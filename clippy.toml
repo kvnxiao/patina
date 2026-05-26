@@ -1,0 +1,3 @@
+# Allow .expect() in test code; production code must still use ? + typed errors.
+# See .claude/rules/rust/rust-error-handling.md and rust-testing.md.
+allow-expect-in-tests = true
