@@ -1,7 +1,7 @@
 ---
 name: speccy-decompose
 description: Decomposes a Speccy SPEC into a checklist of agent-sized tasks. Invoke via /agent speccy-decompose for the pinned execution path defined in this file's frontmatter.
-model: sonnet[1m]
+model: opus[1m]
 effort: medium
 ---
 
@@ -67,7 +67,60 @@ Decomposes the SPEC into an ordered, single-agent-sized task list in
    `speccy lock` edits TASKS.md's frontmatter in place; it does not
    emit a hash to stdout, and it requires TASKS.md to already exist.
 
-4. Suggest the next step: `/speccy-work SPEC-NNNN` to start the
+4. Bootstrap commit the SPEC artefacts. This closes the
+   bootstrap-commit gap that would otherwise trip the SPEC-0045/REQ-002
+   strict clean-tree gate when `/speccy-orchestrate
+   SPEC-NNNN` is invoked on a freshly decomposed SPEC. The step uses
+   narrow file-list staging (never `git add -A` or `git add .`), so
+   any unrelated dirty paths outside `<spec-dir>/` remain in the
+   working tree untouched. The step is idempotent: re-running
+   decompose on an already-committed SPEC produces no new commit.
+
+   1. Stage exactly the two SPEC artefacts via narrow `git add`:
+
+      ```bash
+      git add <spec-dir>/SPEC.md <spec-dir>/TASKS.md
+      ```
+
+      Do not use `git add -A` or `git add .`. Staging unchanged
+      content is a no-op, so passing both paths unconditionally is
+      safe regardless of whether SPEC.md was already committed.
+
+   2. Run `git diff --cached --quiet`. If exit code is 0 (nothing
+      staged), skip the commit silently — both files are already
+      committed at their current content. If non-zero, proceed to
+      the commit.
+
+   3. Build the commit message:
+
+      - **Title:** `[SPEC-NNNN]: create spec and decompose tasks`
+        with `SPEC-NNNN` substituted for the resolved spec id.
+      - **Body:** the trimmed value of the `title:` field from
+        SPEC.md's YAML frontmatter (the one-line title slug, not
+        the full document heading).
+      - **Trailer:** a single `Co-Authored-By: <model> <noreply@anthropic.com>`
+        line where `<model>` is sourced from the host harness's
+        runtime model identifier (env var, runtime API, or
+        host-specific equivalent). When the host does not expose a
+        model identifier, use the documented fallback string
+        `Co-Authored-By: Speccy Skill Pack <noreply@anthropic.com>`.
+        Trailer resolution matches SPEC-0045/REQ-004 verbatim.
+
+      Pass the body via a HEREDOC so newlines and any special
+      characters in the SPEC title survive verbatim, e.g.:
+
+      ```bash
+git commit -m "$(cat <<'EOF'
+[SPEC-NNNN]: create spec and decompose tasks
+
+<SPEC title from frontmatter>
+
+Co-Authored-By: <model> <noreply@anthropic.com>
+EOF
+)"
+      ```
+
+5. Suggest the next step: `/speccy-work SPEC-NNNN` to start the
    implementation loop.
 
 This recipe does not loop.

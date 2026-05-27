@@ -57,12 +57,14 @@ outer:    speccy-orchestrate dispatch loop  ← this skill's session
                   ├── review → fan out 4 reviewer-* sub-agents
                   │             in parallel from this session
                   │             (follows the speccy-review skill body)
-                  └── ship   → run the speccy-vet skill body inline
-                                in this session, spawning
-                                vet-reviewer / vet-implementer /
-                                vet-simplifier leaf sub-agents directly
-                                (drift-fix loop bounded to 3 rounds,
-                                 then one simplifier polish pass)
+                  ├── vet    → run the speccy-vet skill body inline
+                  │             in this session, spawning
+                  │             vet-reviewer / vet-implementer /
+                  │             vet-simplifier leaf sub-agents directly
+                  │             (drift-fix loop bounded to 3 rounds,
+                  │              then one simplifier polish pass)
+                  └── ship   → ask the user, then spawn a
+                                speccy-ship sub-agent on confirm
 inner-1:  per-task retry — same task_id flipping pending after review
             (bounded here in the orchestrator: 5 rounds, then stop)
 inner-2:  holistic drift fix — described in speccy-vet, run inline
@@ -114,7 +116,8 @@ to catch state left by a crashed prior session.
 resolves the spec directory in step 1 below — may return
 `next_action.kind == "reconcile"` when the CLI's consistency check
 flags drift from a prior crashed session. When it does, dispatch the
-reconcile pass per the shared partial inlined immediately below
+reconcile pass per the **Reconcile policy** summary below (canonical
+policy at `.claude/speccy-references/reconcile-policy.md`)
 **before** entering the dispatch loop. Apply the per-drift action
 for every entry in `consistency.drifts[]`, then re-query
 `speccy next SPEC-NNNN --json`. Only when the re-query returns
@@ -131,121 +134,13 @@ enum — including `state_in_progress_orphaned` (dirty tree) and
 `state_in_progress_clean` (clean tree) — so the orchestrator no
 longer scans TASKS.md for `state="in-progress"` itself.
 
-<!-- Shared partial: reconcile-policy. Source: .claude/speccy-references/reconcile-policy.md -->
-# Reconcile policy: shared partial
-
-This file is the single source of truth for Speccy's reconcile
-dispatch policy. It is inlined verbatim into three skill body files
-via the existing shared-partial convention:
-
-- `.claude/skills/speccy-orchestrate/SKILL.md`
-- `.claude/skills/speccy-work/SKILL.md`
-- `.claude/skills/speccy-review/SKILL.md`
-
-Each inlined site is bounded by marker comments naming this partial:
-
-```
-<!-- Shared partial: reconcile-policy. Source: .claude/speccy-references/reconcile-policy.md -->
-<partial content>
-<!-- End shared partial: reconcile-policy. -->
-```
-
-When this file changes, all three inlined copies must be re-synced.
-
----
-
-## Dispatch trigger
-
-The reconcile pass is triggered when `speccy next --json` (in either
-per-spec or workspace form) returns `next_action.kind == "reconcile"`.
-
-The CLI sets this value whenever the envelope's `consistency.status`
-field is anything other than `"ok"` — i.e. `"drift"` or `"blocked"`.
-When `consistency.status == "ok"`, `next_action.kind` reflects the
-normal dispatch (`work`, `review`, `ship`, `decompose`, ...) and the
-calling skill proceeds normally without invoking this policy.
-
-The calling skill (one of `/speccy-orchestrate`, `/speccy-work`,
-`/speccy-review`) iterates the `consistency.drifts[]` array and
-applies one action per entry per the table below.
-
-## Policy table
-
-| `kind` | `severity` | Action |
-|---|---|---|
-| `commit_without_state` | `auto_fixable` | Edit TASKS.md: flip the task's `state` attribute to `completed` (deterministic write). |
-| `state_completed_no_commit` (dirty tree, `details.working_tree_dirty == true`) | `blocking` | Run `git add -A` followed by `git commit` using the REQ-004 message format (title `[SPEC-NNNN/T-NNN]: <task title>`; body extracted from the latest `<implementer>` block's `Completed` field in `journal/T-NNN.md`; `Co-Authored-By` trailer per host). |
-| `state_completed_no_commit` (clean tree, `details.working_tree_dirty == false`) | `blocking` | Edit TASKS.md: roll the task's `state` back to `in-review`. Journal file is preserved intact as evidence for the next reviewer round. |
-| `state_in_progress_orphaned` | `blocking` | Run `git restore .` and `git clean -fd` to discard the partial implementer work, then edit TASKS.md to flip the task's `state` to `pending`. The orchestrator's per-task retry budget will redo the work. |
-| `state_in_progress_clean` (`details.working_tree_dirty == false`) | `blocking` | Edit TASKS.md: roll the task's `state` back to `pending`. No git mutation — the tree is already clean, so there is no partial work to discard. The orchestrator's per-task retry budget will redo the work. |
-| `journal_xml_malformed` | `blocking` | Truncate the journal file at `details.journal_path` to `details.last_well_formed_byte_offset` bytes. Reset the corresponding TASKS.md `state` to whatever the truncated journal implies (if the last well-formed element is `<implementer>`, state goes to `in-review`; if a closing `<review>` block survived and all four personas passed, the per-task journal already reflects a passing round and state may flip to `completed` via the standard commit step). |
-
-## Post-dispatch re-query discipline
-
-After applying actions for every entry in `consistency.drifts[]`, the
-skill re-queries `speccy next --json` (in the same per-spec form it
-was invoked with).
-
-- If `consistency.status == "ok"` on the re-query, the skill resumes
-  its normal dispatch on the returned `next_action.kind`.
-- If `consistency.status` is still `"drift"` or `"blocked"`, the
-  skill applies actions again for the new drift list. The mechanism
-  has no hard round budget; idempotency plus re-detectability on
-  subsequent sessions bounds the worst case.
-
-## Three properties
-
-The reconcile pass holds three properties by construction:
-
-1. **Autonomous.** The pass applies the action for each drift kind
-   without prompting the user, without surfacing a fork ("re-commit
-   or roll back?"), and without halting the orchestration loop. No
-   `AskUserQuestion` invocation, no "press enter to continue"
-   surface, appears anywhere in the dispatch path. The policy table
-   above is exhaustive over the documented enum; an unknown `kind`
-   is the only path that escalates (treated as `blocking` and
-   surfaced to the caller).
-
-2. **Rollback-biased.** When recovery is ambiguous — most notably
-   `state_completed_no_commit` with a clean working tree, meaning
-   the lost commit's content is truly unrecoverable — the policy
-   prefers rolling backward (TASKS.md state reset to `in-review`,
-   journal preserved as evidence) over any forward-recovery attempt
-   that might guess at lost content. The orchestrator's per-task
-   retry budget absorbs the redo cost.
-
-3. **Idempotent.** Each policy action is a no-op when applied to
-   already-converged state. Re-running `git add -A && git commit`
-   on a clean tree produces no commit; re-running a TASKS.md state
-   flip when the state is already at the target value is a no-op;
-   truncating a journal at its current length is a no-op.
-   Successive session crashes during reconciliation converge to the
-   same eventual state.
-
-## Extending the enum
-
-Adding a new drift kind to the consistency enum requires changes in
-exactly two places:
-
-1. **CLI detection.** Add the new variant to the `DriftKind` enum in
-   the Rust source (`speccy-core/src/consistency.rs` or its
-   equivalent under the current module layout) and implement the
-   deterministic detection logic that emits drift entries of the
-   new kind in `speccy next --json`'s `consistency.drifts[]` array.
-   Detection must be read-only: no mutating git commands, no
-   side-effecting writes to TASKS.md or the journal.
-
-2. **Policy table.** Add a row to the policy table in this partial
-   naming the new kind, its `severity`, and the deterministic
-   action the calling skill takes when it encounters the kind in
-   `consistency.drifts[]`. Then re-sync all three inlined copies in
-   the skill body files listed at the top of this partial.
-
-No other site needs to change. The CLI knows what it *detected*;
-this partial knows what to *do*. Future hosts (Codex, others) that
-consume the consistency block reuse this partial unchanged.
-
-<!-- End shared partial: reconcile-policy. -->
+**Reconcile policy.** When `speccy next SPEC-NNNN --json` returns
+`next_action.kind == "reconcile"`, iterate `consistency.drifts[]` and
+apply the table action per entry, then re-query before proceeding.
+See `.claude/speccy-references/reconcile-policy.md` for the full
+policy table, the three properties the dispatch holds by construction
+(autonomous / rollback-biased / idempotent), and the extension
+protocol for adding new drift kinds.
 
 1. Resolve the spec directory from `speccy next SPEC-NNNN --json`:
    take the `spec_md_path` field and strip the trailing `/SPEC.md`
@@ -254,8 +149,9 @@ consume the consistency block reuse this partial unchanged.
    command reports the spec is unknown, stop and report.
 
 2. If `next_action.kind == "reconcile"`, run the reconcile pass per
-   the shared partial above, then re-query and continue. Otherwise
-   proceed directly to the dispatch loop.
+   the **Reconcile policy** summary above (canonical policy at
+   `.claude/speccy-references/reconcile-policy.md`), then re-query
+   and continue. Otherwise proceed directly to the dispatch loop.
 
 ## Loop
 
@@ -278,6 +174,8 @@ Repeat until a stop condition fires:
      section below.
    - **`review`** — execute the [Review dispatch](#review-dispatch)
      section below.
+   - **`vet`** — execute the [Vet dispatch](#vet-dispatch) section
+     below.
    - **`ship`** — execute the [Ship dispatch](#ship-dispatch)
      section below.
    - **`decompose`** — STOP. Tell the user to run
@@ -295,17 +193,40 @@ Repeat until a stop condition fires:
 
 ## Work dispatch
 
-**Clean-tree precondition (REQ-002).** Before spawning the
-`speccy-work` sub-agent, run `git status --porcelain` in the
-orchestrator's running session. If stdout is non-empty, **halt the
-outer loop** and surface the dirty paths to the user — no
-`speccy-work` sub-agent is spawned, and the loop does not advance.
-Empty stdout permits the dispatch below. This check fires in the
-orchestrator's session (not delegated to the sub-agent) because the
-outer loop's invariant — every dispatched implementer turn begins on
-a clean tree — must be enforced by the loop owner. The `speccy-work`
-skill body re-runs the same check defensively at its own entry as a
-second-level guard.
+**Clean-tree precondition (SPEC-0045 REQ-002, extended by SPEC-0047
+REQ-002).** Before spawning the `speccy-work` sub-agent, run three
+steps in the orchestrator's running session:
+
+1. Resolve the target task from `next_action.task_id`.
+2. Read `<spec-dir>/journal/T-NNN.md` (if it exists) and apply the
+   retry-shape rule summarized immediately below (canonical
+   statement at `.claude/speccy-references/retry-shape.md`).
+3. Run `git status --porcelain`. **First-attempt shape** with
+   non-empty stdout halts the outer loop and surfaces the dirty
+   paths to the user — no `speccy-work` sub-agent is spawned, and
+   the loop does not advance (today's SPEC-0045/REQ-002 behaviour,
+   unchanged). Empty stdout proceeds to the dispatch below.
+   **Retry shape** proceeds to spawn the `speccy-work` sub-agent
+   regardless of stdout — the dirty paths are the prior pass's WIP
+   that the retry implementer amends in place; no dirty-paths
+   surface is written. The retry case is the one named by the
+   `SPEC-NNNN → work T-NNN (retry 2/5 after blocking review)`
+   status line below.
+
+This check fires in the orchestrator's session (not delegated to
+the sub-agent) because the outer loop's invariant — every
+dispatched implementer turn begins on a known tree shape — must be
+enforced by the loop owner. The `speccy-work` skill body re-runs
+the same retry-aware precondition defensively at its own entry as
+a second-level guard.
+
+**Retry shape.** A task is in retry shape iff its journal contains
+both an `<implementer>` element and a `<blockers>` element whose
+`round` attribute matches the highest implementer round. Otherwise
+it's first-attempt shape — the strict clean-tree gate applies. See
+`.claude/speccy-references/retry-shape.md` for the full rule
+statement, read-only scope, worked examples, and the
+"implementer awaiting review" edge case.
 
 Spawn a sub-agent that runs the `speccy-work` primitive for the
 resolved task. Prompt:
@@ -351,6 +272,15 @@ The prompt for each spawn is:
 > identify the model that produced the verdict (with the optional
 > slash-suffix effort convention from the verdict-return contract).
 > Do not edit TASKS.md and do not edit the journal file.
+>
+> The working tree may be dirty: the implementer leaves changes
+> uncommitted on purpose, and the orchestrator (not the implementer)
+> owns the single atomic commit on review pass per REQ-003/REQ-004.
+> On retry rounds the dirty tree is the prior pass's WIP that the
+> retry implementer amended in place per the retry-shape contract.
+> Do not flag uncommitted state, commit timing, or "changes not
+> committed before the in-review flip" -- those are out of scope
+> for per-task review.
 
 Substitute the resolved `SPEC-NNNN/T-NNN` and the persona name per
 spawn.
@@ -493,408 +423,56 @@ The `speccy-review` skill remains independently invocable as
 dispatch shares the same fan-out contract via the partial above so
 behaviour stays in sync across invocation paths.
 
-## Ship dispatch
+## Vet dispatch
 
 Run the `speccy-vet` skill body **inline in this orchestrator
 session** (do NOT wrap it in a single general-purpose sub-agent —
 that wrapper would need to spawn the vet-reviewer /
 vet-implementer / vet-simplifier leaves across up to three rounds,
-and sub-agents cannot spawn sub-agents). The shared partial below
-is the single source of truth, included by both this
-orchestrator's ship dispatch and the `/speccy-vet`
-skill body.
-
-
-Round budget: **3 rounds per invocation** for drift fixing. Each
-round is expensive (full SPEC re-read + diff re-analysis +
-implementer pass), so the budget of 3 is intentionally tighter
-than the per-task implementer retry budget.
-
-### Phase 0 — bootstrap
-
-Resolve the three values that sub-agent prompts need, then open a
-new invocation section in VET.md.
-
-1. **Spec directory.** Run:
-
-   ```bash
-   speccy next SPEC-NNNN --json
-   ```
-
-   The `spec_md_path` field (e.g.,
-   `.speccy/specs/NNNN-slug/SPEC.md`) gives the absolute path to
-   `SPEC.md`; strip the trailing `/SPEC.md` to get `<spec-dir>`
-   (e.g., `.speccy/specs/NNNN-slug/`). If the command exits
-   non-zero, the SPEC has reached a terminal state — surface the
-   stderr line and return `fail`. Only parse the JSON envelope
-   when exit code is 0. If the spec is unknown, return `fail`
-   immediately.
-
-   Also verify every task in this spec is at `state="completed"`
-   (read `<spec-dir>/TASKS.md`). If any task is `pending`,
-   `in-progress`, or `in-review`, return `fail` — this is a
-   pre-ship gate, not a mid-loop check.
-
-2. **Diff baseline ref.** Run:
-
-   ```bash
-   git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@'
-   ```
-
-   Use the output as `<base-ref>`. If empty (no remote, detached
-   HEAD), fall back to `main`. Sub-agent prompts will pass this in
-   for `git diff <base-ref>` — that command compares the **working
-   tree** against the ref, including uncommitted changes, which is
-   essential because the drift-implementer leaves changes
-   uncommitted between rounds.
-
-3. **Journal bootstrap and new invocation section.** The journal
-   is at `<spec-dir>/journal/VET.md`.
-
-   - If the file does not exist, create it with the YAML
-     frontmatter (`spec`, `generated_at`).
-   - Scan the file for `^## Invocation (\d+)` headers, take the
-     max, and add 1 to get the new invocation number `N`. If no
-     prior headers exist, `N = 1`.
-   - Append a new section header:
-
-     ```markdown
-
-     ## Invocation N — <ISO8601 timestamp>
-     ```
-
-     (Blank line above the heading for markdown readability.) Do
-     not modify prior sections, even if a prior invocation
-     crashed mid-loop.
-
-### Phase 1 — drift review and fix
-
-Repeat for up to 3 rounds per invocation. The running session owns
-the round counter, the working-tree snapshots, and the VET.md
-writes; sub-agents own the substantive review and fix work.
-
-**Defer-write pattern.** Hold returned verdict blocks in memory
-across each round and write to VET.md only **after** the
-snapshot-keep-vs-revert decision. Writing earlier would put VET.md
-changes inside the snapshot, and a stuck-revert would erase the
-audit trail. The journal is the durable record of *what the loop
-did*; it must survive any rollback the loop performs.
-
-1. **Spawn the drift reviewer sub-agent.** Prompt:
-
-   > Holistic drift review for `SPEC-NNNN`, invocation `N`, round
-   > `R`.
-   >
-   > Resolved paths:
-   > - Spec directory: `<spec-dir>` (use this for `SPEC.md`,
-   >   `TASKS.md`, mission file if any, and the journal at
-   >   `<spec-dir>/journal/VET.md`).
-   > - Diff baseline: `<base-ref>` (run `git diff <base-ref>` —
-   >   that captures the working tree including uncommitted
-   >   changes, which the implementer leaves between rounds).
-   >
-   > Follow the focus, round-2+ scrutiny, and verdict-return
-   > contract in your agent file. Return a single `<drift-review>`
-   > block as your final message.
-
-   Substitute `SPEC-NNNN`, `N`, `R`, `<spec-dir>`, and `<base-ref>`
-   with the resolved values. Hold the returned `<drift-review>`
-   block in memory; do not write to VET.md yet.
-
-   Invoke the `Task` tool with `subagent_type: "vet-reviewer"`.
-   The sub-agent definition at `.claude/agents/vet-reviewer.md`
-   carries the host-native dispatch metadata (model pin, effort
-   level).
-
-2. **If `verdict="pass"`** → append the held `<drift-review>`
-   block to `<spec-dir>/journal/VET.md` under the current
-   invocation section. Exit the loop and go to Phase 2.
-
-3. **If `verdict="blocking"` and no rounds remain** → append the
-   held `<drift-review>` block to VET.md (so the trail is
-   complete) and return a `fail` verdict.
-
-4. **Otherwise** (`verdict="blocking"` with budget remaining):
-
-   a. **Snapshot the working tree** before the implementer call,
-      so the running session can revert on `stuck` without losing
-      the VET.md writes:
-
-      ```bash
-      git stash push --include-untracked -m "speccy-holistic-pre-implementer-<spec>-inv<N>-r<R>"
-      git stash apply
-      ```
-
-      The `push` saves all uncommitted state and clears the working
-      tree to HEAD; the `apply` restores the working tree so the
-      implementer has the current implementation to work on. The
-      stash stays available as the rollback target.
-
-   b. **Spawn the drift-implementer sub-agent.** Prompt:
-
-      > Holistic drift fix for `SPEC-NNNN`, invocation `N`, round
-      > `R`.
-      >
-      > Resolved paths:
-      > - Spec directory: `<spec-dir>`.
-      > - Diff baseline: `<base-ref>` (use `git diff <base-ref>`
-      >   to see the existing implementation; leave your changes
-      >   uncommitted — the next reviewer reads the same command
-      >   and will pick them up).
-      >
-      > The running session will revert your changes if you
-      > return `verdict="stuck"`. Do not manage rollback yourself.
-      >
-      > Follow the scope, hygiene-gate, and verdict-return
-      > contract in your agent file. Return a single
-      > `<holistic-fix>` block as your final message.
-      >
-      > Drift findings (the held `<drift-review>` block):
-      >
-      > [paste the held `<drift-review>` block verbatim]
-
-      Hold the returned `<holistic-fix>` block in memory.
-
-      Invoke the `Task` tool with `subagent_type: "vet-implementer"`.
-      The sub-agent definition at
-      `.claude/agents/vet-implementer.md` carries the host-native
-      dispatch metadata.
-
-   c. **Resolve the snapshot based on the implementer's verdict**:
-
-      - **`addressed` or `blocking`**: keep the implementer's
-        edits.
-
-        ```bash
-        git stash drop
-        ```
-
-        Then append **both** the held `<drift-review>` block and
-        the held `<holistic-fix>` block to VET.md under the
-        current invocation section (drift-review first, then
-        fix). Decrement the round counter and go back to step 1.
-        The next reviewer reads the journal you just appended and
-        verifies the implementer's claims against the now-updated
-        diff.
-
-      - **`stuck`**: revert the implementer's edits, then preserve
-        the audit trail:
-
-        ```bash
-        git restore .
-        git clean -fd
-        git stash pop
-        ```
-
-        `git restore .` undoes implementer edits to tracked
-        files; `git clean -fd` removes any new files the
-        implementer added; `git stash pop` restores the
-        pre-implementer snapshot. Now append both held blocks to
-        VET.md under the current invocation section — the write
-        happens **after** the revert, so it survives. Return a
-        `fail` verdict.
-
-      - **Sub-agent error or missing/malformed `<holistic-fix>`**:
-        treat as `stuck`. Revert as above. Append the held
-        `<drift-review>` block and a synthesized
-        `<holistic-fix verdict="stuck">` block describing the
-        sub-agent failure. Return `fail`.
-
-### Phase 2 — simplifier polish pass
-
-Drift is now `pass`. Run one polish pass for code quality. This
-phase does not affect the verdict (a revert still yields
-`verdict="pass"`); it only sets the `simplifier="..."` field on
-the return block.
-
-1. **Spawn the simplifier scan sub-agent.** Prompt:
-
-   > Identify simplification candidates in the diff for
-   > `SPEC-NNNN`. Run `git diff <base-ref>` to see all changes
-   > (working tree included). **Report only — do NOT modify
-   > files.** Skip anything that would change behavior, weaken
-   > invariants, or trip project conventions in `AGENTS.md` and
-   > project-local rule files.
-   >
-   > Return your verdict as your final message:
-   >
-   > ```
-   > <simplifier-scan verdict="clean|candidates">
-   > <one-line summary>
-   > [optional bullets, each with file:line + proposed change]
-   > </simplifier-scan>
-   > ```
-
-   Invoke the `Task` tool with
-   `subagent_type: "vet-simplifier"`.
-
-   The scan makes no modifications, so no defer-write is needed
-   — **append the returned `<simplifier-scan>` block to VET.md
-   immediately** (under the current invocation section). The
-   block is part of the audit trail whether or not an apply step
-   follows.
-
-2. If `verdict="clean"` → record `simplifier="clean"` for the
-   return block and go to Phase 3.
-
-3. If `verdict="candidates"`:
-
-   a. **Snapshot the working tree** before the apply, so the
-      running session owns the rollback. The simplifier
-      sub-agent cannot reliably roll back itself — `git
-      checkout` doesn't undo new files and `git clean -fd` is
-      dangerous if scoped wrong. Owning the rollback here bounds
-      the blast radius.
-
-      ```bash
-      git stash push --include-untracked -m "speccy-holistic-pre-simplifier-<spec>-<invocation>"
-      git stash apply
-      ```
-
-      The first command saves a snapshot of all uncommitted state
-      (tracked + untracked) and clears the working tree to HEAD;
-      the second restores the working tree so the simplifier sees
-      the drift-fix changes. The stash remains as the rollback
-      target.
-
-   b. **Spawn the simplifier apply sub-agent.** Prompt:
-
-      > Apply the simplification candidates listed below.
-      > Preserve all functionality. After applying, run the
-      > standard hygiene suite per `AGENTS.md` (the project's
-      > four standard hygiene gates).
-      >
-      > **If any hygiene step fails, do NOT attempt to revert
-      > yourself.** Return `verdict="blocking"` with a one-line
-      > description of what failed; the caller owns the rollback.
-      >
-      > Candidates to apply:
-      >
-      > [paste the `<simplifier-scan>` block from step 1 verbatim]
-      >
-      > Return your final message:
-      >
-      > ```
-      > <simplifier-apply verdict="applied|blocking">
-      > <one-line summary>
-      > </simplifier-apply>
-      > ```
-
-      Invoke the `Task` tool with
-      `subagent_type: "vet-simplifier"`.
-
-      Hold the returned `<simplifier-apply>` block in memory; do
-      not write to VET.md yet (same defer-write pattern as Phase 1
-      — write after the revert decision so the audit trail
-      survives any rollback).
-
-   c. Resolve the snapshot based on the verdict, then transcribe:
-
-      - **`applied`** (hygiene green): `git stash drop` — discard
-        the snapshot, keep the simplifications. Append the held
-        `<simplifier-apply>` block to VET.md under the current
-        invocation section. Record `simplifier="applied"` for the
-        return block.
-
-      - **`blocking`** (hygiene failed), sub-agent error, or
-        missing/malformed verdict: roll back.
-
-        ```bash
-        git restore .
-        git clean -fd
-        git stash pop
-        ```
-
-        `git restore .` wipes simplifier changes from tracked
-        files. `git clean -fd` removes untracked files (including
-        any new files the simplifier created). `git stash pop`
-        restores the pre-simplifier snapshot. Then append the
-        held `<simplifier-apply>` block to VET.md under the
-        current invocation section (synthesize a placeholder if
-        the sub-agent returned nothing parseable). Record
-        `simplifier="reverted"`.
-
-### Phase 3 — write `<gate>` block
-
-**Every** exit path — Phase 0 integrity failures, Phase 1
-round-budget exhaustion, Phase 1 `stuck` reverts, Phase 2
-completion (pass or revert), and the success path — appends
-exactly one `<gate>` block to `<spec-dir>/journal/VET.md` under
-the current `## Invocation N` section, **before** surfacing the
-verdict to the caller.
-
-If Phase 0 failed before opening the invocation section (for
-example, the spec is unknown so `<spec-dir>` was never resolved
-or the journal file does not exist yet), bootstrap the file and
-section per Phase 0 step 3, then append the `<gate>` block. The
-on-disk gate record exists regardless of where the early exit
-fired.
-
-The `<gate>` block is appended **after** any `<drift-review>`,
-`<holistic-fix>`, `<simplifier-scan>`, and `<simplifier-apply>`
-blocks already written for the current invocation. It is the
-**last** element in the section.
-
-Block shape:
-
-```
-<gate verdict="passed|failed" tasks_hash="<lowercase-hex-sha256>" date="<ISO8601>">
-<one-line human-readable summary of the invocation outcome>
-</gate>
-```
-
-Attribute rules:
-
-- `verdict` — `passed` when the surfaced verdict will be
-  `verdict="pass"`; `failed` when it will be `verdict="fail"`
-  (including every Phase 0 early-exit path).
-- `tasks_hash` — lowercase hex SHA-256 of the byte contents of
-  `<spec-dir>/TASKS.md` read **immediately before** appending this
-  block. Compute via:
-
-  ```bash
-  sha256sum <spec-dir>/TASKS.md | awk '{print $1}'
-  ```
-
-  PowerShell equivalent on Windows:
-
-  ```powershell
-  (Get-FileHash -Algorithm SHA256 <spec-dir>/TASKS.md).Hash.ToLower()
-  ```
-
-- `date` — ISO8601 datetime with seconds and timezone designator,
-  e.g. `2026-05-22T14:30:00Z`.
-
-The block body is a single line summarising what happened
-(examples: `"Drift cleared on round 2; simplifier applied;
-clean."`, `"Phase 0 integrity check failed: task T-003 not
-completed."`, `"Drift round budget exhausted at round 3 without a
-pass."`).
-
-`speccy next` reads the most recent `<gate>` block's `verdict`
-and `tasks_hash` to decide whether the SPEC is freshly vetted; a
-`passed` gate whose `tasks_hash` no longer matches the on-disk
-TASKS.md forces a re-vet. That is the contract this block exists
-to satisfy.
-
+and sub-agents cannot spawn sub-agents). The vet-phases grammar
+lives canonically in the `/speccy-vet` skill body
+(which includes the `modules/skills/partials/vet-phases.md`
+partial); this site carries only a pointer summary so the two
+invocation paths stay in sync without duplicating the grammar.
+
+**Vet phases.** Phase 0 bootstraps the journal; Phase 1 runs drift
+review with an autonomous fix-and-retry loop; Phase 2 runs the
+simplifier polish pass; Phase 3 writes the final `<gate>` block. Run
+in order; see `.claude/skills/speccy-vet/SKILL.md` § Phase N for the full grammar.
 
 After the vet workflow appends its `<gate>` block and surfaces a
 verdict to this orchestrator session, react as follows:
 
 - `verdict="pass"` → write a one-line summary plus the round and
-  simplifier counters, then **ask the user** whether to invoke
-  `/speccy-ship`. Only after explicit confirmation,
-  spawn a `speccy-ship` sub-agent. Ship opens a PR; never
-  auto-ship.
+  simplifier counters, then re-query
+  `speccy next SPEC-NNNN --json`. The next iteration will observe
+  `next_action.kind == "ship"` and route to the [Ship
+  dispatch](#ship-dispatch) section below.
 - `verdict="fail"` → surface the drift summary and one-line
   suggested next step. Stop the outer loop. The user decides how
   to address it (`/speccy-amend`, manual edits,
   etc.).
 
+## Ship dispatch
+
+The `ship` kind is emitted by the CLI after a fresh passing
+vet-gate artifact lands and `REPORT.md` is absent, so the vet
+workflow has already completed and the only remaining step is user
+confirmation before opening a PR.
+
+Ask the user via `AskUserQuestion` whether to invoke
+`/speccy-ship` now. Ship opens a PR — irreversible —
+so this confirmation is always explicit; never auto-ship.
+
+- On confirm: spawn a `speccy-ship` sub-agent.
+  Invoke the `Task` tool with `subagent_type: "speccy-ship"`. The
+  sub-agent definition at `.claude/agents/speccy-ship.md` carries
+  the host-native dispatch metadata.
+- On decline: stop the outer loop.
+
 ## Stop conditions
 
-- `verdict="pass"` from the holistic gate → ask the user before
-  invoking ship.
+- `ship` dispatch declined by the user → stop the outer loop.
 - Same `task_id` flips back to `pending` after review for
   **5 rounds in a row** → stop. The implementer is stuck on this
   task. Surface the journal path
@@ -905,7 +483,7 @@ verdict to this orchestrator session, react as follows:
   retry counts in memory across loop iterations; the budget of 5
   is the orchestrator's only per-task retry bound.
 - A dispatched sub-agent errors out → stop and surface the error.
-- `next_action.kind` is not one of `work`, `review`, `ship`,
+- `next_action.kind` is not one of `work`, `review`, `vet`, `ship`,
   `decompose` → stop and report.
 - User interrupts → stop on the next loop boundary.
 
@@ -918,7 +496,7 @@ follow the loop without reading sub-agent transcripts:
 SPEC-NNNN → work T-003
 SPEC-NNNN → review T-003
 SPEC-NNNN → work T-003 (retry 2/5 after blocking review)
-SPEC-NNNN → holistic gate
+SPEC-NNNN → vet
 SPEC-NNNN → ready to ship — confirm before proceeding?
 ```
 

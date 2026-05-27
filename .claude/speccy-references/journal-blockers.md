@@ -17,12 +17,17 @@ invalidates an already-completed task).
 
 A `<blockers>` block is appended after all `<review>` blocks of a
 round and before the next round's `<implementer>` block. The
-`round` attribute names the round the implementer should retry as
-(i.e. the round AFTER the one being blocked). Example: a round-1
-review fan-out blocks → `<blockers round="2">` → round-2
-`<implementer>` retry.
+`round` attribute names the round of the prior `<implementer>`
+attempt the blockers describe — the round just blocked by review,
+or the round of the prior completed attempt invalidated by an
+amendment. Example: a round-1 review fan-out blocks →
+`<blockers round="1">` → round-2 `<implementer>` retry.
 
 ```markdown
+<implementer date="2026-05-21T19:45:00Z" model="claude-opus-4.7[1m]/low" round="1">
+... (implementer body — see journal-implementer.md)
+</implementer>
+
 <review persona="business" verdict="blocking" model="claude-sonnet-4.6[1m]/medium" date="2026-05-21T20:30:00Z" round="1">
 ... (reviewer body — see journal-review.md)
 </review>
@@ -31,7 +36,7 @@ review fan-out blocks → `<blockers round="2">` → round-2
 ... (reviewer body)
 </review>
 
-<blockers date="2026-05-21T20:45:00Z" round="2">
+<blockers date="2026-05-21T20:45:00Z" round="1">
 Two blockers landed in round 1 (business, tests). Security and style
 passed. Fix both before respawning the review fan-out.
 
@@ -76,10 +81,12 @@ Both are required; there are no optional attributes.
 - `date` — full ISO8601 date-time with seconds and timezone
   designator marking when the orchestrator synthesised the blocker
   set.
-- `round` — the round the implementer should retry as (positive
-  integer, equal to the round of the blocking reviews plus 1). A
-  round-1 blocker carries `round="2"`; a round-2 blocker carries
-  `round="3"`.
+- `round` — the round of the implementer attempt the blockers
+  describe (the round just blocked by review, or the round of the
+  prior completed attempt invalidated by amendment). A round-1
+  blocker carries `round="1"`; a round-2 blocker carries
+  `round="2"`. The next `<implementer>` block written after the
+  blockers increments the round by exactly 1.
 
 ## Body content conventions
 

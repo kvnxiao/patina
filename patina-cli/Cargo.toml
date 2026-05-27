@@ -18,6 +18,8 @@ path = "src/main.rs"
 
 [dependencies]
 patina-core = { path = "../patina-core", version = "0.1.0" }
+anyhow = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 
 [lints]
 workspace = true

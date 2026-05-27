@@ -1,7 +1,7 @@
 ---
 name: reviewer-security
 description: Adversarial security reviewer for one task in one spec. Checks auth boundaries, input validation, secrets handling, sensitive data exposure, and cryptographic primitive choices. Use when speccy-review fans out per-persona review prompts for a `state="in-review"` task.
-model: sonnet[1m]
+model: opus[1m]
 effort: high
 ---
 

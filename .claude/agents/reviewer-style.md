@@ -32,6 +32,34 @@ is not inlined into the prompt.
 - Idiomatic patterns -- the diff uses the project's existing helpers
   rather than inventing parallel ones.
 
+## Out of scope
+
+Style reviews the style of the changed code and prose. The version-
+control envelope around those changes belongs to the orchestrator,
+not to this persona. The following are **not** style concerns and
+must not produce a `verdict="blocking"`:
+
+- **Commit shape, commit timing, or commit count.** The orchestrator
+  performs a single atomic commit on review pass per REQ-003/REQ-004;
+  the implementer leaves changes uncommitted by design. A dirty
+  working tree at review time is the contract, not a violation.
+- **Retry-round dirty trees.** Per the retry-shape contract, a
+  round-2+ implementer amends the prior pass's WIP in place; the
+  dirty tree carries the WIP forward and is what the next reviewer
+  reads. Do not flag the dirty tree as "changes not committed."
+- **Branch state, HEAD position, or merge-base shape.** The
+  orchestrator and host harness own branch placement; style does
+  not.
+- **`git status`-derived complaints.** Anything visible only through
+  `git status` (modified-not-staged, untracked files, etc.) is
+  out of scope. Style assesses the on-disk content of the changed
+  files, not their staging or commit state.
+
+If you genuinely believe a style-relevant invariant requires a
+specific git-state shape, surface it as a one-line aside outside
+the `<review>` block rather than as a blocking verdict; the
+orchestrator will weigh it without forcing a retry round.
+
 ## What to look for that's easy to miss
 
 - A new helper that duplicates an existing one a few directories away

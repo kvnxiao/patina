@@ -108,7 +108,7 @@ reconciliation are not forgotten.
 4. Reconcile TASKS.md: preserve `state="completed"` tasks unless the
    SPEC change invalidated them (those flip their `state` back to
    `pending`, and the amendment appends a
-   `<blockers date="..." round="N+1">spec amended; ...</blockers>`
+   `<blockers date="..." round="N">spec amended; ...</blockers>`
    element to `.speccy/specs/NNNN-slug/journal/T-NNN.md` — the
    per-task journal file sibling to `SPEC.md` and `TASKS.md` — rather
    than into the `<task>` body in TASKS.md, which now unconditionally
@@ -123,14 +123,19 @@ reconciliation are not forgotten.
    - If the task already has a journal file with rounds up to N
      (i.e. the highest `round="N"` across its existing
      `<implementer>` / `<review>` / `<blockers>` blocks), use
-     `round="N+1"`. The next implementer attempt continues from
-     that round.
+     `round="N"` matching the round of the implementer attempt the
+     amend invalidates. The next implementer attempt will continue
+     at round `N+1` when it writes its own `<implementer>` block.
    - If the task has no prior journal file (it was completed in a
      single round without prior blockers and the journal was never
      created, or the journal exists but has no rounds yet), use
      `round="1"`. If the journal file does not exist, create it
      with the standard frontmatter (`spec`, `task`, `generated_at`)
-     before appending.
+     before appending. In practice this branch is unreachable for
+     amendment-driven blockers — a task being amend-invalidated is
+     already `state="completed"` and therefore has ≥1 prior
+     `<implementer>` round in its journal — so the `round="1"`
+     fallback is informational.
 
    Canonical journal `<blockers>` shape: `.claude/speccy-references/journal-blockers.md`.
 

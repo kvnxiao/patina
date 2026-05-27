@@ -82,13 +82,32 @@ Readiness semantics:
 5. Commit SPEC.md, TASKS.md, REPORT.md, and the code changes from the
    loop. Then push:
 
-   - If this branch has no open PR yet, open one. Note the
-     `REPORT.md` path is spec-local, not repo-root:
+   - If this branch has no open PR yet, open one. Render the PR body
+     from the canonical template at `references/pr-body.md`: fill its
+     three placeholders (named `spec-dir`, `summary`, `coverage-rows`
+     inside angle-bracket markers in the template) from
+     `.speccy/specs/NNNN-slug/SPEC.md`'s `## Summary` prose, the
+     `<coverage>` elements in `.speccy/specs/NNNN-slug/REPORT.md`, and
+     the spec-dir path itself. Write the rendered markdown to a scratch
+     file (e.g. `/tmp/pr-body.md`) and pass it via `--body-file`:
 
      ```bash
      gh pr create --title "<spec id> <slug>" \
-       --body "$(cat .speccy/specs/NNNN-slug/REPORT.md)"
+       --body-file /tmp/pr-body.md
      ```
+
+     Do **not** pipe `REPORT.md` inline via shell command substitution
+     into the `--body` flag. GitHub does not render the `<report>` and
+     `<coverage>` XML wrappers as markdown, so the angle brackets leak
+     into the PR page as visible prose; always use `--body-file` with
+     the rendered template instead.
+
+     Multi-SPEC fallback: branches that bundle multiple SPECs, or
+     carry unrelated precursor commits, fall back to a hand-authored
+     PR body. The template can serve as a per-SPEC starting skeleton
+     when hand-authoring — render once per SPEC and stitch the
+     sections — but this recipe does not prescribe multi-SPEC
+     composition.
 
    - If a PR already exists for this branch (e.g., a long-running
      branch carrying multiple specs), push to update it:

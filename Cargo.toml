@@ -13,8 +13,9 @@ homepage = "https://github.com/kvnxiao/patina"
 readme = "README.md"
 
 [workspace.dependencies]
-# Shared dependencies are introduced as later phases land. Phase 0 keeps
-# the table empty so the workspace skeleton compiles with zero deps.
+anyhow = "1.0"
+thiserror = "2.0"
+tokio = { version = "1.52", default-features = false }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

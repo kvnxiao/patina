@@ -10,72 +10,61 @@ Patina is a cross-platform dotfile manager whose source of truth is a user's cen
 
 ### Users
 
-- **Developer setting up a fresh laptop** — clones their dotfiles repo, runs one command, expects their shell/editor/git config to land at the right paths so the new machine matches their other machines immediately.
-- **Cautious user** — wants the default `patina apply` to show a diff and prompt before any mutation; never wants to accidentally overwrite a file they edited outside of Patina.
-- **CI script author** — wants `patina apply` in a non-interactive shell to display the plan and exit without mutating, so pipelines can preview a deployment safely.
-- **Contributor debugging a failed apply** — wants `patina debug journal` to decode a binary journal into a human-readable form to see exactly which operations the engine planned and which it executed before failure.
+- **Fresh-laptop developer** — clones the dotfiles repo, runs one command, expects shell/editor/git config to land everywhere.
+- **Existing-machine maintainer** — adds, edits, removes config; re-runs `patina apply` expecting the diff-and-prompt loop to never surprise them.
+- **Multi-machine syncer** — runs Patina across macOS / Linux / Windows; same source must produce same result everywhere.
+- **Cautious user** — wants a diff and prompt before any mutation; never accidentally overwrites a file edited outside Patina.
+- **CI script author** — runs `patina apply` in a non-interactive shell to preview a deployment; expects plan output and zero writes.
 
 ### V1.0 outcome
 
-V1.0 ships across three SPECs:
+V1.0 ships when a user can:
 
-- **SPEC-0001 (in progress):** core engine + `apply` / `status` / `rollback` CLI surface — enough to exercise the engine end-to-end in integration tests.
-- **SPEC-0002:** complete user-facing CLI (`init`, `add`, `remove`, `promote`, `doctor`) plus the Windows symlink Developer-Mode / UAC elevation flow.
-- **SPEC-0003:** watch subsystem — filesystem event loop, per-OS service install, drift detection.
+- **Declare and apply** — `patina apply` materializes `patina.toml` as symlinks / rendered templates / byte copies at the right targets.
+- **Preview safely** — diff-and-prompt by default; non-interactive shells fall through to plan-only.
+- **Recover** — `patina status` reports drift; `patina rollback` restores pre-apply state; `patina debug journal` decodes the binary journal post-mortem.
+- **Bootstrap** — `init`, `add`, `remove`, `promote`, `doctor` cover repo setup and migration; Windows symlink elevation via Developer Mode or UAC.
+- **Watch** — background service reapplies on source changes; surfaces files modified outside Patina.
 
-Done-enough-to-ship is gated by the `<done-when>` and `<scenario>` blocks inside each SPEC; this section is the elevator pitch, not the acceptance criteria.
+Acceptance criteria live in each SPEC's `<done-when>` and `<scenario>` blocks.
 
 ### Quality bar
 
-- **Crash safety is not optional.** The single-fsync postcard journal + per-operation progress cursor exists so a `kill -9` mid-apply converges deterministically on the next run. Any change that weakens this invariant is a v1.0 blocker.
-- **No panics in production.** `unwrap` / `expect` / `panic!` / `unreachable!` / `todo!` / `unimplemented!` are Clippy-denied outside `#[cfg(test)]`. See `.claude/rules/rust/rust-error-handling.md`.
-- **Deterministic stdout.** Two consecutive `patina apply` invocations against an unchanged source repo produce byte-identical stdout. No wall-clock timestamps, PIDs, or random IDs in user-facing output (`--json` included).
-- **Cross-platform parity.** macOS, Linux, and Windows are first-class. A feature that works on two of three platforms is not done.
-- **Tests are the validation criterion**, not "looks right." Integration tests use `tempfile::TempDir` fixtures; snapshots use `insta`; properties use `proptest`. See `## Code conventions` below for crate choices.
+- **Crash safety.** Single-fsync postcard journal + per-operation progress cursor; `kill -9` mid-apply converges deterministically on the next run.
+- **Idempotency.** Re-applying against unchanged source is a no-op — same plan, no writes, byte-identical stdout.
+- **Never overwrite without consent.** Files Patina doesn't own are never clobbered.
+- **Rollback fidelity.** After `patina rollback`, filesystem matches pre-apply state byte-for-byte (modulo files the user touched outside Patina).
+- **Deterministic stdout.** Two consecutive `apply`s against unchanged source produce byte-identical output. No timestamps, PIDs, or random IDs (`--json` included).
+- **Cross-platform parity.** macOS, Linux, Windows are first-class. Two-of-three is not done.
+- **No panics, tests gate truth.** Enforcement detail in `## Hard rules — never` below.
 
 ### Non-goals
 
-Each SPEC enumerates its own non-goals authoritatively inside a `<non-goals>` block. At the product level, v1.0 explicitly does **not** include: merge-mode file types (`merge-json`, `merge-toml`, etc.), nested modules beyond two levels, `on_change` / `on_drift` hook events, a JSON schema-version field, a `patina gc` command, a `--repo <path>` global flag, a GUI, migrations from other dotfile managers, an embedded scripting language, native encryption, cross-machine state sync, machine inventory, or dashboards. If the user asks for one of these, the answer is "not in v1.0" — surface it as a question for a future SPEC, not silent scope creep.
+Not in v1.0:
+
+- Merge-mode file types (`merge-json`, `merge-toml`, etc.)
+- Nested modules beyond two levels
+- `on_change` / `on_drift` hook events
+- A JSON schema-version field
+- A `patina gc` command
+- A `--repo <path>` global flag
+- A GUI
+- Migrations from other dotfile managers
+- An embedded scripting language
+- Native encryption
+- Cross-machine state sync, machine inventory, or dashboards
+
+If the user asks for one of these, the answer is "not in v1.0" — surface as a question for a future SPEC.
 
 ### Known unknowns
 
-Tracked authoritatively in each SPEC's `<assumptions>` block. The load-bearing ones for v1.0:
+Each SPEC's `<assumptions>` block is authoritative; load-bearing for v1.0:
 
-- `postcard` wire-format stability across v1.0 (mitigated by the journal version envelope so the decoder refuses incompatible records explicitly).
-- `fs2`'s advisory file lock papering over POSIX `flock(2)` vs Windows `LockFileEx` semantic differences adequately for the single-CLI case and the SPEC-0003 watcher-CLI coordination case.
-- `tokio`'s file I/O remaining `spawn_blocking`-backed on every platform in v1.0; engine accepts this rather than waiting for native async file I/O.
-- MiniJinja's strict-undefined behavior — including the Jinja2-inherited rule that an undefined value inside `{% else %}` renders as empty string — being acceptable for v1.0.
-- Users following the instruction not to place the per-machine state directory on iCloud Drive / OneDrive / Dropbox / Box / Google Drive / Syncthing. SPEC-0002 adds doctor warnings; SPEC-0001 documents only.
-
----
-
-## Speccy workflow
-
-This repository is driven by **speccy**, a spec-driven development tool. Every non-trivial change lands through a SPEC → TASKS → implement-review-vet → ship loop. **Do not implement code changes that bypass the loop** unless the user explicitly authorizes a one-off (e.g. a single-line typo fix, a CI workflow tweak, a docs nit). When in doubt, ask.
-
-The full toolchain lives in two places:
-
-- **`speccy` CLI** at `$PATH`: deterministic feedback engine. Run `speccy --help` for the command list. The most-used subcommands are `speccy status` (workspace overview), `speccy next --json` (resolve the next actionable task), `speccy lock` (record the SPEC.md content hash into TASKS.md so amendments are detectable), and `speccy verify` (the CI gate that proof-shape-validates the repo).
-- **`speccy-*` skills** under `.claude/skills/`: one skill per phase of the loop. Always prefer the skill over hand-running steps; the skill knows the preconditions and the next-step suggestion.
-
-### Picking the right skill
-
-| Situation | Skill |
-| --- | --- |
-| Fuzzy idea, no SPEC yet, scope unclear | `/speccy-brainstorm` (Socratic atomization, hard-gate on user approval) |
-| Scope is clear, ready to draft a SPEC | `/speccy-plan` |
-| SPEC exists, need to decompose into tasks | `/speccy-tasks` |
-| Want to implement one task | `/speccy-work` (one task per invocation; resolves next via `speccy next --json` if no selector) |
-| A task is `state="in-review"` | `/speccy-review` (fans out business / tests / security / style reviewers in parallel) |
-| All tasks `state="completed"`, pre-ship boundary | `/speccy-vet` (holistic SPEC-vs-implementation drift check + simplifier polish pass) |
-| Ready to open the PR | `/speccy-ship` (writes `REPORT.md`, runs `speccy verify`, opens PR) |
-| SPEC.md needs to change mid-loop | `/speccy-amend` (surgical edit + Changelog row + re-lock spec hash) |
-| Want to drive a SPEC end-to-end | `/speccy-orchestrate` (chains work → review → vet until ready to ship; stops one step before `/speccy-ship` because PR opens are irreversible) |
-| Fresh repo with no `.speccy/` yet | `/speccy-init` (one-shot bootstrap; `--force` to refresh shipped files) |
-
-### How to find what to do next
-
-When in doubt about what state the workspace is in: `speccy status` for the human view, `speccy next --json` for the machine-readable "what's the next actionable task" answer. Both are non-mutating; run them freely.
+- **`postcard` wire-format stability** — mitigated by the journal version envelope.
+- **`fs2` advisory lock semantics** — paper over POSIX `flock(2)` vs Windows `LockFileEx` for single-CLI and watcher↔CLI coordination.
+- **`tokio` file I/O remains `spawn_blocking`-backed** in v1.0; we accept the cost.
+- **MiniJinja strict-undefined** (including the Jinja2 `{% else %}` empty-string rule) is acceptable.
+- **Per-machine state directory must not live on cloud-sync paths** (iCloud / OneDrive / Dropbox / Box / Google Drive / Syncthing). SPEC-0002 adds doctor warnings; SPEC-0001 documents only.
 
 ---
 
@@ -112,8 +101,59 @@ General Rust style rules live under `.claude/rules/rust/` and are **authoritativ
 - **Errors:** `thiserror` for typed errors in libraries (`patina-core`); `anyhow` for application-level error chaining in `patina-cli`. For genuinely impossible preconditions in production, refactor to make them type-system enforced or use `?` with a proper error variant. (Panic-family lints in `## Hard rules` above are non-negotiable.)
 - **Paths:** `camino::Utf8PathBuf` and `camino::Utf8Path` everywhere we know paths are UTF-8 (which is most places). Convert at OS-API boundaries.
 - **Filesystem:** prefer `fs-err` over `std::fs` so error messages include the path.
-- **Logging:** `tracing` macros (`info!`, `warn!`, `error!`, `debug!`, `trace!`) everywhere except the CLI's user-facing output layer.
-- **CLI output:** human-readable by default with color where appropriate, JSON when `--json` is set. Use the `output::Reporter` abstraction (introduced in Phase 10), not direct prints.
+- **CLI output:** human-readable by default with color where appropriate, JSON when `--json` is set. Use the `output::Reporter` abstraction (introduced in Phase 10), not direct prints. Logging via `tracing` macros (see Hard rules above for the prohibition on `println!`).
 - **Tests:** integration tests use `tempfile::TempDir` for repo fixtures. Snapshot tests use `insta`. Property-based tests use `proptest`.
 - **Public API:** every public function has a doc comment with at least one example. `cargo doc --no-deps` must build clean.
 - **Diagrams in docs:** when a diagram could be expressed equivalently in either ASCII art or Mermaid, use Mermaid (` ```mermaid ` fenced code blocks). Mermaid renders natively on GitHub, in most viewers, and diffs cleanly per-node/per-edge instead of redrawing the whole picture. Keep ASCII only when it conveys information Mermaid loses — directory trees with inline comments, exact-byte file layouts, terminal output examples.
+
+---
+
+## Speccy conventions
+
+> Managed by `/speccy-init`; edits inside this section are overwritten on re-run. Put project-specific additions in a sibling section.
+
+### When to use which skill
+
+- `/speccy-init` — bootstrap a new Speccy workspace by scaffolding `.speccy/` and seeding both the product north star and this conventions section into `AGENTS.md`. Run once per project before any other `speccy-*` skill. Re-running refreshes this section.
+- `/speccy-brainstorm` — atomize a fuzzy ask into first-principle requirements before any `SPEC.md` is written. Use when the user says "help me brainstorm", "let's think about X", or when the scope is unclear. Stops at a hard gate until the framing is user-approved.
+- `/speccy-plan` — draft a new `SPEC.md` from the product north star. Use when the user says "write a spec", "draft a SPEC", or "spec out X". Requires `.speccy/` and `AGENTS.md`.
+- `/speccy-amend` — orchestrate a mid-loop SPEC change. Edits `SPEC.md` with a Changelog row, reconciles `TASKS.md`, and re-records the spec hash. Use when requirements shift or `speccy` reports the SPEC and tasks are out of sync.
+- `/speccy-decompose` — decompose a SPEC into a checklist of agent-sized tasks in `TASKS.md`, or reconcile the list after an amendment. Use when the user says "break the spec into tasks" or the task list looks stale.
+- `/speccy-work` — implement one Speccy task per invocation. With an optional `SPEC-NNNN/T-NNN` selector, implements that task; without one, resolves the next implementable task. Use when the user says "implement T-003" or "work the next task".
+- `/speccy-review` — review one Speccy task per invocation by fanning out adversarial multi-persona review (business, tests, security, style by default). Passes the task to `completed` or flips it back to `pending` with a blockers block in the journal.
+- `/speccy-vet` — run a holistic SPEC-vs-implementation drift review at the pre-ship boundary, with an autonomous drift-fix retry loop and a simplifier polish pass. Use when the user says "check for drift before shipping".
+- `/speccy-ship` — close out a Speccy spec: write `REPORT.md`, run `speccy verify`, commit, and open a pull request. Use when every task is `state="completed"`.
+- `/speccy-orchestrate` — drive the full implementation + review loop for one SPEC end-to-end by chaining `/speccy-work`, `/speccy-review`, and `/speccy-vet` until the spec is ready-to-ship. Stops one step before shipping so the operator can decide.
+
+### The dev loop
+
+Speccy work moves through five phases:
+
+1. **Plan** — draft `SPEC.md` (`/speccy-plan`, optionally preceded by `/speccy-brainstorm`).
+2. **Tasks** — decompose into agent-sized work (`/speccy-decompose`).
+3. **Impl** — implement one task at a time (`/speccy-work`).
+4. **Review** — adversarial per-task review (`/speccy-review`), followed by holistic pre-ship drift review (`/speccy-vet`).
+5. **Ship** — produce the report and open the PR (`/speccy-ship`).
+
+Per-task implementer notes, reviewer verdicts, and blocker directives all live in a per-task journal file at `.speccy/specs/NNNN-slug/journal/T-NNN.md`, sibling to `SPEC.md` and `TASKS.md`. Inspect that file to follow the conversation between implementer and reviewer rounds for any given task.
+
+### Test hygiene
+
+A test must gate a real invariant of the system under test — not editorial decisions, not its own source constant, not the build's own ability to compile. Do not write any of the following vacuous shapes:
+
+1. **Substring-matching human-curated prose.** Asserting that a specific sentence appears in a hand-authored document (a README, an AGENTS file, a SPEC body) gates editorial choices, not behavior. Such tests break on legitimate rewrites. If a concept must be discoverable in docs, enforce it via review or over a stable structural surface (section IDs, frontmatter fields), not via substring match.
+2. **Copying production constants into the test.** A test that hard-codes the same value the production code uses and compares them proves only that someone updated both sites in sync — it cannot fail in any interesting way. Either derive a property of the constant (length, ordering, prefix relation to another constant) or delete the test.
+3. **File existence or non-emptiness only.** Reading a file already gates readability; asserting only that the file is non-empty after a successful read is tautological. Assert at least one property of the content.
+4. **Mocking the function under test and asserting the mock was called.** The mock replaces the very behavior the test claims to verify. The assertion proves the test plumbing works, not the system.
+5. **Loose-outcome assertions any input passes.** Assertions so permissive that any input satisfies them — checking only that a function returned without error when the function is infallible, or that an output is non-empty when the function always returns non-empty — gate nothing. Pick an assertion that would fail for at least one realistic regression.
+
+When a test you wrote is flaky, investigate the flake. Do not retry it until green; intermittent failures point at real races, ordering assumptions, or shared state that will bite again later.
+
+### Commit hygiene
+
+- AI-authored commits identify themselves via the `Co-Authored-By` trailer in the commit message footer, naming the model and a contact address.
+- Prefer narrow, well-scoped commits over sprawling ones. One logical change per commit makes review, revert, and bisect tractable.
+
+### CI gate (suggestion)
+
+`speccy verify` is designed to run as a CI gate. It fails when the proof shape is broken (missing requirement coverage, malformed task state, parser-rejected journal elements) and passes when intact. Wire it into whichever CI service the project uses so drift surfaces on every push rather than at ship time. The gate is informational by design: it tells you when the contract between intent and shipped behavior is visibly broken; it does not block anyone from making mistakes.

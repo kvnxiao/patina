@@ -12,5 +12,18 @@ readme.workspace = true
 keywords = ["dotfiles", "config", "templating", "cross-platform"]
 categories = ["config", "filesystem"]
 
+[dependencies]
+thiserror = { workspace = true }
+tokio = { workspace = true, features = [
+    "rt-multi-thread",
+    "fs",
+    "process",
+    "signal",
+    "sync",
+    "time",
+    "io-util",
+    "macros",
+] }
+
 [lints]
 workspace = true
