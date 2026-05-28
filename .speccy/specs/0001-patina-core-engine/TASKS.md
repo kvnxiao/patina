@@ -537,7 +537,7 @@ Suggested files: `patina-core/src/variables/mod.rs`,
 </task-scenarios>
 </task>
 
-<task id="T-007" state="pending" covers="REQ-008">
+<task id="T-007" state="completed" covers="REQ-008">
 ## Resolve the active profile via env, persisted, auto-match, fallback
 
 Add a `patina_core::profile` module that resolves the active profile

@@ -43,4 +43,8 @@ pub enum EngineError {
     /// Variable layer ingestion or CLI override parsing failed (REQ-007).
     #[error(transparent)]
     Variable(#[from] crate::variables::VariableError),
+
+    /// Active-profile resolution failed (REQ-008).
+    #[error(transparent)]
+    Profile(#[from] crate::profile::ProfileError),
 }

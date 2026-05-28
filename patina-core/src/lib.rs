@@ -13,6 +13,7 @@
 pub mod config;
 pub mod discovery;
 pub mod error;
+pub mod profile;
 pub mod state_dir;
 pub mod variables;
 
@@ -29,6 +30,12 @@ pub use discovery::RepoDiscoveryError;
 pub use discovery::discover_modules;
 pub use discovery::resolve_repository_root;
 pub use error::EngineError;
+pub use profile::AutoMatchRule;
+pub use profile::ProfileError;
+pub use profile::ProfileSource;
+pub use profile::Resolution as ProfileResolution;
+pub use profile::load_auto_match_rules;
+pub use profile::resolve as resolve_profile;
 pub use state_dir::HostOs;
 pub use state_dir::StateDirError;
 pub use state_dir::resolve as resolve_state_dir;
