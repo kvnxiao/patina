@@ -34,6 +34,8 @@
 //! diff-and-prompt loop, and the apply orchestration that calls these
 //! executors land in their own tasks.
 
+pub mod hooks;
+
 mod copy;
 mod symlink;
 mod template;
@@ -44,6 +46,13 @@ use crate::template::TemplateError;
 use crate::variables::Resolver;
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
+pub use hooks::ForceDeploy;
+pub use hooks::HookError;
+pub use hooks::HookOutcome;
+pub use hooks::ResolvedHook;
+pub use hooks::resolve_shells;
+pub use hooks::run_hook;
+pub use hooks::should_run;
 
 /// What an executor materialized at a target, for the
 /// [`CompletionRecord`] one-per-object handoff to T-010.

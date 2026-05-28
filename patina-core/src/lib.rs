@@ -25,8 +25,15 @@ pub mod variables;
 
 pub use apply::CompletionRecord;
 pub use apply::ExecutorError;
+pub use apply::ForceDeploy;
+pub use apply::HookError;
+pub use apply::HookOutcome;
 pub use apply::Materialization;
+pub use apply::ResolvedHook;
 pub use apply::materialize;
+pub use apply::resolve_shells;
+pub use apply::run_hook;
+pub use apply::should_run;
 pub use backups::BackupError;
 pub use backups::RETENTION_COUNT;
 pub use backups::backup_before_overwrite;

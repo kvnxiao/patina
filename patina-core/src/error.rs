@@ -74,4 +74,9 @@ pub enum EngineError {
     /// (REQ-005).
     #[error(transparent)]
     Executor(#[from] crate::apply::ExecutorError),
+
+    /// Hook shell resolution, `when` evaluation, or execution failed
+    /// (REQ-006).
+    #[error(transparent)]
+    Hook(#[from] crate::apply::HookError),
 }

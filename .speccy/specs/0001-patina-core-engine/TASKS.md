@@ -1121,7 +1121,7 @@ Suggested files: `patina-core/src/apply/mod.rs`,
 </task-scenarios>
 </task>
 
-<task id="T-015" state="pending" covers="REQ-006">
+<task id="T-015" state="completed" covers="REQ-006">
 ## Execute hooks with `must_succeed` semantics and the `--force-deploy` override
 
 Add `patina_core::apply::hooks` covering hook execution. The
