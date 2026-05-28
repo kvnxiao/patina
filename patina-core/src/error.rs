@@ -69,4 +69,9 @@ pub enum EngineError {
     /// Advisory file-lock acquisition timed out or failed (REQ-023).
     #[error(transparent)]
     Lock(#[from] crate::lock::LockError),
+
+    /// A file-mode executor failed to materialize a source at a target
+    /// (REQ-005).
+    #[error(transparent)]
+    Executor(#[from] crate::apply::ExecutorError),
 }

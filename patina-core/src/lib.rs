@@ -10,6 +10,7 @@
 //! Subsystem wiring (discovery, journal, executors, hooks, lock, …)
 //! lands in subsequent tasks.
 
+pub mod apply;
 pub mod backups;
 pub mod config;
 pub mod discovery;
@@ -22,6 +23,10 @@ pub mod state_dir;
 pub mod template;
 pub mod variables;
 
+pub use apply::CompletionRecord;
+pub use apply::ExecutorError;
+pub use apply::Materialization;
+pub use apply::materialize;
 pub use backups::BackupError;
 pub use backups::RETENTION_COUNT;
 pub use backups::backup_before_overwrite;

@@ -1013,7 +1013,7 @@ Suggested files: `patina-core/Cargo.toml`,
 </task-scenarios>
 </task>
 
-<task id="T-014" state="pending" covers="REQ-005">
+<task id="T-014" state="completed" covers="REQ-005">
 ## Implement the five file-mode executors with multi-target fan-out
 
 Add `patina_core::apply::executors` covering the execution side of
