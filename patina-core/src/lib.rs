@@ -13,6 +13,7 @@
 pub mod config;
 pub mod discovery;
 pub mod error;
+pub mod journal;
 pub mod paths;
 pub mod profile;
 pub mod state_dir;
@@ -32,6 +33,10 @@ pub use discovery::RepoDiscoveryError;
 pub use discovery::discover_modules;
 pub use discovery::resolve_repository_root;
 pub use error::EngineError;
+pub use journal::Journal;
+pub use journal::JournalError;
+pub use journal::Plan;
+pub use journal::PlannedOperation;
 pub use paths::PathError;
 pub use paths::canonicalize as canonicalize_path;
 pub use paths::expand_tilde;

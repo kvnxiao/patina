@@ -56,4 +56,9 @@ pub enum EngineError {
     /// Path canonicalization failed (REQ-010).
     #[error(transparent)]
     Path(#[from] crate::paths::PathError),
+
+    /// Plan-journal write, read, or version check failed (REQ-011 /
+    /// REQ-012).
+    #[error(transparent)]
+    Journal(#[from] crate::journal::JournalError),
 }

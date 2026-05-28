@@ -724,7 +724,7 @@ Suggested files: `patina-core/src/paths.rs`,
 </task-scenarios>
 </task>
 
-<task id="T-010" state="pending" covers="REQ-011 REQ-012">
+<task id="T-010" state="completed" covers="REQ-011 REQ-012">
 ## Postcard plan journal with single upfront fsync plus progress cursor
 
 Add `patina_core::journal` owning the binary plan file and the

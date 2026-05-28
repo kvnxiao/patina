@@ -16,6 +16,7 @@ categories = ["config", "filesystem"]
 camino = { workspace = true }
 fs-err = { workspace = true }
 minijinja = { workspace = true }
+postcard = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = [
