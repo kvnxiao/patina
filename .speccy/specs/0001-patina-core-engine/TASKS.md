@@ -409,7 +409,7 @@ Suggested files: `patina-core/src/config/mod.rs`,
 </task-scenarios>
 </task>
 
-<task id="T-005" state="pending" covers="REQ-016">
+<task id="T-005" state="completed" covers="REQ-016">
 ## Resolve the per-machine state directory on macOS, Linux, and Windows
 
 Add `patina_core::state_dir` exposing a `resolve()` function that

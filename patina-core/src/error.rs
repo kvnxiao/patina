@@ -35,4 +35,8 @@ pub enum EngineError {
     /// `[[file]]` / `[[hook]]` schema parse failed (REQ-005 / REQ-006).
     #[error(transparent)]
     ConfigParse(#[from] crate::config::ConfigParseError),
+
+    /// Per-machine state directory resolution failed (REQ-016).
+    #[error(transparent)]
+    StateDir(#[from] crate::state_dir::StateDirError),
 }
