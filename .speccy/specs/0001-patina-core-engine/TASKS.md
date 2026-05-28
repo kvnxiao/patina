@@ -951,7 +951,7 @@ Suggested files: `patina-core/src/backups/mod.rs`,
 </task-scenarios>
 </task>
 
-<task id="T-013" state="pending" covers="REQ-023">
+<task id="T-013" state="completed" covers="REQ-023">
 ## Advisory file lock with shared (status) and exclusive (apply/rollback) modes
 
 Add `patina_core::lock` wrapping `fs2`'s advisory file lock around

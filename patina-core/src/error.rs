@@ -65,4 +65,8 @@ pub enum EngineError {
     /// Pre-overwrite backup or retention GC failed (REQ-014 / REQ-015).
     #[error(transparent)]
     Backup(#[from] crate::backups::BackupError),
+
+    /// Advisory file-lock acquisition timed out or failed (REQ-023).
+    #[error(transparent)]
+    Lock(#[from] crate::lock::LockError),
 }
