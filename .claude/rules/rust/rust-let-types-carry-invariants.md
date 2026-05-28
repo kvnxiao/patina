@@ -95,6 +95,29 @@ correctly takes `&Utf8Path` per the parameter-type hierarchy in
 promote it to `pub(super)` / `pub(crate)` and call it rather than
 duplicating.
 
+**Do this at write time, not after review flags it.** Before you write the
+body of a free function or inherent method, grep the crate for an existing
+one. The shapes that have actually shipped as duplicates and been bounced
+back on this codebase:
+
+- **Recursive directory walks** — a `fn` that recurses into a dir and
+  collects/strips-prefix relative entries. If two submodules each need one,
+  hoist a single `pub(super)` helper into the parent `mod.rs` and call it
+  from both; do not write the walk twice.
+- **Enum → `&'static str` labels** — a method or free fn mapping enum
+  variants to a fixed word. If the word already appears anywhere in public
+  output (e.g. inside a `Display` impl or an error message), the mapping is
+  part of the type's surface: define it once on the enum and promote its
+  visibility rather than re-spelling the `match` at the call site.
+- **Path / byte-twiddling helpers** — see the `&Utf8Path` signature note
+  above.
+
+The check is mechanical: `rg 'fn <name>'` (and a scan for the same `match`
+arms or `walk`/`recurse` shape) across the crate **before** typing the body.
+If a private sibling already has it, promote and call. This is a write-time
+step, not a principle to recall — running it costs seconds and removes the
+most common style-review bounce on this repo.
+
 ```rust
 // Bad: recovery.rs reinvents a helper mod.rs already has, with a worse param type.
 //   mod.rs:      fn remove_if_present(path: &Utf8Path)    -> Result<()>
