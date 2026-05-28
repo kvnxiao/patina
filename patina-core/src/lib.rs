@@ -10,8 +10,14 @@
 //! Subsystem wiring (discovery, journal, executors, hooks, lock, …)
 //! lands in subsequent tasks.
 
+pub mod discovery;
 pub mod error;
 
+pub use discovery::ModuleDiscoveryError;
+pub use discovery::ModuleHandle;
+pub use discovery::RepoDiscoveryError;
+pub use discovery::discover_modules;
+pub use discovery::resolve_repository_root;
 pub use error::EngineError;
 
 /// Options accepted by [`apply`]. Subsequent tasks extend this struct

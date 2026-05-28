@@ -23,4 +23,12 @@ pub enum EngineError {
     /// later tasks.
     #[error("patina-core operation not yet implemented: {0}")]
     NotImplemented(&'static str),
+
+    /// Repository-root resolution failed (REQ-003).
+    #[error(transparent)]
+    RepoDiscovery(#[from] crate::discovery::RepoDiscoveryError),
+
+    /// Module enumeration failed (REQ-004).
+    #[error(transparent)]
+    ModuleDiscovery(#[from] crate::discovery::ModuleDiscoveryError),
 }

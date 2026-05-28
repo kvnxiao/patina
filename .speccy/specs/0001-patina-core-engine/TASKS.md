@@ -160,7 +160,7 @@ Suggested files: `Cargo.toml`, `clippy.toml`,
 </task-scenarios>
 </task>
 
-<task id="T-003" state="pending" covers="REQ-003 REQ-004">
+<task id="T-003" state="completed" covers="REQ-003 REQ-004">
 ## Discover the repository and enumerate modules with a flat depth-1 layout
 
 Add `patina_core::discovery` covering two adjacent responsibilities:

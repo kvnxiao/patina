@@ -13,6 +13,9 @@ keywords = ["dotfiles", "config", "templating", "cross-platform"]
 categories = ["config", "filesystem"]
 
 [dependencies]
+camino = { workspace = true }
+fs-err = { workspace = true }
+serde = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = [
     "rt-multi-thread",
@@ -24,6 +27,10 @@ tokio = { workspace = true, features = [
     "io-util",
     "macros",
 ] }
+toml = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
 
 [lints]
 workspace = true
