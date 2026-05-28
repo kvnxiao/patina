@@ -102,7 +102,7 @@ Suggested files: `Cargo.toml`, `Cargo.lock`,
 </task-scenarios>
 </task>
 
-<task id="T-002" state="pending" covers="REQ-024">
+<task id="T-002" state="completed" covers="REQ-024">
 ## Enforce no-panic Clippy lint set workspace-wide
 
 The workspace `Cargo.toml` already declares the relevant

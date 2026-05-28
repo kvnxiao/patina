@@ -44,8 +44,8 @@ get_unwrap = "deny"
 unwrap_in_result = "deny"
 panic_in_result_fn = "deny"
 unchecked_time_subtraction = "deny"
-todo = "warn"
-unimplemented = "warn"
+todo = "deny"
+unimplemented = "deny"
 
 # Don't fail silently
 let_underscore_future = "deny"
