@@ -39,4 +39,8 @@ pub enum EngineError {
     /// Per-machine state directory resolution failed (REQ-016).
     #[error(transparent)]
     StateDir(#[from] crate::state_dir::StateDirError),
+
+    /// Variable layer ingestion or CLI override parsing failed (REQ-007).
+    #[error(transparent)]
+    Variable(#[from] crate::variables::VariableError),
 }

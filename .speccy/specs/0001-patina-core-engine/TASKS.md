@@ -463,7 +463,7 @@ Suggested files: `patina-core/src/state_dir.rs`,
 </task-scenarios>
 </task>
 
-<task id="T-006" state="pending" covers="REQ-007">
+<task id="T-006" state="completed" covers="REQ-007">
 ## Layered variable resolution with the reserved `patina.*` namespace
 
 Build `patina_core::variables` exposing a `Resolver` that composes

@@ -74,6 +74,11 @@ pub enum ConfigParseError {
     /// A `[[hook]]` entry violated REQ-006's parse-time rules.
     #[error(transparent)]
     HookEntry(#[from] hook_entry::HookEntryError),
+
+    /// A `[variables]` table declared a key inside the reserved
+    /// `patina.*` namespace (REQ-007).
+    #[error(transparent)]
+    Variable(#[from] crate::variables::VariableError),
 }
 
 /// Read and parse a module manifest at `path`, returning a fully
@@ -82,9 +87,10 @@ pub enum ConfigParseError {
 /// # Errors
 ///
 /// Returns [`ConfigParseError::Io`] on IO failure, [`ConfigParseError::Toml`]
-/// on a malformed TOML document, and a `FileEntry` / `HookEntry`
+/// on a malformed TOML document, a `FileEntry` / `HookEntry`
 /// variant when one of the table-array rules in REQ-005 / REQ-006 is
-/// violated.
+/// violated, and [`ConfigParseError::Variable`] when a `[variables]`
+/// key falls inside the reserved `patina.*` namespace (REQ-007).
 pub fn parse_module_config(path: &Utf8Path) -> Result<ModuleConfig, ConfigParseError> {
     let text =
         fs_err::read_to_string(path.as_std_path()).map_err(|source| ConfigParseError::Io {
@@ -99,9 +105,11 @@ pub fn parse_module_config(path: &Utf8Path) -> Result<ModuleConfig, ConfigParseE
 ///
 /// # Errors
 ///
-/// Returns [`ConfigParseError::Toml`] on a malformed TOML document and a
+/// Returns [`ConfigParseError::Toml`] on a malformed TOML document, a
 /// `FileEntry` / `HookEntry` variant when one of the table-array rules
-/// in REQ-005 / REQ-006 is violated.
+/// in REQ-005 / REQ-006 is violated, and [`ConfigParseError::Variable`]
+/// when a `[variables]` key falls inside the reserved `patina.*`
+/// namespace (REQ-007).
 pub fn parse_module_config_str(text: &str) -> Result<ModuleConfig, ConfigParseError> {
     let raw: RawModule = toml::from_str(text).map_err(|source| ConfigParseError::Toml {
         path: Utf8PathBuf::from("<memory>"),
@@ -116,6 +124,10 @@ pub fn parse_module_config_str(text: &str) -> Result<ModuleConfig, ConfigParseEr
     let mut hooks = Vec::with_capacity(raw.hook.len());
     for raw_hook in raw.hook {
         hooks.push(HookEntry::from_raw(raw_hook)?);
+    }
+
+    if let Some(table) = raw.variables.as_ref() {
+        crate::variables::reject_reserved_keys(table.keys().map(String::as_str))?;
     }
 
     Ok(ModuleConfig {

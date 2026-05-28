@@ -14,6 +14,7 @@ pub mod config;
 pub mod discovery;
 pub mod error;
 pub mod state_dir;
+pub mod variables;
 
 pub use config::ConfigParseError;
 pub use config::FileEntry;
@@ -31,6 +32,9 @@ pub use error::EngineError;
 pub use state_dir::HostOs;
 pub use state_dir::StateDirError;
 pub use state_dir::resolve as resolve_state_dir;
+pub use variables::Builtins;
+pub use variables::Resolver;
+pub use variables::VariableError;
 
 /// Options accepted by [`apply`]. Subsequent tasks extend this struct
 /// with the resolved repository root, profile, CLI variable overrides,
