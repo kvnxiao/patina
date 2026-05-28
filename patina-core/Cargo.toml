@@ -15,6 +15,7 @@ categories = ["config", "filesystem"]
 [dependencies]
 camino = { workspace = true }
 fs-err = { workspace = true }
+minijinja = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = [

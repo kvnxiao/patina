@@ -599,7 +599,7 @@ Suggested files: `patina-core/src/profile.rs`,
 </task-scenarios>
 </task>
 
-<task id="T-008" state="pending" covers="REQ-009">
+<task id="T-008" state="completed" covers="REQ-009">
 ## Single MiniJinja environment with `UndefinedBehavior::Strict` for `.tmpl` and `when`
 
 Introduce `patina_core::template` owning a single

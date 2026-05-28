@@ -47,4 +47,9 @@ pub enum EngineError {
     /// Active-profile resolution failed (REQ-008).
     #[error(transparent)]
     Profile(#[from] crate::profile::ProfileError),
+
+    /// Template rendering or `when` predicate evaluation failed under
+    /// strict-undefined semantics (REQ-009).
+    #[error(transparent)]
+    Template(#[from] crate::template::TemplateError),
 }

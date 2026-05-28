@@ -15,6 +15,7 @@ pub mod discovery;
 pub mod error;
 pub mod profile;
 pub mod state_dir;
+pub mod template;
 pub mod variables;
 
 pub use config::ConfigParseError;
@@ -39,6 +40,8 @@ pub use profile::resolve as resolve_profile;
 pub use state_dir::HostOs;
 pub use state_dir::StateDirError;
 pub use state_dir::resolve as resolve_state_dir;
+pub use template::Engine as TemplateEngine;
+pub use template::TemplateError;
 pub use variables::Builtins;
 pub use variables::Resolver;
 pub use variables::VariableError;
