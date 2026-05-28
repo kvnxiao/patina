@@ -31,4 +31,8 @@ pub enum EngineError {
     /// Module enumeration failed (REQ-004).
     #[error(transparent)]
     ModuleDiscovery(#[from] crate::discovery::ModuleDiscoveryError),
+
+    /// `[[file]]` / `[[hook]]` schema parse failed (REQ-005 / REQ-006).
+    #[error(transparent)]
+    ConfigParse(#[from] crate::config::ConfigParseError),
 }

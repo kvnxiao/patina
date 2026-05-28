@@ -267,7 +267,7 @@ Suggested files: `patina-core/src/discovery/mod.rs`,
 </task-scenarios>
 </task>
 
-<task id="T-004" state="pending" covers="REQ-005 REQ-006">
+<task id="T-004" state="completed" covers="REQ-005 REQ-006">
 ## Parse the `[[file]]` and `[[hook]]` TOML schemas
 
 Introduce `patina_core::config` owning the TOML schema for both

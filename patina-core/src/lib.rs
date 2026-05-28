@@ -10,9 +10,17 @@
 //! Subsystem wiring (discovery, journal, executors, hooks, lock, …)
 //! lands in subsequent tasks.
 
+pub mod config;
 pub mod discovery;
 pub mod error;
 
+pub use config::ConfigParseError;
+pub use config::FileEntry;
+pub use config::FileMode;
+pub use config::HookEntry;
+pub use config::HookEvent;
+pub use config::ModuleConfig;
+pub use config::parse_module_config;
 pub use discovery::ModuleDiscoveryError;
 pub use discovery::ModuleHandle;
 pub use discovery::RepoDiscoveryError;
