@@ -666,7 +666,7 @@ Suggested files: `patina-core/Cargo.toml`,
 </task-scenarios>
 </task>
 
-<task id="T-009" state="pending" covers="REQ-010">
+<task id="T-009" state="completed" covers="REQ-010">
 ## Absolute-path canonicalization with lexical fallback for non-existent paths
 
 Add `patina_core::paths` exposing a `canonicalize` helper that

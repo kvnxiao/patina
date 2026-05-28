@@ -66,16 +66,18 @@ pub enum RepoDiscoveryError {
     #[error("failed to read current working directory: {0}")]
     CwdUnavailable(#[source] std::io::Error),
 
-    /// Canonicalizing the resolved path failed. T-009 will replace the
-    /// direct `canonicalize_utf8` call with a lexical-fallback helper;
-    /// for now bubble the IO error verbatim.
+    /// Canonicalizing the resolved repository root failed. Routes
+    /// through the [`crate::paths::canonicalize`] helper (REQ-010),
+    /// which canonicalizes existing paths through the filesystem and
+    /// falls back to a lexical absolute form for paths that do not yet
+    /// exist.
     #[error("failed to canonicalize repository root {path}: {source}")]
     Canonicalize {
         /// The path that failed to canonicalize.
         path: Utf8PathBuf,
-        /// The underlying IO error.
+        /// The underlying path-canonicalization error.
         #[source]
-        source: std::io::Error,
+        source: crate::paths::PathError,
     },
 }
 
@@ -161,9 +163,9 @@ fn validate_root(path: &Utf8Path) -> Result<Utf8PathBuf, String> {
         return Err(format!("no {MANIFEST_FILENAME} found at {manifest}"));
     }
     match read_manifest_head(&manifest) {
-        Ok(head) if head.patina.root == Some(true) => path
-            .canonicalize_utf8()
-            .map_err(|e| format!("canonicalize failed: {e}")),
+        Ok(head) if head.patina.root == Some(true) => {
+            crate::paths::canonicalize(path).map_err(|e| format!("canonicalize failed: {e}"))
+        }
         Ok(_) => Err(format!(
             "{manifest} is missing `root = true` in its `[patina]` table"
         )),
@@ -182,12 +184,12 @@ fn walk_up_for_root(start: &Utf8Path) -> Result<Option<Utf8PathBuf>, RepoDiscove
             && let Ok(head) = read_manifest_head(&candidate)
             && head.patina.root == Some(true)
         {
-            let canonical =
-                dir.canonicalize_utf8()
-                    .map_err(|source| RepoDiscoveryError::Canonicalize {
-                        path: dir.to_path_buf(),
-                        source,
-                    })?;
+            let canonical = crate::paths::canonicalize(dir).map_err(|source| {
+                RepoDiscoveryError::Canonicalize {
+                    path: dir.to_path_buf(),
+                    source,
+                }
+            })?;
             return Ok(Some(canonical));
         }
         cursor = dir.parent();

@@ -52,4 +52,8 @@ pub enum EngineError {
     /// strict-undefined semantics (REQ-009).
     #[error(transparent)]
     Template(#[from] crate::template::TemplateError),
+
+    /// Path canonicalization failed (REQ-010).
+    #[error(transparent)]
+    Path(#[from] crate::paths::PathError),
 }

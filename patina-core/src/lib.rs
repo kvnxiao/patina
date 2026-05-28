@@ -13,6 +13,7 @@
 pub mod config;
 pub mod discovery;
 pub mod error;
+pub mod paths;
 pub mod profile;
 pub mod state_dir;
 pub mod template;
@@ -31,6 +32,9 @@ pub use discovery::RepoDiscoveryError;
 pub use discovery::discover_modules;
 pub use discovery::resolve_repository_root;
 pub use error::EngineError;
+pub use paths::PathError;
+pub use paths::canonicalize as canonicalize_path;
+pub use paths::expand_tilde;
 pub use profile::AutoMatchRule;
 pub use profile::ProfileError;
 pub use profile::ProfileSource;
