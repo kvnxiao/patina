@@ -69,10 +69,10 @@ Encode reasoning effort (when your host harness exposes an effort
 knob) as a slash-suffix on the model string itself rather than as a
 separate attribute. Examples:
 
-- `model="claude-opus-4.7[1m]/low"` — Opus 4.7 with the 1M context
+- `model="claude-opus-4.8[1m]/low"` — Opus 4.8 with the 1M context
   variant, effort `low`.
 - `model="claude-sonnet-4.7/medium"` — Sonnet 4.7, effort `medium`.
-- `model="claude-opus-4.7[1m]"` — Opus 4.7 1M, host harness did
+- `model="claude-opus-4.8[1m]"` — Opus 4.8 1M, host harness did
   not expose an effort knob (no slash suffix in that case).
 
 The slash-suffix is a convention, not a parser-enforced schema; the
@@ -109,7 +109,7 @@ orchestrator applies the state transition.
 
 The verdict element in your final message:
 
-    <review persona="architecture" verdict="pass" model="claude-opus-4.7[1m]/medium">
+    <review persona="architecture" verdict="pass" model="claude-opus-4.8[1m]/medium">
     <one-line verdict>.
     <optional file:line refs and details>.
     </review>
@@ -117,7 +117,7 @@ The verdict element in your final message:
 
 ## Example
 
-    <review persona="architecture" verdict="blocking" model="claude-opus-4.7[1m]/high">
+    <review persona="architecture" verdict="blocking" model="claude-opus-4.8[1m]/high">
     SPEC-NNNN DEC-NNN fixed the parser layer as the only consumer of
     `serde-saphyr`; this diff introduces a direct `serde-saphyr` call
     in `speccy-cli` instead of going through `speccy-core::parse`.

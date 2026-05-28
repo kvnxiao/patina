@@ -181,9 +181,9 @@ in place and appends `<implementer round="N+1">`.
    - `model` — the model identity that ran the implementer turn. A
      slash-suffix encodes effort / reasoning-intensity when the host
      harness exposes that knob (e.g.
-     `model="claude-opus-4.7[1m]/low"`,
-     `model="claude-opus-4.7[1m]/medium"`). Hosts without an effort
-     knob omit the suffix entirely (e.g. `model="claude-opus-4.7"`).
+     `model="claude-opus-4.8[1m]/low"`,
+     `model="claude-opus-4.8[1m]/medium"`). Hosts without an effort
+     knob omit the suffix entirely (e.g. `model="claude-opus-4.8"`).
      The slash-suffix is a documented convention; the parser
      validates `model` is non-empty but does not enforce suffix
      membership.

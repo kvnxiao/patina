@@ -26,7 +26,7 @@ task: T-001
 generated_at: 2026-05-21T19:45:00Z
 ---
 
-<implementer date="2026-05-21T19:45:00Z" model="claude-opus-4.7[1m]/low" round="1">
+<implementer date="2026-05-21T19:45:00Z" model="claude-opus-4.8[1m]/low" round="1">
 ... (implementer body — see journal-implementer.md)
 </implementer>
 
@@ -42,7 +42,7 @@ remains free of the timeout knob (per the SPEC's non-goal), and
 no retry-on-timeout behaviour leaked in.
 </review>
 
-<review persona="tests" verdict="pass" model="claude-opus-4.7[1m]/low" date="2026-05-21T20:35:00Z" round="1">
+<review persona="tests" verdict="pass" model="claude-opus-4.8[1m]/low" date="2026-05-21T20:35:00Z" round="1">
 Red-then-green paper trail in
 `.speccy/specs/NNNN-widget-render-timeout/evidence/T-001.md`
 records three scenarios with concrete pre-edit and post-edit

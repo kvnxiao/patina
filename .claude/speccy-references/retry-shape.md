@@ -19,7 +19,7 @@ grammar `<implementer>` / `<review>` / `<blockers>` enforced by the
 ## Worked example 1 — retry shape
 
 ```
-<implementer round="1" date="2026-05-26T18:00:00Z" model="claude-opus-4.7[1m]/low">
+<implementer round="1" date="2026-05-26T18:00:00Z" model="claude-opus-4.8[1m]/low">
 ... first-pass implementer body ...
 </implementer>
 
@@ -41,7 +41,7 @@ implementer is the WIP the round-2 implementer amends in place.
 ## Worked example 2 — first-attempt shape
 
 ```
-<implementer round="1" date="2026-05-26T18:00:00Z" model="claude-opus-4.7[1m]/low">
+<implementer round="1" date="2026-05-26T18:00:00Z" model="claude-opus-4.8[1m]/low">
 ... first-pass implementer body ...
 </implementer>
 ```

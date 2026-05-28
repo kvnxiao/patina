@@ -25,7 +25,7 @@ task: T-001
 generated_at: 2026-05-21T19:45:00Z
 ---
 
-<implementer date="2026-05-21T19:45:00Z" model="claude-opus-4.7[1m]/low" round="1">
+<implementer date="2026-05-21T19:45:00Z" model="claude-opus-4.8[1m]/low" round="1">
 - Completed: Landed `--timeout-ms <N>` on `widget render` end-to-end.
   Added `timeout_ms: u32` to the `clap`-derived `RenderArgs` struct
   in `widget-cli/src/args.rs` with a range value parser bounded
@@ -106,9 +106,9 @@ All three are required; there are no optional attributes:
   `2026-05-21T19:45:00+00:00`).
 - `model` — the model identity that ran the implementer turn. A
   slash-suffix encodes effort or reasoning-intensity when the host
-  harness exposes that knob (e.g. `claude-opus-4.7[1m]/low`,
-  `claude-opus-4.7[1m]/medium`). Hosts without an effort knob omit
-  the suffix (e.g. `model="claude-opus-4.7"`). The parser validates
+  harness exposes that knob (e.g. `claude-opus-4.8[1m]/low`,
+  `claude-opus-4.8[1m]/medium`). Hosts without an effort knob omit
+  the suffix (e.g. `model="claude-opus-4.8"`). The parser validates
   `model` is non-empty but does not enforce suffix membership.
 - `round` — monotonic positive integer starting at 1. Increment by
   exactly 1 on each post-blocker retry attempt. The first

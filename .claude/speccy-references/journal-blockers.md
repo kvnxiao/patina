@@ -24,7 +24,7 @@ amendment. Example: a round-1 review fan-out blocks →
 `<blockers round="1">` → round-2 `<implementer>` retry.
 
 ```markdown
-<implementer date="2026-05-21T19:45:00Z" model="claude-opus-4.7[1m]/low" round="1">
+<implementer date="2026-05-21T19:45:00Z" model="claude-opus-4.8[1m]/low" round="1">
 ... (implementer body — see journal-implementer.md)
 </implementer>
 
@@ -32,7 +32,7 @@ amendment. Example: a round-1 review fan-out blocks →
 ... (reviewer body — see journal-review.md)
 </review>
 
-<review persona="tests" verdict="blocking" model="claude-opus-4.7[1m]/low" date="2026-05-21T20:35:00Z" round="1">
+<review persona="tests" verdict="blocking" model="claude-opus-4.8[1m]/low" date="2026-05-21T20:35:00Z" round="1">
 ... (reviewer body)
 </review>
 
@@ -67,7 +67,7 @@ stderr message + correct upper bound) must land for T-001 to
 satisfy REQ-001 and REQ-002.
 </blockers>
 
-<implementer date="2026-05-21T21:30:00Z" model="claude-opus-4.7[1m]/low" round="2">
+<implementer date="2026-05-21T21:30:00Z" model="claude-opus-4.8[1m]/low" round="2">
 ... (round-2 implementer body addressing both blockers)
 </implementer>
 ```

@@ -185,7 +185,7 @@ Attribute reference:
 - `date` — full ISO8601 with seconds and timezone.
 - `model` — required. The slash-suffix on the model string encodes
   reasoning effort when the host harness exposes that knob (e.g.,
-  `claude-opus-4.7[1m]/low`); hosts without an effort knob omit
+  `claude-opus-4.8[1m]/low`); hosts without an effort knob omit
   the suffix.
 
 Why the body is structured: round N+1's reviewer reads VET.md
