@@ -10,6 +10,7 @@
 //! Subsystem wiring (discovery, journal, executors, hooks, lock, …)
 //! lands in subsequent tasks.
 
+pub mod backups;
 pub mod config;
 pub mod discovery;
 pub mod error;
@@ -20,6 +21,10 @@ pub mod state_dir;
 pub mod template;
 pub mod variables;
 
+pub use backups::BackupError;
+pub use backups::RETENTION_COUNT;
+pub use backups::backup_before_overwrite;
+pub use backups::gc_retain;
 pub use config::ConfigParseError;
 pub use config::FileEntry;
 pub use config::FileMode;

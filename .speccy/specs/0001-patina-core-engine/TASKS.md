@@ -876,7 +876,7 @@ Suggested files: `patina-core/src/journal/recovery.rs`,
 </task-scenarios>
 </task>
 
-<task id="T-012" state="pending" covers="REQ-014 REQ-015">
+<task id="T-012" state="completed" covers="REQ-014 REQ-015">
 ## Backups before overwrite, mirrored target paths, retention by count of ten
 
 Add `patina_core::backups` covering two responsibilities:

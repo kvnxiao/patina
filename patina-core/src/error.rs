@@ -61,4 +61,8 @@ pub enum EngineError {
     /// REQ-012).
     #[error(transparent)]
     Journal(#[from] crate::journal::JournalError),
+
+    /// Pre-overwrite backup or retention GC failed (REQ-014 / REQ-015).
+    #[error(transparent)]
+    Backup(#[from] crate::backups::BackupError),
 }
