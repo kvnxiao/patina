@@ -1349,6 +1349,12 @@ then `~/.claude/agent.toml` is a regular file with content "old",
 <requirement id="REQ-020">
 ### REQ-020: `patina debug journal <path>` decodes a binary plan into human-readable form
 
+`patina debug` is a clap subcommand group. v1.0 ships exactly one
+subcommand under it (`debug journal <path>`); the group exists as
+the extension point for future debug subcommands (SPEC-0003 layers
+`debug drift-cache` onto the same group without restructuring the
+CLI surface).
+
 The `patina debug journal <path>` subcommand reads a postcard-encoded
 journal file at the given path, validates the version envelope,
 decodes the plan, and prints a human-readable rendering to stdout. If
@@ -1356,6 +1362,8 @@ the file is missing or its version envelope is incompatible with the
 running binary, the command emits a typed error and exits 1.
 
 <done-when>
+- `patina debug` exists as a clap subcommand group; running
+  `patina debug --help` lists `journal` as a subcommand and exits 0.
 - `patina debug journal /path/to/plan` on a valid plan prints the
   recorded operations, hooks, variable context, and timestamps to
   stdout.
@@ -1385,6 +1393,13 @@ when `patina debug journal <ts>.plan` runs,
 then stdout contains the substring `symlink` or `copy`
 corresponding to the modes declared in the test fixture and the
 process exits 0.
+</scenario>
+
+<scenario id="CHK-050">
+Given the compiled `patina` binary,
+when `patina debug --help` runs,
+then stdout names `journal` as a subcommand of the `debug` group and
+the process exits 0.
 </scenario>
 </requirement>
 
@@ -1576,6 +1591,285 @@ in `patina-core/src/apply.rs`,
 when `cargo clippy --workspace --all-targets -- -D warnings` runs,
 then the command exits non-zero with a `clippy::unwrap_used` error
 naming `patina-core/src/apply.rs` and the offending line.
+</scenario>
+</requirement>
+
+<requirement id="REQ-025">
+### REQ-025: CI runs the full test suite on macOS, Linux, and Windows
+
+The continuous integration pipeline runs the workspace test suite
+(`cargo test --workspace --locked` plus `cargo clippy --workspace
+--all-targets --locked -- -D warnings`) on `macos-latest`,
+`ubuntu-latest`, and `windows-latest` runners on every push and
+every pull request. All three matrix jobs are in the
+required-status-checks set; failure on any single OS blocks merge
+into `main`. The north-star parity rule — "macOS, Linux, Windows are
+first-class; two-of-three is not done" — is operationalised here.
+
+<done-when>
+- A workflow file under `.github/workflows/` declares a test job
+  (or matrix of jobs) with `strategy.matrix.os` containing all
+  three of `macos-latest`, `ubuntu-latest`, `windows-latest`,
+  running both `cargo test --workspace --locked` and
+  `cargo clippy --workspace --all-targets --locked -- -D warnings`.
+- The workflow triggers on both `push` (to `main`) and
+  `pull_request`.
+- All three OS jobs appear in the repository's required-status-checks
+  configuration on `main`; merge is blocked when any one of them
+  reports failure.
+- A regression that affects only one OS (e.g. a Windows long-path
+  case, or a Linux-only `#[cfg(target_os = "linux")]` panic) causes
+  only that OS's matrix job to fail; merge is still blocked.
+- Third-party actions referenced by the workflow are pinned to
+  their latest published major version per
+  `.claude/rules/github-actions/github-actions-versioning.md`.
+</done-when>
+
+<behavior>
+- Given a PR introducing a Linux-only unconditional `panic!`, when
+  CI runs, then `ubuntu-latest` fails while macOS and Windows pass,
+  and merge into `main` is blocked.
+- Given a PR breaking Windows path canonicalisation but green on
+  macOS and Linux, when CI runs, then only `windows-latest` fails
+  and merge is blocked.
+</behavior>
+
+<scenario id="CHK-051">
+Given the repository's CI workflow file(s) under
+`.github/workflows/`,
+when parsed as YAML,
+then a job exists whose `strategy.matrix.os` list simultaneously
+contains the strings `macos-latest`, `ubuntu-latest`, and
+`windows-latest`, and the workflow `on:` block includes both `push`
+and `pull_request`.
+</scenario>
+
+<scenario id="CHK-052">
+Given a working tree where a contributor has inserted
+`#[cfg(target_os = "windows")] compile_error!("forced");` into
+`patina-core/src/lib.rs`,
+when the matrix CI runs,
+then `windows-latest` exits non-zero while `macos-latest` and
+`ubuntu-latest` exit 0, and the workflow's overall status is
+failure.
+</scenario>
+</requirement>
+
+<requirement id="REQ-026">
+### REQ-026: User-facing output flows through `output::Reporter`; raw print macros are clippy-denied elsewhere
+
+The workspace defines an `output::Reporter` trait that is the single
+user-facing output sink for `patina-cli` (and any user-facing prints
+that originate inside `patina-core`). It has at least two
+implementations: `HumanReporter` (formatted text, colour where
+appropriate, the default) and `JsonReporter` (line-delimited JSON
+when `--json` is set). Every user-facing message routes through a
+`Reporter` method. The `println!`, `eprintln!`, `print!`, and
+`eprint!` macros are denied by Clippy outside the `output` module.
+The `tracing` macros (`info!`, `warn!`, `error!`, `debug!`,
+`trace!`) remain permitted everywhere because they emit structured
+events, not user-facing output.
+
+<done-when>
+- A `pub trait Reporter` exists in `patina-cli/src/output/mod.rs`
+  (or equivalent path) with methods covering at minimum: progress
+  events, diff rendering, prompt + response capture, and a final
+  result line.
+- `HumanReporter` and `JsonReporter` implementations exist under
+  the `output` module and both satisfy the deterministic-stdout
+  property required by REQ-021 on identical inputs.
+- `clippy.toml` lists `std::println`, `std::eprintln`,
+  `std::print`, and `std::eprint` under `disallowed-macros`. The
+  `output` module is the only path permitted to call these macros;
+  every other file in the workspace must route output through a
+  `Reporter`.
+- `cargo clippy --workspace --all-targets --locked -- -D warnings`
+  exits 0 on the workspace at HEAD.
+- Adding `println!("hi")` to a non-`output` file in `patina-core`
+  or `patina-cli` causes the same clippy command to exit non-zero
+  with a `clippy::disallowed_macros` error naming the offending
+  line.
+</done-when>
+
+<behavior>
+- Given `patina apply` with no `--json`, when it runs, then all
+  user-facing output is rendered by `HumanReporter`.
+- Given `patina apply --json`, when it runs, then all user-facing
+  output is rendered by `JsonReporter` and stdout is a sequence
+  of one JSON document per line.
+- Given a contributor adds `eprintln!("debug")` to
+  `patina-core/src/apply.rs`, when CI clippy runs, then it fails
+  with a `clippy::disallowed_macros` error and the PR is blocked.
+- Given a contributor adds `tracing::info!("foo")` anywhere in the
+  workspace, when CI clippy runs, then no `disallowed_macros`
+  error fires.
+</behavior>
+
+<scenario id="CHK-053">
+Given the workspace at HEAD,
+when `cargo clippy --workspace --all-targets --locked -- -D warnings`
+runs,
+then it exits 0 and `clippy.toml`'s `disallowed-macros` list
+contains entries for `std::println`, `std::eprintln`, `std::print`,
+and `std::eprint`.
+</scenario>
+
+<scenario id="CHK-054">
+Given a working tree where a contributor has inserted
+`println!("hi")` in `patina-core/src/plan.rs`,
+when `cargo clippy --workspace --all-targets --locked -- -D warnings`
+runs,
+then it exits non-zero with a `clippy::disallowed_macros` error
+naming `patina-core/src/plan.rs` and the offending line.
+</scenario>
+
+<scenario id="CHK-055">
+Given two consecutive invocations of `patina apply --json` against
+an unchanged source tree,
+when both invocations write to stdout via `JsonReporter`,
+then their stdout output is byte-identical (the deterministic
+property required by REQ-021 holds across both Reporter
+implementations).
+</scenario>
+</requirement>
+
+<requirement id="REQ-027">
+### REQ-027: `docs/ARCHITECTURE.md` and `docs/USER_GUIDE.md` ship with named structural anchors
+
+The repository carries two top-level docs files inside a `docs/`
+directory: `docs/ARCHITECTURE.md` (contributor-facing engine
+architecture) and `docs/USER_GUIDE.md` (user-facing usage and
+operational guidance). Each file has a fixed set of `##`-level
+headings that downstream tests and cross-SPEC references can rely
+on. The product north star's Known-Unknowns note "SPEC-0001
+documents only" the cloud-sync constraint on the per-machine state
+directory; the `## State directory` section of
+`docs/USER_GUIDE.md` carries that constraint as a structured list
+of providers to avoid.
+
+<done-when>
+- `docs/ARCHITECTURE.md` exists and contains at least these
+  `##`-level headings, by exact text: `## Engine layers`,
+  `## Journal format`, `## Apply phases`, `## Recovery`.
+- `docs/USER_GUIDE.md` exists and contains at least these
+  `##`-level headings, by exact text: `## Installation`,
+  `## Declaring dotfiles`, `## Apply flow`, `## State directory`,
+  `## Recovery`, `## Troubleshooting`.
+- The `## State directory` section of `docs/USER_GUIDE.md` contains
+  a markdown bullet list naming cloud-sync paths the state
+  directory must not live on; the bullets include (at minimum) the
+  literal entries `iCloud Drive`, `OneDrive`, `Dropbox`, `Box`,
+  `Google Drive`, `Syncthing`.
+- An integration test parses both files as markdown and asserts
+  the required heading set is present in each, and that the
+  cloud-sync providers appear as bullets under the named section.
+  Tests gate structural presence (heading existence by exact text,
+  bullet membership in a named section) — never substring-match
+  prose, per the test-hygiene rule in AGENTS.md.
+</done-when>
+
+<behavior>
+- Given the repository at HEAD, when the docs-structure
+  integration test runs, then both files exist and every required
+  `##`-level heading is present in each.
+- Given a contributor deletes `## State directory` from
+  `docs/USER_GUIDE.md`, when the docs-structure test runs, then it
+  fails naming the missing heading.
+- Given a contributor renames a bullet entry under
+  `## State directory` from `Google Drive` to `Google Drive (gdrive)`,
+  when the test runs, then it fails naming the missing literal
+  entry (the test asserts list membership by exact text, not
+  prefix match).
+</behavior>
+
+<scenario id="CHK-056">
+Given the repository at HEAD,
+when an integration test parses `docs/ARCHITECTURE.md` and extracts
+the set of `##`-level headings,
+then the set contains, by exact text, `Engine layers`,
+`Journal format`, `Apply phases`, `Recovery`.
+</scenario>
+
+<scenario id="CHK-057">
+Given the repository at HEAD,
+when an integration test parses `docs/USER_GUIDE.md` and extracts
+the set of `##`-level headings,
+then the set contains, by exact text, `Installation`,
+`Declaring dotfiles`, `Apply flow`, `State directory`, `Recovery`,
+`Troubleshooting`.
+</scenario>
+
+<scenario id="CHK-058">
+Given the repository at HEAD,
+when an integration test extracts the markdown bullet-list items
+from the body of the `## State directory` section in
+`docs/USER_GUIDE.md`,
+then the extracted set contains each of `iCloud Drive`, `OneDrive`,
+`Dropbox`, `Box`, `Google Drive`, `Syncthing` as a literal
+bullet-text entry.
+</scenario>
+</requirement>
+
+<requirement id="REQ-028">
+### REQ-028: `deny.toml` configured and `cargo deny check` gates CI
+
+The repository carries a `deny.toml` at root with `[licenses]`,
+`[advisories]`, `[bans]`, and `[sources]` sections populated. Every
+push and pull request runs `cargo deny check` as a required CI job;
+the job is in the required-status-checks set so licence, advisory,
+bans, and sources violations block merge into `main`.
+
+<done-when>
+- `deny.toml` exists at the repository root.
+- Parsed as TOML, the document contains top-level tables named
+  `licenses`, `advisories`, `bans`, and `sources`.
+- The `[licenses]` allowlist captures the policy under which the
+  project ships (e.g. `MIT`, `Apache-2.0`); GPL-family licences
+  (and any other licences incompatible with the project's
+  distribution model) are not in the allowlist.
+- A CI workflow under `.github/workflows/` runs
+  `cargo deny check` (or an equivalent action wrapper) on every
+  `push` to `main` and every `pull_request`.
+- Any third-party action used to run cargo-deny is pinned to its
+  latest published major version per
+  `.claude/rules/github-actions/github-actions-versioning.md`.
+- The cargo-deny job is in the required-status-checks set so merge
+  to `main` is blocked when it fails.
+- Adding a dependency licensed `GPL-3.0` (or any other licence
+  outside the allowlist) to `Cargo.toml` causes `cargo deny check`
+  to fail with a `licenses` error naming the offending crate.
+</done-when>
+
+<behavior>
+- Given the workspace at HEAD, when `cargo deny check` runs
+  against the configured `deny.toml`, then it exits 0 because all
+  current dependencies satisfy the licence, advisory, bans, and
+  sources policy.
+- Given a PR adding a GPL-3.0-licensed dependency to `Cargo.toml`,
+  when CI runs, then the cargo-deny job fails with a `licenses`
+  error naming the crate and merge is blocked.
+</behavior>
+
+<scenario id="CHK-059">
+Given the repository at HEAD,
+when `cargo deny check` runs against the configured `deny.toml`,
+then it exits 0.
+</scenario>
+
+<scenario id="CHK-060">
+Given `deny.toml` exists at the repository root,
+when parsed as TOML,
+then the resulting document contains top-level tables named
+`licenses`, `advisories`, `bans`, and `sources`.
+</scenario>
+
+<scenario id="CHK-061">
+Given a working tree where `Cargo.toml` declares a dependency on a
+crate published under the `GPL-3.0` licence and that licence is not
+in the `deny.toml` allowlist,
+when `cargo deny check` runs,
+then it exits non-zero with a `licenses` error naming the
+offending crate.
 </scenario>
 </requirement>
 
@@ -1791,6 +2085,7 @@ same revision.
 | 2026-05-25 | human/kevin  | Initial draft after brainstorm. Locks the three-SPEC slicing (engine, complete CLI, watch), async patina-core with tokio, single-fsync postcard journal + progress cursor, advisory fs2 file lock, MiniJinja templating, TTY-driven apply semantics with `--yes` / `--force-deploy` overrides, count-based backup retention (last 10), `[[hook]]` schema with `must_succeed` default true, formalised exit codes 0-5. |
 | 2026-05-25 | human/kevin  | Resolve six self-review questions. Drop `patina.repo_root` from built-ins; add `patina.env.*` map for env access. Split REQ-002 (async lib) from new REQ-024 (no-panic enforcement). Keep hook schema minimal; route OS/env conditionals through `when` clauses against `patina.env.*`. Default `[[file]]` mode is `symlink`. Add DEC-011 capturing backward-only recovery. `--json` alone never mutates; `--json --yes` mutates and reports result. |
 | 2026-05-26 | human/kevin  | Add multi-target fan-out to `[[file]]` schema in REQ-005. Each entry declares exactly one of `target` (string) or `targets` (non-empty array of strings); both, neither, or `targets = []` are parse errors. All five modes support `targets`: the engine materializes the source at every listed target path according to the declared mode, recording one journal operation per (source, target_i) pair so per-target progress, status, backup, and rollback work without special-casing. Update REQ-018 to report each target as its own row with independent CLEAN/DRIFTED/MISSING/ORPHANED counters. Update REQ-019 to require atomic per-`[[file]]`-entry rollback: any target failure in the entry reverts all of the entry's targets as a unit. Add scenarios CHK-042..049 covering symlink, copy, template, parse-error, multi-target status, and multi-target rollback. |
+| 2026-05-27 | human/kevin via assistant | Close five gaps surfaced by north-star audit against AGENTS.md (no prior `state="completed"` task is invalidated; all 21 existing tasks remain `pending`). Add REQ-025 (CI matrix gates merge on macOS / Linux / Windows; quality-bar parity rule operationalised). Add REQ-026 (`output::Reporter` trait with `HumanReporter` + `JsonReporter` impls; `clippy.toml` `disallowed-macros` denies `std::println` / `std::eprintln` / `std::print` / `std::eprint` outside the `output` module; `tracing` macros stay permitted). Add REQ-027 (`docs/ARCHITECTURE.md` + `docs/USER_GUIDE.md` with named structural anchors; cloud-sync paths-to-avoid list lives under `## State directory` as a markdown bullet list). Add REQ-028 (`deny.toml` at repo root with `[licenses]` / `[advisories]` / `[bans]` / `[sources]` tables; `cargo deny check` runs as a required-status-check on `push` and `pull_request`). Amend REQ-020 in place to name `patina debug` as a clap subcommand group — extension point for SPEC-0003's `debug drift-cache` — and add CHK-050 covering `patina debug --help`. New scenarios CHK-050..061 follow the existing numbering. No prior REQ semantics changed. |
 </changelog>
 
 ## Notes

@@ -55,7 +55,7 @@ out of scope for v1.0**: Patina does not invoke `loginctl
 enable-linger` itself and does not ship a `--linger` flag. Users
 who want their watcher to survive logout run
 `sudo loginctl enable-linger $USER` manually; the project docs
-(`docs/operating-environment.md`) include the snippet. A
+(`docs/USER_GUIDE.md`) include the snippet. A
 `--linger` flag is a v1.1 candidate if real users surface the
 need.
 
@@ -139,7 +139,7 @@ watcher's frequent re-applies amplify the issue's impact.
   `systemd --user` services stop at logout by default; users who
   want survive-logout behavior run
   `sudo loginctl enable-linger $USER` manually per the docs
-  (`docs/operating-environment.md`). Patina does not invoke
+  (`docs/USER_GUIDE.md`). Patina does not invoke
   `loginctl enable-linger` itself. A `--linger` flag is a v1.1
   candidate; see DEC-005 for rationale.
 </non-goals>
@@ -249,7 +249,7 @@ and the supervisor is invoked to load the unit.
   who want the watcher to survive logout run
   `sudo loginctl enable-linger $USER` manually; Patina does not
   invoke this command and ships no `--linger` flag in v1.0 (see
-  `docs/operating-environment.md` for the snippet).
+  `docs/USER_GUIDE.md` for the snippet).
 - The command exits 1 with a typed error if the service is
   already installed (the user must `patina watch uninstall` first
   before re-installing).
@@ -897,7 +897,7 @@ lingering. Alternatives considered and rejected:
   surface for a niche need.
 - **Manual `loginctl enable-linger` documented in docs** (chosen):
   zero CLI surface, fully auditable for the user, no implicit
-  privilege escalation. The docs (`docs/operating-environment.md`)
+  privilege escalation. The docs (`docs/USER_GUIDE.md`)
   carry the exact command and a one-line explanation.
 
 A real `--linger` flag remains a v1.1 candidate if users surface a
@@ -963,7 +963,9 @@ direction; SPEC content updated in the same revision.
   `loginctl enable-linger`. REQ-002 was deleted from this SPEC;
   REQ-001 and REQ-003 were rewritten to remove every `--linger`
   reference; DEC-005 was rewritten to record the "docs-only" stance.
-  The project docs (`docs/operating-environment.md`) carry the
+  The project docs (`docs/operating-environment.md` at the time of
+  the 2026-05-26 amend; subsequently renamed to `docs/USER_GUIDE.md`
+  per the 2026-05-27 cross-SPEC reference rename) carry the
   one-shot `sudo loginctl enable-linger $USER` snippet for users
   who actually need survive-logout behavior.
 - [x] b. **Watcher journal-rescan mechanism.** Pinned in REQ-005:
@@ -991,6 +993,7 @@ direction; SPEC content updated in the same revision.
 |------------|--------------|---------|
 | 2026-05-25 | human/kevin  | Initial draft. Locks the watch subsystem: per-journal-entry subscriptions, 500ms hardcoded debounce, drift detection via hash-compare on non-symlink targets with `notify-rust` notifications, per-OS service install (LaunchAgent / `systemd --user` / per-user Scheduled Task), `--linger` opt-in for Linux, `--foreground` escape hatch for non-systemd and debugging, Windows `ERROR_SHARING_VIOLATION` retry-with-backoff (6 attempts, ~3.15s), watcher acquires SPEC-0001 advisory lock with CLI priority. |
 | 2026-05-26 | human/kevin  | Resolve all four self-review questions. (a) Defer Linux `--linger` flag to v1.1: delete REQ-002, rewrite REQ-001/REQ-003 to remove `--linger` references, rewrite DEC-005 to record the docs-only stance, add a non-goal entry; the user runs `sudo loginctl enable-linger $USER` manually per `docs/operating-environment.md`. (b) Pin watcher journal-rescan mechanism in REQ-005: subscribe via `notify` to `<state>/patina/journal/` and re-read on new `.plan` or `.COMMIT` files; add CHK-017. (c) Lock drift cache format in REQ-007 as postcard with a `u16` version envelope at offset 0; add `patina debug drift-cache <path>` subcommand parallel to `patina debug journal`; add CHK-018. (d) Confirm `ERROR_SHARING_VIOLATION` retry budget remains hardcoded for v1.0. |
+| 2026-05-27 | human/kevin via assistant | Rename the docs target from `docs/operating-environment.md` to `docs/USER_GUIDE.md` everywhere SPEC-0003 references it (4 body sites in Assumptions, Non-goals, REQ-001 prose, and DEC-005; the historical 2026-05-26 row above retains the original name as a point-in-time snapshot). SPEC-0001's REQ-027 now formalises `docs/USER_GUIDE.md` with named structural anchors. The `sudo loginctl enable-linger $USER` snippet for survive-logout watcher behavior lands inside `docs/USER_GUIDE.md` in a section SPEC-0003's implementer adds (e.g. extending `## Troubleshooting` or introducing a `## Watch service` section); REQ-027 does not constrain the section name. No requirement-level change in SPEC-0003; this is a cross-SPEC reference rename driven by the SPEC-0001 amend. |
 </changelog>
 
 ## Notes

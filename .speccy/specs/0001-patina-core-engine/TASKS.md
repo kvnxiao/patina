@@ -1,11 +1,11 @@
 ---
 spec: SPEC-0001
-spec_hash_at_generation: 9d5e6806bc96f4d00444378b8243260c450797123f2dcc7835581b9595b598b2
-generated_at: 2026-05-26T19:44:36Z
+spec_hash_at_generation: d789fa9693d87f431cb7753070443fc0911744f143227bef5775fae3de25539a
+generated_at: 2026-05-28T01:25:22Z
 ---
 # Tasks: SPEC-0001 Patina core engine — transactional apply with apply/status/rollback CLI
 
-<task id="T-001" state="pending" covers="REQ-001 REQ-002">
+<task id="T-001" state="completed" covers="REQ-001 REQ-002">
 ## Land the workspace shape and async tokio foundation
 
 The repository root already carries a workspace `Cargo.toml` with both
@@ -1667,5 +1667,288 @@ Suggested files: `patina-cli/src/output/reporter.rs`,
 `patina-cli/src/output/json.rs`,
 `patina-core/src/status/mod.rs`,
 `patina-cli/tests/deterministic_stdout.rs`
+</task-scenarios>
+</task>
+
+<task id="T-022" state="pending" covers="REQ-025">
+## Cross-platform CI matrix gates merge on macOS / Linux / Windows
+
+Stand up the GitHub Actions workflow that operationalises REQ-025's
+parity rule. The workflow runs on every `push` to `main` and every
+`pull_request`; the test job uses `strategy.matrix.os` containing
+`macos-latest`, `ubuntu-latest`, and `windows-latest`. Each matrix
+job runs:
+
+- `cargo test --workspace --locked`
+- `cargo clippy --workspace --all-targets --locked -- -D warnings`
+
+All three matrix jobs are configured as required status checks on
+`main`, so merge is blocked when any single OS fails. The workflow
+uses `dtolnay/rust-toolchain@stable` for the toolchain installation
+(channel-floating per the github-actions-versioning rule) and a
+caching action (e.g. `Swatinem/rust-cache` at its current latest
+major) so cold-cache runtime stays bounded. Third-party `uses:`
+references are otherwise pinned to the current latest published
+major per `.claude/rules/github-actions/github-actions-versioning.md`.
+
+The branch-protection configuration (required-status-checks set)
+is operator-administered on GitHub. The task's deliverable is the
+workflow file plus a one-paragraph note in the workflow's leading
+comment documenting which check names the operator must add to
+required-status-checks on `main`.
+
+<task-scenarios>
+Given the repository at HEAD,
+when the CI workflow file under `.github/workflows/` is parsed as
+YAML,
+then a job exists whose `strategy.matrix.os` list contains, as
+strings, `macos-latest`, `ubuntu-latest`, and `windows-latest`, and
+the workflow `on:` block triggers on both `push` (to `main`) and
+`pull_request`.
+
+Given the matrix workflow against the workspace at HEAD,
+when each OS job runs `cargo test --workspace --locked` followed by
+`cargo clippy --workspace --all-targets --locked -- -D warnings`,
+then all three matrix jobs exit 0.
+
+Given a PR that introduces
+`#[cfg(target_os = "windows")] compile_error!("forced");` into
+`patina-core/src/lib.rs`,
+when the matrix workflow runs,
+then `windows-latest` exits non-zero, `macos-latest` and
+`ubuntu-latest` exit 0, and the workflow's overall conclusion is
+`failure`.
+
+Given the workflow file at HEAD,
+when its `uses:` references are inspected,
+then every third-party action other than channel-floating
+`dtolnay/rust-toolchain@<channel>` references is pinned either to
+its current latest published major tag (e.g. `@v5`) or to a commit
+SHA with an inline `# vX.Y.Z` comment.
+
+Suggested files: `.github/workflows/ci.yml`
+</task-scenarios>
+</task>
+
+<task id="T-023" state="pending" covers="REQ-026">
+## Clippy `disallowed-macros` denies `println!`/`eprintln!`/`print!`/`eprint!` outside the `output` module
+
+T-016 stands up the `output::Reporter` trait and routes user-facing
+prints through it. This task adds the clippy gate that makes the
+Reporter the ONLY permitted call site for those macros across the
+workspace.
+
+Configure `clippy.toml` so `disallowed-macros` lists `std::println`,
+`std::eprintln`, `std::print`, and `std::eprint`. The `output`
+module — wherever the `Reporter` implementations live inside
+`patina-cli` — is the sole permitted call site for those macros
+and bears a module-scoped `#[allow(clippy::disallowed_macros)]`
+attribute (clippy's `disallowed-macros` configuration is
+workspace-wide; the carve-out is per-module via the allow
+attribute). The `tracing` macros (`info!`, `warn!`, `error!`,
+`debug!`, `trace!`) remain unaffected — they emit structured
+events, not user output.
+
+Add an integration test that constructs a fixture working tree
+containing a fresh `println!("hi")` somewhere outside the `output`
+module, invokes the project's clippy command with `-D warnings`,
+and asserts the run exits non-zero with a
+`clippy::disallowed_macros` diagnostic naming the offending file.
+The test can drive this via `cargo clippy --message-format=json`
+and parse the diagnostics, or via a `trycmd`-style snapshot test;
+implementer picks the cheapest reliable mechanism.
+
+This task depends on T-016 having stood up the `output` module
+and the Reporter abstraction; without T-016 there is no carve-out
+location to allow the macros in.
+
+<task-scenarios>
+Given the workspace at HEAD with `clippy.toml` configured per this
+task,
+when `cargo clippy --workspace --all-targets --locked -- -D warnings`
+runs,
+then it exits 0.
+
+Given the repository at HEAD,
+when `clippy.toml` is parsed as TOML,
+then its `disallowed-macros` array contains, as literal strings,
+`std::println`, `std::eprintln`, `std::print`, and `std::eprint`.
+
+Given a working tree where a contributor has inserted
+`println!("hi")` in `patina-core/src/plan.rs`,
+when `cargo clippy --workspace --all-targets --locked -- -D warnings`
+runs,
+then it exits non-zero with a `clippy::disallowed_macros`
+diagnostic naming `patina-core/src/plan.rs` and the offending
+line.
+
+Given the same working tree with the offending line replaced by
+`tracing::info!("hi")`,
+when the same clippy command runs,
+then it exits 0 — `tracing` macros are not in the disallowed
+list.
+
+Given a working tree where the contributor has inserted
+`println!("hi")` into the `output` module (e.g.
+`patina-cli/src/output/human.rs`),
+when the same clippy command runs,
+then it exits 0 — the module-scoped
+`#[allow(clippy::disallowed_macros)]` carve-out applies.
+
+Suggested files: `clippy.toml`,
+`patina-cli/src/output/mod.rs` (module-scoped allow attribute),
+`patina-cli/tests/clippy_disallowed_macros.rs`
+</task-scenarios>
+</task>
+
+<task id="T-024" state="pending" covers="REQ-027">
+## Ship `docs/ARCHITECTURE.md` + `docs/USER_GUIDE.md` with named structural anchors
+
+Author two documentation files under `docs/`:
+
+- `docs/ARCHITECTURE.md` — contributor-facing high-level
+  architecture document. Required `##`-level headings (exact
+  text): `## Engine layers`, `## Journal format`, `## Apply phases`,
+  `## Recovery`. The narrative covers the layered crate boundaries
+  (`patina-core` lib vs `patina-cli` bin), the postcard journal
+  envelope and single-fsync write protocol, the three apply phases
+  (plan → diff → mutate), and the recovery/rollback primitives.
+  Cross-link relevant REQs from SPEC-0001 by ID. Mermaid is
+  preferred over ASCII art for any architecture diagram (per
+  AGENTS.md "Code conventions" diagrams rule).
+
+- `docs/USER_GUIDE.md` — user-facing usage and operational
+  guidance. Required `##`-level headings (exact text):
+  `## Installation`, `## Declaring dotfiles`, `## Apply flow`,
+  `## State directory`, `## Recovery`, `## Troubleshooting`. The
+  `## State directory` section MUST contain a markdown bullet
+  list naming cloud-sync providers the state directory must not
+  live on; the bullets MUST include the literal entries
+  `iCloud Drive`, `OneDrive`, `Dropbox`, `Box`, `Google Drive`,
+  `Syncthing`. (Per the product north star's Known-Unknowns note:
+  SPEC-0001 documents only; SPEC-0002 adds doctor warnings; the
+  `--linger` snippet for SPEC-0003 lands in this same file once
+  SPEC-0003 starts work.)
+
+Add a docs-structure integration test that:
+
+1. Parses both files as CommonMark (e.g. via `pulldown-cmark`).
+2. Extracts the set of `##`-level headings from each file.
+3. Asserts each required heading appears, by exact text.
+4. Locates the `## State directory` section in
+   `docs/USER_GUIDE.md`, extracts its bullet-list items, and
+   asserts each of the six required provider names is present as a
+   literal bullet entry.
+
+The test gates structural presence only — it never substring-matches
+prose around the headings (per the test-hygiene rule in AGENTS.md
+prohibiting tests over editorial choices).
+
+<task-scenarios>
+Given the repository at HEAD,
+when the docs-structure integration test parses
+`docs/ARCHITECTURE.md` and extracts its `##`-level headings,
+then the set contains, by exact text, `Engine layers`,
+`Journal format`, `Apply phases`, `Recovery`.
+
+Given the repository at HEAD,
+when the same test parses `docs/USER_GUIDE.md` and extracts its
+`##`-level headings,
+then the set contains, by exact text, `Installation`,
+`Declaring dotfiles`, `Apply flow`, `State directory`, `Recovery`,
+`Troubleshooting`.
+
+Given the repository at HEAD,
+when the test extracts bullet-list items from the body of the
+`## State directory` section of `docs/USER_GUIDE.md`,
+then the extracted set contains each of `iCloud Drive`, `OneDrive`,
+`Dropbox`, `Box`, `Google Drive`, `Syncthing` as a literal entry.
+
+Given a working tree where the `## State directory` heading is
+renamed to `## State dir`,
+when the docs-structure test runs,
+then it fails naming the missing literal heading.
+
+Given a working tree where the `Dropbox` bullet is replaced with
+`Dropbox (via Smart Sync)`,
+when the docs-structure test runs,
+then it fails naming the missing literal bullet entry (the test
+gates exact text, not prefix match).
+
+Suggested files: `docs/ARCHITECTURE.md`, `docs/USER_GUIDE.md`,
+`patina-cli/tests/docs_structure.rs`, workspace `Cargo.toml`
+(`pulldown-cmark` as a dev-dependency)
+</task-scenarios>
+</task>
+
+<task id="T-025" state="pending" covers="REQ-028">
+## `deny.toml` + `cargo deny check` gate CI on every push and PR
+
+Author `deny.toml` at the repository root with these top-level
+tables populated:
+
+- `[licenses]` — allowlist the project's distribution policy
+  (typical Rust workspace: `MIT`, `Apache-2.0`, `BSD-3-Clause`,
+  `ISC`, `Unicode-DFS-2016`, `Unicode-3.0`, `MPL-2.0`, `Zlib`).
+  GPL-family licences are NOT in the allowlist. Configure
+  `unlicensed = "deny"` (or the schema-current equivalent).
+
+- `[advisories]` — pull the RustSec database via the default
+  source. At minimum: `vulnerability = "deny"`,
+  `unsound = "deny"`, `yanked = "deny"`,
+  `unmaintained = "warn"`, `notice = "warn"`.
+
+- `[bans]` — `multiple-versions = "warn"`,
+  `wildcards = "deny"`. The `deny` list of explicitly-banned
+  crates starts empty and grows organically as the project hits
+  cases.
+
+- `[sources]` — `unknown-registry = "deny"`,
+  `unknown-git = "deny"`. Allow crates.io implicitly; any approved
+  git registries must be explicitly listed.
+
+Wire `cargo deny check` into the CI workflow T-022 stands up.
+The job runs on every `push` to `main` and every `pull_request`.
+The implementer chooses between (a) installing the `cargo-deny`
+binary in the workflow and invoking `cargo deny check` directly,
+or (b) using `EmbarkStudios/cargo-deny-action` at its current
+latest published major; either is acceptable so long as the
+github-actions-versioning rule is satisfied. Document the
+required-status check name in the workflow file's leading comment
+so the operator can add it to branch protection.
+
+<task-scenarios>
+Given the repository at HEAD with `deny.toml` configured per this
+task,
+when `cargo deny check` runs against `deny.toml`,
+then it exits 0.
+
+Given `deny.toml` at the repository root,
+when parsed as TOML,
+then the resulting document contains top-level tables named
+`licenses`, `advisories`, `bans`, and `sources`.
+
+Given the CI workflow at HEAD,
+when its job list is parsed,
+then a job exists that invokes `cargo deny check` (directly or via
+an action wrapper at its current latest published major) and the
+workflow `on:` block triggers on both `push` to `main` and
+`pull_request`.
+
+Given a working tree where `Cargo.toml` has been edited to declare
+a dependency on a crate published under the `GPL-3.0` licence,
+when `cargo deny check licenses` runs against the configured
+`deny.toml`,
+then it exits non-zero with a `licenses` diagnostic naming the
+offending crate.
+
+Given a working tree that adds a dependency with a wildcard
+version (`some-crate = "*"`) to `Cargo.toml`,
+when `cargo deny check bans` runs,
+then it exits non-zero with a `wildcards` diagnostic naming the
+offending dependency.
+
+Suggested files: `deny.toml`, `.github/workflows/ci.yml`
+(extending T-022's workflow file)
 </task-scenarios>
 </task>

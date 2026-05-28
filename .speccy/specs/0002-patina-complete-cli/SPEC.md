@@ -23,7 +23,7 @@ otherwise produce surprising apply failures (repository on a UNC
 path, Developer Mode missing on Windows, running on a too-old
 Windows build, no persisted `default_repo` pointer). Cloud-sync
 mounts are explicitly out of scope for v1.0 detection — the project
-docs (`docs/operating-environment.md`) include a user-facing
+docs (`docs/USER_GUIDE.md`) include a user-facing
 callout about keeping the state directory off iCloud Drive,
 OneDrive, Dropbox, etc.
 
@@ -112,7 +112,7 @@ only the `patina` binary.
   assumption that users do not place the per-machine state
   directory on iCloud Drive / OneDrive / Dropbox / Box / Google
   Drive / Syncthing stands; the project docs include a callout
-  (`docs/operating-environment.md`) explaining the risk. Active
+  (`docs/USER_GUIDE.md`) explaining the risk. Active
   detection — hardcoded provider list or otherwise — is a v1.1
   candidate.
 - No `--linger` flag on `patina watch install` in v1.0 (defined in
@@ -471,7 +471,7 @@ findings list is exhaustively specified here; future findings
 require a SPEC amendment.
 
 Cloud-sync directory detection is explicitly out of scope for v1.0
-(see non-goals); the project docs (`docs/operating-environment.md`)
+(see non-goals); the project docs (`docs/USER_GUIDE.md`)
 include a user-facing callout.
 
 <done-when>
@@ -871,7 +871,7 @@ accepts that for the security-surface payoff.
 <decision id="DEC-004">
 Cloud-sync directory detection is deferred to v1.1. The v1.0
 choice is "no detection in code; document the risk in
-`docs/operating-environment.md`." Alternatives considered and
+`docs/USER_GUIDE.md`." Alternatives considered and
 deferred:
 
 - Hardcoded provider name list (`Dropbox`, `OneDrive`, `iCloud
@@ -939,7 +939,7 @@ direction; SPEC content updated in the same revision.
   list and DEC-004 are repurposed to record the "no detection,
   docs-only" stance. SPEC-0001's assumption that users keep state
   off cloud-sync mounts remains load-bearing; the project docs
-  (`docs/operating-environment.md`) include a user-facing
+  (`docs/USER_GUIDE.md`) include a user-facing
   callout. v1.1 may revisit if real users surface the failure.
 - [x] c. **Developer Mode cache.** Removed. REQ-007 drops the
   `windows_dev_mode.cache` file and 7-day TTL; the registry flag
@@ -967,6 +967,7 @@ direction; SPEC content updated in the same revision.
 |------------|--------------|---------|
 | 2026-05-25 | human/kevin  | Initial draft. Locks the complete user-facing CLI surface (`init`, `add`, `remove`, `promote`, `doctor` with `--fix`) plus the Windows symbolic-link Developer Mode flow with the `patina-elevate.exe` standalone helper binary. Cloud-sync path detection is heuristic and uses a hardcoded provider list. `patina remove` (without `--purge`) replaces the managed target with a regular file containing the last-applied content. `patina promote` refuses on template-rendered targets because templating is non-invertible. |
 | 2026-05-26 | human/kevin  | Resolve all five self-review questions. (a) Confirm move-on-add in REQ-002. (b) Drop cloud-sync detection entirely from REQ-005, REQ-006, the Assumptions block, and the Summary; DEC-004 is reframed as "no detection, docs only" with v1.1 deferral; `docs/operating-environment.md` carries the user-facing callout. (c) Drop the `windows_dev_mode.cache` file and 7-day TTL from REQ-007; the registry flag is re-read on every apply that needs it. (d) Confirm `patina-elevate.exe` refuses non-elevated invocation. (e) No separate `<json-schema>` block in REQ-010; the per-command scenarios pin field shape implicitly. Cross-reference SPEC-0003 in non-goals: no `--linger` flag in v1.0; docs include the manual `sudo loginctl enable-linger` snippet. |
+| 2026-05-27 | human/kevin via assistant | Rename the docs target from `docs/operating-environment.md` to `docs/USER_GUIDE.md` everywhere SPEC-0002 references it (5 sites across Summary, Non-goals, REQ-005 prose, DEC-004, and the prior Changelog row's residual context). SPEC-0001's REQ-027 now formalises `docs/USER_GUIDE.md` with named structural anchors and the cloud-sync paths-to-avoid bullet list lives under its `## State directory` section. No requirement-level change in this SPEC; this is a cross-SPEC reference rename driven by the SPEC-0001 amend. |
 </changelog>
 
 ## Notes
