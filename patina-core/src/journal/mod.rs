@@ -53,7 +53,9 @@
 //! ```
 
 mod plan;
+mod probe;
 mod progress;
+mod recovery;
 mod sync;
 
 use camino::Utf8Path;
@@ -61,7 +63,13 @@ use camino::Utf8PathBuf;
 pub use plan::FILE_MAJOR_VERSION;
 pub use plan::Plan;
 pub use plan::PlannedOperation;
+pub use probe::Probe;
+pub use probe::classify_target;
+pub use probe::mirror_backup_path;
 pub use progress::ProgressCursor;
+pub use recovery::ROLLED_BACK_SUFFIX;
+pub use recovery::RecoveryReport;
+pub use recovery::recover_orphans;
 pub use sync::OsSyncer;
 pub use sync::Syncer;
 use thiserror::Error;
@@ -221,8 +229,9 @@ impl Journal {
 
 /// Remove a file, treating an already-absent file as success. Used on the
 /// commit path where a prior partial run may have removed one of the
-/// pair already.
-fn remove_if_present(path: &Utf8Path) -> Result<(), JournalError> {
+/// pair already, and by the `recovery` sibling when cleaning up orphan
+/// plan + progress files.
+pub(super) fn remove_if_present(path: &Utf8Path) -> Result<(), JournalError> {
     match fs_err::remove_file(path) {
         Ok(()) => Ok(()),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),

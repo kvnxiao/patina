@@ -37,6 +37,8 @@ pub use journal::Journal;
 pub use journal::JournalError;
 pub use journal::Plan;
 pub use journal::PlannedOperation;
+pub use journal::RecoveryReport;
+pub use journal::recover_orphans;
 pub use paths::PathError;
 pub use paths::canonicalize as canonicalize_path;
 pub use paths::expand_tilde;

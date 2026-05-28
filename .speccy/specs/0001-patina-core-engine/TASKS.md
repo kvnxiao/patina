@@ -808,7 +808,7 @@ Suggested files: `patina-core/Cargo.toml`,
 </task-scenarios>
 </task>
 
-<task id="T-011" state="pending" covers="REQ-013">
+<task id="T-011" state="completed" covers="REQ-013">
 ## Crash recovery converges backward to pre-apply state via filesystem probe
 
 Add a `recovery` submodule under `patina_core::journal`. On apply
