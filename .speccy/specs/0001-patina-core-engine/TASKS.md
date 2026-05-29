@@ -1799,7 +1799,7 @@ Suggested files: `clippy.toml`,
 </task-scenarios>
 </task>
 
-<task id="T-024" state="pending" covers="REQ-027">
+<task id="T-024" state="completed" covers="REQ-027">
 ## Ship `docs/ARCHITECTURE.md` + `docs/USER_GUIDE.md` with named structural anchors
 
 Author two documentation files under `docs/`:
