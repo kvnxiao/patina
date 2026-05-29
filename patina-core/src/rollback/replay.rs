@@ -115,7 +115,7 @@ fn snapshot_targets(stage: &Utf8Path, targets: &[&str]) -> std::io::Result<Vec<S
                 // root) is staged by recursive copy so it can be rolled
                 // forward verbatim.
                 let staged = stage.join(format!("{index}.dir"));
-                copy_dir_recursive(&target, &staged)?;
+                crate::fsx::copy_tree(&target, &staged)?;
                 SnapshotState::File(staged)
             }
             Ok(_) => {
@@ -157,17 +157,17 @@ fn revert_target(
     target: &Utf8Path,
 ) -> std::io::Result<()> {
     let backup = mirror_backup_path(backups_dir, timestamp, target);
-    if backup.exists() {
-        remove_existing(target)?;
-        if let Some(parent) = target.parent()
-            && !parent.as_str().is_empty()
-        {
-            fs_err::create_dir_all(parent)?;
-        }
-        fs_err::copy(&backup, target)?;
-        Ok(())
+    if crate::fsx::entry_present(&backup) {
+        // Overwrite case: restore the original entry, kind-preserving — a
+        // symlink comes back a symlink, a directory a directory, a file a
+        // file. Presence is probed with `entry_present` rather than
+        // `exists`, so a backed-up symlink whose destination is gone is
+        // still restored instead of being mistaken for "no backup → delete".
+        crate::fsx::clone_entry(&backup, target)
     } else {
-        remove_existing(target)
+        // Fresh-creation case: nothing was backed up, so reverting deletes
+        // whatever the apply created.
+        crate::fsx::remove_entry(target)
     }
 }
 
@@ -189,7 +189,7 @@ fn roll_forward(reverted: &[&Snapshot]) {
 /// Restore one target to the post-apply state captured in `snapshot`.
 fn restore_snapshot(snapshot: &Snapshot) -> std::io::Result<()> {
     let target = &snapshot.target;
-    ignore_io(remove_existing(target));
+    ignore_io(crate::fsx::remove_entry(target));
     if let Some(parent) = target.parent()
         && !parent.as_str().is_empty()
     {
@@ -198,65 +198,13 @@ fn restore_snapshot(snapshot: &Snapshot) -> std::io::Result<()> {
     match &snapshot.state {
         SnapshotState::File(staged) => {
             if fs_err::symlink_metadata(staged)?.is_dir() {
-                copy_dir_recursive(staged, target)
+                crate::fsx::copy_tree(staged, target)
             } else {
                 fs_err::copy(staged, target).map(|_| ())
             }
         }
-        SnapshotState::Symlink(link) => symlink_to(link, target),
+        SnapshotState::Symlink(link) => crate::fsx::symlink_to(link, target),
         SnapshotState::Absent => Ok(()),
-    }
-}
-
-/// Remove the entry at `target` if present, dispatching on directory vs
-/// file/symlink. A symlink (even a dangling one) is removed as a link.
-///
-/// Delegates to the shared [`crate::apply::remove_entry`] helper so the apply
-/// reverse path and this replay path share one "remove tolerating absent"
-/// implementation.
-fn remove_existing(target: &Utf8Path) -> std::io::Result<()> {
-    crate::apply::remove_entry(target)
-}
-
-/// Recursively copy a directory tree from `src` to `dst`.
-fn copy_dir_recursive(src: &Utf8Path, dst: &Utf8Path) -> std::io::Result<()> {
-    fs_err::create_dir_all(dst)?;
-    for entry in fs_err::read_dir(src)? {
-        let entry = entry?;
-        let from = Utf8PathBuf::from_path_buf(entry.path()).map_err(|bad| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("non-UTF-8 path under {}: {}", src, bad.display()),
-            )
-        })?;
-        let Some(name) = from.file_name() else {
-            continue;
-        };
-        let to = dst.join(name);
-        if entry.file_type()?.is_dir() {
-            copy_dir_recursive(&from, &to)?;
-        } else {
-            fs_err::copy(&from, &to)?;
-        }
-    }
-    Ok(())
-}
-
-/// Create a symbolic link at `target` pointing at `link`. Dispatches to the
-/// platform-appropriate symlink syscall.
-#[cfg(unix)]
-fn symlink_to(link: &Utf8Path, target: &Utf8Path) -> std::io::Result<()> {
-    fs_err::os::unix::fs::symlink(link, target)
-}
-
-#[cfg(windows)]
-fn symlink_to(link: &Utf8Path, target: &Utf8Path) -> std::io::Result<()> {
-    // On Windows the link flavour must match the destination kind; a
-    // directory destination needs a directory symlink.
-    if fs_err::symlink_metadata(link).is_ok_and(|meta| meta.is_dir()) {
-        fs_err::os::windows::fs::symlink_dir(link, target)
-    } else {
-        fs_err::os::windows::fs::symlink_file(link, target)
     }
 }
 
@@ -351,5 +299,35 @@ mod tests {
             b"original"
         );
         assert!(!fresh.exists(), "the fresh target must be deleted");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn overwrite_of_a_pre_existing_symlink_is_restored_as_a_symlink() {
+        // C1 regression at the rollback layer: a target that was a symlink
+        // before the apply must revert to a symlink, not a regular file
+        // holding the destination's bytes. The backup is the original
+        // symlink (what `backup_before_overwrite` stashes), and its
+        // destination need not exist for the revert to recreate the link.
+        let e = env();
+        let ts = "TS";
+        let target = e.root.join("link-target");
+        // Post-apply state: a regular file the apply wrote over the link.
+        fs_err::write(&target, b"new").expect("write post-apply target");
+        let backup = mirror_backup_path(&e.backups, ts, &target);
+        fs_err::create_dir_all(backup.parent().expect("backup parent")).expect("mkdir backup tree");
+        fs_err::os::unix::fs::symlink("/original/dest", &backup).expect("stash original symlink");
+
+        replay_entry(0, &[target.as_str()], &e.backups, ts).expect("revert");
+
+        let meta = fs_err::symlink_metadata(&target).expect("stat reverted target");
+        assert!(
+            meta.file_type().is_symlink(),
+            "a pre-existing symlink must revert to a symlink, not a regular file"
+        );
+        assert_eq!(
+            fs_err::read_link(&target).expect("readlink reverted target"),
+            std::path::Path::new("/original/dest")
+        );
     }
 }

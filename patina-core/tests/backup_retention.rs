@@ -23,6 +23,7 @@ use camino::Utf8Path;
 use camino::Utf8PathBuf;
 use patina_core::backups::RETENTION_COUNT;
 use patina_core::backups::gc_retain;
+use patina_core::prune_cycles;
 use tempfile::TempDir;
 
 /// A staged backup tree under a state directory.
@@ -119,4 +120,42 @@ fn a_failed_apply_leaves_historical_backups_untouched() {
         expected,
         "a failed apply must touch none of the prior cycles and leave its partial dir in place"
     );
+}
+
+#[test]
+fn pruned_backup_cycles_drop_their_commit_sentinels_in_lockstep() {
+    // H1 regression: retention removes the oldest backup cycle directories;
+    // the matching journal COMMIT sentinels must be dropped alongside them.
+    // Otherwise `patina rollback` could walk back to a commit whose backups
+    // are gone and *delete* an overwrite target it can no longer restore.
+    let scene = Scene::new();
+    let names = scene.seed_cycles(11);
+    let journal = scene
+        .backups
+        .parent()
+        .expect("backups has a parent")
+        .join("journal");
+    fs_err::create_dir_all(&journal).expect("create journal dir");
+    // One COMMIT sentinel per seeded backup cycle (the body is opaque to
+    // pruning, which keys on the filename).
+    for ts in &names {
+        fs_err::write(journal.join(format!("{ts}.COMMIT")), b"record").expect("commit sentinel");
+    }
+
+    let removed = gc_retain(&scene.backups, RETENTION_COUNT).expect("retention GC");
+    prune_cycles(&journal, &removed).expect("prune the matching sentinels");
+
+    let (oldest, newest_ten) = names.split_at(1);
+    assert_eq!(removed, oldest, "the single oldest cycle is pruned");
+    let oldest_ts = oldest.first().expect("split_at(1) yields one oldest cycle");
+    assert!(
+        !journal.join(format!("{oldest_ts}.COMMIT")).exists(),
+        "the pruned cycle's COMMIT sentinel must be gone so rollback cannot target it"
+    );
+    for ts in newest_ten {
+        assert!(
+            journal.join(format!("{ts}.COMMIT")).exists(),
+            "a retained cycle's COMMIT sentinel must survive"
+        );
+    }
 }

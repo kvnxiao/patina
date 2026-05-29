@@ -52,8 +52,6 @@ use super::PLAN_SUFFIX;
 use super::PROGRESS_SUFFIX;
 use super::Plan;
 use super::PlannedOperation;
-use super::probe::Probe;
-use super::probe::classify_target;
 use super::probe::mirror_backup_path;
 use super::probe::operation_target;
 use camino::Utf8Path;
@@ -179,8 +177,15 @@ fn reverse_orphan(
 ///
 /// The decision is driven by the backup directory, not the progress
 /// cursor: a backup existing for the target means the apply was about to
-/// (or did) overwrite a pre-existing file, so the original is restored; no
+/// (or did) overwrite a pre-existing entry, so the original is restored; no
 /// backup means the target was created fresh, so it is deleted if present.
+///
+/// Both restore and delete go through the kind-preserving
+/// [`crate::fsx`] helpers, so the original is recreated as the same kind it
+/// was — a symlink as a symlink, a directory as a directory — and backup
+/// presence is probed with [`crate::fsx::entry_present`] so a backed-up
+/// symlink whose destination is gone is still seen (`exists` would follow
+/// the dead link and wrongly delete the target).
 fn reverse_operation(
     backups_dir: &Utf8Path,
     timestamp: &str,
@@ -189,46 +194,17 @@ fn reverse_operation(
     let target = Utf8Path::new(operation_target(op));
     let backup = mirror_backup_path(backups_dir, timestamp, target);
 
-    if backup.exists() {
-        // Overwrite case: restore the original bytes the engine stashed
-        // before mutating. Replace whatever is at the target now (a new
+    if crate::fsx::entry_present(&backup) {
+        // Overwrite case: restore the original entry the engine stashed
+        // before mutating, replacing whatever is at the target now (a new
         // symlink, a half-written copy, or the already-restored original).
-        restore_from_backup(&backup, target)
+        crate::fsx::clone_entry(&backup, target).map_err(JournalError::Filesystem)
     } else {
         // Fresh-creation case: there was nothing to back up, so reversing
         // means removing the target the apply created. If the operation
         // never started, the target is already absent and this is a no-op.
-        match classify_target(target) {
-            Probe::Present => remove_target(target),
-            Probe::Absent => Ok(()),
-        }
+        crate::fsx::remove_entry(target).map_err(JournalError::Filesystem)
     }
-}
-
-/// Restore `target` from its backup at `backup`, replacing any current
-/// entry (regular file, symlink, or directory) at the target first.
-fn restore_from_backup(backup: &Utf8Path, target: &Utf8Path) -> Result<(), JournalError> {
-    if classify_target(target) == Probe::Present {
-        remove_target(target)?;
-    }
-    if let Some(parent) = target.parent() {
-        fs_err::create_dir_all(parent)?;
-    }
-    fs_err::copy(backup, target)?;
-    Ok(())
-}
-
-/// Remove the entry at `target`, dispatching on whether it is a directory
-/// or a file/symlink. Uses `symlink_metadata` so a symlink (even a
-/// dangling one) is removed as a link rather than followed.
-fn remove_target(target: &Utf8Path) -> Result<(), JournalError> {
-    let meta = fs_err::symlink_metadata(target)?;
-    if meta.is_dir() {
-        fs_err::remove_dir_all(target)?;
-    } else {
-        fs_err::remove_file(target)?;
-    }
-    Ok(())
 }
 
 #[cfg(test)]
@@ -297,5 +273,48 @@ mod tests {
 
         let report = recover_orphans(&d.journal, &d.backups).expect("recovery");
         assert!(!report.recovered_any());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn overwrite_of_a_pre_existing_symlink_restores_the_symlink() {
+        // C1 regression at the recovery layer: an orphan apply that
+        // overwrote a pre-existing *symlink* target must, on recovery,
+        // restore the symlink — not leave a regular file holding the
+        // destination's bytes. The backup is a symlink (what
+        // `backup_before_overwrite` now stashes), and its destination need
+        // not exist for the restore to find and recreate the link.
+        let d = dirs();
+        let root = d.journal.parent().expect("journal has a parent");
+        let ts = "20260528T120000Z";
+
+        let target = root.join("home").join(".zshrc");
+        fs_err::create_dir_all(target.parent().expect("target parent")).expect("mkdir home");
+
+        let backup = mirror_backup_path(&d.backups, ts, &target);
+        fs_err::create_dir_all(backup.parent().expect("backup parent")).expect("mkdir backup tree");
+        fs_err::os::unix::fs::symlink("/orig/dest", &backup).expect("stash original as symlink");
+
+        // The crashed apply left a fresh regular file where the link was.
+        fs_err::write(&target, b"new-content").expect("write orphan target");
+
+        write_plan(
+            &d.journal,
+            ts,
+            &Plan::new(vec![PlannedOperation::copy("src", target.as_str())]),
+        );
+
+        let report = recover_orphans(&d.journal, &d.backups).expect("recover");
+        assert!(report.recovered_any(), "the orphan must be recovered");
+
+        let meta = fs_err::symlink_metadata(&target).expect("stat restored target");
+        assert!(
+            meta.file_type().is_symlink(),
+            "the pre-existing symlink must be restored as a symlink, not a regular file"
+        );
+        assert_eq!(
+            fs_err::read_link(&target).expect("readlink restored target"),
+            std::path::Path::new("/orig/dest")
+        );
     }
 }

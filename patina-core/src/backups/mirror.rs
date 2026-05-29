@@ -19,9 +19,11 @@ use camino::Utf8Path;
 ///   caller proceeds to create the target.
 ///
 /// Existence is probed with `symlink_metadata`, so a pre-existing symlink
-/// at the target counts as present. The copy itself uses `fs_err::copy`,
-/// mirroring how recovery restores the bytes, so a regular-file original
-/// round-trips byte-for-byte.
+/// at the target counts as present. The stash itself is kind-preserving via
+/// [`crate::fsx::clone_entry`] — the same primitive recovery and rollback
+/// restore through — so a regular file round-trips byte-for-byte, a symlink
+/// round-trips as a symlink (not flattened to its destination's bytes), and
+/// a directory is captured recursively rather than aborting the copy.
 ///
 /// This writes only under `backups_dir`; it never touches the dotfiles
 /// repository (REQ-014).
@@ -29,7 +31,7 @@ use camino::Utf8Path;
 /// # Errors
 ///
 /// Returns [`BackupError::Filesystem`] if the backup parent directory
-/// cannot be created or the copy fails.
+/// cannot be created or the clone fails.
 ///
 /// # Examples
 ///
@@ -52,17 +54,16 @@ pub fn backup_before_overwrite(
     let target = target.as_ref();
 
     // Probe with symlink_metadata so a pre-existing symlink is "present"
-    // (matching recovery's classify_target). A missing target — the
-    // fresh-creation case — yields no backup entry.
-    if fs_err::symlink_metadata(target).is_err() {
+    // (matching recovery's probe). A missing target — the fresh-creation
+    // case — yields no backup entry.
+    if !crate::fsx::entry_present(target) {
         return Ok(false);
     }
 
     let backup = mirror_backup_path(backups_dir, timestamp, target);
-    if let Some(parent) = backup.parent() {
-        fs_err::create_dir_all(parent)?;
-    }
-    fs_err::copy(target, &backup)?;
+    // `clone_entry` clears any stale backup, creates the parent chain, and
+    // preserves the target's kind (file / symlink / directory).
+    crate::fsx::clone_entry(target, &backup)?;
     Ok(true)
 }
 
@@ -145,6 +146,64 @@ mod tests {
         assert_eq!(
             fs_err::read(&recovery_lookup).expect("recovery reads the same path"),
             b"v1"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn pre_existing_symlink_target_is_backed_up_as_a_symlink() {
+        // C1 regression: a pre-existing symlink target must be stashed as a
+        // symlink, not flattened to its destination's bytes — otherwise
+        // rollback/recovery would restore a regular file where a link stood.
+        let f = fixture();
+        let target = f.root.join("home").join("u").join(".zshrc");
+        fs_err::create_dir_all(target.parent().expect("target parent")).expect("mkdir target dir");
+        fs_err::os::unix::fs::symlink("/elsewhere/zshrc", &target).expect("pre-existing symlink");
+
+        let made = backup_before_overwrite(&f.backups, "TS", &target).expect("backup the symlink");
+
+        assert!(made, "a present symlink must report a backup was made");
+        let backup = mirror_backup_path(&f.backups, "TS", &target);
+        assert!(
+            fs_err::symlink_metadata(&backup)
+                .expect("stat backup")
+                .file_type()
+                .is_symlink(),
+            "the backup of a symlink must itself be a symlink"
+        );
+        assert_eq!(
+            fs_err::read_link(&backup).expect("read backup link"),
+            std::path::Path::new("/elsewhere/zshrc")
+        );
+    }
+
+    #[test]
+    fn pre_existing_directory_target_is_backed_up_not_aborted() {
+        // C1 regression: a directory target (symlink-dir / copy-tree on
+        // re-apply) must be captured recursively, not error out of the apply
+        // the way a plain file copy of a directory would.
+        let f = fixture();
+        let target = f.root.join("home").join("u").join(".config");
+        fs_err::create_dir_all(target.join("nested")).expect("mkdir target tree");
+        fs_err::write(target.join("a.conf"), b"a").expect("write a");
+        fs_err::write(target.join("nested").join("b.conf"), b"b").expect("write b");
+
+        let made = backup_before_overwrite(&f.backups, "TS", &target)
+            .expect("backing up a directory target must not error");
+
+        assert!(made, "a present directory must report a backup was made");
+        let backup = mirror_backup_path(&f.backups, "TS", &target);
+        assert!(
+            fs_err::symlink_metadata(&backup)
+                .expect("stat backup")
+                .file_type()
+                .is_dir(),
+            "the backup of a directory must itself be a directory"
+        );
+        assert_eq!(fs_err::read(backup.join("a.conf")).expect("read a"), b"a");
+        assert_eq!(
+            fs_err::read(backup.join("nested").join("b.conf")).expect("read b"),
+            b"b"
         );
     }
 }

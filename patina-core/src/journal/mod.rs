@@ -298,6 +298,44 @@ pub fn read_latest_commit(dir: impl AsRef<Utf8Path>) -> Result<Option<ApplyRecor
     Ok(Some(ApplyRecord::decode(&bytes)?))
 }
 
+/// Drop every journal sentinel for the `timestamps` whose backup cycles
+/// have been garbage-collected (REQ-015).
+///
+/// After [`backups::gc_retain`](crate::backups::gc_retain) prunes an apply's
+/// backup directory, that apply can no longer be faithfully reversed — the
+/// original bytes its overwrites would restore are gone — so rolling back to
+/// it would *delete* targets it can no longer restore. Removing the
+/// `<ts>.COMMIT` (and any `<ts>.ROLLED_BACK`) sentinel drops the apply from
+/// both `patina status`'s "last apply" search ([`read_latest_commit`]) and
+/// `patina rollback`'s walk-back, so a commit and its backups are retained
+/// or vanish as one unit.
+///
+/// Only timestamps whose backup *directory* was pruned are passed here. An
+/// all-fresh apply (no overwrites) writes no backup directory, so it is
+/// never pruned and remains rollbackable — and rolling back to it correctly
+/// deletes its fresh-created targets, with nothing to restore. Absent
+/// sentinels are tolerated, so the call is idempotent.
+///
+/// # Errors
+///
+/// Returns [`JournalError::Filesystem`] if a sentinel cannot be removed for
+/// a reason other than already being absent.
+pub fn prune_cycles(
+    journal_dir: impl AsRef<Utf8Path>,
+    timestamps: &[String],
+) -> Result<(), JournalError> {
+    let journal_dir = journal_dir.as_ref();
+    for ts in timestamps {
+        remove_if_present(&journal_dir.join(format!("{ts}{COMMIT_SUFFIX}")))?;
+        remove_if_present(&journal_dir.join(format!("{ts}{ROLLED_BACK_SUFFIX}")))?;
+        // The plan and progress files are normally deleted at commit;
+        // remove them defensively so a pruned cycle leaves nothing behind.
+        remove_if_present(&journal_dir.join(format!("{ts}{PLAN_SUFFIX}")))?;
+        remove_if_present(&journal_dir.join(format!("{ts}{PROGRESS_SUFFIX}")))?;
+    }
+    Ok(())
+}
+
 /// Remove a file, treating an already-absent file as success. Used on the
 /// commit path where a prior partial run may have removed one of the
 /// pair already, and by the `recovery` sibling when cleaning up orphan
@@ -307,5 +345,44 @@ pub(super) fn remove_if_present(path: &Utf8Path) -> Result<(), JournalError> {
         Ok(()) => Ok(()),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(err) => Err(JournalError::Filesystem(err)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn prune_cycles_drops_commit_and_rolled_back_sentinels_for_the_named_timestamps() {
+        let temp = TempDir::new().expect("tempdir");
+        let dir = Utf8Path::from_path(temp.path()).expect("utf8 temp path");
+        fs_err::write(dir.join(format!("OLD{COMMIT_SUFFIX}")), b"x").expect("old commit");
+        fs_err::write(dir.join(format!("OLD{ROLLED_BACK_SUFFIX}")), b"x").expect("old rolled-back");
+        fs_err::write(dir.join(format!("NEW{COMMIT_SUFFIX}")), b"x").expect("new commit");
+
+        prune_cycles(dir, &["OLD".to_owned()]).expect("prune the old cycle");
+
+        assert!(
+            !dir.join(format!("OLD{COMMIT_SUFFIX}")).exists(),
+            "the pruned cycle's commit sentinel must be gone so it is no longer rollback-eligible"
+        );
+        assert!(
+            !dir.join(format!("OLD{ROLLED_BACK_SUFFIX}")).exists(),
+            "the pruned cycle's rolled-back sentinel must be gone too"
+        );
+        assert!(
+            dir.join(format!("NEW{COMMIT_SUFFIX}")).exists(),
+            "a retained cycle's sentinel must survive"
+        );
+    }
+
+    #[test]
+    fn prune_cycles_tolerates_absent_sentinels() {
+        let temp = TempDir::new().expect("tempdir");
+        let dir = Utf8Path::from_path(temp.path()).expect("utf8 temp path");
+        // A timestamp with no sentinels at all (the all-fresh-apply shape, or
+        // a partially pruned cycle) is a clean no-op.
+        prune_cycles(dir, &["GHOST".to_owned()]).expect("absent sentinels are tolerated");
     }
 }

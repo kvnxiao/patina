@@ -109,7 +109,7 @@ pub(super) fn dir_symlink(
 /// removal here only clears the path the new link will occupy.
 fn link_file(source: &Utf8Path, target: &Utf8Path) -> Result<CompletionRecord, ExecutorError> {
     ensure_parent(target)?;
-    super::remove_entry(target).map_err(|source| ExecutorError::Io {
+    crate::fsx::remove_entry(target).map_err(|source| ExecutorError::Io {
         path: target.to_path_buf(),
         source,
     })?;

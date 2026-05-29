@@ -47,6 +47,7 @@ use crate::journal::OsSyncer;
 use crate::journal::Plan;
 use crate::journal::PlannedOperation;
 use crate::journal::content_hash;
+use crate::journal::prune_cycles;
 use crate::journal::recover_orphans;
 use crate::journal::timestamp_to_rfc3339;
 use crate::lock::LockKind;
@@ -380,7 +381,15 @@ pub async fn execute(
     } else {
         let record = build_apply_record(resolved, &completed)?;
         journal.commit(&record, &OsSyncer)?;
-        gc_retain(&backups_dir, crate::backups::RETENTION_COUNT)?;
+        // Retention prunes the oldest backup cycles, then the journal
+        // sentinels for exactly those cycles are dropped in lockstep: a
+        // commit whose backups are gone can no longer be faithfully reversed
+        // (its overwrite-restores are gone), so it must not remain
+        // rollback- or status-eligible (REQ-015 / REQ-019). An all-fresh
+        // apply writes no backup directory and so is never pruned here —
+        // rolling back to it correctly deletes its fresh targets.
+        let pruned = gc_retain(&backups_dir, crate::backups::RETENTION_COUNT)?;
+        prune_cycles(&journal_dir, &pruned)?;
         Ok(ApplyResult::Applied { warnings })
     }
 }
@@ -521,9 +530,9 @@ fn reverse_completed(
 
 /// Remove a target file or symlink, tolerating its absence.
 ///
-/// Wraps the shared [`super::remove_entry`] helper into [`EngineError`].
+/// Wraps the shared [`crate::fsx::remove_entry`] helper into [`EngineError`].
 fn remove_target(target: &Utf8Path) -> Result<(), EngineError> {
-    super::remove_entry(target)
+    crate::fsx::remove_entry(target)
         .map_err(|source| EngineError::Journal(crate::journal::JournalError::Filesystem(source)))
 }
 
