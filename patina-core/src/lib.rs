@@ -1,7 +1,8 @@
 //! Core library for the patina cross-platform dotfile manager.
 //!
-//! The three public async entry points — [`apply`], [`status`], and
-//! [`rollback`] — define the engine's outer contract. They return
+//! The three public async entry points — [`apply`](fn@crate::apply),
+//! [`status`](fn@crate::status), and [`rollback`](fn@crate::rollback) —
+//! define the engine's outer contract. They return
 //! [`Result<_, EngineError>`](EngineError); the CLI wraps that into
 //! `anyhow::Result` at the call site (per the project rule that
 //! `anyhow` lives only in the binary).
@@ -108,8 +109,8 @@ pub use variables::Builtins;
 pub use variables::Resolver;
 pub use variables::VariableError;
 
-/// Options accepted by [`apply`]. The TTY-driven prompt, `--json`
-/// envelope, and `--pager` plumbing live in the CLI ([`plan_apply`] /
+/// Options accepted by [`apply`](fn@crate::apply). The TTY-driven prompt,
+/// `--json` envelope, and `--pager` plumbing live in the CLI ([`plan_apply`] /
 /// [`execute_plan`] are the two engine primitives it drives); this
 /// convenience entry point unconditionally plans and executes, mirroring
 /// `patina apply --yes`.
@@ -124,14 +125,14 @@ pub struct ApplyOptions {
     pub timestamp: String,
 }
 
-/// Options accepted by [`status`]. Subsequent tasks extend this with
-/// the resolved repository root and output-format toggle.
+/// Options accepted by [`status`](fn@crate::status). Subsequent tasks extend
+/// this with the resolved repository root and output-format toggle.
 #[derive(Debug, Default, Clone)]
 #[non_exhaustive]
 pub struct StatusOptions {}
 
-/// Options accepted by [`rollback`]. Subsequent tasks extend this with
-/// the journal timestamp selector and confirmation toggles.
+/// Options accepted by [`rollback`](fn@crate::rollback). Subsequent tasks
+/// extend this with the journal timestamp selector and confirmation toggles.
 #[derive(Debug, Default, Clone)]
 #[non_exhaustive]
 pub struct RollbackOptions {}

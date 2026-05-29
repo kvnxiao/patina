@@ -34,7 +34,7 @@
 //! patina.<built-in> == "<literal>"
 //! ```
 //!
-//! The left-hand side resolves through [`Builtins::get`] (so the full
+//! The left-hand side resolves through `Builtins::get` (so the full
 //! `patina.os` / `patina.arch` / `patina.hostname` / `patina.user` /
 //! `patina.home` / `patina.env.*` surface is reachable). The right-hand
 //! side is a single-quoted or double-quoted string literal. Any other

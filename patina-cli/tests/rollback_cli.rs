@@ -79,11 +79,18 @@ impl Fixture {
         self.invoke("rollback", args)
     }
 
-    /// The journal directory under the isolated state dir. The state-dir
-    /// resolver nests `patina` under the platform state root; search for the
-    /// `journal` directory rather than hard-coding the nesting.
+    /// The journal directory under the isolated state dir. The resolved state
+    /// root is platform-dependent: Linux/Windows honour `XDG_STATE_HOME` /
+    /// `LOCALAPPDATA` (→ `self.state`), while macOS ignores both and uses
+    /// `$HOME/Library/Application Support` (→ `self.home`). Search the shared
+    /// tempdir root (the common parent of `state`, `home`, and the repo) so
+    /// the `journal` directory is found wherever the resolver placed it.
     fn journal_dir(&self) -> Utf8PathBuf {
-        find_dir_named(&self.state, "journal").expect("journal dir exists after apply")
+        let temp_root = self
+            .state
+            .parent()
+            .expect("isolated state dir has a tempdir parent");
+        find_dir_named(temp_root, "journal").expect("journal dir exists after apply")
     }
 }
 

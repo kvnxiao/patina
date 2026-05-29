@@ -199,7 +199,7 @@ impl LockGuard {
 ///
 /// The lock file is created if it does not exist (its byte contents are
 /// irrelevant — only the advisory lock on the handle matters). The call
-/// polls a non-blocking acquisition every [`POLL_INTERVAL`] until it
+/// polls a non-blocking acquisition every `POLL_INTERVAL` until it
 /// succeeds or `timeout` elapses.
 ///
 /// On success the returned [`LockGuard`] holds the lock until it is

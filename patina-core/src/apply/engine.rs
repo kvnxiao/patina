@@ -18,7 +18,7 @@
 //!    pre-existing target first), runs `post_apply` hooks, and either commits
 //!    or rolls the file operations back.
 //!
-//! The CLI ([`patina-cli`]) owns the diff rendering, the TTY prompt, the
+//! The CLI (`patina-cli`) owns the diff rendering, the TTY prompt, the
 //! `--pager` plumbing, and the JSON envelope; this module owns the
 //! engine semantics so those presentation concerns never reach into the
 //! subsystem internals.

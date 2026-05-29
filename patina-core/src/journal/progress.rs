@@ -72,7 +72,7 @@ impl ProgressCursor {
     }
 
     /// Decode the completed operation indices recorded in `bytes`,
-    /// discarding any torn trailing record shorter than [`RECORD_LEN`].
+    /// discarding any torn trailing record shorter than `RECORD_LEN`.
     /// Used by crash recovery (T-011) to read back a cursor that was
     /// never `fsync`-ed.
     #[must_use = "the decoded indices drive recovery reconciliation"]

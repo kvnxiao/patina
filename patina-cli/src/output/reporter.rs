@@ -12,7 +12,7 @@
 //!
 //! - [`StreamReporter`] writes the diff / JSON to stdout and prompts / warnings
 //!   to stderr — the production wiring.
-//! - [`BufferReporter`] captures both streams into in-memory buffers so a test
+//! - `BufferReporter` captures both streams into in-memory buffers so a test
 //!   can assert on exactly what would have been printed.
 
 use std::io::Write;

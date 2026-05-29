@@ -4,7 +4,7 @@
 //! path, one-or-more target paths, and a [`FileMode`]. The parse-time
 //! rules — exactly-one-of `target`/`targets`, the accepted-mode
 //! allowlist, and the implicit-template `.tmpl` rule — are enforced in
-//! [`FileEntry::from_raw`] and surface as typed
+//! `FileEntry::from_raw` and surface as typed
 //! [`FileEntryError`] variants whose `Display` impls satisfy the
 //! substring contracts in the SPEC's CHKs and task scenarios.
 

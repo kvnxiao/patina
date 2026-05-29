@@ -1,18 +1,17 @@
 //! File-mode executors with multi-target fan-out (REQ-005).
 //!
-//! Each [`FileMode`](crate::config::FileMode) has an executor that
+//! Each [`FileMode`] has an executor that
 //! materializes a single source path at one or more target paths. The
 //! five modes split across three submodules:
 //!
-//! - [`symlink`] — per-file [`Symlink`](crate::config::FileMode::Symlink) (with
+//! - `symlink` — per-file [`Symlink`](crate::config::FileMode::Symlink) (with
 //!   the directory-source per-file walk) and atomic
 //!   [`SymlinkDir`](crate::config::FileMode::SymlinkDir).
-//! - [`copy`] — [`Copy`](crate::config::FileMode::Copy) and recursive
+//! - `copy` — [`Copy`](crate::config::FileMode::Copy) and recursive
 //!   [`CopyTree`](crate::config::FileMode::CopyTree).
-//! - [`template`] — implicit
+//! - `template` — implicit
 //!   [`TemplateRender`](crate::config::FileMode::TemplateRender) of a `.tmpl`
-//!   source, rendered once and written to each declared (suffix-less)
-//!   target.
+//!   source, rendered once and written to each declared (suffix-less) target.
 //!
 //! # Per-target completion records
 //!

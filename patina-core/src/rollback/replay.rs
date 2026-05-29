@@ -123,7 +123,21 @@ fn snapshot_targets(stage: &Utf8Path, targets: &[&str]) -> std::io::Result<Vec<S
                 fs_err::copy(&target, &staged)?;
                 SnapshotState::File(staged)
             }
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => SnapshotState::Absent,
+            // A target whose parent is not a directory reports `ENOTDIR`
+            // (`NotADirectory`) on Unix and `NotFound` on Windows; either way
+            // the target genuinely cannot exist, so there is nothing to
+            // snapshot. Treating both alike lets the real restore failure —
+            // `create_dir_all` over the non-directory parent in
+            // `revert_target` — drive the per-entry `RollbackPartial` path
+            // identically on every platform.
+            Err(err)
+                if matches!(
+                    err.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                ) =>
+            {
+                SnapshotState::Absent
+            }
             Err(err) => return Err(err),
         };
         snapshots.push(Snapshot {

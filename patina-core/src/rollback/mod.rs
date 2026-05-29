@@ -29,7 +29,7 @@
 //! target it already reverted is restored to its post-apply state, leaving
 //! the entry untouched. This mirrors the all-or-nothing semantic the engine
 //! applies per-entry during apply and crash recovery. The atomicity is
-//! implemented in [`replay`] by snapshotting each target's post-apply state
+//! implemented in `replay` by snapshotting each target's post-apply state
 //! before mutating, then rolling the snapshot back in on any failure.
 //!
 //! ## Locking (REQ-023)

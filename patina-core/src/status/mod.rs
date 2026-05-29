@@ -158,7 +158,7 @@ pub fn report(current_plan_targets: &BTreeSet<Utf8PathBuf>) -> Result<StatusRepo
 /// This enumerates the declared `[[file]]` targets across every module
 /// (the same discovery, manifest parse, and tilde expansion the apply
 /// planner performs) but keys each target by its declared **location**
-/// via [`manage_key`] rather than a full canonicalization. A full
+/// via `manage_key` rather than a full canonicalization. A full
 /// canonicalization would follow an already-materialized symlink target
 /// through to the repo source, so the target would never appear to be its
 /// own managed location and every applied symlink would falsely report as

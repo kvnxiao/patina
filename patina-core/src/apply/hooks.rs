@@ -38,8 +38,8 @@
 //!   true` and no `--force-deploy` override. For a `pre_apply` hook the
 //!   orchestrator aborts before any file operation (CLI exit 2); for a
 //!   `post_apply` hook it rolls back every file operation (CLI exit 3). The
-//!   [`HookEvent`] on the originating [`HookEntry`] tells the orchestrator
-//!   which.
+//!   [`HookEvent`](crate::config::HookEvent) on the originating [`HookEntry`]
+//!   tells the orchestrator which.
 //!
 //! `--force-deploy` ([`ForceDeploy::Yes`]) overrides every hook in the
 //! invocation to behave as `must_succeed = false`, so a non-zero exit can
@@ -147,7 +147,7 @@ pub enum HookOutcome {
     Warned,
     /// The hook exited non-zero with `must_succeed` effectively `true`.
     /// The orchestrator aborts (`pre_apply`) or rolls back (`post_apply`)
-    /// based on the originating [`HookEvent`].
+    /// based on the originating [`HookEvent`](crate::config::HookEvent).
     Failed,
 }
 

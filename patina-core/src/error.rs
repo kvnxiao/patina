@@ -9,8 +9,8 @@
 
 use thiserror::Error;
 
-/// Errors returned from [`crate::apply`], [`crate::status`], and
-/// [`crate::rollback`].
+/// Errors returned from [`apply`](fn@crate::apply),
+/// [`status`](fn@crate::status), and [`rollback`](fn@crate::rollback).
 ///
 /// Variants are added per task as their owning subsystems land. The
 /// `non_exhaustive` attribute keeps downstream `match` arms forward
