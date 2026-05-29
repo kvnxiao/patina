@@ -1728,7 +1728,7 @@ Suggested files: `.github/workflows/ci.yml`
 </task-scenarios>
 </task>
 
-<task id="T-023" state="pending" covers="REQ-026">
+<task id="T-023" state="completed" covers="REQ-026">
 ## Clippy `disallowed-macros` denies `println!`/`eprintln!`/`print!`/`eprint!` outside the `output` module
 
 T-016 stands up the `output::Reporter` trait and routes user-facing

@@ -412,6 +412,7 @@ dependencies = [
  "similar",
  "tempfile",
  "tokio",
+ "toml",
  "tracing",
 ]
 

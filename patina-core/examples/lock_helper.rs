@@ -146,7 +146,17 @@ fn run(args: &Args) -> Result<(), Failure> {
         code: EXIT_ERROR,
         message: e.to_string(),
     })?;
-    println!("ACQUIRED {acquired}");
+    // This test-harness example talks to its parent test process over stdout /
+    // stderr; it is not user-facing CLI output and has no `output::Reporter` to
+    // route through, so the workspace-wide `disallowed-macros` ban (REQ-026) is
+    // scoped-out here.
+    #[expect(
+        clippy::disallowed_macros,
+        reason = "test-harness IPC over stdout, not user-facing CLI output (REQ-026)"
+    )]
+    {
+        println!("ACQUIRED {acquired}");
+    }
 
     if args.abort {
         // Terminate abnormally while still holding the lock. The OS must
@@ -156,7 +166,13 @@ fn run(args: &Args) -> Result<(), Failure> {
 
     std::thread::sleep(args.hold);
     let released = nanos_now();
-    println!("RELEASED {released}");
+    #[expect(
+        clippy::disallowed_macros,
+        reason = "test-harness IPC over stdout, not user-facing CLI output (REQ-026)"
+    )]
+    {
+        println!("RELEASED {released}");
+    }
     drop(guard);
     Ok(())
 }
@@ -164,7 +180,13 @@ fn run(args: &Args) -> Result<(), Failure> {
 fn main() {
     let result = parse_args().and_then(|args| run(&args));
     if let Err(failure) = result {
-        eprintln!("{}", failure.message);
+        #[expect(
+            clippy::disallowed_macros,
+            reason = "test-harness IPC over stderr, not user-facing CLI output (REQ-026)"
+        )]
+        {
+            eprintln!("{}", failure.message);
+        }
         std::process::exit(failure.code);
     }
 }

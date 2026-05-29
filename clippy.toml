@@ -1,3 +1,16 @@
 # Allow .expect() in test code; production code must still use ? + typed errors.
 # See .claude/rules/rust/rust-error-handling.md and rust-testing.md.
 allow-expect-in-tests = true
+
+# Raw print macros are denied workspace-wide (REQ-026). User-facing output must
+# route through the `output::Reporter` abstraction in `patina-cli`; everything
+# else logs via `tracing`. The `tracing` macros stay permitted because they emit
+# structured events, not user output. A site that legitimately needs a raw print
+# (the `lock_helper` test-harness example) carries a scoped
+# `#[expect(clippy::disallowed_macros, reason = "...")]`.
+disallowed-macros = [
+    "std::println",
+    "std::eprintln",
+    "std::print",
+    "std::eprint",
+]
