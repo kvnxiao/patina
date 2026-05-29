@@ -137,9 +137,14 @@ where
 }
 
 /// Compute the state-directory root for `host` from `env` without
-/// touching the filesystem. Exposed for tests that want to assert
-/// the pure path resolution independently of directory creation.
-fn compute_root<F>(host: HostOs, env: &F) -> Result<Utf8PathBuf, StateDirError>
+/// touching the filesystem.
+///
+/// This is the pure, side-effect-free core of [`resolve`]: it does not
+/// create any directory. [`resolve`] layers directory materialization on
+/// top; repository discovery ([`crate::discovery`]) calls this directly so
+/// it can locate the persisted-default file without the side effect of
+/// creating the state tree on a read-only path.
+pub(crate) fn compute_root<F>(host: HostOs, env: &F) -> Result<Utf8PathBuf, StateDirError>
 where
     F: Fn(&str) -> Option<String>,
 {

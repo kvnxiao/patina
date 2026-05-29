@@ -1,11 +1,13 @@
 //! Top-level engine error type returned from every public entry point in
 //! [`crate`].
 //!
-//! Later phases extend [`EngineError`] with one variant per failure
-//! domain (discovery, config parse, journal, lock, hooks, …). For now the
-//! enum carries only the [`EngineError::NotImplemented`] placeholder so
-//! the async entry points in [`crate`] have a typed return without
-//! resorting to `todo!()` / `panic!()` (forbidden by REQ-024).
+//! [`EngineError`] aggregates one variant per failure domain (repository
+//! discovery, module discovery, config parse, state directory, variables,
+//! profile, template, path, journal, backup, lock, executor, hook,
+//! rollback). Each wraps its subsystem's typed error via `#[from]`, so `?`
+//! threads a subsystem failure up to the async entry points without
+//! `todo!()` / `panic!()` (forbidden by REQ-024). The `non_exhaustive`
+//! attribute keeps downstream `match` arms forward compatible.
 
 use thiserror::Error;
 
@@ -18,12 +20,6 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum EngineError {
-    /// Placeholder for entry points whose real implementation has not
-    /// yet landed. Removed once every subsystem is wired through in
-    /// later tasks.
-    #[error("patina-core operation not yet implemented: {0}")]
-    NotImplemented(&'static str),
-
     /// Repository-root resolution failed (REQ-003).
     #[error(transparent)]
     RepoDiscovery(#[from] crate::discovery::RepoDiscoveryError),

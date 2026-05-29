@@ -197,47 +197,22 @@ fn walk_up_for_root(start: &Utf8Path) -> Result<Option<Utf8PathBuf>, RepoDiscove
     Ok(None)
 }
 
-/// Compute the path of the persisted-default file under the
-/// per-machine state directory. Mirrors T-005's layout so a later
-/// refactor can replace this with a `state_dir::resolve()` call.
+/// Compute the path of the persisted-default file under the per-machine
+/// state directory (`<state>/patina/default_repo`).
 ///
-/// Returns `None` when the OS-specific environment variables that
-/// drive state-dir resolution are not set (e.g. tests with `HOME`
-/// unset).
+/// Routes through the canonical [`crate::state_dir::compute_root`] resolver
+/// (the pure, no-directory-creation variant) rather than re-deriving the
+/// per-OS layout here, so repo discovery and the state-directory module
+/// cannot drift on where state lives.
+///
+/// Returns `None` when the OS-specific environment variables that drive
+/// state-dir resolution are not set (e.g. tests with `HOME` unset).
 fn persisted_default_repo_path() -> Option<Utf8PathBuf> {
-    state_dir_root().map(|root| root.join("patina").join(PERSISTED_DEFAULT_FILENAME))
-}
-
-#[cfg(target_os = "linux")]
-fn state_dir_root() -> Option<Utf8PathBuf> {
-    if let Ok(xdg) = env::var("XDG_STATE_HOME")
-        && !xdg.is_empty()
-    {
-        return Some(Utf8PathBuf::from(xdg));
-    }
-    let home = env::var("HOME").ok().filter(|v| !v.is_empty())?;
-    Some(Utf8PathBuf::from(home).join(".local").join("state"))
-}
-
-#[cfg(target_os = "macos")]
-fn state_dir_root() -> Option<Utf8PathBuf> {
-    let home = env::var("HOME").ok().filter(|v| !v.is_empty())?;
-    Some(
-        Utf8PathBuf::from(home)
-            .join("Library")
-            .join("Application Support"),
-    )
-}
-
-#[cfg(target_os = "windows")]
-fn state_dir_root() -> Option<Utf8PathBuf> {
-    let local = env::var("LOCALAPPDATA").ok().filter(|v| !v.is_empty())?;
-    Some(Utf8PathBuf::from(local))
-}
-
-#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-fn state_dir_root() -> Option<Utf8PathBuf> {
-    None
+    crate::state_dir::compute_root(crate::state_dir::HostOs::current(), &|name: &str| {
+        env::var(name).ok().filter(|v| !v.is_empty())
+    })
+    .ok()
+    .map(|root| root.join(PERSISTED_DEFAULT_FILENAME))
 }
 
 /// Read the persisted-default file and return the contained

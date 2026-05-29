@@ -122,7 +122,10 @@ mod tests {
 
     #[test]
     fn other_engine_errors_map_to_generic() {
-        let err = EngineError::NotImplemented("x");
+        // Any non-lock-timeout EngineError falls through to the generic
+        // bucket; a state-directory failure stands in for "some other
+        // subsystem error".
+        let err = EngineError::StateDir(patina_core::StateDirError::MissingEnv { name: "HOME" });
         assert_eq!(ExitCode::from_engine_error(&err), ExitCode::Generic);
     }
 
