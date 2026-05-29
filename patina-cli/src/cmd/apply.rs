@@ -18,6 +18,7 @@
 
 use crate::cli::ApplyArgs;
 use crate::cli::Pager;
+use crate::exit_code::ExitCode;
 use crate::output::diff;
 use crate::output::reporter::Reporter;
 use anyhow::Context;
@@ -91,7 +92,7 @@ pub async fn run(
         (true, _) => true,
         (false, Tty::NonInteractive) => {
             // Non-TTY without --yes: preview only, exit 0 (CHK-028).
-            return Ok(0);
+            return Ok(ExitCode::Success.code());
         }
         (false, Tty::Interactive) => {
             reporter.prompt("Apply? [y/N] ");
@@ -102,7 +103,7 @@ pub async fn run(
 
     if !should_apply {
         // User declined the prompt.
-        return Ok(5);
+        return Ok(ExitCode::UserDeclined.code());
     }
 
     let result = execute_plan(&resolved, &request)
@@ -123,7 +124,7 @@ async fn run_json(
         // --json without --yes is a preview; never mutate.
         let document = json_envelope(resolved, "previewed");
         reporter.json(&document);
-        return Ok(0);
+        return Ok(ExitCode::Success.code());
     }
 
     let result = execute_plan(resolved, request)
@@ -218,13 +219,14 @@ fn report_result(result: &ApplyResult, reporter: &mut impl Reporter) {
     }
 }
 
-/// Exit code for an apply result (REQ-017 table).
+/// Exit code for an apply result (REQ-022 table).
 fn exit_code_for(result: &ApplyResult) -> i32 {
     match result {
-        ApplyResult::Applied { .. } => 0,
-        ApplyResult::Aborted { .. } => 2,
-        ApplyResult::RolledBack { .. } => 3,
+        ApplyResult::Applied { .. } => ExitCode::Success,
+        ApplyResult::Aborted { .. } => ExitCode::PreApplyAbort,
+        ApplyResult::RolledBack { .. } => ExitCode::PostApplyRollback,
     }
+    .code()
 }
 
 /// Build the engine [`ApplyRequest`] from the parsed flags.

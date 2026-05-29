@@ -13,6 +13,7 @@
 //! (REQ-023's read-only escape hatch), not a non-zero exit.
 
 use crate::cli::StatusArgs;
+use crate::exit_code::ExitCode;
 use crate::output::reporter::Reporter;
 use anyhow::Context;
 use anyhow::Result;
@@ -45,7 +46,7 @@ pub async fn run(args: &StatusArgs, reporter: &mut impl Reporter) -> Result<i32>
     } else {
         render_human(&report, reporter);
     }
-    Ok(0)
+    Ok(ExitCode::Success.code())
 }
 
 /// Build the `--json` envelope: `last_apply`, `files`, and the four

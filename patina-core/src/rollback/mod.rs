@@ -45,9 +45,9 @@ use crate::journal::COMMIT_SUFFIX;
 use crate::journal::OsSyncer;
 use crate::journal::ROLLED_BACK_SUFFIX;
 use crate::journal::Syncer;
-use crate::lock::EXCLUSIVE_TIMEOUT;
 use crate::lock::LockKind;
 use crate::lock::acquire as acquire_lock;
+use crate::lock::exclusive_timeout;
 use crate::state_dir::resolve as resolve_state_dir;
 use camino::Utf8Path;
 pub use replay::replay_entry;
@@ -115,7 +115,7 @@ pub fn run() -> Result<(), EngineError> {
     let lock_path = state_dir.join("lock");
 
     // Mutating subcommands take the exclusive lock for the whole rollback.
-    let _guard = acquire_lock(&lock_path, LockKind::Exclusive, EXCLUSIVE_TIMEOUT)?;
+    let _guard = acquire_lock(&lock_path, LockKind::Exclusive, exclusive_timeout())?;
 
     let Some(timestamp) = latest_rollbackable(&journal_dir)? else {
         return Err(RollbackError::NoPriorApply.into());

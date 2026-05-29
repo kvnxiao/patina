@@ -49,9 +49,9 @@ use crate::journal::PlannedOperation;
 use crate::journal::fingerprint_bytes;
 use crate::journal::recover_orphans;
 use crate::journal::timestamp_to_rfc3339;
-use crate::lock::EXCLUSIVE_TIMEOUT;
 use crate::lock::LockKind;
 use crate::lock::acquire as acquire_lock;
+use crate::lock::exclusive_timeout;
 use crate::paths::canonicalize;
 use crate::paths::expand_tilde;
 use crate::profile::load_auto_match_rules;
@@ -300,7 +300,7 @@ pub async fn execute(
     let _guard = acquire_lock(
         &resolved.lock_path(),
         LockKind::Exclusive,
-        EXCLUSIVE_TIMEOUT,
+        exclusive_timeout(),
     )?;
 
     // Resolve every hook's shell up front so an unresolved explicit shell

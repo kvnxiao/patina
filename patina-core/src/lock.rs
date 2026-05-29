@@ -65,6 +65,32 @@ pub const EXCLUSIVE_TIMEOUT: Duration = Duration::from_mins(1);
 /// expiry the caller warns and proceeds without the lock.
 pub const SHARED_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// Environment variable overriding the exclusive-lock wait cap, in
+/// milliseconds. Exists solely so the integration suite can provoke a
+/// [`LockError::Timeout`] (and the CLI's exit-code-4 mapping) without
+/// waiting the full production [`EXCLUSIVE_TIMEOUT`]. Unset in normal
+/// operation; a missing or unparseable value falls back to the constant.
+pub const EXCLUSIVE_TIMEOUT_ENV: &str = "PATINA_LOCK_TIMEOUT_MS";
+
+/// The exclusive-lock wait cap honouring the [`EXCLUSIVE_TIMEOUT_ENV`]
+/// test override.
+///
+/// Returns [`EXCLUSIVE_TIMEOUT`] unless `PATINA_LOCK_TIMEOUT_MS` is set to
+/// a parseable non-negative integer count of milliseconds, in which case
+/// that duration is used instead. The mutating subcommands acquire the
+/// exclusive lock with this value so the timeout cap is parameterisable
+/// from the test harness.
+#[must_use = "the returned duration is the exclusive-lock acquisition cap"]
+pub fn exclusive_timeout() -> Duration {
+    match std::env::var(EXCLUSIVE_TIMEOUT_ENV) {
+        Ok(raw) => match raw.parse::<u64>() {
+            Ok(ms) => Duration::from_millis(ms),
+            Err(_) => EXCLUSIVE_TIMEOUT,
+        },
+        Err(_) => EXCLUSIVE_TIMEOUT,
+    }
+}
+
 /// Interval between successive non-blocking acquisition attempts.
 ///
 /// Short enough that a freed lock is picked up promptly, long enough that

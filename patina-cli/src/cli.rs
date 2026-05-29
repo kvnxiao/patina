@@ -5,11 +5,42 @@
 //! so the command logic lives in [`crate::cmd`] and stays unit-testable
 //! without going through clap.
 
+use crate::exit_code::ExitCode;
+use crate::output::reporter::Reporter;
 use camino::Utf8PathBuf;
 use clap::Args;
 use clap::Parser;
 use clap::Subcommand;
 use clap::ValueEnum;
+
+/// Resolve a command's outcome to a process exit code (REQ-022).
+///
+/// This is the single funnel every subcommand terminates through, so the
+/// exit-code contract lives in one place. A subcommand returns
+/// `Ok(code)` when it reached a terminal state under its own control (a
+/// successful apply, an aborted-by-hook apply, a declined prompt); the
+/// code is returned verbatim. An `Err` is an engine-level failure: its
+/// error chain is rendered to the reporter's err stream and mapped to an
+/// [`ExitCode`] via [`ExitCode::from_error_chain`] — the lock timeout
+/// becomes `4`, every other failure `1`.
+///
+/// The returned `i32` is what [`crate::main`] hands to
+/// [`std::process::exit`].
+#[must_use = "the returned code is the process's terminal exit status"]
+pub fn resolve_exit_code(outcome: anyhow::Result<i32>, reporter: &mut impl Reporter) -> i32 {
+    match outcome {
+        Ok(code) => code,
+        Err(error) => {
+            // Render the full context chain so the underlying cause (e.g.
+            // the offending TOML line) reaches the user, not just the
+            // outermost `anyhow` context line.
+            for cause in error.chain() {
+                reporter.warn(&cause.to_string());
+            }
+            ExitCode::from_error_chain(&error).code()
+        }
+    }
+}
 
 /// `patina` — a cross-platform dotfile manager.
 #[derive(Debug, Parser)]

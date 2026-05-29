@@ -21,6 +21,7 @@
 
 use crate::cli::DebugCommand;
 use crate::cli::DebugJournalArgs;
+use crate::exit_code::ExitCode;
 use crate::output::reporter::Reporter;
 use patina_core::load_plan_file;
 use patina_core::render_plan;
@@ -43,7 +44,7 @@ fn run_journal(args: &DebugJournalArgs, reporter: &mut impl Reporter) -> i32 {
         Ok((plan, timestamp)) => {
             let rendered = render_plan(&plan, &timestamp);
             reporter.diff(&rendered);
-            0
+            ExitCode::Success.code()
         }
         Err(err) => {
             // The typed error's own `Display` is the single source of truth
@@ -51,7 +52,7 @@ fn run_journal(args: &DebugJournalArgs, reporter: &mut impl Reporter) -> i32 {
             // `Decode` carries its `JournalError` (a version mismatch names
             // both majors). Mirrors `rollback.rs`'s `err.to_string()` path.
             reporter.warn(&err.to_string());
-            1
+            ExitCode::Generic.code()
         }
     }
 }

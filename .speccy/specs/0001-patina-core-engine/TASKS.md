@@ -1519,7 +1519,7 @@ Suggested files: `patina-cli/src/cmd/debug.rs`,
 </task-scenarios>
 </task>
 
-<task id="T-020" state="pending" covers="REQ-022">
+<task id="T-020" state="completed" covers="REQ-022">
 ## Formalise CLI exit codes 0 / 1 / 2 / 3 / 4 / 5
 
 Add an `ExitCode` enum (or `i32` constants) in `patina-cli` mapping

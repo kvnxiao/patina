@@ -22,6 +22,7 @@
 use crate::cli::RollbackArgs;
 use crate::cmd::apply::PromptReader;
 use crate::cmd::apply::Tty;
+use crate::exit_code::ExitCode;
 use crate::output::reporter::Reporter;
 use anyhow::Result;
 use patina_core::EngineError;
@@ -51,7 +52,7 @@ pub async fn run(
             } else {
                 reporter.line("Would roll back the most recent apply. Re-run with --yes to apply.");
             }
-            return Ok(0);
+            return Ok(ExitCode::Success.code());
         }
         (false, Tty::Interactive) => {
             reporter.prompt("Roll back the most recent apply? [y/N] ");
@@ -61,7 +62,7 @@ pub async fn run(
     };
 
     if !should_proceed {
-        return Ok(5);
+        return Ok(ExitCode::UserDeclined.code());
     }
 
     match patina_core::rollback(RollbackOptions::default()).await {
@@ -71,7 +72,7 @@ pub async fn run(
             } else {
                 reporter.line("Rolled back the most recent apply.");
             }
-            Ok(0)
+            Ok(ExitCode::Success.code())
         }
         // The two typed user-facing outcomes exit 1 with the message on
         // stderr rather than bubbling up as an `anyhow` error.
@@ -79,7 +80,7 @@ pub async fn run(
             err @ (RollbackError::NoPriorApply | RollbackError::RollbackPartial { .. }),
         )) => {
             reporter.warn(&err.to_string());
-            Ok(1)
+            Ok(ExitCode::Generic.code())
         }
         Err(other) => Err(other.into()),
     }
