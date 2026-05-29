@@ -330,11 +330,21 @@ The `patina remove <path>` subcommand removes the `[[file]]` entry
 for the named target from its module's `patina.toml` and replaces
 the target on disk with a regular file containing the last-applied
 content (so the user's system remains functional). With `--purge`,
-the target file is also deleted from the system entirely. If
-removing the entry leaves the module's `patina.toml` with no
-`[[file]]` or `[[hook]]` entries, the empty `patina.toml` is left
-in place; the empty module directory is the user's call to clean
-up (Patina does not auto-delete user files).
+the target file is also deleted from the system entirely. After
+mutating the repository and the target, `remove` re-journals the new
+managed set: it writes a fresh `<ts>.COMMIT` apply record (SPEC-0001
+REQ-029) that no longer lists the removed target, so `patina status`
+treats the path as deliberately unmanaged (absent from the report)
+rather than as an ORPHANED leftover. ORPHANED, per SPEC-0001
+REQ-018, is reserved for a target a user dropped *implicitly* — by
+hand-editing `patina.toml` or deleting a source file — without
+running `remove`; the fresh COMMIT is what keeps the explicit-remove
+path out of that bucket. This mirrors `patina promote`, which also
+re-journals after mutating (REQ-004). If removing the entry leaves
+the module's `patina.toml` with no `[[file]]` or `[[hook]]` entries,
+the empty `patina.toml` is left in place; the empty module directory
+is the user's call to clean up (Patina does not auto-delete user
+files).
 
 <done-when>
 - `patina remove ~/.zshrc` (without `--purge`) removes the
@@ -346,9 +356,11 @@ up (Patina does not auto-delete user files).
 - `patina remove <path>` against a path that is not currently
   managed exits 1 with a typed error naming the path and the
   three discovery sources (env, walk-up, persisted default).
-- After `patina remove ~/.zshrc`, running `patina apply --yes` is
-  a no-op for `~/.zshrc` (the file is no longer managed; status
-  reports it as unmanaged).
+- `patina remove ~/.zshrc` writes a fresh `<ts>.COMMIT` apply record
+  that omits `~/.zshrc`; consequently `patina status` no longer lists
+  `~/.zshrc` (it is unmanaged — absent from the report — not
+  ORPHANED), and a subsequent `patina apply --yes` is a no-op for
+  `~/.zshrc`.
 - For copy-mode targets, the "last-applied content" is the bytes of
   the journaled source — the canonical source path recorded per
   SPEC-0001 REQ-029 — which the engine reads from the repository at
@@ -387,7 +399,10 @@ Given a tempdir HOME and repository, an applied symbolic link at
 when `patina remove ~/.zshrc --yes` runs,
 then `~/.zshrc` is a regular file with content "shell-config",
 `<repo>/zsh/patina.toml` no longer contains a `[[file]]` entry
-for `~/.zshrc`, and `<repo>/zsh/zshrc` is unchanged.
+for `~/.zshrc`, `<repo>/zsh/zshrc` is unchanged, and a subsequent
+`patina status --json` does not list `~/.zshrc` in its `files`
+array (the fresh COMMIT omitted it, so it is unmanaged rather than
+ORPHANED).
 </scenario>
 
 <scenario id="CHK-006">
@@ -984,6 +999,7 @@ direction; SPEC content updated in the same revision.
 | 2026-05-26 | human/kevin  | Resolve all five self-review questions. (a) Confirm move-on-add in REQ-002. (b) Drop cloud-sync detection entirely from REQ-005, REQ-006, the Assumptions block, and the Summary; DEC-004 is reframed as "no detection, docs only" with v1.1 deferral; `docs/operating-environment.md` carries the user-facing callout. (c) Drop the `windows_dev_mode.cache` file and 7-day TTL from REQ-007; the registry flag is re-read on every apply that needs it. (d) Confirm `patina-elevate.exe` refuses non-elevated invocation. (e) No separate `<json-schema>` block in REQ-010; the per-command scenarios pin field shape implicitly. Cross-reference SPEC-0003 in non-goals: no `--linger` flag in v1.0; docs include the manual `sudo loginctl enable-linger` snippet. |
 | 2026-05-27 | human/kevin via assistant | Rename the docs target from `docs/operating-environment.md` to `docs/USER_GUIDE.md` everywhere SPEC-0002 references it (5 sites across Summary, Non-goals, REQ-005 prose, DEC-004, and the prior Changelog row's residual context). SPEC-0001's REQ-027 now formalises `docs/USER_GUIDE.md` with named structural anchors and the cloud-sync paths-to-avoid bullet list lives under its `## State directory` section. No requirement-level change in this SPEC; this is a cross-SPEC reference rename driven by the SPEC-0001 amend. |
 | 2026-05-29 | human/kevin via assistant | Align `patina remove` / `patina promote` with the SPEC-0001 REQ-029 amendment (committed `ApplyRecord` now retains per-target source + a 32-byte blake3 content hash). REQ-003: redefine the template-target "last-applied content" as re-rendering the journaled source at remove time (the journal records only a blake3 hash of the rendered bytes, not the bytes), and source the copy-mode content from the journaled source path; DEC-005 rewritten to match and to record why full rendered bytes are not journaled. CHK-007: "SHA of the new content" → "blake3 hash of the new content (SPEC-0001 REQ-029)". Add a cross-SPEC handoff bullet noting `remove`/`promote` read the target→source map and content hash from the committed record. Not yet decomposed, so no TASKS reconciliation. |
+| 2026-05-29 | human/kevin via assistant | Fix REQ-003's "status reports it as unmanaged" — there is no such state in SPEC-0001's classifier, which has exactly CLEAN/DRIFTED/MISSING/ORPHANED (`status/classify.rs`). Left as written, a removed-but-on-disk target would classify ORPHANED (removed from the plan, still present) until the next apply, surprising the user who just ran `remove`. Require `patina remove` to re-journal the new managed set after mutating (write a fresh `<ts>.COMMIT` omitting the removed target), so `patina status` simply omits the path (unmanaged/absent) and ORPHANED stays reserved for the *implicit* drop (hand-edited TOML / deleted source). Mirrors `promote`, which already re-journals (REQ-004). Reword the REQ-003 prose + done-when bullet, extend CHK-005 to assert status no longer lists the target, and update the cross-SPEC handoff bullet. No dependency change; not yet decomposed, so no TASKS reconciliation. |
 </changelog>
 
 ## Notes
@@ -998,9 +1014,10 @@ SPEC-0002 depends on SPEC-0001 for:
   directly but then triggers a re-apply through the engine.
 - The committed apply record (SPEC-0001 REQ-029). `patina remove`
   reads each target's canonical source path from it (to re-render
-  or re-read last-applied content) and `patina promote` writes a
-  fresh record whose per-target blake3 content hash status then
-  classifies against.
+  or re-read last-applied content) and then writes a fresh record
+  omitting the removed target so status treats it as unmanaged
+  rather than ORPHANED; `patina promote` writes a fresh record whose
+  per-target blake3 content hash status then classifies against.
 - The advisory file lock at `<state>/patina/lock`. All mutating
   SPEC-0002 commands acquire the exclusive lock as established in
   SPEC-0001 REQ-023.

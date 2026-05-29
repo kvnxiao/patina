@@ -32,13 +32,17 @@ Windows).
 
 Drift detection runs only against non-symbolic-link targets (symbolic
 links cannot drift because they resolve to the source). When a
-deployed copy-mode or template-rendered file's hash diverges from
-the journal-recorded expected hash, the watcher emits an OS-native
-desktop notification via `notify-rust` and the next `patina status`
-invocation reports the file as DRIFTED. There is no `on_drift` hook
-in v1.0; the user resolves drift by re-running `patina apply` (to
-revert to source) or by running `patina promote` (defined in
-SPEC-0002, to update the source from the target).
+deployed copy-mode or template-rendered file's `blake3` hash diverges
+from the journal-recorded expected hash, the watcher emits an
+OS-native desktop notification via `notify-rust` so the user learns of
+the edit proactively. The DRIFTED *classification* itself is not the
+watcher's to make: `patina status` already reports any content target
+whose live bytes differ from the recorded hash (SPEC-0001 REQ-018),
+watcher or no watcher. The watcher's drift cache is its notification
+ledger, not a status input. There is no `on_drift` hook in v1.0; the
+user resolves drift by re-running `patina apply` (to revert to source)
+or by running `patina promote` (defined in SPEC-0002, to update the
+source from the target).
 
 The watcher coordinates with the CLI through the advisory file lock
 defined in SPEC-0001 REQ-023. The CLI has priority: when a manual
@@ -565,12 +569,21 @@ the watcher computes the file's `blake3` hash and compares to the
 journal-recorded expected hash — a 32-byte `blake3` digest per
 SPEC-0001 REQ-029, so the freshly computed and recorded hashes use
 the same algorithm and are directly comparable. If they differ, the
-watcher emits
-an OS desktop notification via `notify-rust` and writes a
-DRIFTED event to the structured log. The next `patina status`
-invocation reads the watcher's recorded drift events (via a
-small drift state file at `<state>/patina/drift.cache`) and
-reports the affected files as DRIFTED.
+watcher emits an OS desktop notification via `notify-rust`, writes a
+DRIFTED event to the structured log, and records the divergence in a
+small drift cache at `<state>/patina/drift.cache`.
+
+The drift cache is the watcher's *notification ledger* — it backs the
+per-target rate limit (DEC-004), the `patina debug drift-cache`
+decode surface, and the watcher's own metrics. It is **not** consulted
+by `patina status`. `patina status` classifies a content target as
+DRIFTED by SPEC-0001 REQ-018's own live comparison — freshly hashing
+the target and comparing to the recorded `blake3` (REQ-029) — so a
+drifted file is reported whether or not the watcher is running, and a
+file edited and then reverted to its recorded bytes reports CLEAN (the
+live hash matches) even though the watcher logged the intervening
+edit. Routing the DRIFTED verdict through a stale cache entry instead
+would contradict that, so the cache deliberately does not feed status.
 
 <done-when>
 - A FS event on a watched non-symlink target triggers a hash
@@ -584,6 +597,10 @@ reports the affected files as DRIFTED.
 - The drift cache survives watcher restarts; the next
   `patina apply` clears it when its journal becomes the new
   truth.
+- The drift cache is **not** read by `patina status`. `patina status`
+  derives DRIFTED solely from SPEC-0001 REQ-018's live re-hash, so a
+  content target reverted to its recorded bytes after an edit reports
+  CLEAN even while the cache still holds the intervening edit event.
 - A FS event on a symlink target is NOT processed by drift
   detection (symlinks cannot drift because they resolve to the
   source).
@@ -642,11 +659,13 @@ notification.
 </scenario>
 
 <scenario id="CHK-012">
-Given the post-state of CHK-011 (drift recorded),
+Given the post-state of CHK-011 (`~/.gitconfig` now holds content
+hashing to H2 ≠ the recorded H1),
 when `patina status --json` runs,
 then the JSON output's `files` array contains an entry with
-`path` containing `.gitconfig` and `state = "drifted"`, and the
-`drifted` aggregate counter is at least 1.
+`path` containing `.gitconfig` and `state = "drifted"` — derived
+from SPEC-0001 REQ-018's live re-hash, not from the drift cache —
+and the `drifted` aggregate counter is at least 1.
 </scenario>
 
 <scenario id="CHK-018">
@@ -1008,6 +1027,7 @@ direction; SPEC content updated in the same revision.
 | 2026-05-26 | human/kevin  | Resolve all four self-review questions. (a) Defer Linux `--linger` flag to v1.1: delete REQ-002, rewrite REQ-001/REQ-003 to remove `--linger` references, rewrite DEC-005 to record the docs-only stance, add a non-goal entry; the user runs `sudo loginctl enable-linger $USER` manually per `docs/operating-environment.md`. (b) Pin watcher journal-rescan mechanism in REQ-005: subscribe via `notify` to `<state>/patina/journal/` and re-read on new `.plan` or `.COMMIT` files; add CHK-017. (c) Lock drift cache format in REQ-007 as postcard with a `u16` version envelope at offset 0; add `patina debug drift-cache <path>` subcommand parallel to `patina debug journal`; add CHK-018. (d) Confirm `ERROR_SHARING_VIOLATION` retry budget remains hardcoded for v1.0. |
 | 2026-05-27 | human/kevin via assistant | Rename the docs target from `docs/operating-environment.md` to `docs/USER_GUIDE.md` everywhere SPEC-0003 references it (4 body sites in Assumptions, Non-goals, REQ-001 prose, and DEC-005; the historical 2026-05-26 row above retains the original name as a point-in-time snapshot). SPEC-0001's REQ-027 now formalises `docs/USER_GUIDE.md` with named structural anchors. The `sudo loginctl enable-linger $USER` snippet for survive-logout watcher behavior lands inside `docs/USER_GUIDE.md` in a section SPEC-0003's implementer adds (e.g. extending `## Troubleshooting` or introducing a `## Watch service` section); REQ-027 does not constrain the section name. No requirement-level change in SPEC-0003; this is a cross-SPEC reference rename driven by the SPEC-0001 amend. |
 | 2026-05-29 | human/kevin via assistant | Align with the SPEC-0001 REQ-029 amendment and correct a phantom dependency. REQ-005: the watcher reads subscriptions from the committed `<ts>.COMMIT` record (not the `<ts>.plan`, which is deleted at commit), recovering per-target source paths via REQ-029's `Content.source` — fixes the previously unsatisfiable "read sources from the `.plan`". REQ-007: note the drift `blake3` now matches the journal's recorded `blake3` (REQ-029) — same algorithm, directly comparable. REQ-009 / DEC-009 / cross-SPEC handoffs: SPEC-0003 now OWNS the `<state>/patina/logs/` directory and the `tracing-appender` daily-rotation (keep-7) stack; dropped the false attribution to SPEC-0001 REQ-016, which defines only the state-directory root plus `journal/` and `backups/`. Not yet decomposed, so no TASKS reconciliation. |
+| 2026-05-29 | human/kevin via assistant | Resolve a status/drift-cache conflict surfaced by reviewing the shipped SPEC-0001 implementation. SPEC-0001's `patina status` already classifies a content target as DRIFTED by live `blake3` re-hash vs the recorded hash (REQ-018, `status/classify.rs`) — standalone and authoritative on *current* content. REQ-007's prior wording had `patina status` read the watcher's `drift.cache` and report DRIFTED from it, which is redundant and wrong for an edited-then-reverted file (live hash CLEAN, cache stale). Reword the Summary and REQ-007 so the drift cache is explicitly the watcher's *notification ledger* (per-target rate limit + `patina debug drift-cache` + watcher metrics), NOT a status input; add a `<done-when>` bullet pinning "the drift cache is not read by `patina status`"; reword CHK-012's premise to derive the DRIFTED verdict from the live H2 ≠ H1 divergence rather than a cache read. No new behaviour and no dependency change; not yet decomposed, so no TASKS reconciliation. |
 </changelog>
 
 ## Notes
