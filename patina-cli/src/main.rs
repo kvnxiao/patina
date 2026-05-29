@@ -47,6 +47,10 @@ async fn main() -> anyhow::Result<()> {
             let mut reporter = StreamReporter::new();
             cmd::rollback::run(&args, tty, &mut reader, &mut reporter).await?
         }
+        Command::Debug(command) => {
+            let mut reporter = StreamReporter::new();
+            cmd::debug::run(&command, &mut reporter)
+        }
     };
     std::process::exit(code);
 }

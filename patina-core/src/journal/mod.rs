@@ -57,6 +57,7 @@ mod probe;
 mod progress;
 mod record;
 mod recovery;
+mod render;
 mod sync;
 
 use camino::Utf8Path;
@@ -77,6 +78,9 @@ pub use record::timestamp_to_rfc3339;
 pub use recovery::ROLLED_BACK_SUFFIX;
 pub use recovery::RecoveryReport;
 pub use recovery::recover_orphans;
+pub use render::PlanRenderError;
+pub use render::load_plan_file;
+pub use render::render_plan;
 pub use sync::OsSyncer;
 pub use sync::Syncer;
 use thiserror::Error;

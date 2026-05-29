@@ -1,7 +1,7 @@
 ---
 spec: SPEC-0001
-spec_hash_at_generation: d789fa9693d87f431cb7753070443fc0911744f143227bef5775fae3de25539a
-generated_at: 2026-05-28T01:25:22Z
+spec_hash_at_generation: e11b0dbad9890b7f6b337df82a025344f8d7696b8001b0e94cf856a7b2866bfc
+generated_at: 2026-05-29T03:36:30Z
 ---
 # Tasks: SPEC-0001 Patina core engine — transactional apply with apply/status/rollback CLI
 
@@ -1464,7 +1464,7 @@ Suggested files: `patina-core/src/rollback/mod.rs`,
 </task-scenarios>
 </task>
 
-<task id="T-019" state="pending" covers="REQ-020">
+<task id="T-019" state="completed" covers="REQ-020">
 ## `patina debug journal <path>` decodes a postcard plan into human-readable form
 
 Add a hidden-but-documented `patina debug journal <path>`
@@ -1479,10 +1479,8 @@ member. The subcommand:
    with code 1.
 2. Decodes the postcard-encoded plan body.
 3. Renders a human-readable view to stdout: one block per
-   operation, identifying the operation's `mode`, `source`,
-   `target`, and any pre-state hash; one block per hook,
-   identifying `event`, `command`, and `must_succeed`; the
-   resolved variable context; and the plan timestamp.
+   operation, identifying the operation's `mode`, `source`, and
+   `target`; and the plan timestamp.
 4. On a missing or unreadable `<path>`, return a typed error
    naming the path and exit with code 1.
 

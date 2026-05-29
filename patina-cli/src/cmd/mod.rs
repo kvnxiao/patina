@@ -4,5 +4,6 @@
 //! semantics live in `patina_core`.
 
 pub mod apply;
+pub mod debug;
 pub mod rollback;
 pub mod status;

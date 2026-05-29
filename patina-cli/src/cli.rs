@@ -5,6 +5,7 @@
 //! so the command logic lives in [`crate::cmd`] and stays unit-testable
 //! without going through clap.
 
+use camino::Utf8PathBuf;
 use clap::Args;
 use clap::Parser;
 use clap::Subcommand;
@@ -30,6 +31,26 @@ pub enum Command {
 
     /// Reverse the most recent successful apply via the journal and backups.
     Rollback(RollbackArgs),
+
+    /// Debugging utilities. Hidden from the top-level help summary but
+    /// documented; `journal` decodes a binary plan file post-mortem.
+    #[command(hide = true, subcommand)]
+    Debug(DebugCommand),
+}
+
+/// Subcommands under the `patina debug` namespace.
+#[derive(Debug, Subcommand)]
+pub enum DebugCommand {
+    /// Decode a `<ts>.plan` journal file into a human-readable view.
+    Journal(DebugJournalArgs),
+}
+
+/// Flags for `patina debug journal`.
+#[derive(Debug, Args)]
+pub struct DebugJournalArgs {
+    /// Path to the `<ts>.plan` file to decode.
+    #[arg(value_name = "path")]
+    pub path: Utf8PathBuf,
 }
 
 /// Flags for `patina rollback`.

@@ -849,7 +849,7 @@ then the JSON output's `repo_root` field equals `/tmp/work/dot`.
 ### REQ-011: Single-fsync upfront postcard journal records the plan before any mutation
 
 Before performing any filesystem mutation, the engine computes the
-full plan (list of file operations and hook invocations) and writes
+full plan (list of file operations) and writes
 it to a single binary file at `<state>/patina/journal/<ts>.plan`
 using `postcard` encoding. The file is fsync'd once, along with its
 parent directory's fsync, before any operation in the plan is
@@ -1365,11 +1365,9 @@ running binary, the command emits a typed error and exits 1.
 - `patina debug` exists as a clap subcommand group; running
   `patina debug --help` lists `journal` as a subcommand and exits 0.
 - `patina debug journal /path/to/plan` on a valid plan prints the
-  recorded operations, hooks, variable context, and timestamps to
-  stdout.
+  recorded operations and timestamps to stdout.
 - The output is structured (one operation per line or per indented
-  block) and identifies each op's mode, source, target, and
-  pre-state hash where applicable.
+  block) and identifies each op's mode, source, and target.
 - An invalid path produces a typed error naming the path and
   exits 1.
 - A plan written by a newer version of Patina (version envelope
@@ -2086,6 +2084,7 @@ same revision.
 | 2026-05-25 | human/kevin  | Resolve six self-review questions. Drop `patina.repo_root` from built-ins; add `patina.env.*` map for env access. Split REQ-002 (async lib) from new REQ-024 (no-panic enforcement). Keep hook schema minimal; route OS/env conditionals through `when` clauses against `patina.env.*`. Default `[[file]]` mode is `symlink`. Add DEC-011 capturing backward-only recovery. `--json` alone never mutates; `--json --yes` mutates and reports result. |
 | 2026-05-26 | human/kevin  | Add multi-target fan-out to `[[file]]` schema in REQ-005. Each entry declares exactly one of `target` (string) or `targets` (non-empty array of strings); both, neither, or `targets = []` are parse errors. All five modes support `targets`: the engine materializes the source at every listed target path according to the declared mode, recording one journal operation per (source, target_i) pair so per-target progress, status, backup, and rollback work without special-casing. Update REQ-018 to report each target as its own row with independent CLEAN/DRIFTED/MISSING/ORPHANED counters. Update REQ-019 to require atomic per-`[[file]]`-entry rollback: any target failure in the entry reverts all of the entry's targets as a unit. Add scenarios CHK-042..049 covering symlink, copy, template, parse-error, multi-target status, and multi-target rollback. |
 | 2026-05-27 | human/kevin via assistant | Close five gaps surfaced by north-star audit against AGENTS.md (no prior `state="completed"` task is invalidated; all 21 existing tasks remain `pending`). Add REQ-025 (CI matrix gates merge on macOS / Linux / Windows; quality-bar parity rule operationalised). Add REQ-026 (`output::Reporter` trait with `HumanReporter` + `JsonReporter` impls; `clippy.toml` `disallowed-macros` denies `std::println` / `std::eprintln` / `std::print` / `std::eprint` outside the `output` module; `tracing` macros stay permitted). Add REQ-027 (`docs/ARCHITECTURE.md` + `docs/USER_GUIDE.md` with named structural anchors; cloud-sync paths-to-avoid list lives under `## State directory` as a markdown bullet list). Add REQ-028 (`deny.toml` at repo root with `[licenses]` / `[advisories]` / `[bans]` / `[sources]` tables; `cargo deny check` runs as a required-status-check on `push` and `pull_request`). Amend REQ-020 in place to name `patina debug` as a clap subcommand group — extension point for SPEC-0003's `debug drift-cache` — and add CHK-050 covering `patina debug --help`. New scenarios CHK-050..061 follow the existing numbering. No prior REQ semantics changed. |
+| 2026-05-28 | human/kevin via assistant | Reconcile REQ-020 and REQ-011 with the file-operations-only on-disk plan format (surfaced by a blocking T-019 review). The serialized `Plan`/`PlannedOperation` model (T-011) records only file operations (symlink / render / copy with source + target); it carries no hooks, no resolved variable context, and no pre-state hash. REQ-020's `<done-when>` is narrowed to drop the "hooks, variable context" and "pre-state hash where applicable" rendering promises (`debug journal` now prints recorded operations + timestamps, identifying each op's mode / source / target); REQ-011's prose drops the stray "and hook invocations" (its own `<done-when>` only ever committed to file operations). No `<scenario>`, `<behavior>`, `<done-when>` test surface changed beyond the two narrowed REQ-020 bullets; CHK-034 and CHK-050 are untouched. Cross-spec verified: SPEC-0002/0003 read no hooks/variable-context/pre-state-hash from the plan — pre-state/expected hashes live in the COMMIT/backup record (REQ-017, rollback) and the SPEC-0003 drift-cache, and SPEC-0003 references `debug journal` only as a structural template for `debug drift-cache`. T-019 stays `pending`; the SPEC-drift blocker is resolved by this amendment, leaving only the style fix for the next implementer pass. No prior `state="completed"` task is invalidated. |
 </changelog>
 
 ## Notes
