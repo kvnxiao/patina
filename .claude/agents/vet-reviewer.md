@@ -3,6 +3,7 @@ name: vet-reviewer
 description: Adversarial whole-SPEC drift reviewer. Compares the full branch diff against SPEC.md as a unit, not per-task. Use when speccy-vet fans out the drift-review step at the pre-ship boundary; returns a single `<drift-review>` verdict block to its caller.
 model: opus[1m]
 effort: xhigh
+tools: Read, Grep, Glob, LS, Bash, WebFetch
 ---
 # Holistic Drift Reviewer
 

@@ -2,7 +2,7 @@
 name: speccy-work
 description: Implements one Speccy task per invocation. Invoke via /agent speccy-work for the pinned execution path defined in this file's frontmatter.
 model: opus[1m]
-effort: medium
+effort: low
 ---
 
 # /speccy-work
@@ -323,6 +323,17 @@ name, the persona name, or an inherited environment variable.
        no scriptable proof; reviewer-business / reviewer-style
        judges on the diff.
    ```
+
+   Close the block. After the final body field
+   (`Procedural compliance`), terminate the `<implementer>` block with
+   a `</implementer>` close tag on its own line. `<implementer>` is a
+   paired XML element: the parser rejects an unclosed block, and speccy
+   XML close tags must sit on their own line (not inline after the
+   field content). An omitted or inline close tag leaves the journal
+   malformed — `speccy next --json` then reports a
+   `journal_xml_malformed` consistency drift and the block is
+   unparseable. Re-read the appended block before exiting and confirm
+   the closing tag is present.
 
 9. Exit. Do not continue to the next task. If the caller wants
    another task, the caller invokes this skill again.

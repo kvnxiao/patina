@@ -44,6 +44,14 @@ is already agreed.
 
 2. Write SPEC.md following the PRD template.
 
+   When the slice touches existing code, invoke the `plan-explorer`
+   subagent before/while drafting to trace the relevant feature
+   through its entry points, call flows, and architecture layers.
+   Fold its grounding into the `## Summary` prose and the
+   `<requirement>` blocks. The explorer's report is **ephemeral**: do
+   NOT persist it to a new `*.md` artifact file — its only durable home
+   is the existing SPEC.md sections above.
+
    Canonical SPEC.md shape: `references/spec.md`.
 
    If the brainstorm output
