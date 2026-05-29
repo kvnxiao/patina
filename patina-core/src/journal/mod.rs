@@ -244,23 +244,24 @@ impl Journal {
     }
 }
 
-/// Read the [`ApplyRecord`] from the most recent committed apply in
-/// `dir`, or `None` when the directory holds no `<ts>.COMMIT` sentinel
-/// (no apply has ever committed). "Most recent" is the lexically greatest
-/// `<ts>` prefix, which is chronological for the compact UTC timestamp
-/// format the engine writes.
+/// The `<ts>` of the most recent committed apply in `dir` that has not also
+/// been rolled back, or `None` when none exists.
 ///
-/// `patina status` (T-017) is the reader: it decodes the latest apply's
-/// recorded targets and classifies each against the live filesystem.
+/// "Most recent" is the lexically greatest `<ts>` prefix, which is
+/// chronological for the compact UTC timestamp the engine writes. A `<ts>`
+/// carrying a `ROLLED_BACK` sentinel beside its `COMMIT` (T-018) is skipped:
+/// it has been reversed and no longer describes the live filesystem.
+///
+/// This single scan backs both readers of "the last apply": `patina status`
+/// via [`read_latest_commit`] (which then decodes the winner's record) and
+/// `patina rollback` (which reverts it), so the two cannot disagree on which
+/// commit is current.
 ///
 /// # Errors
 ///
-/// - [`JournalError::Filesystem`] if the directory or sentinel cannot be read.
-/// - [`JournalError::Truncated`] / [`JournalError::VersionMismatch`] /
-///   [`JournalError::Decode`] if the latest sentinel cannot be decoded (a
-///   sentinel from a newer binary, or a corrupt one).
-pub fn read_latest_commit(dir: impl AsRef<Utf8Path>) -> Result<Option<ApplyRecord>, JournalError> {
-    let dir = dir.as_ref();
+/// Returns [`JournalError::Filesystem`] if the journal directory cannot be
+/// read.
+pub(crate) fn latest_unrolled_commit(dir: &Utf8Path) -> Result<Option<String>, JournalError> {
     if !dir.exists() {
         return Ok(None);
     }
@@ -275,10 +276,6 @@ pub fn read_latest_commit(dir: impl AsRef<Utf8Path>) -> Result<Option<ApplyRecor
         let Some(timestamp) = name.strip_suffix(COMMIT_SUFFIX) else {
             continue;
         };
-        // A committed apply that has since been rolled back (T-018) no
-        // longer describes the live filesystem, so it is excluded from the
-        // "last apply" computation; status then walks back to the prior
-        // un-rolled-back commit, or reports no apply (REQ-019 done-when).
         if dir
             .join(format!("{timestamp}{ROLLED_BACK_SUFFIX}"))
             .exists()
@@ -289,8 +286,27 @@ pub fn read_latest_commit(dir: impl AsRef<Utf8Path>) -> Result<Option<ApplyRecor
             latest = Some(timestamp.to_owned());
         }
     }
+    Ok(latest)
+}
 
-    let Some(timestamp) = latest else {
+/// Read the [`ApplyRecord`] from the most recent committed apply in `dir`,
+/// or `None` when the directory holds no live `<ts>.COMMIT` sentinel (no
+/// apply has ever committed, or every commit has since been rolled back).
+///
+/// `patina status` (T-017) is the reader: it decodes the latest apply's
+/// recorded targets and classifies each against the live filesystem. The
+/// "most recent un-rolled-back `<ts>`" selection is shared with rollback via
+/// [`latest_unrolled_commit`].
+///
+/// # Errors
+///
+/// - [`JournalError::Filesystem`] if the directory or sentinel cannot be read.
+/// - [`JournalError::Truncated`] / [`JournalError::VersionMismatch`] /
+///   [`JournalError::Decode`] if the latest sentinel cannot be decoded (a
+///   sentinel from a newer binary, or a corrupt one).
+pub fn read_latest_commit(dir: impl AsRef<Utf8Path>) -> Result<Option<ApplyRecord>, JournalError> {
+    let dir = dir.as_ref();
+    let Some(timestamp) = latest_unrolled_commit(dir)? else {
         return Ok(None);
     };
     let commit_path = dir.join(format!("{timestamp}{COMMIT_SUFFIX}"));

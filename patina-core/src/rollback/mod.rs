@@ -133,36 +133,11 @@ pub fn run() -> Result<(), EngineError> {
 /// Find the `<ts>` of the most recent committed apply that has not already
 /// been rolled back, or `None` when no such apply exists.
 ///
-/// "Most recent" is the lexically greatest `<ts>` prefix, which is
-/// chronological for the compact UTC timestamp format the engine writes. A
-/// `<ts>` with both a `COMMIT` and a `ROLLED_BACK` sentinel is skipped: it
-/// has already been reversed, so rollback walks back to the prior one.
+/// Delegates to [`crate::journal::latest_unrolled_commit`] — the same scan
+/// `patina status` uses to choose its "last apply" — so status and rollback
+/// agree on which commit is current rather than each re-deriving the rule.
 fn latest_rollbackable(journal_dir: &Utf8Path) -> Result<Option<String>, RollbackError> {
-    if !journal_dir.exists() {
-        return Ok(None);
-    }
-
-    let mut latest: Option<String> = None;
-    for entry in fs_err::read_dir(journal_dir).map_err(RollbackError::Filesystem)? {
-        let entry = entry.map_err(RollbackError::Filesystem)?;
-        let name = entry.file_name();
-        let Some(name) = name.to_str() else {
-            continue;
-        };
-        let Some(timestamp) = name.strip_suffix(COMMIT_SUFFIX) else {
-            continue;
-        };
-        let already_rolled_back = journal_dir
-            .join(format!("{timestamp}{ROLLED_BACK_SUFFIX}"))
-            .exists();
-        if already_rolled_back {
-            continue;
-        }
-        if latest.as_deref().is_none_or(|current| timestamp > current) {
-            latest = Some(timestamp.to_owned());
-        }
-    }
-    Ok(latest)
+    crate::journal::latest_unrolled_commit(journal_dir).map_err(RollbackError::Journal)
 }
 
 /// Reverse every `[[file]]` entry recorded in `record`, one atomic entry at
