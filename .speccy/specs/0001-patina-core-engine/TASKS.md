@@ -1389,7 +1389,7 @@ Suggested files: `patina-core/src/status/mod.rs`,
 </task-scenarios>
 </task>
 
-<task id="T-018" state="pending" covers="REQ-019">
+<task id="T-018" state="completed" covers="REQ-019">
 ## `patina rollback` reverses the last successful apply via the journal and backups
 
 Wire the `patina rollback` subcommand in `patina-cli`, backed by a

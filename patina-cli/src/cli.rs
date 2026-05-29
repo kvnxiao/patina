@@ -1,9 +1,9 @@
 //! The clap-derived command-line surface for `patina` (REQ-017).
 //!
-//! Only `apply` and `status` land so far; `rollback` and the `debug`
-//! family are wired by their own tasks. The derive surface is
-//! kept thin — parsing only — so the command logic lives in
-//! [`crate::cmd`] and stays unit-testable without going through clap.
+//! `apply`, `status`, and `rollback` land so far; the `debug` family is
+//! wired by its own task. The derive surface is kept thin — parsing only —
+//! so the command logic lives in [`crate::cmd`] and stays unit-testable
+//! without going through clap.
 
 use clap::Args;
 use clap::Parser;
@@ -27,6 +27,21 @@ pub enum Command {
 
     /// Report drift between the repository and the materialized targets.
     Status(StatusArgs),
+
+    /// Reverse the most recent successful apply via the journal and backups.
+    Rollback(RollbackArgs),
+}
+
+/// Flags for `patina rollback`.
+#[derive(Debug, Args, Default)]
+pub struct RollbackArgs {
+    /// Roll back unconditionally with no prompt, regardless of TTY state.
+    #[arg(long)]
+    pub yes: bool,
+
+    /// Emit a JSON envelope instead of human output.
+    #[arg(long)]
+    pub json: bool,
 }
 
 /// Flags for `patina status`.

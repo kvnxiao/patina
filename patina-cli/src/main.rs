@@ -37,6 +37,16 @@ async fn main() -> anyhow::Result<()> {
             let mut reporter = StreamReporter::new();
             cmd::status::run(&args, &mut reporter).await?
         }
+        Command::Rollback(args) => {
+            let tty = if std::io::stdin().is_terminal() {
+                Tty::Interactive
+            } else {
+                Tty::NonInteractive
+            };
+            let mut reader = StdinReader;
+            let mut reporter = StreamReporter::new();
+            cmd::rollback::run(&args, tty, &mut reader, &mut reporter).await?
+        }
     };
     std::process::exit(code);
 }

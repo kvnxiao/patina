@@ -120,6 +120,7 @@ mod tests {
         let expected = ExpectedTarget::Content {
             target: target.as_str().to_owned(),
             fingerprint: fingerprint_bytes(b"payload"),
+            entry: 0,
         };
         assert_eq!(classify(&expected, true), TargetState::Clean);
 
@@ -133,6 +134,7 @@ mod tests {
         let expected = ExpectedTarget::Content {
             target: dir.join("gone").as_str().to_owned(),
             fingerprint: 0,
+            entry: 0,
         };
         assert_eq!(classify(&expected, true), TargetState::Missing);
     }
@@ -145,6 +147,7 @@ mod tests {
         let expected = ExpectedTarget::Content {
             target: target.as_str().to_owned(),
             fingerprint: 0,
+            entry: 0,
         };
         // still_managed = false: the current plan dropped this entry.
         assert_eq!(classify(&expected, false), TargetState::Orphaned);
@@ -155,6 +158,7 @@ mod tests {
         let expected = ExpectedTarget::Symlink {
             target: "/t/link".to_owned(),
             link_target: "/repo/src".to_owned(),
+            entry: 0,
         };
         // A non-existent path is Missing regardless of link expectation.
         assert_eq!(classify(&expected, true), TargetState::Missing);

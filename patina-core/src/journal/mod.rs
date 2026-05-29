@@ -271,6 +271,16 @@ pub fn read_latest_commit(dir: impl AsRef<Utf8Path>) -> Result<Option<ApplyRecor
         let Some(timestamp) = name.strip_suffix(COMMIT_SUFFIX) else {
             continue;
         };
+        // A committed apply that has since been rolled back (T-018) no
+        // longer describes the live filesystem, so it is excluded from the
+        // "last apply" computation; status then walks back to the prior
+        // un-rolled-back commit, or reports no apply (REQ-019 done-when).
+        if dir
+            .join(format!("{timestamp}{ROLLED_BACK_SUFFIX}"))
+            .exists()
+        {
+            continue;
+        }
         if latest.as_deref().is_none_or(|current| timestamp > current) {
             latest = Some(timestamp.to_owned());
         }

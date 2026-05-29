@@ -57,6 +57,11 @@ pub enum ExpectedTarget {
         target: String,
         /// Canonical absolute path the link is expected to point at.
         link_target: String,
+        /// Index of the `[[file]]` entry that materialized this target.
+        /// Targets sharing an entry index form one atomic rollback unit
+        /// (REQ-019): a multi-target entry reverts every target as a unit
+        /// or fails the whole entry.
+        entry: u32,
     },
     /// The target should be a regular file whose bytes fingerprint to
     /// `fingerprint` (copy or rendered-template output).
@@ -65,6 +70,9 @@ pub enum ExpectedTarget {
         target: String,
         /// 64-bit non-cryptographic fingerprint of the expected bytes.
         fingerprint: u64,
+        /// Index of the `[[file]]` entry that materialized this target
+        /// (see [`ExpectedTarget::Symlink::entry`]).
+        entry: u32,
     },
 }
 
@@ -74,6 +82,16 @@ impl ExpectedTarget {
     pub fn target(&self) -> &str {
         match self {
             Self::Symlink { target, .. } | Self::Content { target, .. } => target,
+        }
+    }
+
+    /// The index of the `[[file]]` entry that materialized this target.
+    /// Rollback groups targets by this index to honour per-entry atomicity
+    /// (REQ-019).
+    #[must_use = "the entry index groups targets into atomic rollback units"]
+    pub fn entry(&self) -> u32 {
+        match self {
+            Self::Symlink { entry, .. } | Self::Content { entry, .. } => *entry,
         }
     }
 }
@@ -227,10 +245,12 @@ mod tests {
                 ExpectedTarget::Symlink {
                     target: "/home/u/.zshrc".to_owned(),
                     link_target: "/repo/zsh/zshrc".to_owned(),
+                    entry: 0,
                 },
                 ExpectedTarget::Content {
                     target: "/home/u/.gitconfig".to_owned(),
                     fingerprint: fingerprint_bytes(b"payload"),
+                    entry: 1,
                 },
             ],
         )
@@ -290,12 +310,16 @@ mod tests {
         let sym = ExpectedTarget::Symlink {
             target: "/t/s".to_owned(),
             link_target: "/r/s".to_owned(),
+            entry: 0,
         };
         let content = ExpectedTarget::Content {
             target: "/t/c".to_owned(),
             fingerprint: 0,
+            entry: 3,
         };
         assert_eq!(sym.target(), "/t/s");
         assert_eq!(content.target(), "/t/c");
+        assert_eq!(sym.entry(), 0);
+        assert_eq!(content.entry(), 3);
     }
 }

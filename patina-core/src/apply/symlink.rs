@@ -100,8 +100,19 @@ pub(super) fn dir_symlink(
 }
 
 /// Link a single file source at a single target, returning its record.
+///
+/// A pre-existing entry at `target` is removed before the link is created:
+/// `create_symlink` fails with `EEXIST` (Unix) / os error 183 (Windows)
+/// against an occupied path. The apply engine always runs
+/// `backup_before_overwrite` ahead of `materialize`, so any pre-existing
+/// regular file has already been stashed and rollback can restore it; the
+/// removal here only clears the path the new link will occupy.
 fn link_file(source: &Utf8Path, target: &Utf8Path) -> Result<CompletionRecord, ExecutorError> {
     ensure_parent(target)?;
+    super::remove_entry(target).map_err(|source| ExecutorError::Io {
+        path: target.to_path_buf(),
+        source,
+    })?;
     create_symlink(source, target, LinkKind::File)?;
     Ok(CompletionRecord::symlink(
         source.to_path_buf(),
@@ -254,6 +265,32 @@ mod tests {
         fs_err::write(&source, b"x").expect("write file");
         let err = dir_symlink(&source, &[dir.join("t")]).expect_err("file source rejected");
         assert!(matches!(err, ExecutorError::NotADirectory { .. }));
+    }
+
+    #[test]
+    fn pre_existing_regular_file_target_is_replaced_by_link() {
+        // CHK-033 apply leg: a target that already exists as a regular file
+        // is cleared before linking (the engine has already backed it up), so
+        // `create_symlink` does not fail with EEXIST / os-183.
+        let (_td, dir) = utf8_tempdir();
+        let source = dir.join("zshrc");
+        fs_err::write(&source, b"export X=1").expect("write source");
+        let target = dir.join("home").join(".zshrc");
+        fs_err::create_dir_all(target.parent().expect("target parent")).expect("mkdir home");
+        fs_err::write(&target, b"original").expect("write pre-existing target");
+
+        let records =
+            per_file_symlink(&source, std::slice::from_ref(&target)).expect("link replaces file");
+
+        assert_eq!(records.len(), 1);
+        assert!(
+            fs_err::symlink_metadata(&target)
+                .expect("stat target")
+                .file_type()
+                .is_symlink(),
+            "the pre-existing regular file must be replaced by a symlink"
+        );
+        assert_eq!(read_link_canonical(&target), canonical(&source));
     }
 
     #[test]

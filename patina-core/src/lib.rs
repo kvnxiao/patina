@@ -19,6 +19,7 @@ pub mod journal;
 pub mod lock;
 pub mod paths;
 pub mod profile;
+pub mod rollback;
 pub mod state_dir;
 pub mod status;
 pub mod template;
@@ -85,6 +86,8 @@ pub use profile::ProfileSource;
 pub use profile::Resolution as ProfileResolution;
 pub use profile::load_auto_match_rules;
 pub use profile::resolve as resolve_profile;
+pub use rollback::RollbackError;
+pub use rollback::run as run_rollback;
 pub use state_dir::HostOs;
 pub use state_dir::StateDirError;
 pub use state_dir::resolve as resolve_state_dir;
@@ -159,17 +162,23 @@ pub async fn status(_options: StatusOptions) -> Result<StatusReport, EngineError
     status_report(&targets)
 }
 
-/// Roll back a prior apply to its pre-apply filesystem state using the
-/// journaled backups.
+/// Roll back the most recent committed apply to its pre-apply filesystem
+/// state using the journaled backups (REQ-019).
+///
+/// Delegates to [`run_rollback`], which takes the exclusive lock, finds the
+/// most recent committed-and-not-rolled-back apply, reverts each `[[file]]`
+/// entry's inverse operations atomically, and marks the apply rolled back.
 ///
 /// # Errors
 ///
-/// Returns [`EngineError::NotImplemented`] until later tasks land the
-/// rollback subsystem.
+/// Returns an [`EngineError`] when no prior apply remains
+/// ([`RollbackError::NoPriorApply`]), a multi-target entry cannot be
+/// reverted as a unit ([`RollbackError::RollbackPartial`]), or a
+/// filesystem / lock / record-decode operation fails.
 #[expect(
     clippy::unused_async,
-    reason = "REQ-002 mandates an async signature; bodies become await-ful in later tasks."
+    reason = "REQ-002 mandates an async signature; the rollback itself is synchronous filesystem work."
 )]
 pub async fn rollback(_options: RollbackOptions) -> Result<(), EngineError> {
-    Err(EngineError::NotImplemented("rollback"))
+    run_rollback()
 }

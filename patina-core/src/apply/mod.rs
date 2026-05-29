@@ -221,6 +221,33 @@ pub fn materialize(
     }
 }
 
+/// Remove the filesystem entry at `target` if present, dispatching on
+/// directory vs file/symlink and tolerating its absence.
+///
+/// A symbolic link (even a dangling one) is removed as a link, never
+/// followed. Returns the raw [`std::io::Result`] so each caller can wrap
+/// the failure into its own error type at the boundary; shared by the apply
+/// engine's reverse path and the rollback replay path (and the symlink
+/// executor's clear-before-link).
+///
+/// # Errors
+///
+/// Returns the underlying [`std::io::Error`] when the remove fails for any
+/// reason other than the entry already being absent.
+pub(crate) fn remove_entry(target: &Utf8Path) -> std::io::Result<()> {
+    match fs_err::symlink_metadata(target) {
+        Ok(meta) => {
+            if meta.is_dir() {
+                fs_err::remove_dir_all(target)
+            } else {
+                fs_err::remove_file(target)
+            }
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(err),
+    }
+}
+
 /// Create the parent directory chain for `target` if it is absent.
 ///
 /// Shared by every executor: a target whose parent directories have not

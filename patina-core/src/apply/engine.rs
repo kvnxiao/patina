@@ -334,20 +334,23 @@ pub async fn execute(
     )?;
 
     // Materialize every operation, backing up each pre-existing target
-    // first. Track completion records so a post_apply hook failure can
-    // reverse them.
-    let mut completed: Vec<CompletionRecord> = Vec::new();
+    // first. Track completion records (paired with the index of the
+    // `[[file]]` entry that produced them) so a post_apply hook failure can
+    // reverse them and the commit record can group targets into atomic
+    // rollback units (REQ-019).
+    let mut completed: Vec<(u32, CompletionRecord)> = Vec::new();
     let mut op_index: u32 = 0;
-    for op in &resolved.operations {
+    for (entry_index, op) in resolved.operations.iter().enumerate() {
+        let entry_index = u32::try_from(entry_index).unwrap_or(u32::MAX);
         for target in &op.targets {
             backup_before_overwrite(&backups_dir, &resolved.timestamp, target)?;
         }
         let records = materialize(op.mode, &op.source, &op.targets, &template_engine, vars)?;
-        for _ in &records {
+        for record in records {
             journal.record_progress(op_index)?;
             op_index = op_index.saturating_add(1);
+            completed.push((entry_index, record));
         }
-        completed.extend(records);
     }
 
     // post_apply hooks run after the file operations.
@@ -393,7 +396,7 @@ pub async fn execute(
 /// recorded fingerprint matches exactly what `status` will compute.
 fn build_apply_record(
     resolved: &ResolvedPlan,
-    completed: &[CompletionRecord],
+    completed: &[(u32, CompletionRecord)],
 ) -> Result<ApplyRecord, EngineError> {
     let vars = &resolved.resolver;
     let last_apply = LastApply {
@@ -403,13 +406,15 @@ fn build_apply_record(
     };
 
     let mut targets = Vec::with_capacity(completed.len());
-    for record in completed {
+    for (entry, record) in completed {
+        let entry = *entry;
         let target = record.target.as_str().to_owned();
         match &record.materialization {
             Materialization::Symlink { link_target } => {
                 targets.push(ExpectedTarget::Symlink {
                     target,
                     link_target: link_target.as_str().to_owned(),
+                    entry,
                 });
             }
             Materialization::Copy | Materialization::Render => {
@@ -419,6 +424,7 @@ fn build_apply_record(
                 targets.push(ExpectedTarget::Content {
                     target,
                     fingerprint: fingerprint_bytes(&bytes),
+                    entry,
                 });
             }
         }
@@ -481,14 +487,14 @@ async fn run_hook_phase_collecting(
 /// target (no backup) is removed. This mirrors crash recovery's reversal
 /// rule, applied in-process when a `post_apply` hook fails.
 fn reverse_completed(
-    completed: &[CompletionRecord],
+    completed: &[(u32, CompletionRecord)],
     backups_dir: &Utf8Path,
     timestamp: &str,
 ) -> Result<(), EngineError> {
     use crate::journal::mirror_backup_path;
 
     // Reverse in inverse order so later operations are undone first.
-    for record in completed.iter().rev() {
+    for (_entry, record) in completed.iter().rev() {
         let backup = mirror_backup_path(backups_dir, timestamp, &record.target);
         if backup.exists() {
             // The target pre-existed; restore the original bytes.
@@ -512,23 +518,11 @@ fn reverse_completed(
 }
 
 /// Remove a target file or symlink, tolerating its absence.
+///
+/// Wraps the shared [`super::remove_entry`] helper into [`EngineError`].
 fn remove_target(target: &Utf8Path) -> Result<(), EngineError> {
-    match fs_err::symlink_metadata(target) {
-        Ok(meta) => {
-            let result = if meta.is_dir() {
-                fs_err::remove_dir_all(target)
-            } else {
-                fs_err::remove_file(target)
-            };
-            result.map_err(|source| {
-                EngineError::Journal(crate::journal::JournalError::Filesystem(source))
-            })
-        }
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(source) => Err(EngineError::Journal(
-            crate::journal::JournalError::Filesystem(source),
-        )),
-    }
+    super::remove_entry(target)
+        .map_err(|source| EngineError::Journal(crate::journal::JournalError::Filesystem(source)))
 }
 
 /// Whether a materialization wrote rendered/copied content (as opposed to

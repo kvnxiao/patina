@@ -79,4 +79,8 @@ pub enum EngineError {
     /// (REQ-006).
     #[error(transparent)]
     Hook(#[from] crate::apply::HookError),
+
+    /// `patina rollback` failed to reverse a prior apply (REQ-019).
+    #[error(transparent)]
+    Rollback(#[from] crate::rollback::RollbackError),
 }
