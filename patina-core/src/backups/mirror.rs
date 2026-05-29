@@ -20,10 +20,11 @@ use camino::Utf8Path;
 ///
 /// Existence is probed with `symlink_metadata`, so a pre-existing symlink
 /// at the target counts as present. The stash itself is kind-preserving via
-/// [`crate::fsx::clone_entry`] — the same primitive recovery and rollback
-/// restore through — so a regular file round-trips byte-for-byte, a symlink
-/// round-trips as a symlink (not flattened to its destination's bytes), and
-/// a directory is captured recursively rather than aborting the copy.
+/// the crate-internal `fsx::clone_entry` — the same primitive recovery and
+/// rollback restore through — so a regular file round-trips byte-for-byte, a
+/// symlink round-trips as a symlink (not flattened to its destination's
+/// bytes), and a directory is captured recursively rather than aborting the
+/// copy.
 ///
 /// This writes only under `backups_dir`; it never touches the dotfiles
 /// repository (REQ-014).

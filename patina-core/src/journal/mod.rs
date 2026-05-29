@@ -296,7 +296,7 @@ pub(crate) fn latest_unrolled_commit(dir: &Utf8Path) -> Result<Option<String>, J
 /// `patina status` (T-017) is the reader: it decodes the latest apply's
 /// recorded targets and classifies each against the live filesystem. The
 /// "most recent un-rolled-back `<ts>`" selection is shared with rollback via
-/// [`latest_unrolled_commit`].
+/// the crate-internal `latest_unrolled_commit`.
 ///
 /// # Errors
 ///
