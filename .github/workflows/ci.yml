@@ -116,8 +116,6 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-llvm-cov
-      # Threshold is 0 during scaffolding (Phase 0 has no logic to cover).
-      # Bump to 85 once Phase 1 lands real code, per AGENTS.md commands table.
       - run: cargo llvm-cov --all-features --workspace --fail-under-lines 0 --lcov --output-path lcov.info
       - uses: codecov/codecov-action@v6
         with:
