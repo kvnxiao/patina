@@ -1,0 +1,26 @@
+# rustfmt.toml - formatting configuration.
+#
+# This project enforces nightly rustfmt so the unstable options below
+# (group_imports, imports_granularity, normalize_comments,
+# normalize_doc_attributes, wrap_comments, float_literal_trailing_zero)
+# take effect. CI runs nightly rustfmt; contributors must do the same:
+#
+#   rustup toolchain install nightly --component rustfmt
+#   cargo +nightly fmt --all              # apply
+#   cargo +nightly fmt --all --check      # verify (matches CI)
+#
+# `unstable_features = true` is required to enable the unstable options.
+# On *stable* rustfmt this line warns and the unstable options are
+# silently ignored — i.e. running `cargo fmt` on stable will partially
+# format the code. Always use `cargo +nightly fmt` to match CI.
+
+unstable_features = true
+
+reorder_imports = true
+group_imports = "One"
+imports_granularity = "Item"
+newline_style = "Unix"
+normalize_comments = true
+normalize_doc_attributes = true
+wrap_comments = true
+float_literal_trailing_zero = "Always"
