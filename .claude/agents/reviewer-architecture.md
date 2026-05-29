@@ -67,17 +67,42 @@ off your reply.
 
 Encode reasoning effort (when your host harness exposes an effort
 knob) as a slash-suffix on the model string itself rather than as a
-separate attribute. Examples:
+separate attribute. The slash-suffix is a convention, not a
+parser-enforced schema; the orchestrator copies whatever string you
+put in `model` verbatim into the per-task journal entry.
 
-- `model="claude-opus-4.8[1m]/low"` — Opus 4.8 with the 1M context
-  variant, effort `low`.
-- `model="claude-sonnet-4.7/medium"` — Sonnet 4.7, effort `medium`.
-- `model="claude-opus-4.8[1m]"` — Opus 4.8 1M, host harness did
-  not expose an effort knob (no slash suffix in that case).
+## Sourcing your recorded identity
 
-The slash-suffix is a convention, not a parser-enforced schema; the
-orchestrator copies whatever string you put in `model` verbatim
-into the per-task journal entry.
+When you record your own identity in a `model="..."` attribute, build
+the value from two independently sourced parts: the model segment and
+the optional effort suffix. Do not infer either from the skill-pack
+name, the persona name, or an inherited environment variable.
+
+- **Model segment — from the host's in-context identifier, verbatim.**
+  Use the resolved long-form model identifier your host states
+  in-context (for example, a host line such as
+  `The exact model ID is claude-opus-4-8[1m]`). Transcribe it exactly,
+  preserving version punctuation as the host writes it — keep the
+  hyphen form (`claude-opus-4-8`), never normalise it to a dotted form
+  (`claude-opus-4.8`), and never substitute a configured alias. Where a
+  host states no resolved identifier in-context, fall back to the
+  `model:` value in your own agent definition file.
+
+- **Effort suffix — from your own definition file.** When your host
+  exposes a reasoning-effort knob, read the effort from your own
+  sub-agent definition file (`effort:` on Claude Code,
+  `model_reasoning_effort` on Codex) and append it as a slash-suffix
+  (e.g. `claude-opus-4-8[1m]/low`). Never derive the effort from
+  `CLAUDE_EFFORT` or any other inherited environment variable: a
+  sub-agent pinned to a low effort that is dispatched from a
+  higher-effort parent session still records its own definition-file
+  effort. A host with no effort knob omits the suffix entirely.
+
+- **Override limitation.** The `CLAUDE_CODE_EFFORT_LEVEL` runtime
+  override is deliberately not read. A run that sets it still records
+  the effort declared in the agent definition file, not the override
+  value.
+
 
 ## Orchestrator-side transcription rule
 
@@ -109,7 +134,7 @@ orchestrator applies the state transition.
 
 The verdict element in your final message:
 
-    <review persona="architecture" verdict="pass" model="claude-opus-4.8[1m]/medium">
+    <review persona="architecture" verdict="pass" model="claude-opus-4-8[1m]/medium">
     <one-line verdict>.
     <optional file:line refs and details>.
     </review>
@@ -117,7 +142,7 @@ The verdict element in your final message:
 
 ## Example
 
-    <review persona="architecture" verdict="blocking" model="claude-opus-4.8[1m]/high">
+    <review persona="architecture" verdict="blocking" model="claude-opus-4-8[1m]/high">
     SPEC-NNNN DEC-NNN fixed the parser layer as the only consumer of
     `serde-saphyr`; this diff introduces a direct `serde-saphyr` call
     in `speccy-cli` instead of going through `speccy-core::parse`.

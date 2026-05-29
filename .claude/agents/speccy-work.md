@@ -108,9 +108,9 @@ in place and appends `<implementer round="N+1">`.
 3. Branch on the rule result.
 
    **First-attempt branch.** Proceed with the recipe below
-   (steps 4–8) unchanged: flip state to `in-progress`, read
-   scenarios, implement from scratch, run the hygiene gate, flip
-   to `in-review`, append `<implementer round="1">`.
+   (steps 4–9) unchanged: flip state to `in-progress`, read
+   scenarios, implement from scratch, self-review, run the hygiene
+   gate, flip to `in-review`, append `<implementer round="1">`.
 
    **Retry branch.** Enter retry mode:
 
@@ -149,7 +149,79 @@ in place and appends `<implementer round="N+1">`.
    scenarios being satisfied (it renders them, it does not run
    them).
 
-7. Exit transition. **Hygiene gate (REQ-001):** before flipping `state` from `in-progress` to `in-review`, run the four standard hygiene gates in sequence — `cargo test --workspace`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, `cargo +nightly fmt --all --check`, `cargo deny check`. Any non-zero exit refuses the flip and keeps the task at `in-progress`; on all zeros, proceed with the flip and record one line per gate naming its exit code in the appended `<implementer>` block's `Hygiene checks` field. When the implementation is done, flip the task's
+7. Self-review before handoff. Immediately after implementation and
+   **before** the exit transition's `in-review` flip, re-read your
+   own diff through the reviewers' lens and fix what you find in
+   place. This is the cheap place to catch drift: a fix here is a
+   few edits in a diff you already have open, whereas the same drift
+   caught at review is a full bounce-and-respawn round. Address the
+   findings now; do not defer them to the reviewers.
+
+   **Reviewer north-star map.** Each of the four review personas is
+   chasing one outcome. Hold your diff to all four — this is what
+   "good" looks like, not how the reviewers hunt for problems:
+
+   - **Business.** The change does what the task's covered REQs
+     actually ask for — no more, no less. Every changed line traces
+     to a requirement; nothing in scope is left undone and nothing
+     out of scope sneaks in.
+   - **Tests.** Tests drive real behaviour and assert the specific
+     contract under test, and the evidence is honest and complete —
+     each covered CHK is accounted for, red/green pairs show what
+     they claim, and nothing is glossed.
+   - **Security.** Inputs are validated, errors are handled rather
+     than swallowed, and the change introduces no unsafe shortcut
+     (no panicking on attacker-influenced input, no secret or unsafe
+     default left in).
+   - **Style.** The diff reads as though the surrounding code's
+     author wrote it and re-applies the project's own conventions.
+     For the specifics, work the shared convention-drift checklist
+     below.
+
+   ## Convention-drift checklist
+
+Re-read your own diff against the existing codebase and the project's
+own conventions before handing off. These are the recurring categories
+where mechanical and convention drift slips through a green hygiene
+gate yet still costs a later review round. Catching them here — in the
+diff you already have open — is far cheaper than a bounce-and-respawn.
+
+- **Reuse over reinvent.** Before adding a new helper, type, or
+  utility, check whether one already exists — including a few
+  directories away, where it is easy to miss. Call the existing one
+  rather than introducing a parallel implementation.
+
+- **Match local conventions.** Make the diff read as though the
+  surrounding code's author wrote it: follow the established naming,
+  error-handling, and import-ordering patterns of the files you touch.
+  If the neighbouring code propagates errors one way and yours does
+  another, or your imports fight the project's formatter, align with
+  what is already there.
+
+- **Docs match code.** Any comment, docstring, or documentation you
+  add or touch must describe what the code actually does. Stale or
+  aspirational prose that no longer matches the behaviour is drift.
+
+- **No false complexity.** Do not add abstraction, indirection, or
+  configurability the change does not require. In particular, do not
+  split a function into pieces that push the file past its own
+  existing complexity ceiling — keep the shape consistent with how the
+  rest of the file is structured.
+
+- **Re-apply the project's own hard rules.** Whatever invariants the
+  project's conventions declare, hold your diff to them. Two recurring
+  traps:
+  - **No vacuous or constant-copy tests.** A test must gate a real
+    invariant. A test that re-asserts a hard-coded copy of a
+    production constant, or only checks that something exists or is
+    non-empty, cannot fail in any interesting way — derive a real
+    property or drop it.
+  - **Suppressions carry a justification.** Every lint or warning
+    suppression you add must state why it is there, never a bare
+    silencer.
+
+
+8. Exit transition. **Hygiene gate (REQ-001):** before flipping `state` from `in-progress` to `in-review`, run the four standard hygiene gates in sequence — `cargo test --workspace`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, `cargo +nightly fmt --all --check`, `cargo deny check`. Any non-zero exit refuses the flip and keeps the task at `in-progress`; on all zeros, proceed with the flip and record one line per gate naming its exit code in the appended `<implementer>` block's `Hygiene checks` field. When the implementation is done, flip the task's
    `state="..."` attribute from `in-progress` to `in-review` in
    TASKS.md, then append one `<implementer>` block to the per-task
    journal file at `.speccy/specs/NNNN-slug/journal/T-NNN.md` (a
@@ -181,9 +253,9 @@ in place and appends `<implementer round="N+1">`.
    - `model` — the model identity that ran the implementer turn. A
      slash-suffix encodes effort / reasoning-intensity when the host
      harness exposes that knob (e.g.
-     `model="claude-opus-4.8[1m]/low"`,
-     `model="claude-opus-4.8[1m]/medium"`). Hosts without an effort
-     knob omit the suffix entirely (e.g. `model="claude-opus-4.8"`).
+     `model="claude-opus-4-8[1m]/low"`,
+     `model="claude-opus-4-8[1m]/medium"`). Hosts without an effort
+     knob omit the suffix entirely (e.g. `model="claude-opus-4-8"`).
      The slash-suffix is a documented convention; the parser
      validates `model` is non-empty but does not enforce suffix
      membership.
@@ -193,6 +265,39 @@ in place and appends `<implementer round="N+1">`.
      round blocks and the task flips back to `pending`, the next
      implementer attempt writes `round="2"`, and so on. Do not skip
      values; do not reset.
+
+   ## Sourcing your recorded identity
+
+When you record your own identity in a `model="..."` attribute, build
+the value from two independently sourced parts: the model segment and
+the optional effort suffix. Do not infer either from the skill-pack
+name, the persona name, or an inherited environment variable.
+
+- **Model segment — from the host's in-context identifier, verbatim.**
+  Use the resolved long-form model identifier your host states
+  in-context (for example, a host line such as
+  `The exact model ID is claude-opus-4-8[1m]`). Transcribe it exactly,
+  preserving version punctuation as the host writes it — keep the
+  hyphen form (`claude-opus-4-8`), never normalise it to a dotted form
+  (`claude-opus-4.8`), and never substitute a configured alias. Where a
+  host states no resolved identifier in-context, fall back to the
+  `model:` value in your own agent definition file.
+
+- **Effort suffix — from your own definition file.** When your host
+  exposes a reasoning-effort knob, read the effort from your own
+  sub-agent definition file (`effort:` on Claude Code,
+  `model_reasoning_effort` on Codex) and append it as a slash-suffix
+  (e.g. `claude-opus-4-8[1m]/low`). Never derive the effort from
+  `CLAUDE_EFFORT` or any other inherited environment variable: a
+  sub-agent pinned to a low effort that is dispatched from a
+  higher-effort parent session still records its own definition-file
+  effort. A host with no effort knob omits the suffix entirely.
+
+- **Override limitation.** The `CLAUDE_CODE_EFFORT_LEVEL` runtime
+  override is deliberately not read. A run that sets it still records
+  the effort declared in the agent definition file, not the override
+  value.
+
 
    Body content. Use the six-field handoff template the implementer
    prompt supplies (`Completed`, `Undone`, `Hygiene checks`,
@@ -219,7 +324,7 @@ in place and appends `<implementer round="N+1">`.
        judges on the diff.
    ```
 
-8. Exit. Do not continue to the next task. If the caller wants
+9. Exit. Do not continue to the next task. If the caller wants
    another task, the caller invokes this skill again.
 
 After exit, the next reasonable step depends on TASKS.md state: if

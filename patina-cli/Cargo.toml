@@ -19,7 +19,19 @@ path = "src/main.rs"
 [dependencies]
 patina-core = { path = "../patina-core", version = "0.1.0" }
 anyhow = { workspace = true }
+camino = { workspace = true }
+clap = { workspace = true }
+fs-err = { workspace = true }
+is-terminal = { workspace = true }
+jiff = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+similar = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
 
 [lints]
 workspace = true

@@ -26,11 +26,11 @@ task: T-001
 generated_at: 2026-05-21T19:45:00Z
 ---
 
-<implementer date="2026-05-21T19:45:00Z" model="claude-opus-4.8[1m]/low" round="1">
+<implementer date="2026-05-21T19:45:00Z" model="claude-opus-4-8[1m]/low" round="1">
 ... (implementer body — see journal-implementer.md)
 </implementer>
 
-<review persona="business" verdict="pass" model="claude-sonnet-4.6[1m]/medium" date="2026-05-21T20:30:00Z" round="1">
+<review persona="business" verdict="pass" model="claude-sonnet-4-6[1m]/medium" date="2026-05-21T20:30:00Z" round="1">
 The `--timeout-ms` flag satisfies REQ-001 and REQ-002 as written.
 The 30000ms default and 1..=600000 range match the SPEC's
 guardrail values verbatim; the stderr line uses the configured
@@ -42,7 +42,7 @@ remains free of the timeout knob (per the SPEC's non-goal), and
 no retry-on-timeout behaviour leaked in.
 </review>
 
-<review persona="tests" verdict="pass" model="claude-opus-4.8[1m]/low" date="2026-05-21T20:35:00Z" round="1">
+<review persona="tests" verdict="pass" model="claude-opus-4-8[1m]/low" date="2026-05-21T20:35:00Z" round="1">
 Red-then-green paper trail in
 `.speccy/specs/NNNN-widget-render-timeout/evidence/T-001.md`
 records three scenarios with concrete pre-edit and post-edit
@@ -56,7 +56,7 @@ internal". Scenario 2 captures both boundary rejections (0 and
 all exited 0 in the recorded run.
 </review>
 
-<review persona="security" verdict="pass" model="claude-sonnet-4.6[1m]/medium" date="2026-05-21T20:40:00Z" round="1">
+<review persona="security" verdict="pass" model="claude-sonnet-4-6[1m]/medium" date="2026-05-21T20:40:00Z" round="1">
 No security-relevant changes. The `--timeout-ms` flag accepts only
 `u32` values via the `clap` range parser; no arbitrary string
 handling, no file-path expansion, no subprocess invocation. The
@@ -65,7 +65,7 @@ new `RenderError::TimedOut { budget_ms }` variant carries a single
 log-injection vector through the error message.
 </review>
 
-<review persona="style" verdict="pass" model="claude-sonnet-4.6[1m]/medium" date="2026-05-21T20:42:00Z" round="1">
+<review persona="style" verdict="pass" model="claude-sonnet-4-6[1m]/medium" date="2026-05-21T20:42:00Z" round="1">
 Diff stays within the suggested files. `RenderArgs::timeout_ms`
 follows the existing `clap` field naming convention (snake_case,
 no `arg_` prefix). The new `RenderError::TimedOut` variant docstring
@@ -92,7 +92,7 @@ All five are required; there are no optional attributes.
   closed set.
 - `model` — the model identity that ran the reviewer turn. Same
   slash-suffix convention as `<implementer>` (e.g.
-  `claude-sonnet-4.6[1m]/medium`).
+  `claude-sonnet-4-6[1m]/medium`).
 - `date` — full ISO8601 date-time with seconds and timezone
   designator.
 - `round` — monotonic positive integer matching the

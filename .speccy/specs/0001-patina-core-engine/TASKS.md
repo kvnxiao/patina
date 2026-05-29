@@ -1206,7 +1206,7 @@ Suggested files: `patina-core/src/apply/hooks.rs`,
 </task-scenarios>
 </task>
 
-<task id="T-016" state="pending" covers="REQ-017">
+<task id="T-016" state="completed" covers="REQ-017">
 ## `patina apply` CLI surface with TTY prompt, `--yes`, `--force-deploy`, `--json`, `--pager`
 
 Wire the `patina apply` subcommand in `patina-cli`. The clap-derived

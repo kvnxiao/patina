@@ -293,7 +293,8 @@ fn is_powershell(shell: &str) -> bool {
 /// rather than walked across `PATH`. On Windows the `PATHEXT` extensions
 /// (`.EXE`, `.CMD`, …) are appended to each candidate so a bare `pwsh`
 /// resolves to `pwsh.exe`.
-fn resolve_on_path(binary: &str) -> Option<Utf8PathBuf> {
+#[must_use = "the resolved path is the result of the PATH lookup; use it"]
+pub fn resolve_on_path(binary: &str) -> Option<Utf8PathBuf> {
     if binary.contains('/') || binary.contains('\\') {
         let candidate = Utf8PathBuf::from(binary);
         return is_executable_file(&candidate).then_some(candidate);

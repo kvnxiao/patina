@@ -1,26 +1,38 @@
 //! Patina CLI entry point.
 //!
-//! T-001 wires `#[tokio::main]` and proves the binary can await one of
-//! `patina-core`'s public async entry points. The full clap-derived
-//! subcommand surface — including user-facing output routed through
-//! the `output::Reporter` layer — lands in T-016.
+//! Parses the clap-derived command surface ([`cli`]) and dispatches to a
+//! subcommand in [`cmd`]. User-facing output is routed exclusively through
+//! the [`output::reporter::Reporter`] layer; logs go through `tracing`.
+//! The process exit code is owned by the subcommand (REQ-017's exit-code
+//! contract), so `main` translates the returned code into
+//! [`std::process::exit`].
 
-use anyhow::Context;
-use anyhow::Result;
+mod cli;
+mod cmd;
+mod output;
+
+use clap::Parser;
+use cli::Cli;
+use cli::Command;
+use cmd::apply::StdinReader;
+use cmd::apply::Tty;
+use is_terminal::IsTerminal;
+use output::reporter::StreamReporter;
 
 #[tokio::main]
-async fn main() -> Result<()> {
-    // Wiring-proof call: await one of patina-core's public async entry
-    // points so the `#[tokio::main]` annotation has a real `.await` to
-    // drive. The placeholder error is expected until later tasks land
-    // the real engine.
-    //
-    // No user-facing output is emitted here: the `output::Reporter`
-    // layer (T-016 / Phase 10) is the only sanctioned print site per
-    // AGENTS.md, and argument parsing (including `--version`) is
-    // migrated to clap in T-016.
-    let result = patina_core::status(patina_core::StatusOptions::default()).await;
-    result.context("patina-core::status failed")?;
-
-    Ok(())
+async fn main() -> anyhow::Result<()> {
+    let cli = Cli::parse();
+    let code = match cli.command {
+        Command::Apply(args) => {
+            let tty = if std::io::stdin().is_terminal() {
+                Tty::Interactive
+            } else {
+                Tty::NonInteractive
+            };
+            let mut reader = StdinReader;
+            let mut reporter = StreamReporter::new();
+            cmd::apply::run(&args, tty, &mut reader, &mut reporter).await?
+        }
+    };
+    std::process::exit(code);
 }

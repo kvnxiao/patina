@@ -99,10 +99,12 @@ Decomposes the SPEC into an ordered, single-agent-sized task list in
         SPEC.md's YAML frontmatter (the one-line title slug, not
         the full document heading).
       - **Trailer:** a single `Co-Authored-By: <model> <noreply@anthropic.com>`
-        line where `<model>` is sourced from the host harness's
-        runtime model identifier (env var, runtime API, or
-        host-specific equivalent). When the host does not expose a
-        model identifier, use the documented fallback string
+        line where `<model>` is the model segment sourced per the
+        "Sourcing your recorded identity" rule — the host's
+        in-context identifier transcribed verbatim in hyphen form
+        (e.g. `claude-opus-4-8[1m]`), never a dotted form or a
+        configured alias. When the host states no resolved identifier
+        in-context, use the documented fallback string
         `Co-Authored-By: Speccy Skill Pack <noreply@anthropic.com>`.
         Trailer resolution matches SPEC-0045/REQ-004 verbatim.
 

@@ -34,6 +34,7 @@
 //! diff-and-prompt loop, and the apply orchestration that calls these
 //! executors land in their own tasks.
 
+pub mod engine;
 pub mod hooks;
 
 mod copy;
@@ -50,6 +51,7 @@ pub use hooks::ForceDeploy;
 pub use hooks::HookError;
 pub use hooks::HookOutcome;
 pub use hooks::ResolvedHook;
+pub use hooks::resolve_on_path;
 pub use hooks::resolve_shells;
 pub use hooks::run_hook;
 pub use hooks::should_run;

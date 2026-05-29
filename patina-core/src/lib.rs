@@ -30,7 +30,15 @@ pub use apply::HookError;
 pub use apply::HookOutcome;
 pub use apply::Materialization;
 pub use apply::ResolvedHook;
+pub use apply::engine::ApplyRequest;
+pub use apply::engine::ApplyResult;
+pub use apply::engine::ResolvedOperation;
+pub use apply::engine::ResolvedPlan;
+pub use apply::engine::execute as execute_plan;
+pub use apply::engine::is_content_materialization;
+pub use apply::engine::plan as plan_apply;
 pub use apply::materialize;
+pub use apply::resolve_on_path;
 pub use apply::resolve_shells;
 pub use apply::run_hook;
 pub use apply::should_run;
@@ -81,12 +89,21 @@ pub use variables::Builtins;
 pub use variables::Resolver;
 pub use variables::VariableError;
 
-/// Options accepted by [`apply`]. Subsequent tasks extend this struct
-/// with the resolved repository root, profile, CLI variable overrides,
-/// and the `--yes` / `--force-deploy` / `--json` toggles.
+/// Options accepted by [`apply`]. The TTY-driven prompt, `--json`
+/// envelope, and `--pager` plumbing live in the CLI ([`plan_apply`] /
+/// [`execute_plan`] are the two engine primitives it drives); this
+/// convenience entry point unconditionally plans and executes, mirroring
+/// `patina apply --yes`.
 #[derive(Debug, Default, Clone)]
 #[non_exhaustive]
-pub struct ApplyOptions {}
+pub struct ApplyOptions {
+    /// Invocation toggles forwarded to the engine (`--force-deploy`,
+    /// `-v` overrides).
+    pub request: ApplyRequest,
+    /// Timestamp keying this run's journal and backup files. The CLI
+    /// supplies a real UTC timestamp; tests supply a fixed string.
+    pub timestamp: String,
+}
 
 /// Options accepted by [`status`]. Subsequent tasks extend this with
 /// the resolved repository root and output-format toggle.
@@ -105,14 +122,12 @@ pub struct RollbackOptions {}
 ///
 /// # Errors
 ///
-/// Returns [`EngineError::NotImplemented`] until later tasks land the
-/// discovery, plan, executor, and journal subsystems.
-#[expect(
-    clippy::unused_async,
-    reason = "REQ-002 mandates an async signature; bodies become await-ful in later tasks."
-)]
-pub async fn apply(_options: ApplyOptions) -> Result<(), EngineError> {
-    Err(EngineError::NotImplemented("apply"))
+/// Returns an [`EngineError`] when planning or execution fails. A hook
+/// that fails under `must_succeed` is reported through the returned
+/// [`ApplyResult`], not as an error.
+pub async fn apply(options: ApplyOptions) -> Result<ApplyResult, EngineError> {
+    let resolved = plan_apply(&options.request, options.timestamp)?;
+    execute_plan(&resolved, &options.request).await
 }
 
 /// Report drift between the resolved dotfiles repository and the

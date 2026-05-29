@@ -176,6 +176,14 @@ The 600000ms (10-minute) upper bound is a defensive guardrail against
 typo'd values like `--timeout-ms 3000000`. If a real workload needs a
 longer budget, raising the cap is a follow-up SPEC, not a config
 knob.
+
+## Changelog
+
+<changelog>
+| Date | Author | Summary |
+| --- | --- | --- |
+| 2026-05-21 | acme-author | Initial SPEC: `--timeout-ms` flag, exit 124 on budget overrun. |
+</changelog>
 ```
 
 ---
@@ -191,6 +199,9 @@ knob.
   one or more `<scenario id="CHK-NNN">` blocks.
 - Scenario blocks use Given/When/Then prose; the `id` attribute is
   the proof handle `speccy check` and `REPORT.md` reference.
+- `## Changelog` carries a `<changelog>` table in the
+  `Date | Author | Summary` shape; the parser requires it, so a SPEC
+  authored without it trips `SPC-001`.
 - Unresolved placeholder substrings (the conventional unfinished-draft
   markers and angle-bracket ellipses) do not appear anywhere in a real
   SPEC.md; example values are concrete and load-bearing.
