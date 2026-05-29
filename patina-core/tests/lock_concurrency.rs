@@ -44,12 +44,34 @@ static BUILD: Once = Once::new();
 /// `cargo run` that might race the build cache.
 fn ensure_helper_built() {
     BUILD.call_once(|| {
+        // Build into the same target root this test binary lives in (derived
+        // from the running test exe), not cargo's default. Under
+        // `cargo llvm-cov` the test runs from `target/llvm-cov-target/`, so a
+        // plain `cargo build` would emit the example into `target/` where
+        // `helper_path` (which derives from the test exe) cannot find it.
         let status = Command::new(env!("CARGO"))
             .args(["build", "--quiet", "--example", "lock_helper"])
+            .arg("--target-dir")
+            .arg(target_root().as_str())
             .status()
             .expect("spawn cargo build for lock_helper example");
         assert!(status.success(), "building lock_helper example failed");
     });
+}
+
+/// The cargo target root this test binary was built into, derived from the
+/// running test executable: `<target-root>/<profile>/deps/<test-exe>`. Under
+/// plain `cargo test` this is `target/`; under `cargo llvm-cov` it is
+/// `target/llvm-cov-target/`. Deriving it keeps the example build and the
+/// spawn lookup in agreement under both.
+fn target_root() -> Utf8PathBuf {
+    let test_exe = std::env::current_exe().expect("current test exe path");
+    let root = test_exe
+        .parent()
+        .and_then(std::path::Path::parent)
+        .and_then(std::path::Path::parent)
+        .expect("derive target root from test exe path");
+    Utf8PathBuf::from_path_buf(root.to_owned()).expect("utf8 target root")
 }
 
 /// Locate the compiled `lock_helper` example next to this test binary.
