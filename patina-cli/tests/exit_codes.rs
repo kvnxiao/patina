@@ -25,97 +25,12 @@
 //! subprocess pipe cannot simulate; it is covered by the in-process unit
 //! tests on the injected `PromptReader` in `cmd::apply` and `cmd::rollback`.
 
-use camino::Utf8Path;
-use camino::Utf8PathBuf;
-use patina_core::HostOs;
+mod common;
+
+use common::Fixture;
+use common::code;
 use patina_core::LockKind;
-use std::process::Command;
-use std::process::Output;
 use std::time::Duration;
-use tempfile::TempDir;
-
-/// A prepared fixture: an isolated repo + state dir, ready to invoke
-/// `patina apply` against.
-struct Fixture {
-    _temp: TempDir,
-    root: Utf8PathBuf,
-    home: Utf8PathBuf,
-    state: Utf8PathBuf,
-}
-
-impl Fixture {
-    /// Build a fixture with a root manifest and an empty home/state tree.
-    fn new() -> Self {
-        let temp = TempDir::new().expect("tempdir");
-        let root = Utf8Path::from_path(temp.path())
-            .expect("utf8 temp path")
-            .to_owned();
-        let repo = root.join("repo");
-        let home = root.join("home");
-        let state = root.join("state");
-        fs_err::create_dir_all(&repo).expect("mkdir repo");
-        fs_err::create_dir_all(&home).expect("mkdir home");
-        fs_err::create_dir_all(&state).expect("mkdir state");
-        fs_err::write(repo.join("patina.toml"), "[patina]\nroot = true\n")
-            .expect("write root manifest");
-        Self {
-            _temp: temp,
-            root: repo,
-            home,
-            state,
-        }
-    }
-
-    /// Write a module directory with the given `patina.toml` body and an
-    /// optional source file.
-    fn module(&self, name: &str, manifest: &str) -> Utf8PathBuf {
-        let dir = self.root.join(name);
-        fs_err::create_dir_all(&dir).expect("mkdir module");
-        fs_err::write(dir.join("patina.toml"), manifest).expect("write module manifest");
-        dir
-    }
-
-    /// The per-machine state-directory root the subprocess will resolve,
-    /// computed from this fixture's own isolated env values (not the
-    /// process environment) so concurrent tests never collide.
-    fn state_root(&self) -> Utf8PathBuf {
-        patina_core::state_dir::resolve_with_env(HostOs::current(), |name| match name {
-            "XDG_STATE_HOME" | "LOCALAPPDATA" => Some(self.state.as_str().to_owned()),
-            "HOME" | "USERPROFILE" => Some(self.home.as_str().to_owned()),
-            _ => None,
-        })
-        .expect("resolve fixture state dir")
-    }
-
-    /// Invoke `patina apply` with `args`, isolating repo + state + home.
-    /// Extra environment pairs are layered on last.
-    fn apply_with_env(&self, args: &[&str], extra: &[(&str, &str)]) -> Output {
-        let bin = env!("CARGO_BIN_EXE_patina");
-        let mut cmd = Command::new(bin);
-        cmd.arg("apply")
-            .args(args)
-            .env("PATINA_REPO", self.root.as_str())
-            .env("HOME", self.home.as_str())
-            .env("USERPROFILE", self.home.as_str())
-            .env("XDG_STATE_HOME", self.state.as_str())
-            .env("LOCALAPPDATA", self.state.as_str())
-            .env_remove("PATINA_PROFILE");
-        for (k, v) in extra {
-            cmd.env(k, v);
-        }
-        cmd.output().expect("spawn patina")
-    }
-
-    /// Invoke `patina apply` with `args` and no extra environment.
-    fn apply(&self, args: &[&str]) -> Output {
-        self.apply_with_env(args, &[])
-    }
-}
-
-/// The numeric exit code, or a panic if the process was signalled.
-fn code(output: &Output) -> i32 {
-    output.status.code().expect("process exited with a code")
-}
 
 /// A module with a single copy `[[file]]` plus a hook of the given event /
 /// command. Used to drive the hook-failure exit codes.

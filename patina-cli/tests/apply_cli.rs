@@ -1,8 +1,3 @@
-#![expect(
-    clippy::expect_used,
-    reason = "integration tests use .expect() on fixture setup; allow-expect-in-tests covers #[cfg(test)] modules but not the helper functions in tests/*.rs integration crates."
-)]
-
 //! Integration tests for the `patina apply` CLI surface (REQ-017,
 //! CHK-028 / CHK-029 / CHK-030).
 //!
@@ -12,78 +7,11 @@
 //! The binary is invoked as a subprocess (its stdin is therefore not a
 //! TTY, exercising the non-interactive path).
 
-use camino::Utf8Path;
-use camino::Utf8PathBuf;
+mod common;
+
+use common::Fixture;
+use common::code;
 use std::process::Command;
-use std::process::Output;
-use tempfile::TempDir;
-
-/// A prepared fixture: an isolated repo + state dir, ready to invoke
-/// `patina apply` against.
-struct Fixture {
-    _temp: TempDir,
-    root: Utf8PathBuf,
-    home: Utf8PathBuf,
-    state: Utf8PathBuf,
-}
-
-impl Fixture {
-    /// Build a fixture with a root manifest and an empty home/state tree.
-    fn new() -> Self {
-        let temp = TempDir::new().expect("tempdir");
-        let root = Utf8Path::from_path(temp.path())
-            .expect("utf8 temp path")
-            .to_owned();
-        let repo = root.join("repo");
-        let home = root.join("home");
-        let state = root.join("state");
-        fs_err::create_dir_all(&repo).expect("mkdir repo");
-        fs_err::create_dir_all(&home).expect("mkdir home");
-        fs_err::create_dir_all(&state).expect("mkdir state");
-        fs_err::write(repo.join("patina.toml"), "[patina]\nroot = true\n")
-            .expect("write root manifest");
-        Self {
-            _temp: temp,
-            root: repo,
-            home,
-            state,
-        }
-    }
-
-    /// Write a module directory with the given `patina.toml` body and an
-    /// optional source file.
-    fn module(&self, name: &str, manifest: &str) -> Utf8PathBuf {
-        let dir = self.root.join(name);
-        fs_err::create_dir_all(&dir).expect("mkdir module");
-        fs_err::write(dir.join("patina.toml"), manifest).expect("write module manifest");
-        dir
-    }
-
-    /// Invoke `patina apply` with `args`, isolating repo + state + home.
-    fn apply(&self, args: &[&str]) -> Output {
-        let bin = env!("CARGO_BIN_EXE_patina");
-        Command::new(bin)
-            .arg("apply")
-            .args(args)
-            .env("PATINA_REPO", self.root.as_str())
-            .env("HOME", self.home.as_str())
-            .env("USERPROFILE", self.home.as_str())
-            .env("XDG_STATE_HOME", self.state.as_str())
-            // Windows resolves the state dir from LOCALAPPDATA; isolate it
-            // per-test so parallel tests never share one journal / lock /
-            // backup tree (which would let one test's crash-recovery pass
-            // reverse another test's just-applied files).
-            .env("LOCALAPPDATA", self.state.as_str())
-            .env_remove("PATINA_PROFILE")
-            .output()
-            .expect("spawn patina")
-    }
-}
-
-/// The numeric exit code, or a panic if the process was signalled.
-fn code(output: &Output) -> i32 {
-    output.status.code().expect("process exited with a code")
-}
 
 #[test]
 fn non_tty_apply_previews_without_mutating() {

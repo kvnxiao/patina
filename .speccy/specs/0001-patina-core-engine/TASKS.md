@@ -1592,7 +1592,7 @@ Suggested files: `patina-cli/src/exit_code.rs`,
 </task-scenarios>
 </task>
 
-<task id="T-021" state="pending" covers="REQ-021">
+<task id="T-021" state="completed" covers="REQ-021">
 ## Make user-facing stdout byte-deterministic across consecutive applies
 
 Audit and harden the `output::Reporter` (T-016) abstraction so two
