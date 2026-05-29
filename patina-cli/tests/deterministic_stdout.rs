@@ -35,7 +35,7 @@ fn rich_fixture() -> Fixture {
 
     let shell = f.module(
         "shell",
-        "[[file]]\nsource = \"rc.tmpl\"\ntarget = \"~/.shellrc.tmpl\"\n",
+        "[[file]]\nsource = \"rc.tmpl\"\ntarget = \"~/.shellrc\"\n",
     );
     fs_err::write(shell.join("rc.tmpl"), "export EDITOR=vim\n").expect("write tmpl source");
     f

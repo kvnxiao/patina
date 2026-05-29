@@ -11,8 +11,8 @@
 //!   [`CopyTree`](crate::config::FileMode::CopyTree).
 //! - [`template`] — implicit
 //!   [`TemplateRender`](crate::config::FileMode::TemplateRender) of a `.tmpl`
-//!   source, rendered once and written to each target with the `.tmpl` suffix
-//!   stripped.
+//!   source, rendered once and written to each declared (suffix-less)
+//!   target.
 //!
 //! # Per-target completion records
 //!
@@ -156,10 +156,11 @@ pub enum ExecutorError {
         path: Utf8PathBuf,
     },
 
-    /// A template `.tmpl` target path did not end with the `.tmpl` suffix
-    /// once stripped, leaving no distinct output path. Surfaced rather
-    /// than silently overwriting the source.
-    #[error("template source {path} does not carry a `.tmpl` suffix to strip")]
+    /// The render executor was handed a source that does not carry the
+    /// `.tmpl` suffix. Templating is keyed off the source suffix, so the
+    /// engine should never classify a non-`.tmpl` source as a render; this
+    /// guards that invariant rather than rendering an arbitrary file.
+    #[error("template source {path} does not carry a `.tmpl` suffix")]
     NotATemplate {
         /// The source path that lacked the `.tmpl` suffix.
         path: Utf8PathBuf,

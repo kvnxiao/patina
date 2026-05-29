@@ -1,9 +1,12 @@
 //! Implicit template-render executor (REQ-005).
 //!
-//! A `.tmpl` source is rendered through the shared T-008 `MiniJinja`
+//! Templating keys off the **source** `.tmpl` suffix (REQ-005): a source
+//! file ending in `.tmpl` is rendered through the shared T-008 `MiniJinja`
 //! [`Engine`] **exactly once** against the resolved variable context, and
-//! the same rendered bytes are written to each target. The target path is
-//! the declared target with the `.tmpl` suffix stripped; the materialized
+//! the same rendered bytes are written to each declared target. The target
+//! is declared as its final, suffix-less path (`source = "gitconfig.tmpl"`,
+//! `target = "~/.gitconfig"`), so the executor writes to the target
+//! verbatim — it does not strip anything from the target. The materialized
 //! object is a regular file, never a symlink. Rendering once (rather than
 //! per target) is the REQ-005 guarantee a multi-target `.tmpl` entry must
 //! honour.
@@ -16,8 +19,8 @@ use crate::variables::Resolver;
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
 
-/// Render a `.tmpl` source once and write the result to each target with
-/// the `.tmpl` suffix stripped.
+/// Render a `.tmpl` source once and write the result to each declared
+/// target verbatim (REQ-005 declares targets suffix-less).
 pub(super) fn render(
     source: &Utf8Path,
     targets: &[Utf8PathBuf],
@@ -26,6 +29,14 @@ pub(super) fn render(
 ) -> Result<Vec<CompletionRecord>, ExecutorError> {
     if !source.exists() {
         return Err(ExecutorError::SourceMissing {
+            path: source.to_path_buf(),
+        });
+    }
+    // Templating is keyed off the source suffix; a non-`.tmpl` source
+    // never reaches the render executor, but guard it so the executor
+    // refuses to render a path the engine should never have classified.
+    if !has_tmpl_suffix(source) {
+        return Err(ExecutorError::NotATemplate {
             path: source.to_path_buf(),
         });
     }
@@ -39,29 +50,25 @@ pub(super) fn render(
 
     let mut records = Vec::with_capacity(targets.len());
     for target in targets {
-        let output = strip_tmpl_suffix(target).ok_or_else(|| ExecutorError::NotATemplate {
-            path: target.to_path_buf(),
-        })?;
-        ensure_parent(&output)?;
-        fs_err::write(&output, rendered.as_bytes()).map_err(|err| ExecutorError::Io {
-            path: output.clone(),
+        ensure_parent(target)?;
+        fs_err::write(target, rendered.as_bytes()).map_err(|err| ExecutorError::Io {
+            path: target.clone(),
             source: err,
         })?;
-        records.push(CompletionRecord::render(source.to_path_buf(), output));
+        records.push(CompletionRecord::render(
+            source.to_path_buf(),
+            target.clone(),
+        ));
     }
     Ok(records)
 }
 
-/// Strip a trailing `.tmpl` (case-insensitive) extension from `target`,
-/// returning the suffix-less path. Returns `None` when the path does not
-/// end in `.tmpl`, so the executor refuses to overwrite a non-template
-/// path rather than collide source and output.
-fn strip_tmpl_suffix(target: &Utf8Path) -> Option<Utf8PathBuf> {
-    let ext = target.extension()?;
-    if !ext.eq_ignore_ascii_case("tmpl") {
-        return None;
-    }
-    Some(target.with_extension(""))
+/// Whether `source` carries a trailing `.tmpl` (case-insensitive)
+/// extension — the marker that makes an entry an implicit template render.
+fn has_tmpl_suffix(source: &Utf8Path) -> bool {
+    source
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("tmpl"))
 }
 
 #[cfg(test)]
@@ -85,12 +92,13 @@ mod tests {
     }
 
     #[test]
-    fn renders_once_and_writes_each_target_without_suffix() {
+    fn renders_once_and_writes_each_declared_target() {
         let (_td, dir) = utf8_tempdir();
+        // Source carries `.tmpl`; targets are declared suffix-less per REQ-005.
         let source = dir.join("agent.toml.tmpl");
         fs_err::write(&source, b"name = {{ who }}").expect("write template");
-        let t1 = dir.join("claude").join("agent.toml.tmpl");
-        let t2 = dir.join("codex").join("agent.toml.tmpl");
+        let t1 = dir.join("claude").join("agent.toml");
+        let t2 = dir.join("codex").join("agent.toml");
 
         let records = render(
             &source,
@@ -100,18 +108,15 @@ mod tests {
         )
         .expect("render");
 
-        assert_eq!(records.len(), 2);
-        let out1 = dir.join("claude").join("agent.toml");
-        let out2 = dir.join("codex").join("agent.toml");
-        assert_eq!(fs_err::read(&out1).expect("read out1"), b"name = kevin");
-        assert_eq!(fs_err::read(&out2).expect("read out2"), b"name = kevin");
-        // The `.tmpl` paths themselves must not exist at the targets.
-        assert!(!t1.exists());
-        assert!(!t2.exists());
+        // The executor writes to the declared targets verbatim.
+        let written: Vec<&Utf8PathBuf> = records.iter().map(|r| &r.target).collect();
+        assert_eq!(written, vec![&t1, &t2]);
+        assert_eq!(fs_err::read(&t1).expect("read t1"), b"name = kevin");
+        assert_eq!(fs_err::read(&t2).expect("read t2"), b"name = kevin");
         // Output is a regular file, not a symlink.
         assert!(
-            !fs_err::symlink_metadata(&out1)
-                .expect("out1 metadata")
+            !fs_err::symlink_metadata(&t1)
+                .expect("t1 metadata")
                 .file_type()
                 .is_symlink()
         );
@@ -122,7 +127,7 @@ mod tests {
         let (_td, dir) = utf8_tempdir();
         let source = dir.join("gitconfig.tmpl");
         fs_err::write(&source, b"email = {{ patina.profile_email }}").expect("write template");
-        let target = dir.join("gitconfig.tmpl");
+        let target = dir.join("gitconfig");
         let err = render(
             &source,
             &[target],
@@ -134,15 +139,25 @@ mod tests {
     }
 
     #[test]
-    fn strip_tmpl_suffix_handles_case_and_absence() {
-        assert_eq!(
-            strip_tmpl_suffix(Utf8Path::new("/x/y.toml.tmpl")),
-            Some(Utf8PathBuf::from("/x/y.toml"))
-        );
-        assert_eq!(
-            strip_tmpl_suffix(Utf8Path::new("/x/y.toml.TMPL")),
-            Some(Utf8PathBuf::from("/x/y.toml"))
-        );
-        assert_eq!(strip_tmpl_suffix(Utf8Path::new("/x/y.toml")), None);
+    fn non_tmpl_source_is_rejected() {
+        let (_td, dir) = utf8_tempdir();
+        let source = dir.join("gitconfig");
+        fs_err::write(&source, b"name = {{ who }}").expect("write source");
+        let target = dir.join("out");
+        let err = render(
+            &source,
+            &[target],
+            &Engine::new(),
+            &resolver_with("who", "kevin"),
+        )
+        .expect_err("non-`.tmpl` source must not render");
+        assert!(matches!(err, ExecutorError::NotATemplate { .. }));
+    }
+
+    #[test]
+    fn has_tmpl_suffix_handles_case_and_absence() {
+        assert!(has_tmpl_suffix(Utf8Path::new("/x/y.toml.tmpl")));
+        assert!(has_tmpl_suffix(Utf8Path::new("/x/y.toml.TMPL")));
+        assert!(!has_tmpl_suffix(Utf8Path::new("/x/y.toml")));
     }
 }

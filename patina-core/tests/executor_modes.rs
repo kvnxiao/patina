@@ -205,15 +205,16 @@ fn copy_tree_mode_mirrors_directory() {
     );
 }
 
-/// CHK-011: a `.tmpl` source renders through `MiniJinja` and materializes at
-/// the target with the `.tmpl` suffix stripped as a regular file, and the
-/// `.tmpl` path does not exist at the target.
+/// CHK-011: a `.tmpl` *source* renders through `MiniJinja` and materializes at
+/// the declared suffix-less target as a regular file. Per REQ-005 the target
+/// is declared without a `.tmpl` suffix (`source = "gitconfig.tmpl"`,
+/// `target = "~/.gitconfig"`); the executor writes to it verbatim.
 #[test]
-fn template_render_mode_strips_suffix_and_renders() {
+fn template_render_mode_renders_to_declared_target() {
     let (_td, dir) = utf8_tempdir();
     let source = dir.join("gitconfig.tmpl");
     fs_err::write(&source, b"[user]\n    email = {{ email }}").expect("write template");
-    let target = dir.join("home").join("gitconfig.tmpl");
+    let target = dir.join("home").join("gitconfig");
 
     let resolver = resolver()
         .with_repo_shared([("email", "kevin@example.com")])
@@ -230,10 +231,16 @@ fn template_render_mode_strips_suffix_and_renders() {
 
     assert_eq!(records.len(), 1);
     assert_eq!(records[0].materialization, Materialization::Render);
-    let output = dir.join("home").join("gitconfig");
+    assert_eq!(records[0].target, target);
     assert_eq!(
-        fs_err::read_to_string(&output).expect("read rendered"),
+        fs_err::read_to_string(&target).expect("read rendered"),
         "[user]\n    email = kevin@example.com"
     );
-    assert!(!target.exists());
+    // The rendered output is a regular file, not a symlink.
+    assert!(
+        !fs_err::symlink_metadata(&target)
+            .expect("target metadata")
+            .file_type()
+            .is_symlink()
+    );
 }

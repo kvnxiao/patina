@@ -164,7 +164,7 @@ fn cli_variable_override_renders_into_template() {
     let f = Fixture::new();
     let module = f.module(
         "shell",
-        "[[file]]\nsource = \"gitconfig.tmpl\"\ntarget = \"~/.gitconfig.tmpl\"\n",
+        "[[file]]\nsource = \"gitconfig.tmpl\"\ntarget = \"~/.gitconfig\"\n",
     );
     fs_err::write(module.join("gitconfig.tmpl"), "email = {{ email }}\n").expect("write tmpl");
 

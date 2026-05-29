@@ -106,16 +106,19 @@ fn copy_fans_out_to_every_target() {
     }
 }
 
-/// CHK-044: a multi-target `.tmpl` entry renders the template once against
-/// the resolved context and writes the same rendered bytes to each target
-/// (with the `.tmpl` suffix stripped); neither `.tmpl` target path exists.
+/// CHK-044: a multi-target `.tmpl` *source* entry renders the template once
+/// against the resolved context and writes the same rendered bytes to each
+/// declared target. Per REQ-005 (and CHK-044) the targets are declared
+/// suffix-less (`source = "agent.toml.tmpl"`,
+/// `targets = ["~/.claude/agent.toml", "~/.codex/agent.toml"]`); the executor
+/// writes to each declared target verbatim.
 #[test]
 fn template_renders_once_and_writes_each_target() {
     let (_td, dir) = utf8_tempdir();
     let source = dir.join("agent.toml.tmpl");
     fs_err::write(&source, b"name = {{ who }}").expect("write template");
-    let t1 = dir.join("claude").join("agent.toml.tmpl");
-    let t2 = dir.join("codex").join("agent.toml.tmpl");
+    let t1 = dir.join("claude").join("agent.toml");
+    let t2 = dir.join("codex").join("agent.toml");
 
     let resolver = resolver()
         .with_repo_shared([("who", "patina")])
@@ -131,13 +134,11 @@ fn template_renders_once_and_writes_each_target() {
     .expect("render fan-out");
 
     assert_eq!(records.len(), 2);
-    let out1 = dir.join("claude").join("agent.toml");
-    let out2 = dir.join("codex").join("agent.toml");
-    let rendered1 = fs_err::read_to_string(&out1).expect("read out1");
-    let rendered2 = fs_err::read_to_string(&out2).expect("read out2");
+    assert_eq!(records[0].target, t1);
+    assert_eq!(records[1].target, t2);
+    let rendered1 = fs_err::read_to_string(&t1).expect("read t1");
+    let rendered2 = fs_err::read_to_string(&t2).expect("read t2");
     assert_eq!(rendered1, "name = patina");
     // Render-once guarantee: the two targets receive byte-identical output.
     assert_eq!(rendered1, rendered2);
-    assert!(!t1.exists());
-    assert!(!t2.exists());
 }
