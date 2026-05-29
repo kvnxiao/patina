@@ -1879,7 +1879,7 @@ Suggested files: `docs/ARCHITECTURE.md`, `docs/USER_GUIDE.md`,
 </task-scenarios>
 </task>
 
-<task id="T-025" state="pending" covers="REQ-028">
+<task id="T-025" state="completed" covers="REQ-028">
 ## `deny.toml` + `cargo deny check` gate CI on every push and PR
 
 Author `deny.toml` at the repository root with these top-level

@@ -14,6 +14,18 @@
 # Windows long-path case, a Linux-only `#[cfg(target_os = ...)]` panic)
 # blocks merge into `main`. Branch protection is administered on GitHub
 # and is not expressible in this file; this comment is the contract.
+#
+# Supply-chain gate (REQ-028): the `deny` job below runs `cargo deny
+# check` (licences, advisories, bans, sources) against the root
+# `deny.toml`. Add its check name to the same required-status-checks set
+# so a licence / advisory / bans / sources violation blocks merge into
+# `main`:
+#
+#   - Cargo deny
+#
+# A PR that adds, for example, a `GPL-3.0`-licensed dependency to
+# `Cargo.toml` fails the `licenses` check and, with this name required,
+# is blocked from merging.
 
 name: CI
 
