@@ -40,3 +40,20 @@ The SPEC-0001 working-tree holistic template-render fix (and the surrounding com
 <gate verdict="passed" tasks_hash="b6ad9ba25bb00b0ef1345d15882139ddf629298bd7c40515efe1f2e81d9b4fa6" date="2026-05-29T05:28:20Z">
 Drift cleared on round 2 (one drift-fix round: template-render re-keyed off the source `.tmpl` suffix, inverted tests re-pointed at SPEC-shaped targets); simplifier scan clean. Holistic gate passed.
 </gate>
+
+## Invocation 2 — 2026-05-29T07:22:17Z
+
+<drift-review verdict="pass" round="1" date="2026-05-29T07:34:52-04:00" model="claude-opus-4-8[1m]/high">
+SPEC-0001 satisfied as a unit. The new REQ-029 (widened COMMIT record: per-target canonical source + 32-byte blake3 content hash, shared version-envelope major bumped to 2) is implemented end-to-end and verified against the SPEC-shaped fixtures: the write side reads back materialized bytes and hashes them (patina-core/src/apply/engine.rs:398 build_apply_record), the record types carry source/hash/entry per variant (patina-core/src/journal/record.rs:51), status recomputes the same blake3 to classify drift (patina-core/src/status/classify.rs:94), and the envelope major is 2 (patina-core/src/journal/plan.rs:28). CHK-062/063/064 plus the symlink-source and status-drift done-when behaviors all pass (commit_record 5/5, status_cli 6/6). No regression in the machinery REQ-029 touches: recovery (5/5), rollback_cli (6/6), rollback_atomic (2/2). Build clean, clippy clean (REQ-024/026), cargo-deny green with blake3's license accepted (REQ-028). No scope creep — the only new public surface (ApplyRecord/ExpectedTarget/content_hash/read_latest_commit) is exactly what REQ-029 authorizes for the SPEC-0002/0003 consumers and is named in the SPEC; no new CLI flag, command, env var, or config key. No non-goal violated. The invocation-1 template-render fix (source-keyed .tmpl, suffix-less targets) remains intact. No stale u64/std::hash fingerprint or major=1 reference survives in production code.
+</drift-review>
+
+<simplifier-scan verdict="clean">
+SPEC-0001 production code is uniformly disciplined; the one borderline indirection was already reviewed and deliberately kept, and the remaining repeated shapes are documented cross-module idioms, not behavior-preserving wins.
+- `patina-cli/src/cmd/status.rs:103` — `state_label` is a single-use wrapper that only forwards to `TargetState::label()`; inlining the two call sites (lines 71, 94) would remove it, but `.speccy/specs/0001-patina-core-engine/journal/T-017.md:143` records a prior review pass that examined this exact alias and deliberately retained it with a doc note. Not worth re-litigating; downgraded to a note, not applied.
+- `patina-cli/src/cmd/apply.rs:168` (`mode_label`) and `patina-core/src/config/file_entry.rs:138` (mode-string deserialize) spell the same `symlink-dir`/`copy-tree` mode words in opposite directions across two crates. Could be unified via a `FileMode::as_toml_str` on the enum, but it is two distinct directions (parse vs. render) rather than a literal duplication, and `render.rs:134` `describe` uses a different vocabulary (`template-render` vs `template`) over a different enum, so there is no single mapping that serves all three. Left alone.
+- The `ignore_io` / `ignore_fmt` / `emit`+`discard` / `ResolvedPlan` dir-path helpers are deliberate, individually documented infallible-discard idioms consistent across `reporter.rs`, `render.rs`, `replay.rs`, and `diff.rs`; collapsing them would re-introduce the bare-`let _` / `must_use` lint noise they were written to avoid.
+</simplifier-scan>
+
+<gate verdict="passed" tasks_hash="15f15803fc8a70fc6291e1bcd53a71cdd8693e97056fe1cc18959c0bb0f423ba" date="2026-05-29T07:27:00Z">
+Drift review passed on round 1 (REQ-029 widened COMMIT record verified end-to-end as a unit; no scope creep, no non-goal violated, invocation-1 template-render fix intact); simplifier scan clean. Holistic gate passed.
+</gate>
