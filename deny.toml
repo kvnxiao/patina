@@ -1,0 +1,60 @@
+# cargo-deny configuration for patina.
+# See https://embarkstudios.github.io/cargo-deny/ for the full schema.
+
+[graph]
+# Patina ships on macOS, Linux, and Windows. Check all targets.
+all-features = true
+
+[output]
+feature-depth = 1
+
+# ---- Security advisories (RustSec) ----
+[advisories]
+version = 2
+db-path = "~/.cargo/advisory-db"
+db-urls = ["https://github.com/rustsec/advisory-db"]
+yanked = "deny"
+ignore = []
+
+# ---- License policy ----
+[licenses]
+version = 2
+# Permissive licenses compatible with patina's MIT licensing.
+# Add to this list with care; new licenses require a deliberate review.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-DFS-2016",
+    "Unicode-3.0",
+    "Zlib",
+    "CC0-1.0",
+    "MPL-2.0",
+]
+confidence-threshold = 0.93
+exceptions = []
+
+# ---- Dependency hygiene ----
+[bans]
+# Multiple versions of the same crate inflate compile time and binary size.
+# Warn for now; tighten to "deny" once the dep graph stabilizes.
+multiple-versions = "warn"
+# Wildcard versions (`= "*"`) bypass semver and hide upgrade churn.
+wildcards = "deny"
+highlight = "all"
+deny = []
+allow = []
+skip = []
+skip-tree = []
+
+# ---- Source policy ----
+[sources]
+# Patina dependencies must come from crates.io. Anything else (git deps,
+# private registries) requires deliberate allow-listing here.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

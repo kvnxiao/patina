@@ -1,0 +1,46 @@
+#!/usr/bin/env sh
+# Patina pre-commit hook.
+#
+# Runs the same fast gate CI runs, so a clean commit means a clean PR check:
+#   1. cargo +nightly fmt --all --check       (formatting)
+#   2. cargo clippy --workspace --all-targets --all-features -- -D warnings  (linting)
+#
+# Use `git commit --no-verify` to bypass for an emergency commit; the matching
+# CI jobs will still gate the PR, so this is rarely the right call.
+
+set -e
+
+# Phase 0 hasn't landed yet — no Cargo.toml means there's nothing to check.
+# Once Phase 0 of SPEC 0001 lands, this guard becomes a no-op.
+if [ ! -f Cargo.toml ]; then
+    exit 0
+fi
+
+# Verify the nightly toolchain is available before invoking it.
+if ! command -v rustup >/dev/null 2>&1; then
+    echo "pre-commit: rustup not found. Install Rust via https://rustup.rs/." >&2
+    exit 1
+fi
+
+if ! rustup toolchain list | grep -q '^nightly'; then
+    echo "pre-commit: nightly toolchain not installed." >&2
+    echo "  Run: rustup toolchain install nightly --component rustfmt" >&2
+    exit 1
+fi
+
+echo "pre-commit: cargo +nightly fmt --all --check"
+if ! cargo +nightly fmt --all --check; then
+    echo "" >&2
+    echo "pre-commit: formatting check failed." >&2
+    echo "  Run 'cargo +nightly fmt --all' to fix, then re-stage and commit." >&2
+    exit 1
+fi
+
+echo "pre-commit: cargo clippy --workspace --all-targets --all-features -- -D warnings"
+if ! cargo clippy --workspace --all-targets --all-features -- -D warnings; then
+    echo "" >&2
+    echo "pre-commit: clippy failed. Fix the warnings above and re-stage." >&2
+    exit 1
+fi
+
+exit 0

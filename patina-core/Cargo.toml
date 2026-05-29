@@ -1,0 +1,40 @@
+[package]
+name = "patina-core"
+description = "Core library for the patina cross-platform dotfile manager."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+keywords = ["dotfiles", "config", "templating", "cross-platform"]
+categories = ["config", "filesystem"]
+
+[dependencies]
+blake3 = { workspace = true }
+camino = { workspace = true }
+fs-err = { workspace = true }
+fs2 = { workspace = true }
+minijinja = { workspace = true }
+postcard = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = [
+    "rt-multi-thread",
+    "fs",
+    "process",
+    "signal",
+    "sync",
+    "time",
+    "io-util",
+    "macros",
+] }
+toml = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

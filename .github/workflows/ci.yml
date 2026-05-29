@@ -1,0 +1,132 @@
+# Patina CI.
+#
+# Operator note (REQ-025): the cross-platform parity gate is the `test`
+# matrix job below. To enforce "macOS, Linux, Windows are first-class;
+# two-of-three is not done", add ALL THREE of these check names to the
+# required-status-checks set for the `main` branch in the repository's
+# branch-protection settings:
+#
+#   - Test (ubuntu-latest)
+#   - Test (macos-latest)
+#   - Test (windows-latest)
+#
+# With those three required, a regression that fails on only one OS (a
+# Windows long-path case, a Linux-only `#[cfg(target_os = ...)]` panic)
+# blocks merge into `main`. Branch protection is administered on GitHub
+# and is not expressible in this file; this comment is the contract.
+#
+# Supply-chain gate (REQ-028): the `deny` job below runs `cargo deny
+# check` (licences, advisories, bans, sources) against the root
+# `deny.toml`. Add its check name to the same required-status-checks set
+# so a licence / advisory / bans / sources violation blocks merge into
+# `main`:
+#
+#   - Cargo deny
+#
+# A PR that adds, for example, a `GPL-3.0`-licensed dependency to
+# `Cargo.toml` fails the `licenses` check and, with this name required,
+# is blocked from merging.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fmt:
+    name: Format (nightly)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      # Nightly rustfmt is required because `.rustfmt.toml` uses unstable
+      # options (group_imports, imports_granularity, etc.). Pin to a specific
+      # nightly date if rolling-nightly regressions become a problem.
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rustfmt
+      - run: cargo +nightly fmt --all --check
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+  # Cross-platform parity gate (REQ-025). Each OS runs the workspace
+  # test suite and clippy with `--locked` so a lockfile drift or an
+  # OS-specific regression fails that OS's job and blocks merge.
+  # `fail-fast: false` ensures all three OSes report independently
+  # rather than the first failure cancelling the others.
+  test:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --workspace --locked
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+  docs:
+    name: Docs
+    runs-on: ubuntu-latest
+    env:
+      RUSTDOCFLAGS: -D warnings
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo doc --workspace --no-deps --all-features
+
+  msrv:
+    name: MSRV (Rust 1.95)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --workspace --all-features
+
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    needs: [fmt, clippy, test]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+      - run: cargo llvm-cov --all-features --workspace --fail-under-lines 0 --lcov --output-path lcov.info
+      - uses: codecov/codecov-action@v6
+        with:
+          files: lcov.info
+          # codecov outages shouldn't block CI; the --fail-under-lines gate
+          # above is the authoritative coverage check.
+          fail_ci_if_error: false
+
+  deny:
+    name: Cargo deny
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: EmbarkStudios/cargo-deny-action@v2

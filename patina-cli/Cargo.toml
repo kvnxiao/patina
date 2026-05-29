@@ -1,0 +1,39 @@
+[package]
+name = "patina-cli"
+description = "Command-line interface for the patina cross-platform dotfile manager."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+keywords = ["dotfiles", "cli", "config", "templating"]
+categories = ["command-line-utilities", "config"]
+
+[[bin]]
+name = "patina"
+path = "src/main.rs"
+
+[dependencies]
+patina-core = { path = "../patina-core", version = "0.1.0" }
+anyhow = { workspace = true }
+camino = { workspace = true }
+clap = { workspace = true }
+fs-err = { workspace = true }
+is-terminal = { workspace = true }
+jiff = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+similar = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tracing = { workspace = true }
+
+[dev-dependencies]
+pulldown-cmark = { workspace = true }
+tempfile = { workspace = true }
+toml = { workspace = true }
+
+[lints]
+workspace = true
