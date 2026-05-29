@@ -349,12 +349,19 @@ up (Patina does not auto-delete user files).
 - After `patina remove ~/.zshrc`, running `patina apply --yes` is
   a no-op for `~/.zshrc` (the file is no longer managed; status
   reports it as unmanaged).
-- For copy-mode targets, the "last-applied content" comes from
-  the most recent journal record's source hash; the engine reads
-  the source file from the repository at remove time.
+- For copy-mode targets, the "last-applied content" is the bytes of
+  the journaled source — the canonical source path recorded per
+  SPEC-0001 REQ-029 — which the engine reads from the repository at
+  remove time.
 - For template-rendered targets, the "last-applied content" is
-  the rendered output recorded in the journal (NOT the raw
-  template source).
+  produced by re-rendering that journaled source through MiniJinja
+  against the variable context resolved at remove time. The engine
+  does NOT recover raw rendered bytes from the journal, which records
+  only a blake3 hash of them (SPEC-0001 REQ-029). If the resolved
+  variable context changed since the last apply the re-rendered bytes
+  may differ from the last-applied bytes; remove leaves the freshly
+  re-rendered output — the deliberate "reset to current source
+  intent" semantics (DEC-005).
 - The original source file in the repository is NOT deleted by
   `patina remove` (purge or not); the user reclaims the
   repository file manually if desired.
@@ -445,8 +452,8 @@ Given a tempdir repository with `<repo>/git/gitconfig` (content
 when `patina promote ~/.gitconfig --yes` runs,
 then `<repo>/git/gitconfig` contains
 "[user]\nemail = new@example.com", and the most recent journal
-record's expected hash for `~/.gitconfig` matches the SHA of the
-new content.
+record's expected hash for `~/.gitconfig` matches the blake3 hash of
+the new content (SPEC-0001 REQ-029).
 </scenario>
 
 <scenario id="CHK-008">
@@ -893,15 +900,23 @@ candidate if real users surface the failure mode.
 
 <decision id="DEC-005">
 `patina remove` (without `--purge`) replaces the managed target
-with a regular file containing the last-applied content rather
-than the source file content. For symbolic-link mode targets,
-these are byte-identical. For copy-mode targets, they are also
-byte-identical (the deployed file is a copy of the source). For
-template-rendered targets, the last-applied content is the
-rendered output (recorded in the journal), not the raw template
-source. This last case is what makes the "regular file containing
-the last-linked content" promise non-trivial: the engine reads
-the rendered bytes from the journal, not from the repository.
+with a regular file containing the last-applied content rather than
+whatever currently sits on disk (which may have drifted). For
+symbolic-link and copy-mode targets the last-applied content is the
+bytes of the journaled source — the canonical source path recorded
+per SPEC-0001 REQ-029 — read from the repository at remove time. For
+template-rendered targets the engine re-renders that journaled source
+through MiniJinja against the variable context resolved at remove
+time, because the committed journal records only a blake3 hash of the
+rendered bytes (REQ-029), not the bytes themselves. Storing the full
+rendered bytes in the journal was rejected: it would bloat every
+commit record with whole-file contents for one command's
+convenience. The trade-off is that a template whose variable context
+changed since the last apply re-renders to current-intent bytes
+rather than byte-exact last-applied bytes. This is acceptable and
+arguably more correct: remove's purpose is to leave a working file,
+and the current source plus context is the freshest expression of
+intent.
 </decision>
 
 <decision id="DEC-006">
@@ -968,6 +983,7 @@ direction; SPEC content updated in the same revision.
 | 2026-05-25 | human/kevin  | Initial draft. Locks the complete user-facing CLI surface (`init`, `add`, `remove`, `promote`, `doctor` with `--fix`) plus the Windows symbolic-link Developer Mode flow with the `patina-elevate.exe` standalone helper binary. Cloud-sync path detection is heuristic and uses a hardcoded provider list. `patina remove` (without `--purge`) replaces the managed target with a regular file containing the last-applied content. `patina promote` refuses on template-rendered targets because templating is non-invertible. |
 | 2026-05-26 | human/kevin  | Resolve all five self-review questions. (a) Confirm move-on-add in REQ-002. (b) Drop cloud-sync detection entirely from REQ-005, REQ-006, the Assumptions block, and the Summary; DEC-004 is reframed as "no detection, docs only" with v1.1 deferral; `docs/operating-environment.md` carries the user-facing callout. (c) Drop the `windows_dev_mode.cache` file and 7-day TTL from REQ-007; the registry flag is re-read on every apply that needs it. (d) Confirm `patina-elevate.exe` refuses non-elevated invocation. (e) No separate `<json-schema>` block in REQ-010; the per-command scenarios pin field shape implicitly. Cross-reference SPEC-0003 in non-goals: no `--linger` flag in v1.0; docs include the manual `sudo loginctl enable-linger` snippet. |
 | 2026-05-27 | human/kevin via assistant | Rename the docs target from `docs/operating-environment.md` to `docs/USER_GUIDE.md` everywhere SPEC-0002 references it (5 sites across Summary, Non-goals, REQ-005 prose, DEC-004, and the prior Changelog row's residual context). SPEC-0001's REQ-027 now formalises `docs/USER_GUIDE.md` with named structural anchors and the cloud-sync paths-to-avoid bullet list lives under its `## State directory` section. No requirement-level change in this SPEC; this is a cross-SPEC reference rename driven by the SPEC-0001 amend. |
+| 2026-05-29 | human/kevin via assistant | Align `patina remove` / `patina promote` with the SPEC-0001 REQ-029 amendment (committed `ApplyRecord` now retains per-target source + a 32-byte blake3 content hash). REQ-003: redefine the template-target "last-applied content" as re-rendering the journaled source at remove time (the journal records only a blake3 hash of the rendered bytes, not the bytes), and source the copy-mode content from the journaled source path; DEC-005 rewritten to match and to record why full rendered bytes are not journaled. CHK-007: "SHA of the new content" → "blake3 hash of the new content (SPEC-0001 REQ-029)". Add a cross-SPEC handoff bullet noting `remove`/`promote` read the target→source map and content hash from the committed record. Not yet decomposed, so no TASKS reconciliation. |
 </changelog>
 
 ## Notes
@@ -980,6 +996,11 @@ SPEC-0002 depends on SPEC-0001 for:
   directory layout. `patina add` and `patina remove` mutate
   through the engine; `patina promote` mutates source files
   directly but then triggers a re-apply through the engine.
+- The committed apply record (SPEC-0001 REQ-029). `patina remove`
+  reads each target's canonical source path from it (to re-render
+  or re-read last-applied content) and `patina promote` writes a
+  fresh record whose per-target blake3 content hash status then
+  classifies against.
 - The advisory file lock at `<state>/patina/lock`. All mutating
   SPEC-0002 commands acquire the exclusive lock as established in
   SPEC-0001 REQ-023.

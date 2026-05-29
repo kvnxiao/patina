@@ -430,11 +430,15 @@ substring `shutdown`.
 <requirement id="REQ-005">
 ### REQ-005: Watcher subscribes only to journal-recorded paths; new repo files require manual `patina apply` to register
 
-The watcher reads the most recent committed journal (the
-`<state>/patina/journal/<ts>.plan` with a corresponding `.COMMIT`
-sentinel) and subscribes via `notify` only to the source paths
-and non-symlink target paths listed there. The watcher does not
-recursively watch the repository directory tree. Files added to
+The watcher reads the most recent committed journal — the
+`<state>/patina/journal/<ts>.COMMIT` record (SPEC-0001 REQ-029); the
+`<ts>.plan` is deleted at commit, so the COMMIT record is the source
+of truth — and subscribes via `notify` only to the per-target source
+paths and non-symlink target paths it records. Each recorded target
+carries its canonical source (REQ-029), so the watcher recovers the
+source→target mapping for symlink, copy, and template targets without
+re-reading the repository. The watcher does not recursively watch the
+repository directory tree. Files added to
 the repository without a subsequent `patina apply` are not
 watched and do not trigger re-applies.
 
@@ -558,7 +562,10 @@ For every non-symlink target in the journal (copy mode,
 copy-tree files, template-rendered output), the watcher
 subscribes to the target path. When the target's FS event fires,
 the watcher computes the file's `blake3` hash and compares to the
-journal-recorded expected hash. If they differ, the watcher emits
+journal-recorded expected hash — a 32-byte `blake3` digest per
+SPEC-0001 REQ-029, so the freshly computed and recorded hashes use
+the same algorithm and are directly comparable. If they differ, the
+watcher emits
 an OS desktop notification via `notify-rust` and writes a
 DRIFTED event to the structured log. The next `patina status`
 invocation reads the watcher's recorded drift events (via a
@@ -722,9 +729,11 @@ detected, drift notifications emitted, debounce intervals
 observed, FS subscription counts) as structured `tracing`
 events. There is no in-memory ring buffer, no CLI subcommand to
 query metrics, and no HTTP endpoint. The watcher's metrics are
-extracted via the structured log file written by
-`tracing-appender` (path defined in SPEC-0001 REQ-016's state
-directory layout).
+extracted via the structured log file written by `tracing-appender`
+under `<state>/patina/logs/` — a directory and rotating-log stack
+this SPEC introduces. SPEC-0001 REQ-016 defines the state-directory
+root and its `journal/` and `backups/` subdirectories but neither a
+`logs/` directory nor any logging configuration; SPEC-0003 owns both.
 
 <done-when>
 - Each re-apply event produces a `tracing` event at info level
@@ -737,8 +746,10 @@ directory layout).
   field `skip.reason = "lock_held"`.
 - The watcher does NOT expose a `patina watch metrics` subcommand
   or any other in-process metrics surface.
-- Log rotation (per SPEC-0001 REQ-016: daily rotation, keep 7)
-  applies to the watcher's log file too.
+- The watcher creates `<state>/patina/logs/` lazily on first start
+  (SPEC-0001's `state_dir` resolution does not create it) and writes
+  its log there via `tracing-appender` with daily rotation, keeping
+  the 7 most recent files.
 </done-when>
 
 <behavior>
@@ -938,9 +949,11 @@ require deduplication logic that adds no information.
 Watcher metrics are emitted via `tracing` structured logs only.
 No `patina watch metrics` subcommand, no in-memory ring buffer,
 no HTTP endpoint. Users wanting structured metrics extract them
-from the rotated log files at `<state>/patina/logs/` (per
-SPEC-0001 REQ-016). The brainstorm explicitly rejected the
-in-memory ring buffer alternative as scope creep.
+from the rotated log files at `<state>/patina/logs/` — a directory
+and `tracing-appender` daily-rotation (keep-7) logging stack this
+SPEC introduces; SPEC-0001 REQ-016 defines only the state-directory
+root plus `journal/` and `backups/`. The brainstorm explicitly
+rejected the in-memory ring buffer alternative as scope creep.
 </decision>
 
 <decision id="DEC-010">
@@ -994,6 +1007,7 @@ direction; SPEC content updated in the same revision.
 | 2026-05-25 | human/kevin  | Initial draft. Locks the watch subsystem: per-journal-entry subscriptions, 500ms hardcoded debounce, drift detection via hash-compare on non-symlink targets with `notify-rust` notifications, per-OS service install (LaunchAgent / `systemd --user` / per-user Scheduled Task), `--linger` opt-in for Linux, `--foreground` escape hatch for non-systemd and debugging, Windows `ERROR_SHARING_VIOLATION` retry-with-backoff (6 attempts, ~3.15s), watcher acquires SPEC-0001 advisory lock with CLI priority. |
 | 2026-05-26 | human/kevin  | Resolve all four self-review questions. (a) Defer Linux `--linger` flag to v1.1: delete REQ-002, rewrite REQ-001/REQ-003 to remove `--linger` references, rewrite DEC-005 to record the docs-only stance, add a non-goal entry; the user runs `sudo loginctl enable-linger $USER` manually per `docs/operating-environment.md`. (b) Pin watcher journal-rescan mechanism in REQ-005: subscribe via `notify` to `<state>/patina/journal/` and re-read on new `.plan` or `.COMMIT` files; add CHK-017. (c) Lock drift cache format in REQ-007 as postcard with a `u16` version envelope at offset 0; add `patina debug drift-cache <path>` subcommand parallel to `patina debug journal`; add CHK-018. (d) Confirm `ERROR_SHARING_VIOLATION` retry budget remains hardcoded for v1.0. |
 | 2026-05-27 | human/kevin via assistant | Rename the docs target from `docs/operating-environment.md` to `docs/USER_GUIDE.md` everywhere SPEC-0003 references it (4 body sites in Assumptions, Non-goals, REQ-001 prose, and DEC-005; the historical 2026-05-26 row above retains the original name as a point-in-time snapshot). SPEC-0001's REQ-027 now formalises `docs/USER_GUIDE.md` with named structural anchors. The `sudo loginctl enable-linger $USER` snippet for survive-logout watcher behavior lands inside `docs/USER_GUIDE.md` in a section SPEC-0003's implementer adds (e.g. extending `## Troubleshooting` or introducing a `## Watch service` section); REQ-027 does not constrain the section name. No requirement-level change in SPEC-0003; this is a cross-SPEC reference rename driven by the SPEC-0001 amend. |
+| 2026-05-29 | human/kevin via assistant | Align with the SPEC-0001 REQ-029 amendment and correct a phantom dependency. REQ-005: the watcher reads subscriptions from the committed `<ts>.COMMIT` record (not the `<ts>.plan`, which is deleted at commit), recovering per-target source paths via REQ-029's `Content.source` — fixes the previously unsatisfiable "read sources from the `.plan`". REQ-007: note the drift `blake3` now matches the journal's recorded `blake3` (REQ-029) — same algorithm, directly comparable. REQ-009 / DEC-009 / cross-SPEC handoffs: SPEC-0003 now OWNS the `<state>/patina/logs/` directory and the `tracing-appender` daily-rotation (keep-7) stack; dropped the false attribution to SPEC-0001 REQ-016, which defines only the state-directory root plus `journal/` and `backups/`. Not yet decomposed, so no TASKS reconciliation. |
 </changelog>
 
 ## Notes
@@ -1002,9 +1016,13 @@ direction; SPEC content updated in the same revision.
 
 SPEC-0003 depends on:
 
-- **SPEC-0001**'s engine, journal format, advisory file lock at
-  `<state>/patina/lock`, per-machine state directory layout, and
-  `tracing` log configuration with daily rotation.
+- **SPEC-0001**'s engine, journal format (including the committed
+  `ApplyRecord` per REQ-029 — the per-target source paths the
+  watcher subscribes around and the blake3 content hash drift
+  detection compares against), advisory file lock at
+  `<state>/patina/lock`, and per-machine state-directory root. This
+  SPEC adds the `logs/` subdirectory and the `tracing-appender`
+  daily-rotation logging stack; SPEC-0001 does not define them.
 - **SPEC-0002**'s `patina promote` command as the explicit-
   promotion path for drifted targets, `patina doctor` warnings
   for UNC paths and missing Developer Mode, and the `--json`
