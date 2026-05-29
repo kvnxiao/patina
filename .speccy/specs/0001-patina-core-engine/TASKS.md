@@ -1668,7 +1668,7 @@ Suggested files: `patina-cli/src/output/reporter.rs`,
 </task-scenarios>
 </task>
 
-<task id="T-022" state="pending" covers="REQ-025">
+<task id="T-022" state="completed" covers="REQ-025">
 ## Cross-platform CI matrix gates merge on macOS / Linux / Windows
 
 Stand up the GitHub Actions workflow that operationalises REQ-025's
