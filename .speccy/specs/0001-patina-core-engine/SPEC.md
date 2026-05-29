@@ -2,7 +2,7 @@
 id: SPEC-0001
 slug: patina-core-engine
 title: Patina core engine — transactional apply with apply/status/rollback CLI
-status: implemented
+status: in-progress
 created: 2026-05-25
 supersedes: []
 ---
@@ -854,7 +854,10 @@ it to a single binary file at `<state>/patina/journal/<ts>.plan`
 using `postcard` encoding. The file is fsync'd once, along with its
 parent directory's fsync, before any operation in the plan is
 attempted. The journal includes a version envelope so future format
-changes can be detected and refused.
+changes can be detected and refused. The matching `<ts>.COMMIT`
+sentinel embeds the committed apply record (see REQ-029) behind that
+same version envelope, so the plan and commit-record formats version
+together.
 
 <done-when>
 - A `patina apply` invocation writes one `<ts>.plan` file under
@@ -1197,8 +1200,10 @@ naming the hook, and the process exits with code 0.
 
 The `patina status` subcommand reads the most recent journal (the
 last `COMMIT`-sentineled apply) and classifies every managed target
-into one of four states by comparing the recorded expected hash to
-the current filesystem state:
+into one of four states by comparing the recorded expectation — the
+link target for symlink-mode targets, or the `blake3` content hash
+recorded per REQ-029 for content-mode targets — to the current
+filesystem state:
 
 - CLEAN: target exists and matches expected.
 - DRIFTED: target exists but content differs from expected.
@@ -1871,6 +1876,101 @@ offending crate.
 </scenario>
 </requirement>
 
+<requirement id="REQ-029">
+### REQ-029: The committed apply record retains per-target source provenance and a blake3 content hash
+
+The `<ts>.COMMIT` sentinel embeds the committed apply record
+(`ApplyRecord`) behind the shared version envelope (REQ-011). For
+every materialized target the record retains enough provenance for
+later commands and SPECs to map the target back to its source and to
+detect content drift, without re-reading the repository or the
+already-deleted plan file:
+
+- the canonical absolute target path;
+- the canonical source path the target was materialized from — for
+  symlink-mode targets this is the recorded link target; for
+  content-mode targets (copy, copy-tree files, template render) it is
+  the canonical source the bytes were copied or rendered from;
+- the `[[file]]`-entry index that groups multi-target entries into
+  the atomic rollback unit (REQ-019);
+- for content-mode targets, a 32-byte `blake3` hash of the
+  materialized bytes.
+
+The hash is `blake3` rather than a `std::hash` fingerprint so the
+same hash serves the journal here and the SPEC-0003 drift cache,
+which compares a freshly computed `blake3` of a target against this
+recorded value. Because the record layout widened relative to the
+first implementation, the shared version-envelope major is bumped to
+`2`; a binary reading a major it does not support refuses the record
+per the REQ-011 envelope rule rather than mis-decoding it.
+
+This record is the sole post-commit source of truth: the `<ts>.plan`
+file is deleted at commit (REQ-011), so SPEC-0002 (`remove`,
+`promote`) and SPEC-0003 (watcher subscriptions, drift detection)
+read source paths and content hashes from this record, not from the
+plan.
+
+<done-when>
+- After a successful apply, decoding the `<ts>.COMMIT` record yields,
+  for each content-mode target, a non-empty canonical source path and
+  a 32-byte `blake3` hash of the bytes written to that target.
+- After a successful apply, decoding the record yields, for each
+  symlink-mode target, the canonical link target as its source.
+- Two consecutive applies of an unchanged source repository record a
+  byte-identical `blake3` hash for each content target (the hash is a
+  stable function of the bytes, consistent with REQ-021 determinism
+  for any output derived from it).
+- Any `<ts>.plan` or `<ts>.COMMIT` file this binary writes carries
+  `2` in the `u16` major version field at offset 0.
+- A `<ts>.COMMIT` record whose envelope major exceeds the running
+  binary's supported major is refused with the typed
+  version-mismatch error from REQ-011, naming both versions.
+- `patina status` (REQ-018) classifies content targets by comparing a
+  freshly computed `blake3` of the live file against the recorded
+  `blake3` hash; CLEAN/DRIFTED behaviour is unchanged.
+</done-when>
+
+<behavior>
+- Given a copy-mode apply of `<repo>/git/gitconfig` to
+  `~/.gitconfig`, when the `<ts>.COMMIT` record is decoded, then the
+  entry for `~/.gitconfig` names the canonical source
+  `<repo>/git/gitconfig` and a 32-byte `blake3` hash equal to the
+  `blake3` of the materialized bytes.
+- Given a symlink-mode apply, when the record is decoded, then the
+  entry's source equals the canonical path the link points at.
+- Given a record written by a future Patina whose envelope major is
+  `3`, when a binary supporting major `2` decodes it, then decoding
+  fails with the version-mismatch error naming `3` and `2`.
+</behavior>
+
+<scenario id="CHK-062">
+Given a tempdir repository whose `git` module declares
+`[[file]] source = "gitconfig" target = "~/.gitconfig" mode = "copy"`
+and `<repo>/git/gitconfig` with arbitrary content,
+when `patina apply --yes` runs and the resulting
+`<state>/patina/journal/<ts>.COMMIT` record is decoded,
+then the decoded record contains an entry whose target resolves to
+`~/.gitconfig`, whose source equals the canonical absolute path of
+`<repo>/git/gitconfig`, and whose content hash equals the 32-byte
+`blake3` of the bytes of `<repo>/git/gitconfig`.
+</scenario>
+
+<scenario id="CHK-063">
+Given a tempdir repository with one content-mode `[[file]]` entry,
+when `patina apply --yes` runs twice against the unchanged source
+and both `<ts>.COMMIT` records are decoded,
+then the recorded `blake3` content hash for that target is
+byte-identical across the two records.
+</scenario>
+
+<scenario id="CHK-064">
+Given the `<state>/patina/journal/<ts>.COMMIT` file produced by a
+successful apply,
+when its first two bytes are read as a little-endian `u16`,
+then the value equals `2`.
+</scenario>
+</requirement>
+
 ## Decisions
 
 <decision id="DEC-001">
@@ -2085,6 +2185,7 @@ same revision.
 | 2026-05-26 | human/kevin  | Add multi-target fan-out to `[[file]]` schema in REQ-005. Each entry declares exactly one of `target` (string) or `targets` (non-empty array of strings); both, neither, or `targets = []` are parse errors. All five modes support `targets`: the engine materializes the source at every listed target path according to the declared mode, recording one journal operation per (source, target_i) pair so per-target progress, status, backup, and rollback work without special-casing. Update REQ-018 to report each target as its own row with independent CLEAN/DRIFTED/MISSING/ORPHANED counters. Update REQ-019 to require atomic per-`[[file]]`-entry rollback: any target failure in the entry reverts all of the entry's targets as a unit. Add scenarios CHK-042..049 covering symlink, copy, template, parse-error, multi-target status, and multi-target rollback. |
 | 2026-05-27 | human/kevin via assistant | Close five gaps surfaced by north-star audit against AGENTS.md (no prior `state="completed"` task is invalidated; all 21 existing tasks remain `pending`). Add REQ-025 (CI matrix gates merge on macOS / Linux / Windows; quality-bar parity rule operationalised). Add REQ-026 (`output::Reporter` trait with `HumanReporter` + `JsonReporter` impls; `clippy.toml` `disallowed-macros` denies `std::println` / `std::eprintln` / `std::print` / `std::eprint` outside the `output` module; `tracing` macros stay permitted). Add REQ-027 (`docs/ARCHITECTURE.md` + `docs/USER_GUIDE.md` with named structural anchors; cloud-sync paths-to-avoid list lives under `## State directory` as a markdown bullet list). Add REQ-028 (`deny.toml` at repo root with `[licenses]` / `[advisories]` / `[bans]` / `[sources]` tables; `cargo deny check` runs as a required-status-check on `push` and `pull_request`). Amend REQ-020 in place to name `patina debug` as a clap subcommand group — extension point for SPEC-0003's `debug drift-cache` — and add CHK-050 covering `patina debug --help`. New scenarios CHK-050..061 follow the existing numbering. No prior REQ semantics changed. |
 | 2026-05-28 | human/kevin via assistant | Reconcile REQ-020 and REQ-011 with the file-operations-only on-disk plan format (surfaced by a blocking T-019 review). The serialized `Plan`/`PlannedOperation` model (T-011) records only file operations (symlink / render / copy with source + target); it carries no hooks, no resolved variable context, and no pre-state hash. REQ-020's `<done-when>` is narrowed to drop the "hooks, variable context" and "pre-state hash where applicable" rendering promises (`debug journal` now prints recorded operations + timestamps, identifying each op's mode / source / target); REQ-011's prose drops the stray "and hook invocations" (its own `<done-when>` only ever committed to file operations). No `<scenario>`, `<behavior>`, `<done-when>` test surface changed beyond the two narrowed REQ-020 bullets; CHK-034 and CHK-050 are untouched. Cross-spec verified: SPEC-0002/0003 read no hooks/variable-context/pre-state-hash from the plan — pre-state/expected hashes live in the COMMIT/backup record (REQ-017, rollback) and the SPEC-0003 drift-cache, and SPEC-0003 references `debug journal` only as a structural template for `debug drift-cache`. T-019 stays `pending`; the SPEC-drift blocker is resolved by this amendment, leaving only the style fix for the next implementer pass. No prior `state="completed"` task is invalidated. |
+| 2026-05-29 | human/kevin via assistant | Add REQ-029 to close cross-SPEC gaps the 2026-05-28 file-ops-only amendment left in the COMMIT record (caught while prepping SPEC-0002/0003 decomposition; the SPEC-0001 PR is not yet merged). The committed `ApplyRecord` now retains, per target, the canonical source path and — for content targets — a 32-byte `blake3` content hash (was a `u64` `std::hash` fingerprint with no source); the shared version-envelope major bumps `1`→`2`. Rationale: SPEC-0003 drift detection (REQ-007) compares `blake3` hashes and the SPEC-0003 watcher (REQ-005) needs per-target source paths from the committed journal because the `.plan` is deleted at commit; SPEC-0002 `remove`/`promote` (REQ-003/REQ-004) need the target→source map. Tiny clarifying cross-references added to REQ-011 (the COMMIT sentinel shares the envelope) and REQ-018 (the expected hash is the `blake3` content hash). New task T-026 implements the record widening end-to-end (type + write side + read side + `blake3` dependency + version bump) as one atomic, CI-green change; T-010 and T-017 stay `completed` (their REQ-011/012 and REQ-018 semantics are unchanged — T-026's review covers the files it touches). REPORT.md deleted and status flipped `implemented`→`in-progress`; speccy-ship re-runs once T-026 lands. |
 </changelog>
 
 ## Notes

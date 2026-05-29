@@ -1,7 +1,7 @@
 ---
 spec: SPEC-0001
-spec_hash_at_generation: e11b0dbad9890b7f6b337df82a025344f8d7696b8001b0e94cf856a7b2866bfc
-generated_at: 2026-05-29T03:36:30Z
+spec_hash_at_generation: 5e986d6eaf0c170c5093ab408a861bfff2b5f7763b3797910e9c50eb8c67f667
+generated_at: 2026-05-29T06:46:21Z
 ---
 # Tasks: SPEC-0001 Patina core engine — transactional apply with apply/status/rollback CLI
 
@@ -1948,5 +1948,112 @@ offending dependency.
 
 Suggested files: `deny.toml`, `.github/workflows/ci.yml`
 (extending T-022's workflow file)
+</task-scenarios>
+</task>
+
+<task id="T-026" state="pending" covers="REQ-029">
+## Widen the committed apply record: per-target source + blake3 content hash
+
+REQ-029 (added by the 2026-05-29 amendment) tightens the committed
+`ApplyRecord` so downstream SPECs can read each target's source and a
+real content hash from the `<ts>.COMMIT` sentinel — the `<ts>.plan`
+that also held sources is deleted at commit, so the COMMIT record is
+the only post-commit source of truth.
+
+Land this as ONE atomic change so the workspace compiles and CI stays
+green after the task: the record type, the write side, and the read
+side change together (a split would leave an intermediate tree where
+`classify.rs` references a field the record no longer has).
+
+Type (`patina-core/src/journal/record.rs`):
+
+- `ExpectedTarget::Content` replaces `fingerprint: u64` with
+  `hash: [u8; 32]` (a `blake3` digest) and gains a `source: String`
+  (canonical absolute source path).
+- Document `ExpectedTarget::Symlink.link_target` as the canonical
+  source for symlink targets, and add a `source()` accessor returning
+  the source for either variant (parallel to the existing `target()`
+  / `entry()` accessors).
+- Replace `fingerprint_bytes(&[u8]) -> u64` with a `blake3`-based
+  `content_hash(&[u8]) -> [u8; 32]` helper used by BOTH the write and
+  read sides so the two agree byte-for-byte.
+- Bump the shared `FILE_MAJOR_VERSION` (in
+  `patina-core/src/journal/plan.rs`, imported by `record.rs`) from
+  `1` to `2`; the envelope rule already refuses a newer major, so no
+  other version-handling code changes.
+
+Write side (`patina-core/src/apply/engine.rs`, ~lines 414-432):
+
+- When building each `ExpectedTarget`, capture the canonical source
+  path and, for content targets, compute the `blake3` hash of the
+  bytes written (replacing the `fingerprint_bytes(&bytes)` call).
+
+Read side (`patina-core/src/status/classify.rs`):
+
+- Compare a freshly computed `blake3` of the live file against the
+  recorded `hash`. CLEAN / DRIFTED / MISSING / ORPHANED behaviour is
+  unchanged — REQ-018 scenarios CHK-031 / CHK-032 / CHK-048 must
+  still pass.
+
+Mechanical ripples — update the call sites that destructure or build
+the changed variants so the workspace compiles: `status/mod.rs`,
+`rollback/mod.rs`, `rollback/replay.rs`, `journal/recovery.rs`, and
+the in-module / integration tests. Rollback and recovery behaviour is
+unchanged; they read `source` / `entry` and ignore the hash.
+
+Dependency: add `blake3` to `patina-core/Cargo.toml`. Its license
+expression includes `Apache-2.0`, which the `deny.toml` allowlist
+already permits, so `cargo deny check` passes without an allowlist
+edit — verify rather than assume.
+
+<task-scenarios>
+Given a tempdir repository whose `git` module declares
+`[[file]] source = "gitconfig" target = "~/.gitconfig" mode = "copy"`
+and `<repo>/git/gitconfig` with arbitrary content,
+when `patina apply --yes` runs and the resulting
+`<state>/patina/journal/<ts>.COMMIT` record is decoded,
+then the decoded record contains an entry whose target resolves to
+`~/.gitconfig`, whose source equals the canonical absolute path of
+`<repo>/git/gitconfig`, and whose content hash equals the 32-byte
+`blake3` of the bytes of `<repo>/git/gitconfig`.
+
+Given a tempdir repository declaring a symlink `[[file]]`,
+when `patina apply --yes` runs and the COMMIT record is decoded,
+then the entry's source equals the canonical path the link points
+at.
+
+Given a tempdir repository with one content-mode `[[file]]` entry,
+when `patina apply --yes` runs twice against the unchanged source and
+both `<ts>.COMMIT` records are decoded,
+then the recorded `blake3` content hash for that target is
+byte-identical across the two records.
+
+Given the `<state>/patina/journal/<ts>.COMMIT` file produced by a
+successful apply,
+when its first two bytes are read as a little-endian `u16`,
+then the value equals `2`.
+
+Given a copy-mode apply followed by an external edit to the target's
+bytes,
+when `patina status --json` runs,
+then the target is reported `drifted`; with no edit it is reported
+`clean` — confirming the read side compares the recorded `blake3`.
+
+Given the workspace at HEAD after this task,
+when `cargo test --workspace --locked`,
+`cargo clippy --workspace --all-targets --locked -- -D warnings`, and
+`cargo deny check` run,
+then all three exit 0.
+
+Suggested files: `patina-core/src/journal/record.rs`,
+`patina-core/src/journal/plan.rs`,
+`patina-core/src/apply/engine.rs`,
+`patina-core/src/status/classify.rs`,
+`patina-core/src/status/mod.rs`,
+`patina-core/src/rollback/mod.rs`,
+`patina-core/src/rollback/replay.rs`,
+`patina-core/src/journal/recovery.rs`,
+`patina-core/Cargo.toml`,
+`patina-core/tests/commit_record.rs`
 </task-scenarios>
 </task>
