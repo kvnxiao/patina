@@ -20,6 +20,7 @@ pub mod lock;
 pub mod paths;
 pub mod profile;
 pub mod state_dir;
+pub mod status;
 pub mod template;
 pub mod variables;
 
@@ -59,11 +60,15 @@ pub use discovery::RepoDiscoveryError;
 pub use discovery::discover_modules;
 pub use discovery::resolve_repository_root;
 pub use error::EngineError;
+pub use journal::ApplyRecord;
+pub use journal::ExpectedTarget;
 pub use journal::Journal;
 pub use journal::JournalError;
+pub use journal::LastApply;
 pub use journal::Plan;
 pub use journal::PlannedOperation;
 pub use journal::RecoveryReport;
+pub use journal::read_latest_commit;
 pub use journal::recover_orphans;
 pub use lock::EXCLUSIVE_TIMEOUT;
 pub use lock::LockError;
@@ -83,6 +88,11 @@ pub use profile::resolve as resolve_profile;
 pub use state_dir::HostOs;
 pub use state_dir::StateDirError;
 pub use state_dir::resolve as resolve_state_dir;
+pub use status::StatusEntry;
+pub use status::StatusReport;
+pub use status::TargetState;
+pub use status::current_plan_targets;
+pub use status::report as status_report;
 pub use template::Engine as TemplateEngine;
 pub use template::TemplateError;
 pub use variables::Builtins;
@@ -130,19 +140,23 @@ pub async fn apply(options: ApplyOptions) -> Result<ApplyResult, EngineError> {
     execute_plan(&resolved, &options.request).await
 }
 
-/// Report drift between the resolved dotfiles repository and the
-/// current filesystem state.
+/// Report drift between the resolved dotfiles repository and the current
+/// filesystem state, classifying every managed target as CLEAN / DRIFTED /
+/// MISSING / ORPHANED against the last committed apply (REQ-018).
 ///
 /// # Errors
 ///
-/// Returns [`EngineError::NotImplemented`] until later tasks land the
-/// status subsystem.
+/// Returns an [`EngineError`] when repository / state-directory
+/// resolution, the current-plan computation, or the journal read fails. A
+/// shared-lock timeout is downgraded to a warning in the returned
+/// [`StatusReport`], not an error.
 #[expect(
     clippy::unused_async,
-    reason = "REQ-002 mandates an async signature; bodies become await-ful in later tasks."
+    reason = "REQ-002 mandates an async signature; the status read itself is synchronous."
 )]
-pub async fn status(_options: StatusOptions) -> Result<(), EngineError> {
-    Err(EngineError::NotImplemented("status"))
+pub async fn status(_options: StatusOptions) -> Result<StatusReport, EngineError> {
+    let targets = current_plan_targets()?;
+    status_report(&targets)
 }
 
 /// Roll back a prior apply to its pre-apply filesystem state using the

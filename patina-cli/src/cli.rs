@@ -1,7 +1,7 @@
 //! The clap-derived command-line surface for `patina` (REQ-017).
 //!
-//! Only the `apply` subcommand lands in T-016; `status`, `rollback`, and
-//! the `debug` family are wired by their own tasks. The derive surface is
+//! Only `apply` and `status` land so far; `rollback` and the `debug`
+//! family are wired by their own tasks. The derive surface is
 //! kept thin — parsing only — so the command logic lives in
 //! [`crate::cmd`] and stays unit-testable without going through clap.
 
@@ -24,6 +24,17 @@ pub struct Cli {
 pub enum Command {
     /// Materialize the declared configuration at its targets.
     Apply(ApplyArgs),
+
+    /// Report drift between the repository and the materialized targets.
+    Status(StatusArgs),
+}
+
+/// Flags for `patina status`.
+#[derive(Debug, Args, Default)]
+pub struct StatusArgs {
+    /// Emit a JSON envelope instead of the human-readable table.
+    #[arg(long)]
+    pub json: bool,
 }
 
 /// Flags for `patina apply`.

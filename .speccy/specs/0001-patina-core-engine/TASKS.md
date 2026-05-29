@@ -1304,7 +1304,7 @@ Suggested files: `patina-cli/src/cli.rs`,
 </task-scenarios>
 </task>
 
-<task id="T-017" state="pending" covers="REQ-018">
+<task id="T-017" state="completed" covers="REQ-018">
 ## `patina status` classifies every managed target as CLEAN / DRIFTED / MISSING / ORPHANED
 
 Wire the `patina status` subcommand in `patina-cli`, backed by a

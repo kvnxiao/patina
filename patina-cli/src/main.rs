@@ -33,6 +33,10 @@ async fn main() -> anyhow::Result<()> {
             let mut reporter = StreamReporter::new();
             cmd::apply::run(&args, tty, &mut reader, &mut reporter).await?
         }
+        Command::Status(args) => {
+            let mut reporter = StreamReporter::new();
+            cmd::status::run(&args, &mut reporter).await?
+        }
     };
     std::process::exit(code);
 }

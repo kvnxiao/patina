@@ -39,11 +39,16 @@ use crate::config::parse_module_config;
 use crate::discovery::discover_modules;
 use crate::discovery::resolve_repository_root;
 use crate::error::EngineError;
+use crate::journal::ApplyRecord;
+use crate::journal::ExpectedTarget;
 use crate::journal::Journal;
+use crate::journal::LastApply;
 use crate::journal::OsSyncer;
 use crate::journal::Plan;
 use crate::journal::PlannedOperation;
+use crate::journal::fingerprint_bytes;
 use crate::journal::recover_orphans;
+use crate::journal::timestamp_to_rfc3339;
 use crate::lock::EXCLUSIVE_TIMEOUT;
 use crate::lock::LockKind;
 use crate::lock::acquire as acquire_lock;
@@ -370,10 +375,55 @@ pub async fn execute(
             failed_hook: failed,
         })
     } else {
-        journal.commit(&OsSyncer)?;
+        let record = build_apply_record(resolved, &completed)?;
+        journal.commit(&record, &OsSyncer)?;
         gc_retain(&backups_dir, crate::backups::RETENTION_COUNT)?;
         Ok(ApplyResult::Applied { warnings })
     }
+}
+
+/// Build the [`ApplyRecord`] persisted in this run's COMMIT sentinel from
+/// the resolved plan's `last_apply` metadata and the completed
+/// materializations. `patina status` (T-017) decodes this to classify the
+/// live filesystem against the last committed apply.
+///
+/// Each completed object becomes one [`ExpectedTarget`]: a symlink records
+/// its canonical link target; a copy or render records a fingerprint of
+/// the bytes that were just written, read back from the live target so the
+/// recorded fingerprint matches exactly what `status` will compute.
+fn build_apply_record(
+    resolved: &ResolvedPlan,
+    completed: &[CompletionRecord],
+) -> Result<ApplyRecord, EngineError> {
+    let vars = &resolved.resolver;
+    let last_apply = LastApply {
+        at: timestamp_to_rfc3339(&resolved.timestamp),
+        user: vars.get("patina.user").unwrap_or_default(),
+        host: vars.get("patina.hostname").unwrap_or_default(),
+    };
+
+    let mut targets = Vec::with_capacity(completed.len());
+    for record in completed {
+        let target = record.target.as_str().to_owned();
+        match &record.materialization {
+            Materialization::Symlink { link_target } => {
+                targets.push(ExpectedTarget::Symlink {
+                    target,
+                    link_target: link_target.as_str().to_owned(),
+                });
+            }
+            Materialization::Copy | Materialization::Render => {
+                let bytes = fs_err::read(&record.target).map_err(|source| {
+                    EngineError::Journal(crate::journal::JournalError::Filesystem(source))
+                })?;
+                targets.push(ExpectedTarget::Content {
+                    target,
+                    fingerprint: fingerprint_bytes(&bytes),
+                });
+            }
+        }
+    }
+    Ok(ApplyRecord::new(last_apply, targets))
 }
 
 /// Run every hook whose event matches `event`, returning the command of

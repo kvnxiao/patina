@@ -55,6 +55,7 @@
 mod plan;
 mod probe;
 mod progress;
+mod record;
 mod recovery;
 mod sync;
 
@@ -67,6 +68,12 @@ pub use probe::Probe;
 pub use probe::classify_target;
 pub use probe::mirror_backup_path;
 pub use progress::ProgressCursor;
+pub use record::ApplyRecord;
+pub use record::ExpectedTarget;
+pub use record::LastApply;
+pub use record::fingerprint_bytes;
+pub use record::read_symlink_target;
+pub use record::timestamp_to_rfc3339;
 pub use recovery::ROLLED_BACK_SUFFIX;
 pub use recovery::RecoveryReport;
 pub use recovery::recover_orphans;
@@ -186,18 +193,24 @@ impl Journal {
         self.progress.record(op_index)
     }
 
-    /// Write `<ts>.COMMIT`, `fsync` it and the journal directory, then
-    /// delete this run's plan and progress files. After this returns the
-    /// apply is durably committed and recovery will skip its timestamp
-    /// (REQ-011 `<behavior>`).
+    /// Write `<ts>.COMMIT` carrying the committed [`ApplyRecord`], `fsync`
+    /// it and the journal directory, then delete this run's plan and
+    /// progress files. After this returns the apply is durably committed
+    /// and recovery will skip its timestamp (REQ-011 `<behavior>`).
+    ///
+    /// The sentinel body is the encoded `record`: crash recovery (T-011)
+    /// keys on the sentinel's *existence* and never decodes the body, so
+    /// the payload is invisible to it; `patina status` (T-017) reads the
+    /// body to classify the live filesystem against the last apply.
     ///
     /// # Errors
     ///
-    /// Returns [`JournalError::Filesystem`] if any write, `fsync`, or
-    /// delete fails.
-    pub fn commit(self, syncer: &impl Syncer) -> Result<(), JournalError> {
+    /// Returns [`JournalError::Encode`] if the record cannot be encoded,
+    /// or [`JournalError::Filesystem`] if any write, `fsync`, or delete
+    /// fails.
+    pub fn commit(self, record: &ApplyRecord, syncer: &impl Syncer) -> Result<(), JournalError> {
         let commit_path = self.dir.join(format!("{}{COMMIT_SUFFIX}", self.timestamp));
-        fs_err::write(&commit_path, [])?;
+        fs_err::write(&commit_path, record.encode()?)?;
         syncer.sync_file(&commit_path)?;
         syncer.sync_dir(&self.dir)?;
 
@@ -225,6 +238,50 @@ impl Journal {
     pub fn timestamp(&self) -> &str {
         &self.timestamp
     }
+}
+
+/// Read the [`ApplyRecord`] from the most recent committed apply in
+/// `dir`, or `None` when the directory holds no `<ts>.COMMIT` sentinel
+/// (no apply has ever committed). "Most recent" is the lexically greatest
+/// `<ts>` prefix, which is chronological for the compact UTC timestamp
+/// format the engine writes.
+///
+/// `patina status` (T-017) is the reader: it decodes the latest apply's
+/// recorded targets and classifies each against the live filesystem.
+///
+/// # Errors
+///
+/// - [`JournalError::Filesystem`] if the directory or sentinel cannot be read.
+/// - [`JournalError::Truncated`] / [`JournalError::VersionMismatch`] /
+///   [`JournalError::Decode`] if the latest sentinel cannot be decoded (a
+///   sentinel from a newer binary, or a corrupt one).
+pub fn read_latest_commit(dir: impl AsRef<Utf8Path>) -> Result<Option<ApplyRecord>, JournalError> {
+    let dir = dir.as_ref();
+    if !dir.exists() {
+        return Ok(None);
+    }
+
+    let mut latest: Option<String> = None;
+    for entry in fs_err::read_dir(dir)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        let Some(timestamp) = name.strip_suffix(COMMIT_SUFFIX) else {
+            continue;
+        };
+        if latest.as_deref().is_none_or(|current| timestamp > current) {
+            latest = Some(timestamp.to_owned());
+        }
+    }
+
+    let Some(timestamp) = latest else {
+        return Ok(None);
+    };
+    let commit_path = dir.join(format!("{timestamp}{COMMIT_SUFFIX}"));
+    let bytes = fs_err::read(&commit_path)?;
+    Ok(Some(ApplyRecord::decode(&bytes)?))
 }
 
 /// Remove a file, treating an already-absent file as success. Used on the

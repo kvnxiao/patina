@@ -22,10 +22,12 @@
 
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
+use patina_core::journal::ApplyRecord;
 use patina_core::journal::COMMIT_SUFFIX;
 use patina_core::journal::FILE_MAJOR_VERSION;
 use patina_core::journal::Journal;
 use patina_core::journal::JournalError;
+use patina_core::journal::LastApply;
 use patina_core::journal::PLAN_SUFFIX;
 use patina_core::journal::PROGRESS_SUFFIX;
 use patina_core::journal::Plan;
@@ -91,6 +93,17 @@ fn journal_dir(temp: &TempDir) -> Utf8PathBuf {
     Utf8PathBuf::from_path_buf(temp.path().join("journal")).expect("temp path must be UTF-8")
 }
 
+fn sample_record() -> ApplyRecord {
+    ApplyRecord::new(
+        LastApply {
+            at: "2026-05-28T12:00:00Z".to_owned(),
+            user: "u".to_owned(),
+            host: "h".to_owned(),
+        },
+        Vec::new(),
+    )
+}
+
 fn three_op_plan() -> Plan {
     Plan::new(vec![
         PlannedOperation::symlink("git/.gitconfig", "/home/u/.gitconfig"),
@@ -119,7 +132,7 @@ fn three_op_apply_fsyncs_plan_dir_commit_but_never_progress() {
             .expect("record progress");
     }
 
-    journal.commit(&syncer).expect("commit");
+    journal.commit(&sample_record(), &syncer).expect("commit");
 
     assert_eq!(
         syncer.file_syncs_with_suffix(PLAN_SUFFIX),
@@ -259,7 +272,7 @@ fn commit_deletes_plan_and_progress_leaving_only_commit_sentinel() {
             .record_progress(u32::try_from(i).expect("index fits in u32"))
             .expect("record progress");
     }
-    journal.commit(&syncer).expect("commit");
+    journal.commit(&sample_record(), &syncer).expect("commit");
 
     assert!(
         !dir.join(format!("20260528T140000Z{PLAN_SUFFIX}")).exists(),
