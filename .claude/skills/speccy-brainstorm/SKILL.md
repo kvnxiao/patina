@@ -1,6 +1,6 @@
 ---
 name: speccy-brainstorm
-description: Atomize a fuzzy ask into first-principle requirements before any SPEC.md is written. Walks the user through a Socratic exchange (one question at a time, 2-3 alternative framings with trade-offs, silent assumptions, open questions) and stops at a hard gate until the user explicitly approves the framing. Use when the user has a fuzzy idea, says "help me brainstorm", "help me think about", "let's brainstorm", "I want to spec out X but I'm not sure where to start", or before invoking speccy-plan on an unclear ask. Requires no preconditions. Do NOT trigger when the user has named the slice and the scope is clear - go straight to speccy-plan.
+description: Atomize a fuzzy ask into first-principle requirements before any SPEC.md is written. Walks the user through a Socratic exchange (one question at a time, 2-3 alternative framings with trade-offs, silent assumptions, open questions) and stops at a hard gate until the user explicitly approves the framing. Use when the user has a fuzzy idea, says "help me brainstorm", "help me think about", "let's brainstorm", "can we brainstorm", "I want to spec out X but I'm not sure where to start", or before invoking speccy-plan on an unclear ask. Requires no preconditions. Do NOT trigger when the user has named the slice and the scope is clear - go straight to speccy-plan.
 ---
 
 # /speccy-brainstorm
@@ -52,6 +52,15 @@ own judgment.
    ```bash
    speccy status --json
    ```
+
+   When the ask touches existing code, invoke the `plan-explorer`
+   subagent to trace the relevant feature through its entry points,
+   call flows, and architecture layers. Its grounding report is
+   **ephemeral**: do NOT write it to a new `*.md` artifact file. Fold
+   the salient findings into your clarifying questions now, and route
+   them into SPEC.md's existing sections (Summary prose and
+   `<requirement>` grounding) when `/speccy-plan` runs
+   next (see "Routing" below) — never into a standalone report file.
 
    Don't dump the context back at the user — use it to ground your
    clarifying questions.

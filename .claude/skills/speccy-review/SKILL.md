@@ -90,12 +90,13 @@ same partial below so the fan-out contract has a single source of
 truth.
 
 
-Fan out four reviewer-* sub-agents in parallel against the resolved
+Fan out five reviewer-* sub-agents in parallel against the resolved
 task, one per persona. Default fan-out: `reviewer-business`,
-`reviewer-tests`, `reviewer-security`, `reviewer-style`. Two
-additional personas (`reviewer-architecture`, `reviewer-docs`) are
-off the default fan-out and are invoked explicitly when an
-architectural or documentation risk is suspected.
+`reviewer-tests`, `reviewer-security`, `reviewer-style`,
+`reviewer-correctness`. Two additional personas
+(`reviewer-architecture`, `reviewer-docs`) are off the default
+fan-out and are invoked explicitly when an architectural or
+documentation risk is suspected.
 
 The prompt for each spawn is:
 
@@ -123,13 +124,14 @@ The prompt for each spawn is:
 Substitute the resolved `SPEC-NNNN/T-NNN` and the persona name per
 spawn.
 
-Invoke the `Task` tool four times **in one message** (parallel
+Invoke the `Task` tool five times **in one message** (parallel
 dispatch) with `subagent_type: "reviewer-business"`,
 `subagent_type: "reviewer-tests"`,
-`subagent_type: "reviewer-security"`, and
-`subagent_type: "reviewer-style"`. Each persona's agent definition
-at `.claude/agents/reviewer-<persona>.md` carries the host-native
-dispatch metadata.
+`subagent_type: "reviewer-security"`,
+`subagent_type: "reviewer-style"`, and
+`subagent_type: "reviewer-correctness"`. Each persona's agent
+definition at `.claude/agents/reviewer-<persona>.md` carries the
+host-native dispatch metadata.
 
 Canonical journal `<review>` shape:
 `.claude/speccy-references/journal-review.md`.

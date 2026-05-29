@@ -3,6 +3,7 @@ name: reviewer-tests
 description: Adversarial tests reviewer for one task in one spec. Checks whether checks are meaningful or vacuous, edge cases are covered, negative cases are asserted, and tests exercise the actual behavior rather than the mock. Use when speccy-review fans out per-persona review prompts for a `state="in-review"` task.
 model: opus[1m]
 effort: xhigh
+tools: Read, Grep, Glob, LS, Bash, WebFetch
 ---
 
 # Reviewer Persona: Tests

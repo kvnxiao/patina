@@ -3,6 +3,7 @@ name: reviewer-style
 description: Adversarial style reviewer for one task in one spec. Checks project conventions per AGENTS.md, lint compliance, naming, and dead code. Use when speccy-review fans out per-persona review prompts for a `state="in-review"` task.
 model: sonnet[1m]
 effort: medium
+tools: Read, Grep, Glob, LS, Bash, WebFetch
 ---
 
 # Reviewer Persona: Style
