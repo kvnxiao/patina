@@ -2,7 +2,7 @@
 name: speccy-decompose
 description: Decomposes a Speccy SPEC into a checklist of agent-sized tasks. Invoke via /agent speccy-decompose for the pinned execution path defined in this file's frontmatter.
 model: opus[1m]
-effort: medium
+effort: xhigh
 ---
 
 # /speccy-decompose
