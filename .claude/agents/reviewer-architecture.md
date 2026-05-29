@@ -3,6 +3,7 @@ name: reviewer-architecture
 description: Adversarial architecture reviewer for one task in one spec. Checks cross-spec invariants, design adherence, layering, premature abstraction, and ADR drift. Use when speccy-review explicitly invokes the architecture persona (not in the default fan-out).
 model: opus[1m]
 effort: xhigh
+tools: Read, Grep, Glob, LS, Bash, WebFetch
 ---
 
 # Reviewer Persona: Architecture
