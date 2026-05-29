@@ -50,7 +50,7 @@ fn clippy_toml_lists_all_four_print_macros() {
     // leave a hole an `eprint!` (etc.) could slip through.
     let path = workspace_clippy_toml();
     let body = fs_err::read_to_string(&path).expect("read workspace clippy.toml");
-    let parsed: toml::Value = body.parse().expect("clippy.toml parses as TOML");
+    let parsed: toml::Value = toml::from_str(&body).expect("clippy.toml parses as TOML");
 
     let entries: Vec<&str> = parsed
         .get("disallowed-macros")
