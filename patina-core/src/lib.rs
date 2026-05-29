@@ -72,6 +72,7 @@ pub use journal::Plan;
 pub use journal::PlanRenderError;
 pub use journal::PlannedOperation;
 pub use journal::RecoveryReport;
+pub use journal::content_hash;
 pub use journal::load_plan_file;
 pub use journal::read_latest_commit;
 pub use journal::recover_orphans;

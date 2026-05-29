@@ -19,27 +19,28 @@
 //!
 //! - `last_apply` metadata: the apply timestamp (`at`, an RFC 3339 string
 //!   derived from the journal `<ts>`), the `user`, and the `host`.
-//! - One [`ExpectedTarget`] per materialized object, in apply order. Each pairs
-//!   the canonical absolute target path with the fingerprint `status` compares
-//!   the live filesystem against:
+//! - One [`ExpectedTarget`] per materialized object, in apply order. Each
+//!   records the canonical absolute target path, the canonical source the
+//!   target was materialized from, and — for content targets — the content hash
+//!   `status` compares the live filesystem against (REQ-029):
 //!   - a [`ExpectedTarget::Symlink`] records the canonical link target the
-//!     symlink should point at;
-//!   - a [`ExpectedTarget::Content`] records a 64-bit fingerprint of the bytes
-//!     written (copy / render), so an external edit changes the fingerprint and
+//!     symlink should point at; that link target is also the symlink's source.
+//!   - a [`ExpectedTarget::Content`] records the canonical source path the
+//!     bytes were copied or rendered from plus a 32-byte `blake3` hash of the
+//!     bytes written (copy / render), so an external edit changes the hash and
 //!     surfaces as drift.
 //!
-//! The fingerprint is a non-cryptographic `std::hash` digest: status only
-//! needs to notice an *accidental* external edit, not resist an adversary
-//! forging a collision, so a std-only hash keeps the dependency surface
-//! flat (no new crate to clear through `deny.toml`).
+//! The content hash is `blake3` rather than a `std::hash` fingerprint so the
+//! same hash serves the journal here and the SPEC-0003 drift cache, which
+//! compares a freshly computed `blake3` of a target against this recorded
+//! value (REQ-029). Because the record layout widened relative to the first
+//! implementation, the shared version-envelope major is bumped to `2`.
 
 use super::JournalError;
 use super::plan::FILE_MAJOR_VERSION;
 use camino::Utf8Path;
 use serde::Deserialize;
 use serde::Serialize;
-use std::hash::Hash as _;
-use std::hash::Hasher as _;
 
 /// Width in bytes of the version envelope prefix (a little-endian `u16`),
 /// shared with the plan-file layout in [`super::plan`].
@@ -51,11 +52,14 @@ const ENVELOPE_LEN: usize = core::mem::size_of::<u16>();
 #[non_exhaustive]
 pub enum ExpectedTarget {
     /// The target should be a symbolic link pointing at `link_target`
-    /// (a canonical absolute path).
+    /// (a canonical absolute path). For a symlink the `link_target` is also
+    /// the source the target was materialized from, so [`Self::source`]
+    /// returns it.
     Symlink {
         /// Canonical absolute target path of the symlink itself.
         target: String,
-        /// Canonical absolute path the link is expected to point at.
+        /// Canonical absolute path the link is expected to point at. This is
+        /// the canonical source for a symlink target (REQ-029).
         link_target: String,
         /// Index of the `[[file]]` entry that materialized this target.
         /// Targets sharing an entry index form one atomic rollback unit
@@ -63,13 +67,16 @@ pub enum ExpectedTarget {
         /// or fails the whole entry.
         entry: u32,
     },
-    /// The target should be a regular file whose bytes fingerprint to
-    /// `fingerprint` (copy or rendered-template output).
+    /// The target should be a regular file whose bytes hash to `hash`
+    /// (copy or rendered-template output).
     Content {
         /// Canonical absolute target path of the file.
         target: String,
-        /// 64-bit non-cryptographic fingerprint of the expected bytes.
-        fingerprint: u64,
+        /// Canonical absolute source path the bytes were copied or rendered
+        /// from (REQ-029).
+        source: String,
+        /// 32-byte `blake3` hash of the expected bytes.
+        hash: [u8; 32],
         /// Index of the `[[file]]` entry that materialized this target
         /// (see [`ExpectedTarget::Symlink::entry`]).
         entry: u32,
@@ -85,6 +92,17 @@ impl ExpectedTarget {
         }
     }
 
+    /// The canonical absolute source path this target was materialized from
+    /// (REQ-029): the recorded link target for a symlink, or the copied /
+    /// rendered source for a content target.
+    #[must_use = "the source path maps the target back to its origin"]
+    pub fn source(&self) -> &str {
+        match self {
+            Self::Symlink { link_target, .. } => link_target,
+            Self::Content { source, .. } => source,
+        }
+    }
+
     /// The index of the `[[file]]` entry that materialized this target.
     /// Rollback groups targets by this index to honour per-entry atomicity
     /// (REQ-019).
@@ -96,14 +114,12 @@ impl ExpectedTarget {
     }
 }
 
-/// Compute the 64-bit fingerprint of a byte slice with the std default
-/// hasher. Used both when recording an apply and when probing the live
-/// file during status, so the two agree byte-for-byte.
-#[must_use = "the fingerprint is compared to detect content drift"]
-pub fn fingerprint_bytes(bytes: &[u8]) -> u64 {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    bytes.hash(&mut hasher);
-    hasher.finish()
+/// Compute the 32-byte `blake3` content hash of a byte slice. Used both
+/// when recording an apply and when probing the live file during status, so
+/// the two agree byte-for-byte (REQ-029).
+#[must_use = "the hash is compared to detect content drift"]
+pub fn content_hash(bytes: &[u8]) -> [u8; 32] {
+    *blake3::hash(bytes).as_bytes()
 }
 
 /// The `last_apply` metadata block surfaced by `patina status --json`.
@@ -249,7 +265,8 @@ mod tests {
                 },
                 ExpectedTarget::Content {
                     target: "/home/u/.gitconfig".to_owned(),
-                    fingerprint: fingerprint_bytes(b"payload"),
+                    source: "/repo/git/gitconfig".to_owned(),
+                    hash: content_hash(b"payload"),
                     entry: 1,
                 },
             ],
@@ -285,9 +302,37 @@ mod tests {
     }
 
     #[test]
-    fn fingerprint_changes_when_bytes_change() {
-        assert_ne!(fingerprint_bytes(b"a"), fingerprint_bytes(b"b"));
-        assert_eq!(fingerprint_bytes(b"same"), fingerprint_bytes(b"same"));
+    fn content_hash_changes_when_bytes_change() {
+        assert_ne!(content_hash(b"a"), content_hash(b"b"));
+        assert_eq!(content_hash(b"same"), content_hash(b"same"));
+    }
+
+    #[test]
+    fn content_hash_is_blake3_of_the_bytes() {
+        // Pin the helper to the canonical blake3 digest so a silent swap to
+        // a different hash function is caught (REQ-029 names blake3 so the
+        // journal hash matches the SPEC-0003 drift cache).
+        assert_eq!(
+            content_hash(b"payload"),
+            *blake3::hash(b"payload").as_bytes()
+        );
+    }
+
+    #[test]
+    fn source_accessor_returns_origin_for_each_variant() {
+        let sym = ExpectedTarget::Symlink {
+            target: "/t/s".to_owned(),
+            link_target: "/r/s".to_owned(),
+            entry: 0,
+        };
+        let content = ExpectedTarget::Content {
+            target: "/t/c".to_owned(),
+            source: "/r/c".to_owned(),
+            hash: [0u8; 32],
+            entry: 3,
+        };
+        assert_eq!(sym.source(), "/r/s");
+        assert_eq!(content.source(), "/r/c");
     }
 
     #[test]
@@ -314,7 +359,8 @@ mod tests {
         };
         let content = ExpectedTarget::Content {
             target: "/t/c".to_owned(),
-            fingerprint: 0,
+            source: "/r/c".to_owned(),
+            hash: [0u8; 32],
             entry: 3,
         };
         assert_eq!(sym.target(), "/t/s");

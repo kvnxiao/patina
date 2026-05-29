@@ -25,7 +25,7 @@ use serde::Serialize;
 /// Current on-disk plan format major version. Bump when the serialized
 /// [`Plan`] layout changes incompatibly; older binaries then refuse the
 /// newer file via the version envelope.
-pub const FILE_MAJOR_VERSION: u16 = 1;
+pub const FILE_MAJOR_VERSION: u16 = 2;
 
 /// Width in bytes of the version envelope prefix (a little-endian `u16`).
 const ENVELOPE_LEN: usize = core::mem::size_of::<u16>();

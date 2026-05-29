@@ -72,7 +72,7 @@ pub use progress::ProgressCursor;
 pub use record::ApplyRecord;
 pub use record::ExpectedTarget;
 pub use record::LastApply;
-pub use record::fingerprint_bytes;
+pub use record::content_hash;
 pub use record::read_symlink_target;
 pub use record::timestamp_to_rfc3339;
 pub use recovery::ROLLED_BACK_SUFFIX;

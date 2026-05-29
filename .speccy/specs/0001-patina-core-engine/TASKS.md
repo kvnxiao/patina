@@ -1951,7 +1951,7 @@ Suggested files: `deny.toml`, `.github/workflows/ci.yml`
 </task-scenarios>
 </task>
 
-<task id="T-026" state="pending" covers="REQ-029">
+<task id="T-026" state="completed" covers="REQ-029">
 ## Widen the committed apply record: per-target source + blake3 content hash
 
 REQ-029 (added by the 2026-05-29 amendment) tightens the committed

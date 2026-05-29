@@ -46,7 +46,7 @@ use crate::journal::LastApply;
 use crate::journal::OsSyncer;
 use crate::journal::Plan;
 use crate::journal::PlannedOperation;
-use crate::journal::fingerprint_bytes;
+use crate::journal::content_hash;
 use crate::journal::recover_orphans;
 use crate::journal::timestamp_to_rfc3339;
 use crate::lock::LockKind;
@@ -391,9 +391,10 @@ pub async fn execute(
 /// live filesystem against the last committed apply.
 ///
 /// Each completed object becomes one [`ExpectedTarget`]: a symlink records
-/// its canonical link target; a copy or render records a fingerprint of
-/// the bytes that were just written, read back from the live target so the
-/// recorded fingerprint matches exactly what `status` will compute.
+/// its canonical link target (which is also its source); a copy or render
+/// records its canonical source path and a `blake3` hash of the bytes that
+/// were just written, read back from the live target so the recorded hash
+/// matches exactly what `status` will compute (REQ-029).
 fn build_apply_record(
     resolved: &ResolvedPlan,
     completed: &[(u32, CompletionRecord)],
@@ -423,7 +424,8 @@ fn build_apply_record(
                 })?;
                 targets.push(ExpectedTarget::Content {
                     target,
-                    fingerprint: fingerprint_bytes(&bytes),
+                    source: record.source.as_str().to_owned(),
+                    hash: content_hash(&bytes),
                     entry,
                 });
             }

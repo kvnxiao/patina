@@ -10,7 +10,7 @@
 //! `<done-when>` enumerates.
 
 use crate::journal::ExpectedTarget;
-use crate::journal::fingerprint_bytes;
+use crate::journal::content_hash;
 use crate::journal::read_symlink_target;
 use camino::Utf8Path;
 
@@ -53,7 +53,7 @@ impl TargetState {
 ///
 /// When the target is still managed, the comparison is the expectation's:
 /// a symlink must still point at the recorded link target; a content file
-/// must still fingerprint to the recorded value.
+/// must still `blake3`-hash to the recorded value (REQ-029).
 #[must_use = "the classification is the per-target status result"]
 pub fn classify(expected: &ExpectedTarget, still_managed: bool) -> TargetState {
     let target = Utf8Path::new(expected.target());
@@ -91,9 +91,9 @@ pub fn classify(expected: &ExpectedTarget, still_managed: bool) -> TargetState {
                 _ => TargetState::Drifted,
             }
         }
-        ExpectedTarget::Content { fingerprint, .. } => match fs_err::read(target) {
-            Ok(bytes) if fingerprint_bytes(&bytes) == *fingerprint => TargetState::Clean,
-            // Unreadable or fingerprint mismatch: the content changed.
+        ExpectedTarget::Content { hash, .. } => match fs_err::read(target) {
+            Ok(bytes) if content_hash(&bytes) == *hash => TargetState::Clean,
+            // Unreadable or hash mismatch: the content changed.
             _ => TargetState::Drifted,
         },
     }
@@ -119,7 +119,8 @@ mod tests {
         fs_err::write(&target, b"payload").expect("write");
         let expected = ExpectedTarget::Content {
             target: target.as_str().to_owned(),
-            fingerprint: fingerprint_bytes(b"payload"),
+            source: "/repo/file".to_owned(),
+            hash: content_hash(b"payload"),
             entry: 0,
         };
         assert_eq!(classify(&expected, true), TargetState::Clean);
@@ -133,7 +134,8 @@ mod tests {
         let (_td, dir) = utf8_tempdir();
         let expected = ExpectedTarget::Content {
             target: dir.join("gone").as_str().to_owned(),
-            fingerprint: 0,
+            source: "/repo/gone".to_owned(),
+            hash: [0u8; 32],
             entry: 0,
         };
         assert_eq!(classify(&expected, true), TargetState::Missing);
@@ -146,7 +148,8 @@ mod tests {
         fs_err::write(&target, b"x").expect("write");
         let expected = ExpectedTarget::Content {
             target: target.as_str().to_owned(),
-            fingerprint: 0,
+            source: "/repo/old".to_owned(),
+            hash: [0u8; 32],
             entry: 0,
         };
         // still_managed = false: the current plan dropped this entry.

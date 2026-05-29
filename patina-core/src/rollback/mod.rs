@@ -241,17 +241,20 @@ mod tests {
         let rec = record(vec![
             ExpectedTarget::Content {
                 target: "/a".to_owned(),
-                fingerprint: 0,
+                source: "/repo/a".to_owned(),
+                hash: [0u8; 32],
                 entry: 0,
             },
             ExpectedTarget::Content {
                 target: "/b1".to_owned(),
-                fingerprint: 0,
+                source: "/repo/b1".to_owned(),
+                hash: [0u8; 32],
                 entry: 1,
             },
             ExpectedTarget::Content {
                 target: "/b2".to_owned(),
-                fingerprint: 0,
+                source: "/repo/b2".to_owned(),
+                hash: [0u8; 32],
                 entry: 1,
             },
         ]);
