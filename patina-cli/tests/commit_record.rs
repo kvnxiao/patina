@@ -26,6 +26,7 @@ use camino::Utf8Path;
 use camino::Utf8PathBuf;
 use patina_core::ApplyRecord;
 use patina_core::ExpectedTarget;
+use patina_core::HostOs;
 use patina_core::content_hash;
 use patina_core::read_latest_commit;
 use std::process::Output;
@@ -94,9 +95,20 @@ impl Fixture {
     }
 
     /// The per-machine journal directory the subprocess writes COMMIT
-    /// sentinels into: `<state>/patina/journal`.
+    /// sentinels into. The resolved state root is platform-dependent:
+    /// Linux/Windows honour `XDG_STATE_HOME` / `LOCALAPPDATA` (→ `self.state`),
+    /// while macOS ignores both and uses `$HOME/Library/Application Support`
+    /// (→ `self.home`). Resolve it from this fixture's own isolated env values
+    /// (the same ones `invoke` passes to the subprocess) so the path matches
+    /// wherever the binary actually wrote the journal.
     fn journal_dir(&self) -> Utf8PathBuf {
-        self.state.join("patina").join("journal")
+        patina_core::state_dir::resolve_with_env(HostOs::current(), |name| match name {
+            "XDG_STATE_HOME" | "LOCALAPPDATA" => Some(self.state.as_str().to_owned()),
+            "HOME" | "USERPROFILE" => Some(self.home.as_str().to_owned()),
+            _ => None,
+        })
+        .expect("resolve fixture state dir")
+        .join("journal")
     }
 
     /// Decode the single COMMIT record produced by the last apply.
