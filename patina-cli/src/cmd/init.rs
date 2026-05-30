@@ -25,6 +25,7 @@
 //! against the same target produce identical stdout (CHK-017).
 
 use crate::cli::InitArgs;
+use crate::cmd::MANIFEST_FILENAME;
 use crate::exit_code::ExitCode;
 use crate::output::reporter::Reporter;
 use anyhow::Context;
@@ -40,9 +41,6 @@ use patina_core::exclusive_timeout;
 use patina_core::resolve_state_dir;
 use patina_core::scaffold_root_manifest;
 use patina_core::write_persisted_default;
-
-/// The manifest filename `init` scaffolds and refuses to overwrite.
-const MANIFEST_FILENAME: &str = "patina.toml";
 
 /// Run `patina init`. Returns the process exit code.
 ///

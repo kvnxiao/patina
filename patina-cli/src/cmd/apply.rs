@@ -264,7 +264,7 @@ fn parse_override(raw: &str) -> Result<(String, String)> {
 /// formatted `YYYYMMDDTHHMMSSZ` (matches the journal fixtures). The
 /// timestamp keys the journal filename only; it never appears in user
 /// output, so determinism of stdout is preserved.
-fn current_timestamp() -> String {
+pub(crate) fn current_timestamp() -> String {
     jiff::Timestamp::now()
         .strftime("%Y%m%dT%H%M%SZ")
         .to_string()

@@ -31,6 +31,7 @@
 //! [`Reporter`].
 
 use crate::cli::AddArgs;
+use crate::cmd::MANIFEST_FILENAME;
 use crate::cmd::apply::PromptReader;
 use crate::cmd::apply::Tty;
 use crate::exit_code::ExitCode;
@@ -52,9 +53,6 @@ use patina_core::expand_tilde;
 use patina_core::parse_module_config;
 use patina_core::resolve_repository_root;
 use patina_core::resolve_state_dir;
-
-/// The module manifest filename `add` reads and writes.
-const MANIFEST_FILENAME: &str = "patina.toml";
 
 /// The materialization mode the user selected for the new entry.
 ///
@@ -333,7 +331,7 @@ fn file_mode(mode: AddMode) -> FileMode {
 
 /// Resolve the user's home directory for tilde expansion, reading `$HOME`
 /// then `$USERPROFILE` (the Windows fallback).
-fn resolve_home() -> Result<Utf8PathBuf> {
+pub(crate) fn resolve_home() -> Result<Utf8PathBuf> {
     for name in ["HOME", "USERPROFILE"] {
         if let Ok(value) = std::env::var(name)
             && !value.is_empty()

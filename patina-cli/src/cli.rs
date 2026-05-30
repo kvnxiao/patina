@@ -61,6 +61,11 @@ pub enum Command {
     /// write a `[[file]]` entry.
     Add(AddArgs),
 
+    /// Unmanage a target: remove its `[[file]]` entry and replace the target
+    /// with a regular file holding the last-applied content. `--purge`
+    /// deletes the target outright.
+    Remove(RemoveArgs),
+
     /// Materialize the declared configuration at its targets.
     Apply(ApplyArgs),
 
@@ -149,6 +154,28 @@ pub struct AddArgs {
     pub json: bool,
 
     /// Proceed without prompting. `add` is a mutating command (REQ-009).
+    #[arg(long)]
+    pub yes: bool,
+}
+
+/// Flags for `patina remove` (REQ-003).
+#[derive(Debug, Args, Default)]
+pub struct RemoveArgs {
+    /// The managed target to unmanage. Absolute or HOME-relative (a leading
+    /// `~` is expanded).
+    #[arg(value_name = "path")]
+    pub path: Utf8PathBuf,
+
+    /// Delete the target from disk entirely instead of replacing it with a
+    /// regular file holding the last-applied content.
+    #[arg(long)]
+    pub purge: bool,
+
+    /// Emit a JSON envelope instead of human output.
+    #[arg(long)]
+    pub json: bool,
+
+    /// Proceed without prompting. `remove` is a mutating command (REQ-009).
     #[arg(long)]
     pub yes: bool,
 }

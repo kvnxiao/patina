@@ -7,5 +7,9 @@ pub mod add;
 pub mod apply;
 pub mod debug;
 pub mod init;
+pub mod remove;
 pub mod rollback;
 pub mod status;
+
+/// The per-module manifest filename the subcommands read and write.
+pub(crate) const MANIFEST_FILENAME: &str = "patina.toml";

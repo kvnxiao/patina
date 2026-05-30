@@ -287,7 +287,7 @@ Suggested files: `patina-cli/src/cli.rs`, `patina-cli/src/cmd/add.rs`,
 </task-scenarios>
 </task>
 
-<task id="T-005" state="pending" covers="REQ-003 REQ-009">
+<task id="T-005" state="completed" covers="REQ-003 REQ-009">
 ## Implement `patina remove <path>` with `--purge` and `Held`-policy re-journal
 
 `patina remove <path>` unmanages a target: it removes the `[[file]]` entry,

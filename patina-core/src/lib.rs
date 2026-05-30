@@ -114,6 +114,7 @@ pub use status::StatusEntry;
 pub use status::StatusReport;
 pub use status::TargetState;
 pub use status::current_plan_targets;
+pub use status::manage_key;
 pub use status::report as status_report;
 pub use template::Engine as TemplateEngine;
 pub use template::TemplateError;
