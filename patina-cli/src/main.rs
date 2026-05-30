@@ -48,6 +48,15 @@ async fn main() -> ! {
             let mut reader = StdinReader;
             cmd::remove::run(&args, tty, &mut reader, &mut reporter).await
         }
+        Command::Promote(args) => {
+            let tty = if std::io::stdin().is_terminal() {
+                Tty::Interactive
+            } else {
+                Tty::NonInteractive
+            };
+            let mut reader = StdinReader;
+            cmd::promote::run(&args, tty, &mut reader, &mut reporter).await
+        }
         Command::Apply(args) => {
             let tty = if std::io::stdin().is_terminal() {
                 Tty::Interactive

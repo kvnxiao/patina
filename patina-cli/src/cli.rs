@@ -66,6 +66,11 @@ pub enum Command {
     /// deletes the target outright.
     Remove(RemoveArgs),
 
+    /// Promote a drifted copy-mode target: copy its current bytes back into
+    /// its repository source, then re-apply so the journal records the new
+    /// content. Refuses on template-rendered and symbolic-link targets.
+    Promote(PromoteArgs),
+
     /// Materialize the declared configuration at its targets.
     Apply(ApplyArgs),
 
@@ -176,6 +181,23 @@ pub struct RemoveArgs {
     pub json: bool,
 
     /// Proceed without prompting. `remove` is a mutating command (REQ-009).
+    #[arg(long)]
+    pub yes: bool,
+}
+
+/// Flags for `patina promote` (REQ-004).
+#[derive(Debug, Args, Default)]
+pub struct PromoteArgs {
+    /// The drifted copy-mode target to promote. Absolute or HOME-relative (a
+    /// leading `~` is expanded).
+    #[arg(value_name = "target")]
+    pub target: Utf8PathBuf,
+
+    /// Emit a JSON envelope instead of human output.
+    #[arg(long)]
+    pub json: bool,
+
+    /// Proceed without prompting. `promote` is a mutating command (REQ-009).
     #[arg(long)]
     pub yes: bool,
 }

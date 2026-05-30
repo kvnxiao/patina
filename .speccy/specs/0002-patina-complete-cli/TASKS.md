@@ -366,7 +366,7 @@ Suggested files: `patina-cli/src/cli.rs`, `patina-cli/src/cmd/remove.rs`,
 </task-scenarios>
 </task>
 
-<task id="T-006" state="pending" covers="REQ-004 REQ-009">
+<task id="T-006" state="completed" covers="REQ-004 REQ-009">
 ## Implement `patina promote <target>` for drifted copy-mode targets
 
 `patina promote <target>` copies an externally-edited copy-mode target's

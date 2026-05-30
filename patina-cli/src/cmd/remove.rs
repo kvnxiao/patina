@@ -36,6 +36,9 @@ use crate::cmd::add::resolve_home;
 use crate::cmd::apply::PromptReader;
 use crate::cmd::apply::Tty;
 use crate::cmd::apply::current_timestamp;
+use crate::cmd::managed::TEMPLATE_SUFFIX;
+use crate::cmd::managed::acquire_state_and_lock;
+use crate::cmd::managed::rejournal;
 use crate::exit_code::ExitCode;
 use crate::output::reporter::Reporter;
 use anyhow::Context;
@@ -46,22 +49,13 @@ use camino::Utf8PathBuf;
 use patina_core::ApplyRequest;
 use patina_core::EngineError;
 use patina_core::ExpectedTarget;
-use patina_core::LockKind;
-use patina_core::LockPolicy;
 use patina_core::ResolvedPlan;
 use patina_core::TemplateEngine;
-use patina_core::acquire_lock;
-use patina_core::exclusive_timeout;
-use patina_core::execute_plan;
 use patina_core::expand_tilde;
 use patina_core::manage_key;
 use patina_core::plan_apply;
 use patina_core::read_latest_commit;
 use patina_core::remove_file_entry;
-use patina_core::resolve_state_dir;
-
-/// The `.tmpl` source suffix marking an implicit template-rendered target.
-const TEMPLATE_SUFFIX: &str = ".tmpl";
 
 /// Run `patina remove`. Returns the process exit code.
 ///
@@ -85,11 +79,7 @@ pub async fn run(
     // REQ-009: take ONE exclusive advisory lock for the whole command. The
     // re-apply below reuses this guard via LockPolicy::Held rather than
     // acquiring a second time (which would self-contend).
-    let state = resolve_state_dir().map_err(EngineError::from)?;
-    let lock_path = state.join("lock");
-    let guard = acquire_lock(&lock_path, LockKind::Exclusive, exclusive_timeout())
-        .map_err(EngineError::from)
-        .context("failed to acquire the exclusive lock")?;
+    let (state, guard) = acquire_state_and_lock()?;
 
     // Locate the journaled expectation for this target in the latest commit.
     let journal_dir = state.join("journal");
@@ -141,16 +131,7 @@ pub async fn run(
     // `patina status` no longer lists it. Re-plan AFTER the manifest edit so
     // the new plan reflects the removal; drive the apply with the lock we
     // already hold.
-    let rejournal_ts = current_timestamp();
-    let rejournaled =
-        plan_apply(&ApplyRequest::default(), &rejournal_ts).context("failed to re-plan")?;
-    execute_plan(
-        &rejournaled,
-        &ApplyRequest::default(),
-        LockPolicy::Held(guard),
-    )
-    .await
-    .context("re-apply failed")?;
+    rejournal(guard).await?;
 
     report_success(args, &target_path, reporter);
     Ok(ExitCode::Success.code())

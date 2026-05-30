@@ -7,6 +7,8 @@ pub mod add;
 pub mod apply;
 pub mod debug;
 pub mod init;
+pub mod managed;
+pub mod promote;
 pub mod remove;
 pub mod rollback;
 pub mod status;
