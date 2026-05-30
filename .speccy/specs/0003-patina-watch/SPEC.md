@@ -1040,6 +1040,32 @@ direction; SPEC content updated in the same revision.
   typical antivirus/cloud-sync transient holds; configurability
   remains a v1.1 candidate if real users surface persistent-lock
   workloads.
+- [ ] e. **Orphan recovery vs. `NonBlocking` lock ordering.** Open,
+  added 2026-05-30. The shipped SPEC-0001 engine (`apply/engine.rs`
+  `execute`) runs `recover_orphans` *before* it resolves the lock per
+  REQ-030's policy, for all three policies. `recover_orphans` is a
+  no-op when no orphan is present, but when one is present it mutates
+  the filesystem (reverses a prior orphan's backups, deletes orphaned
+  plan/progress files). So a `NonBlocking` re-apply that finds an
+  orphan AND loses the lock race would mutate before returning the
+  typed contention error — in tension with REQ-030's "perform zero
+  filesystem mutation" prose that REQ-006/REQ-008/CHK-013 rely on for
+  the watcher's skip-on-contention guarantee. This was surfaced by the
+  SPEC-0001 REQ-030 vet gate (see
+  `.speccy/specs/0001-patina-core-engine/journal/VET.md`, invocation
+  1) and deliberately deferred here because the watcher is the only
+  `NonBlocking` consumer and the fix cannot be a blanket reorder:
+  REQ-030 pins the `Blocking` path as byte-for-byte the pre-amendment
+  apply, so moving recovery under the lock would change observable
+  `Blocking` behaviour. The watcher decomposition must pick one of:
+  (a) acquire-then-recover only on the `NonBlocking` path (per-policy
+  recovery placement in the engine, a SPEC-0001 follow-up amendment);
+  (b) scope REQ-030's "writes nothing" claim to the new-apply
+  artifacts (plan/journal/backups) and accept that a contended
+  `NonBlocking` attempt may still run orphan recovery; or (c) have the
+  watcher confirm no orphan is pending before attempting a
+  `NonBlocking` re-apply. Resolve before wiring REQ-006/REQ-008 to
+  `NonBlocking`.
 
 ## Changelog
 
@@ -1051,6 +1077,7 @@ direction; SPEC content updated in the same revision.
 | 2026-05-27 | human/kevin via assistant | Rename the docs target from `docs/operating-environment.md` to `docs/USER_GUIDE.md` everywhere SPEC-0003 references it (4 body sites in Assumptions, Non-goals, REQ-001 prose, and DEC-005; the historical 2026-05-26 row above retains the original name as a point-in-time snapshot). SPEC-0001's REQ-027 now formalises `docs/USER_GUIDE.md` with named structural anchors. The `sudo loginctl enable-linger $USER` snippet for survive-logout watcher behavior lands inside `docs/USER_GUIDE.md` in a section SPEC-0003's implementer adds (e.g. extending `## Troubleshooting` or introducing a `## Watch service` section); REQ-027 does not constrain the section name. No requirement-level change in SPEC-0003; this is a cross-SPEC reference rename driven by the SPEC-0001 amend. |
 | 2026-05-29 | human/kevin via assistant | Align with the SPEC-0001 REQ-029 amendment and correct a phantom dependency. REQ-005: the watcher reads subscriptions from the committed `<ts>.COMMIT` record (not the `<ts>.plan`, which is deleted at commit), recovering per-target source paths via REQ-029's `Content.source` — fixes the previously unsatisfiable "read sources from the `.plan`". REQ-007: note the drift `blake3` now matches the journal's recorded `blake3` (REQ-029) — same algorithm, directly comparable. REQ-009 / DEC-009 / cross-SPEC handoffs: SPEC-0003 now OWNS the `<state>/patina/logs/` directory and the `tracing-appender` daily-rotation (keep-7) stack; dropped the false attribution to SPEC-0001 REQ-016, which defines only the state-directory root plus `journal/` and `backups/`. Not yet decomposed, so no TASKS reconciliation. |
 | 2026-05-29 | human/kevin via assistant | Resolve a status/drift-cache conflict surfaced by reviewing the shipped SPEC-0001 implementation. SPEC-0001's `patina status` already classifies a content target as DRIFTED by live `blake3` re-hash vs the recorded hash (REQ-018, `status/classify.rs`) — standalone and authoritative on *current* content. REQ-007's prior wording had `patina status` read the watcher's `drift.cache` and report DRIFTED from it, which is redundant and wrong for an edited-then-reverted file (live hash CLEAN, cache stale). Reword the Summary and REQ-007 so the drift cache is explicitly the watcher's *notification ledger* (per-target rate limit + `patina debug drift-cache` + watcher metrics), NOT a status input; add a `<done-when>` bullet pinning "the drift cache is not read by `patina status`"; reword CHK-012's premise to derive the DRIFTED verdict from the live H2 ≠ H1 divergence rather than a cache read. No new behaviour and no dependency change; not yet decomposed, so no TASKS reconciliation. |
+| 2026-05-30 | human/kevin via assistant | Add open question (e): orphan recovery vs. `NonBlocking` lock ordering. The SPEC-0001 REQ-030 vet gate surfaced that `recover_orphans` runs before lock resolution in the shipped engine `execute`, so a contended `NonBlocking` re-apply that also finds an orphan would mutate the filesystem before returning the typed contention error — in tension with the "writes nothing" guarantee REQ-006/REQ-008/CHK-013 depend on. Captured as an open item (not yet resolved) because the watcher is the sole `NonBlocking` consumer and the fix interacts with REQ-030's byte-for-byte-`Blocking` constraint. Must be resolved before wiring the watcher re-apply to `NonBlocking`. No requirement-level change; not yet decomposed, so no TASKS reconciliation. |
 | 2026-05-30 | human/kevin via assistant | Resolve three gaps surfaced by reviewing the shipped SPEC-0001 code. (1) Lock model: the shipped engine apply path self-acquires the exclusive lock with a 60-second blocking poll and offers no non-blocking path, so the watcher could neither skip-on-contention (REQ-006/REQ-008/CHK-013) nor pre-acquire-then-apply without self-deadlock. SPEC-0001 gained REQ-030 (apply-path lock policy: Blocking / NonBlocking / Held); reword REQ-008 prose and the REQ-006/REQ-008 done-when bullets so the watcher re-apply runs under the `NonBlocking` policy (single attempt, typed contention error, zero mutation → skip), and add REQ-030 to the cross-SPEC handoffs. (2) Drift-cache envelope: REQ-007 now extracts a shared `pub` version-envelope helper in `patina-core` (the journal duplicates it privately across `plan.rs`/`record.rs`) instead of hand-rolling a third copy, and the drift cache carries its OWN major-version constant independent of the journal's `FILE_MAJOR_VERSION` so the two formats version separately. (3) Timestamp helper: note that the watcher re-apply reuses a hoisted shared compact-UTC timestamp helper (currently the private `current_timestamp()` in the CLI `cmd/apply.rs`) rather than duplicating it. No user-facing behaviour change; the new `notify` / `notify-rust` deps are unchanged. Not yet decomposed, so no TASKS reconciliation. |
 </changelog>
 
