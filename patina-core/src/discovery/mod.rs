@@ -21,9 +21,13 @@ use camino::Utf8Path;
 pub use modules::ModuleDiscoveryError;
 pub use modules::ModuleHandle;
 pub use modules::discover_modules;
+pub use repo::PERSISTED_DEFAULT_FILENAME;
 pub use repo::RepoDiscoveryError;
+pub use repo::default_repo_pointer_path;
+pub use repo::persisted_default_present;
 pub use repo::resolve_repository_root;
 pub use repo::resolve_repository_root_with;
+pub use repo::write_persisted_default;
 use serde::Deserialize;
 
 /// Filename of the per-module / per-root Patina manifest.

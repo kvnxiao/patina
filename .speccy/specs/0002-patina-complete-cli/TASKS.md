@@ -89,7 +89,7 @@ Suggested files: `patina-core/src/config/writer.rs`,
 </task-scenarios>
 </task>
 
-<task id="T-002" state="pending" covers="REQ-001">
+<task id="T-002" state="completed" covers="REQ-001">
 ## Add a persisted `default_repo` pointer writer to `patina-core::discovery`
 
 Repo discovery already *reads* the persisted default

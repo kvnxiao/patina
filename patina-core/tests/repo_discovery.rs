@@ -15,7 +15,10 @@
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
 use patina_core::discovery::RepoDiscoveryError;
+use patina_core::discovery::default_repo_pointer_path;
+use patina_core::discovery::persisted_default_present;
 use patina_core::discovery::resolve_repository_root_with;
+use patina_core::discovery::write_persisted_default;
 use tempfile::TempDir;
 
 fn write_root_manifest(dir: &Utf8Path) {
@@ -118,4 +121,47 @@ fn persisted_default_is_consulted_when_other_sources_fail() {
     let resolved = resolve_repository_root_with(None, &empty_cwd, Some(persisted.as_path()))
         .expect("persisted default resolves");
     assert_eq!(resolved, repo);
+}
+
+#[test]
+fn write_persisted_default_round_trips_through_read_path() {
+    // T-002 scenario 1 (REQ-001): writing the pointer under state dir
+    // `S` makes the file exist, its trimmed contents equal the
+    // canonical repo path `R`, `persisted_default_present(S)` is true,
+    // and the existing read path resolves the persisted default
+    // against `S` back to `R`.
+    let (_repo_td, repo) = utf8_tempdir();
+    write_root_manifest(&repo);
+
+    let (_state_td, state_dir) = utf8_tempdir();
+
+    write_persisted_default(&state_dir, &repo).expect("write persisted default");
+
+    let pointer = default_repo_pointer_path(&state_dir);
+    assert!(pointer.exists(), "pointer file must exist after write");
+
+    let contents = fs_err::read_to_string(pointer.as_std_path()).expect("read pointer");
+    assert_eq!(contents.trim(), repo.as_str());
+
+    assert!(
+        persisted_default_present(&state_dir),
+        "presence check must report the pointer as present"
+    );
+
+    // The existing read path resolves the persisted default against S.
+    let (_cwd_td, empty_cwd) = utf8_tempdir();
+    let resolved = resolve_repository_root_with(None, &empty_cwd, Some(pointer.as_path()))
+        .expect("persisted default resolves through read path");
+    assert_eq!(resolved, repo);
+}
+
+#[test]
+fn persisted_default_present_is_false_without_pointer() {
+    // T-002 scenario 2: a state dir with no `default_repo` file
+    // reports the pointer as absent.
+    let (_state_td, state_dir) = utf8_tempdir();
+    assert!(
+        !persisted_default_present(&state_dir),
+        "no pointer file means present() must be false"
+    );
 }
