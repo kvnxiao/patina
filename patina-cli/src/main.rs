@@ -30,6 +30,15 @@ async fn main() -> ! {
     let mut reporter = StreamReporter::new();
     let outcome = match cli.command {
         Command::Init(args) => cmd::init::run(&args, &mut reporter).await,
+        Command::Add(args) => {
+            let tty = if std::io::stdin().is_terminal() {
+                Tty::Interactive
+            } else {
+                Tty::NonInteractive
+            };
+            let mut reader = StdinReader;
+            cmd::add::run(&args, tty, &mut reader, &mut reporter).await
+        }
         Command::Apply(args) => {
             let tty = if std::io::stdin().is_terminal() {
                 Tty::Interactive

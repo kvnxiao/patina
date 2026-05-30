@@ -57,6 +57,10 @@ pub enum Command {
     /// Scaffold a root `patina.toml` and persist the default-repo pointer.
     Init(InitArgs),
 
+    /// Bring an existing dotfile under management: move it into a module and
+    /// write a `[[file]]` entry.
+    Add(AddArgs),
+
     /// Materialize the declared configuration at its targets.
     Apply(ApplyArgs),
 
@@ -101,6 +105,50 @@ pub struct InitArgs {
 
     /// Proceed without prompting. `init` is a mutating command (REQ-009);
     /// this is accepted for parity with the other mutating subcommands.
+    #[arg(long)]
+    pub yes: bool,
+}
+
+/// Flags for `patina add` (REQ-002).
+///
+/// The three mode flags (`--symlink` / `--copy` / `--template`) form a
+/// mutually-exclusive clap group: declaring two produces a usage error
+/// (exit 2). In v1.0 `add` exposes only these three modes — not
+/// `symlink-dir` / `copy-tree` (a v1.0 non-goal).
+#[derive(Debug, Args, Default)]
+#[command(group = clap::ArgGroup::new("mode").multiple(false))]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "this is a clap-derived flag struct: each bool is an independent CLI flag (the three mode flags plus --json / --yes), not a state machine that would be better modelled as an enum. The mode flags are unified at use-site into the AddMode enum."
+)]
+pub struct AddArgs {
+    /// The dotfile to bring under management. Absolute or HOME-relative
+    /// (a leading `~` is expanded).
+    #[arg(value_name = "path")]
+    pub path: Utf8PathBuf,
+
+    /// The module subdirectory to file the entry under. Prompted for in a
+    /// TTY when omitted; required in a non-TTY shell.
+    #[arg(long, value_name = "name")]
+    pub module: Option<String>,
+
+    /// File the entry as a symbolic link.
+    #[arg(long, group = "mode")]
+    pub symlink: bool,
+
+    /// File the entry as a byte copy.
+    #[arg(long, group = "mode")]
+    pub copy: bool,
+
+    /// File the entry as a rendered template.
+    #[arg(long, group = "mode")]
+    pub template: bool,
+
+    /// Emit a JSON envelope instead of human output.
+    #[arg(long)]
+    pub json: bool,
+
+    /// Proceed without prompting. `add` is a mutating command (REQ-009).
     #[arg(long)]
     pub yes: bool,
 }

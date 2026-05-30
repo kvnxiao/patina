@@ -214,7 +214,7 @@ Suggested files: `patina-cli/src/cli.rs`, `patina-cli/src/cmd/init.rs`,
 </task-scenarios>
 </task>
 
-<task id="T-004" state="pending" covers="REQ-002 REQ-009">
+<task id="T-004" state="completed" covers="REQ-002 REQ-009">
 ## Implement `patina add <path>`
 
 `patina add <path>` brings an existing dotfile under management: it moves

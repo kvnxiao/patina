@@ -115,8 +115,16 @@ fn init_json_success_and_failure_diverge_then_failure_is_byte_stable() {
     let third = fx.run(&["init", target.as_str(), "--json"], &[]);
 
     assert_eq!(code(&first), 0, "first init must succeed");
-    assert_eq!(code(&second), 1, "second init must fail: manifest now exists");
-    assert_eq!(code(&third), 1, "third init must fail: manifest still exists");
+    assert_eq!(
+        code(&second),
+        1,
+        "second init must fail: manifest now exists"
+    );
+    assert_eq!(
+        code(&third),
+        1,
+        "third init must fail: manifest still exists"
+    );
 
     // The success and failure documents carry different result fields.
     assert_ne!(
