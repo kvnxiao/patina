@@ -31,6 +31,9 @@
 
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
+use std::io::BufRead;
+use std::io::BufReader;
+use std::process::Child;
 use std::process::Command;
 use std::process::Stdio;
 use std::sync::Once;
@@ -164,6 +167,32 @@ fn spawn(
         .expect("spawn lock_helper")
 }
 
+/// Block until `child` prints its `ACQUIRED` stdout marker, proving it
+/// holds the lock, then keep draining the rest of its stdout on a
+/// background thread so the helper never blocks (or hits a broken pipe) on
+/// a later `println!` such as its `RELEASED` line. Gating a contender on
+/// this observed acquisition — rather than a fixed head-start sleep —
+/// makes the contention deterministic under machine load (F2).
+fn wait_for_acquired(child: &mut Child) {
+    let stdout = child.stdout.take().expect("holder stdout piped");
+    let mut reader = BufReader::new(stdout);
+    loop {
+        let mut line = String::new();
+        let read = reader.read_line(&mut line).expect("read holder stdout");
+        assert!(read != 0, "holder exited before printing ACQUIRED marker");
+        if line.starts_with("ACQUIRED ") {
+            break;
+        }
+    }
+    // Drain the remainder to EOF so the holder's later writes have a live
+    // reader; the bytes are unused (this test asserts only exit status and
+    // stderr).
+    std::thread::spawn(move || {
+        // Errors here mean the holder closed stdout; nothing to do.
+        let _drained = std::io::copy(&mut reader, &mut std::io::sink());
+    });
+}
+
 #[test]
 fn two_exclusive_applies_do_not_interleave() {
     // CHK-037: two processes contend for the exclusive lock; their
@@ -231,9 +260,13 @@ fn blocked_exclusive_exits_with_lock_timeout_code() {
     let state = State::new();
 
     // Holder keeps the lock for 1.5s; the blocked process caps at 200ms.
-    let holder = spawn(&helper, &state.dir, "exclusive", 1_500, 5_000, false);
-    // Give the holder a moment to acquire before the contender starts.
-    std::thread::sleep(Duration::from_millis(150));
+    let mut holder = spawn(&helper, &state.dir, "exclusive", 1_500, 5_000, false);
+    // Start the contender only after the holder has *observably* acquired
+    // the lock (its `ACQUIRED` stdout marker), not after a fixed sleep — a
+    // cold-starting holder binary can take longer than any hardcoded
+    // head-start under load, which previously let the contender win the
+    // still-free lock and exit 0 instead of timing out (F2).
+    wait_for_acquired(&mut holder);
     let blocked = spawn(&helper, &state.dir, "exclusive", 0, 200, false);
 
     let blocked_out = blocked.wait_with_output().expect("wait blocked");

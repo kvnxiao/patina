@@ -123,6 +123,18 @@ only the `patina` binary.
   flag is re-read on each apply that requires it (registry reads
   are microsecond-scale; the cache invalidation surface earns no
   net win).
+- No `--symlink-dir` or `--copy-tree` mode flag on `patina add`. In
+  v1.0 `patina add` offers exactly `--symlink`, `--copy`, and
+  `--template` (REQ-002). The two directory-oriented engine modes
+  from SPEC-0001 REQ-005 (`symlink-dir`, `copy-tree`) stay reachable
+  by hand-editing the module `patina.toml`, but `add` does not
+  generate them; exposing them as `add` flags is a v1.1 candidate.
+- No release / packaging pipeline. SPEC-0002 specifies which binaries
+  each OS's release artifact contains (`patina` everywhere;
+  `patina-elevate.exe` only on Windows — REQ-008), but the mechanics
+  of building, code-signing, and distributing those artifacts
+  (`cargo install`, Homebrew, MSI, etc.) are owned by the release
+  tooling, not a v1.0 feature requirement here.
 </non-goals>
 
 ## User stories
@@ -629,7 +641,7 @@ elevated.
   exits 1.
 - On user-declined UAC, the engine emits a typed error whose
   message names "Developer Mode" and "patina doctor
-  --fix-symlinks", and exits 5.
+  --fix", and exits 5.
 - The Developer Mode registry flag is read on every apply that
   contains symbolic link operations. There is no cache file; the
   registry read is microsecond-scale and the cache invalidation
@@ -651,7 +663,7 @@ elevated.
 - Given the same host, when `patina apply --yes` runs and the
   user clicks "No" on the UAC dialog, then no file operation
   occurs, stderr names `Developer Mode` and `patina doctor
-  --fix-symlinks`, and exit code is 5.
+  --fix`, and exit code is 5.
 - Given a macOS or Linux host, when `patina apply --yes` runs,
   then `patina-elevate.exe` is not present in the process tree
   and no registry read is attempted.
@@ -664,7 +676,7 @@ TTY harness configured to decline the UAC prompt,
 when `patina apply --yes` runs,
 then no symbolic link is created at the target path, stderr
 contains the substrings `Developer Mode` and
-`patina doctor --fix-symlinks`, and the process exits with
+`patina doctor --fix`, and the process exits with
 code 5.
 </scenario>
 
@@ -768,6 +780,13 @@ invocations of `doctor` (without `--fix`) acquire a shared lock.
 - Lock-contention exit code (4) and timeout behavior follow the
   rules established in SPEC-0001 REQ-023 (mutating commands
   time out after 60 seconds; read-only commands warn after 5).
+- Commands that re-journal by re-applying (`remove`, `promote`)
+  acquire the exclusive lock ONCE for the whole command and drive
+  the engine re-apply under SPEC-0001 REQ-030's `Held` lock policy,
+  so the re-apply reuses the already-held guard instead of acquiring
+  the lock a second time (which would self-contend against the
+  command's own lock). The bare-engine apply path defaults to the
+  `Blocking` policy; these commands override it to `Held`.
 </done-when>
 
 <behavior>
@@ -954,6 +973,31 @@ recommended action ("edit the template source or variable scope
 directly").
 </decision>
 
+<decision id="DEC-007">
+SPEC-0002 commands write and edit `patina.toml` files (`init`
+scaffolds a root manifest; `add` creates / appends a module manifest;
+`remove` deletes one `[[file]]` entry from an existing module
+manifest). SPEC-0001's `patina-core::config` is parse-only —
+`parse_module_config` deserializes via `toml::from_str` and `FileEntry`
+is `Deserialize`-only; there is no serializer. SPEC-0002 therefore
+introduces a TOML *writer*, and the choice is `toml_edit`
+(format-preserving) rather than `toml` (reserialize). Reasons:
+
+- `remove` must delete a single `[[file]]` entry while leaving the
+  module manifest's other `[[file]]` / `[[hook]]` entries, its
+  `[variables]` table, comments, key ordering, and whitespace intact.
+  A reserialize-everything writer would rewrite the whole file,
+  discarding the user's comments and formatting.
+- REQ-010 requires byte-identical stdout/output across reruns; a
+  format-preserving editor keeps the on-disk manifest stable across
+  edits, which keeps downstream apply output deterministic.
+
+`init` and `add` write fresh tables, where either crate would do, but
+using `toml_edit` for all three keeps one writer path. The TOML *read*
+side stays on `patina-core::config` (the `toml` crate); only the write
+side adds `toml_edit`.
+</decision>
+
 ## Open Questions
 
 All five self-review questions resolved 2026-05-26 by user
@@ -1000,6 +1044,8 @@ direction; SPEC content updated in the same revision.
 | 2026-05-27 | human/kevin via assistant | Rename the docs target from `docs/operating-environment.md` to `docs/USER_GUIDE.md` everywhere SPEC-0002 references it (5 sites across Summary, Non-goals, REQ-005 prose, DEC-004, and the prior Changelog row's residual context). SPEC-0001's REQ-027 now formalises `docs/USER_GUIDE.md` with named structural anchors and the cloud-sync paths-to-avoid bullet list lives under its `## State directory` section. No requirement-level change in this SPEC; this is a cross-SPEC reference rename driven by the SPEC-0001 amend. |
 | 2026-05-29 | human/kevin via assistant | Align `patina remove` / `patina promote` with the SPEC-0001 REQ-029 amendment (committed `ApplyRecord` now retains per-target source + a 32-byte blake3 content hash). REQ-003: redefine the template-target "last-applied content" as re-rendering the journaled source at remove time (the journal records only a blake3 hash of the rendered bytes, not the bytes), and source the copy-mode content from the journaled source path; DEC-005 rewritten to match and to record why full rendered bytes are not journaled. CHK-007: "SHA of the new content" → "blake3 hash of the new content (SPEC-0001 REQ-029)". Add a cross-SPEC handoff bullet noting `remove`/`promote` read the target→source map and content hash from the committed record. Not yet decomposed, so no TASKS reconciliation. |
 | 2026-05-29 | human/kevin via assistant | Fix REQ-003's "status reports it as unmanaged" — there is no such state in SPEC-0001's classifier, which has exactly CLEAN/DRIFTED/MISSING/ORPHANED (`status/classify.rs`). Left as written, a removed-but-on-disk target would classify ORPHANED (removed from the plan, still present) until the next apply, surprising the user who just ran `remove`. Require `patina remove` to re-journal the new managed set after mutating (write a fresh `<ts>.COMMIT` omitting the removed target), so `patina status` simply omits the path (unmanaged/absent) and ORPHANED stays reserved for the *implicit* drop (hand-edited TOML / deleted source). Mirrors `promote`, which already re-journals (REQ-004). Reword the REQ-003 prose + done-when bullet, extend CHK-005 to assert status no longer lists the target, and update the cross-SPEC handoff bullet. No dependency change; not yet decomposed, so no TASKS reconciliation. |
+| 2026-05-30 | human/kevin via assistant | Close two gaps surfaced by reviewing the shipped SPEC-0001 code against this SPEC. (1) Lock re-entrancy: the shipped engine apply path self-acquires the exclusive lock, so `remove`/`promote` mutating-under-lock and then re-journaling via a re-apply would self-contend. SPEC-0001 gained REQ-030 (an apply-path lock policy: Blocking / NonBlocking / Held); REQ-009 and the cross-SPEC handoffs now require `remove`/`promote` to hold one exclusive lock for the whole command and drive the re-apply under the `Held` policy. Also pin that the fresh COMMIT is produced via the engine re-apply path (no bespoke COMMIT-writer) and that `remove`'s regular-file replacement is pre-re-apply fs work. (2) TOML writer: `patina-core::config` is parse-only (no serializer), but `init`/`add`/`remove` write and edit manifests. Add DEC-007 selecting `toml_edit` (format/comment-preserving — required so `remove` deletes one `[[file]]` entry without rewriting sibling entries/comments and so REQ-010 determinism holds) and add `toml_edit` to the tooling-notes dependency list. Not yet decomposed, so no TASKS reconciliation. |
+| 2026-05-30 | human/kevin via assistant | Harden against two discrepancies found by the SPEC-0001-vs-code + cross-SPEC verification pass. (1) Internal inconsistency: REQ-007's declined-UAC error message and CHK-012 named `patina doctor --fix-symlinks`, a flag defined nowhere — REQ-006 defines the remediation flag as `patina doctor --fix`. Changed all three `--fix-symlinks` references (REQ-007 done-when + behaviour, CHK-012) to `--fix` so the error points at the command that exists. (2) Added two non-goals: `patina add` exposes only `--symlink`/`--copy`/`--template` (not the `symlink-dir`/`copy-tree` engine modes — hand-edit the manifest for those), and the release/packaging pipeline (building/signing/distributing the per-OS artifacts) is out of scope for the feature SPECs. Also reviewed the SPEC-0001 2026-05-30 recovery-ordering amendment (orphan recovery now runs under the exclusive lock) for impact on `remove`/`promote`'s `Held`-policy re-apply: consistent — the re-apply recovers under the caller's already-held guard, no self-contention. Not yet decomposed, so no TASKS reconciliation. |
 </changelog>
 
 ## Notes
@@ -1020,7 +1066,18 @@ SPEC-0002 depends on SPEC-0001 for:
   per-target blake3 content hash status then classifies against.
 - The advisory file lock at `<state>/patina/lock`. All mutating
   SPEC-0002 commands acquire the exclusive lock as established in
-  SPEC-0001 REQ-023.
+  SPEC-0001 REQ-023. `remove` and `promote` re-journal by re-applying
+  through the engine; because the shipped engine apply path
+  self-acquires the exclusive lock, they pass SPEC-0001 REQ-030's
+  `Held` policy (supplying their already-acquired guard) so the
+  re-apply does not self-contend.
+- The engine re-apply primitive itself: `remove` (after replacing the
+  target with a regular file) and `promote` (after writing the source)
+  invoke the engine apply path to produce the fresh `<ts>.COMMIT`
+  record — there is no bespoke "write a COMMIT" primitive. `remove`'s
+  regular-file replacement is `remove`-specific filesystem work done
+  before the re-apply; the re-apply, planning against the now-removed
+  `[[file]]` entry, simply omits the target from the new record.
 - The per-machine state directory layout
   (`<state>/patina/journal/`, `<state>/patina/backups/`,
   `<state>/patina/default_repo`, etc.).
@@ -1065,9 +1122,11 @@ SPEC-0003 will pick up:
 
 ### Tooling notes
 
-SPEC-0002 introduces no new global dependencies beyond `winsafe`
+SPEC-0002 introduces two new direct dependencies: `winsafe`
 (`taskschd`, `shell`, `advapi` features) for the Windows-specific
-modules.
+modules, and `toml_edit` for the format-preserving `patina.toml`
+writer the `init` / `add` / `remove` commands need (DEC-007). The TOML
+read side stays on `patina-core`'s existing `toml` dependency.
 
 The `patina-elevate` crate is a Windows-only workspace member.
 Its `Cargo.toml` uses `[target.'cfg(windows)']` gating so the
