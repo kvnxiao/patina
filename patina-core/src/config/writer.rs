@@ -109,7 +109,9 @@ pub fn scaffold_root_manifest(created_at: &str) -> String {
 /// # Errors
 ///
 /// Returns [`ConfigWriteError::Parse`] when `doc_text` is not a
-/// well-formed TOML document.
+/// well-formed TOML document, and [`ConfigWriteError::MalformedFileArray`]
+/// when `doc_text` already declares a `file` key that is not a `[[file]]`
+/// array of tables.
 ///
 /// # Examples
 ///
@@ -340,5 +342,58 @@ editor = \"vim\"
         let err = append_file_entry("not = = toml", "s", "t", FileMode::Symlink)
             .expect_err("malformed text errors");
         assert!(matches!(err, ConfigWriteError::Parse { .. }));
+    }
+
+    #[test]
+    fn remove_file_entry_removes_only_the_keyed_entry_not_the_first_or_last() {
+        // Three entries with the removal target in the middle: gates
+        // by-`target`-key selection against both an "always remove first"
+        // and an "always remove last" implementation, which the two-entry
+        // scenario fixture (removed target at index 0) cannot distinguish.
+        let text = "\
+[[file]]
+source = \"a\"
+target = \"~/.a\"
+mode = \"symlink\"
+
+[[file]]
+source = \"b\"
+target = \"~/.b\"
+mode = \"symlink\"
+
+[[file]]
+source = \"c\"
+target = \"~/.c\"
+mode = \"symlink\"
+";
+
+        let pruned = remove_file_entry(text, "~/.b").expect("middle removal succeeds");
+
+        let config = parse_module_config_str(&pruned).expect("pruned text parses");
+        let targets: Vec<&str> = config
+            .files
+            .iter()
+            .flat_map(|entry| entry.targets.iter().map(|target| target.as_str()))
+            .collect();
+        assert_eq!(
+            targets,
+            vec!["~/.a", "~/.c"],
+            "only the keyed middle entry is removed, neighbours survive in order"
+        );
+    }
+
+    #[test]
+    fn append_to_manifest_with_non_array_file_key_surfaces_malformed_error() {
+        // A `file` key that is not a [[file]] array of tables cannot accept
+        // a new entry; the writer surfaces a typed error rather than
+        // panicking or silently overwriting the user's value.
+        let err = append_file_entry(
+            "file = \"not an array\"\n",
+            "zshrc",
+            "~/.zshrc",
+            FileMode::Symlink,
+        )
+        .expect_err("a non-array `file` key must error");
+        assert!(matches!(err, ConfigWriteError::MalformedFileArray));
     }
 }
