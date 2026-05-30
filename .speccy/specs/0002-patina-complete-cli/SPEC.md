@@ -998,6 +998,44 @@ side stays on `patina-core::config` (the `toml` crate); only the write
 side adds `toml_edit`.
 </decision>
 
+<decision id="DEC-008">
+The Windows Developer Mode elevation flow (REQ-007) splits across the two
+crates along the engine/CLI IO boundary. `patina-core` performs no
+user-facing IO — the `output::Reporter` layer and every interactive prompt
+live in `patina-cli`, and the no-`println!` / no-`eprintln!` hard rule
+applies to the library — so REQ-007's "the engine emits an interactive
+prompt … spawns the helper" is realized as a capability/orchestration
+split rather than as prompting inside `execute_plan`:
+
+- **Capability in `patina-core::windows`** (IO-free functions returning
+  typed values): read the Developer Mode registry flag, query process
+  elevation and the OS build, launch `patina-elevate.exe` via
+  `ShellExecuteEx` with the `runas` verb, and re-read the flag after the
+  helper exits. None of these prompt or print.
+- **Orchestration in `patina-cli`**: inspect the resolved plan for
+  symbolic-link operations, render the one-time UAC prompt through the
+  `Reporter` (reusing the `Tty` / `PromptReader` seam), decide on the
+  user's answer, and map a declined prompt to exit code 5 (a command-layer
+  control-flow decision, not an `EngineError`). On accept, the CLI invokes
+  the helper-launch capability, then re-drives the engine apply under
+  `LockPolicy::Held` so the prompt-then-apply spans one held exclusive
+  lock.
+
+This satisfies REQ-007's done-when verbatim: "the engine reads the flag /
+spawns the helper" is the `patina-core::windows` capability, and "prompt
+before any filesystem mutation occurs" holds because the CLI prompts before
+it calls `execute_plan`, the first mutation point. The engine retains
+`ExecutorError::WindowsSymlinkPermission` (SPEC-0001) as the backstop if a
+symbolic-link materialization is ever attempted without Developer Mode.
+
+The rejected alternative — letting `execute_plan` prompt and spawn directly
+— would force `patina-core` to take a `Reporter` / stdin dependency,
+violate the library IO boundary, and make the apply path untestable without
+a fake terminal. Keeping the capability in the engine crate and the
+prompting in the CLI preserves both the IO boundary and the existing
+prompt-injection seam.
+</decision>
+
 ## Open Questions
 
 All five self-review questions resolved 2026-05-26 by user
@@ -1046,6 +1084,7 @@ direction; SPEC content updated in the same revision.
 | 2026-05-29 | human/kevin via assistant | Fix REQ-003's "status reports it as unmanaged" — there is no such state in SPEC-0001's classifier, which has exactly CLEAN/DRIFTED/MISSING/ORPHANED (`status/classify.rs`). Left as written, a removed-but-on-disk target would classify ORPHANED (removed from the plan, still present) until the next apply, surprising the user who just ran `remove`. Require `patina remove` to re-journal the new managed set after mutating (write a fresh `<ts>.COMMIT` omitting the removed target), so `patina status` simply omits the path (unmanaged/absent) and ORPHANED stays reserved for the *implicit* drop (hand-edited TOML / deleted source). Mirrors `promote`, which already re-journals (REQ-004). Reword the REQ-003 prose + done-when bullet, extend CHK-005 to assert status no longer lists the target, and update the cross-SPEC handoff bullet. No dependency change; not yet decomposed, so no TASKS reconciliation. |
 | 2026-05-30 | human/kevin via assistant | Close two gaps surfaced by reviewing the shipped SPEC-0001 code against this SPEC. (1) Lock re-entrancy: the shipped engine apply path self-acquires the exclusive lock, so `remove`/`promote` mutating-under-lock and then re-journaling via a re-apply would self-contend. SPEC-0001 gained REQ-030 (an apply-path lock policy: Blocking / NonBlocking / Held); REQ-009 and the cross-SPEC handoffs now require `remove`/`promote` to hold one exclusive lock for the whole command and drive the re-apply under the `Held` policy. Also pin that the fresh COMMIT is produced via the engine re-apply path (no bespoke COMMIT-writer) and that `remove`'s regular-file replacement is pre-re-apply fs work. (2) TOML writer: `patina-core::config` is parse-only (no serializer), but `init`/`add`/`remove` write and edit manifests. Add DEC-007 selecting `toml_edit` (format/comment-preserving — required so `remove` deletes one `[[file]]` entry without rewriting sibling entries/comments and so REQ-010 determinism holds) and add `toml_edit` to the tooling-notes dependency list. Not yet decomposed, so no TASKS reconciliation. |
 | 2026-05-30 | human/kevin via assistant | Harden against two discrepancies found by the SPEC-0001-vs-code + cross-SPEC verification pass. (1) Internal inconsistency: REQ-007's declined-UAC error message and CHK-012 named `patina doctor --fix-symlinks`, a flag defined nowhere — REQ-006 defines the remediation flag as `patina doctor --fix`. Changed all three `--fix-symlinks` references (REQ-007 done-when + behaviour, CHK-012) to `--fix` so the error points at the command that exists. (2) Added two non-goals: `patina add` exposes only `--symlink`/`--copy`/`--template` (not the `symlink-dir`/`copy-tree` engine modes — hand-edit the manifest for those), and the release/packaging pipeline (building/signing/distributing the per-OS artifacts) is out of scope for the feature SPECs. Also reviewed the SPEC-0001 2026-05-30 recovery-ordering amendment (orphan recovery now runs under the exclusive lock) for impact on `remove`/`promote`'s `Held`-policy re-apply: consistent — the re-apply recovers under the caller's already-held guard, no self-contention. Not yet decomposed, so no TASKS reconciliation. |
+| 2026-05-30 | human/kevin via assistant | Pin the engine/CLI layering split for the Windows Developer Mode flow as DEC-008 (surfaced during SPEC-0002 decomposition). REQ-007's prose ("the engine emits an interactive prompt … spawns the helper") sits in tension with the `patina-core` IO boundary (no `println!`/`eprintln!`; the `Reporter` and all prompts live in `patina-cli`). DEC-008 records the resolution that satisfies REQ-007 without altering it: the *capability* (registry read, elevation/OS queries, `ShellExecuteEx`/`runas` helper launch, flag re-read) lives in `patina-core::windows` as IO-free functions; the *orchestration* (UAC prompt via `Reporter`, decline → exit 5, re-drive `execute_plan` under `LockPolicy::Held` on accept) lives in `patina-cli`. Decisions-block-only edit: no `<requirement>` / `<done-when>` / `<scenario>` / `<goals>` / `<non-goals>` / `<assumptions>` content changed. TASKS.md T-007 / T-009 already describe this split, so reconcile records no task-content change; re-lock the spec hash. |
 </changelog>
 
 ## Notes
