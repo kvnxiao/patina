@@ -100,33 +100,37 @@ fn init_refuses_when_manifest_exists() {
     );
 }
 
-/// CHK-017: `patina init T --json` run twice against an already-initialized
-/// directory produces byte-identical stdout (deterministic failure
-/// document), and a successful `--json` run is itself byte-stable on
-/// repetition.
+/// CHK-017: a successful `init T --json` and a refused one differ ("diff
+/// produces non-empty output"), while each invocation is itself deterministic.
+/// The first run succeeds (out1); the second fails because `T/patina.toml` now
+/// exists (out2); the two documents differ; and a third run (out3) byte-matches
+/// the second, proving the failure path is byte-stable across reruns.
 #[test]
-fn init_json_failure_is_byte_stable_across_reruns() {
+fn init_json_success_and_failure_diverge_then_failure_is_byte_stable() {
     let fx = Fixture::new();
     let target = fx.home.join("dot");
-    fs_err::create_dir_all(target.as_std_path()).expect("mkdir target");
-    fs_err::write(
-        target.join("patina.toml").as_std_path(),
-        "[patina]\nroot = true\n",
-    )
-    .expect("seed manifest");
 
     let first = fx.run(&["init", target.as_str(), "--json"], &[]);
     let second = fx.run(&["init", target.as_str(), "--json"], &[]);
+    let third = fx.run(&["init", target.as_str(), "--json"], &[]);
 
-    assert_eq!(code(&first), 1, "already-initialized init must exit 1");
-    assert_eq!(code(&second), 1, "already-initialized init must exit 1");
-    assert_eq!(
+    assert_eq!(code(&first), 0, "first init must succeed");
+    assert_eq!(code(&second), 1, "second init must fail: manifest now exists");
+    assert_eq!(code(&third), 1, "third init must fail: manifest still exists");
+
+    // The success and failure documents carry different result fields.
+    assert_ne!(
         first.stdout, second.stdout,
+        "a successful and a refused --json run must produce different stdout"
+    );
+    // The failure path is deterministic: the third run byte-matches the second.
+    assert_eq!(
+        second.stdout, third.stdout,
         "two failing --json runs must emit byte-identical stdout"
     );
 
     // The failing --json stdout is a typed-error document naming the path.
-    let stdout = String::from_utf8(first.stdout).expect("utf8 stdout");
+    let stdout = String::from_utf8(second.stdout).expect("utf8 stdout");
     let doc: serde_json::Value =
         serde_json::from_str(stdout.trim()).expect("failing --json stdout is one JSON doc");
     assert_eq!(

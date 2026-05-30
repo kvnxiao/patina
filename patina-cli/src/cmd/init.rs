@@ -58,7 +58,7 @@ const MANIFEST_FILENAME: &str = "patina.toml";
     reason = "the subcommand dispatch in main.rs awaits every command uniformly; init's work is synchronous filesystem and lock I/O but keeps the async signature for parity."
 )]
 pub async fn run(args: &InitArgs, reporter: &mut impl Reporter) -> Result<i32> {
-    let target = resolve_target(args.path.as_deref())?;
+    let target = resolve_target_path(args.path.as_deref())?;
     let manifest_path = target.join(MANIFEST_FILENAME);
 
     // Refuse before acquiring the lock or mutating anything: the existing
@@ -81,6 +81,12 @@ pub async fn run(args: &InitArgs, reporter: &mut impl Reporter) -> Result<i32> {
     if manifest_path.exists() {
         return Ok(refuse_existing(&manifest_path, args.json, reporter));
     }
+
+    // Create the target directory now that we hold the lock, so no filesystem
+    // mutation precedes lock acquisition (REQ-009). Creating a directory that
+    // already exists is idempotent (the CWD case is always a no-op).
+    fs_err::create_dir_all(target.as_std_path())
+        .with_context(|| format!("failed to create target directory {target}"))?;
 
     let manifest = scaffold_root_manifest(&rfc3339_now());
     fs_err::write(manifest_path.as_std_path(), manifest)
@@ -110,34 +116,26 @@ pub async fn run(args: &InitArgs, reporter: &mut impl Reporter) -> Result<i32> {
 fn refuse_existing(manifest_path: &Utf8Path, json: bool, reporter: &mut impl Reporter) -> i32 {
     let message = format!("{manifest_path} already exists");
     if json {
-        let envelope = serde_json::json!({
-            "error": "already_exists",
-            "path": manifest_path.as_str(),
-            "message": message,
-        });
-        reporter.json(&serde_json::to_string_pretty(&envelope).unwrap_or_else(|_| "{}".to_owned()));
+        reporter.json(&error_envelope(manifest_path, &message));
     } else {
         reporter.warn(&message);
     }
     ExitCode::Generic.code()
 }
 
-/// Resolve the target directory, creating it if necessary.
+/// Resolve the target directory path, performing no filesystem mutation.
 ///
-/// A positional path is used verbatim (created if absent); when omitted the
-/// current working directory is used. The directory must exist before the
-/// manifest is written, so a missing positional path is created here.
-fn resolve_target(path: Option<&Utf8Path>) -> Result<Utf8PathBuf> {
-    let target = if let Some(path) = path {
-        path.to_owned()
+/// A positional path is returned verbatim; when omitted the current working
+/// directory is used. The directory is created by the caller under the
+/// exclusive lock (REQ-009), not here, so that no mutation precedes the lock.
+fn resolve_target_path(path: Option<&Utf8Path>) -> Result<Utf8PathBuf> {
+    if let Some(path) = path {
+        Ok(path.to_owned())
     } else {
         let cwd = std::env::current_dir().context("failed to read the current directory")?;
         Utf8PathBuf::from_path_buf(cwd)
-            .map_err(|p| anyhow!("current directory `{}` is not valid UTF-8", p.display()))?
-    };
-    fs_err::create_dir_all(target.as_std_path())
-        .with_context(|| format!("failed to create target directory {target}"))?;
-    Ok(target)
+            .map_err(|p| anyhow!("current directory `{}` is not valid UTF-8", p.display()))
+    }
 }
 
 /// The single-line next-step hint printed as the final stdout line on the
@@ -153,6 +151,19 @@ fn json_envelope(canonical: &Utf8Path, state: &Utf8Path) -> String {
     let envelope = serde_json::json!({
         "initialized": canonical.as_str(),
         "default_repo": patina_core::default_repo_pointer_path(state).as_str(),
+    });
+    serde_json::to_string_pretty(&envelope).unwrap_or_else(|_| "{}".to_owned())
+}
+
+/// Build the `--json` already-exists error envelope: the typed error tag, the
+/// existing manifest path, and the human message. Deterministic for a given
+/// path, so the failing `--json` stdout is byte-stable across reruns (REQ-010,
+/// CHK-017). Mirrors [`json_envelope`] for the success path.
+fn error_envelope(manifest_path: &Utf8Path, message: &str) -> String {
+    let envelope = serde_json::json!({
+        "error": "already_exists",
+        "path": manifest_path.as_str(),
+        "message": message,
     });
     serde_json::to_string_pretty(&envelope).unwrap_or_else(|_| "{}".to_owned())
 }
