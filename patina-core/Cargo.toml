@@ -33,11 +33,16 @@ tokio = { workspace = true, features = [
 ] }
 toml = { workspace = true }
 toml_edit = { workspace = true }
+tracing = { workspace = true }
 
-# REQ-007 Developer Mode / elevation reads. Windows-only so non-Windows
-# builds never resolve `winsafe` into the graph.
+# REQ-007 Developer Mode / elevation reads + the one-time UAC launch.
+# Windows-only so non-Windows builds never resolve `winsafe` into the
+# graph. On top of the workspace `advapi` + `kernel` (registry + token
+# reads), this crate also needs `shell` for `ShellExecuteEx` (the `runas`
+# launch of `patina-elevate.exe`); the helper crate does NOT, so the
+# feature is added here per-crate rather than at the workspace level.
 [target.'cfg(windows)'.dependencies]
-winsafe = { workspace = true }
+winsafe = { workspace = true, features = ["shell"] }
 
 [dev-dependencies]
 tempfile = { workspace = true }

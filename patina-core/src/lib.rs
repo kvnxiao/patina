@@ -122,6 +122,7 @@ pub use template::TemplateError;
 pub use variables::Builtins;
 pub use variables::Resolver;
 pub use variables::VariableError;
+pub use windows::DEV_MODE_REGISTRY_PATH;
 pub use windows::DevModeProbe;
 pub use windows::DevModeStatus;
 pub use windows::GateDecision;
@@ -129,6 +130,10 @@ pub use windows::HostDevModeProbe;
 pub use windows::WindowsError;
 pub use windows::decide_symlink_gate;
 pub use windows::dev_mode_status;
+#[cfg(windows)]
+pub use windows::elevate::ElevationOutcome;
+#[cfg(windows)]
+pub use windows::elevate::launch_elevate_helper;
 pub use windows::is_elevated;
 pub use windows::is_unc_path;
 pub use windows::plan_has_symlink_op;

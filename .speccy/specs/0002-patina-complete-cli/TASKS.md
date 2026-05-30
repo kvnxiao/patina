@@ -587,7 +587,7 @@ Suggested files: `Cargo.toml`, `patina-elevate/Cargo.toml`,
 </task-scenarios>
 </task>
 
-<task id="T-009" state="pending" covers="REQ-007">
+<task id="T-009" state="completed" covers="REQ-007">
 ## Wire the dev-mode elevation flow: helper launch, engine gate, CLI prompt
 
 Complete REQ-007 by connecting T-007's detection to T-008's helper: add the

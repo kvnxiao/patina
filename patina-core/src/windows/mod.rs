@@ -44,6 +44,16 @@ use camino::Utf8Path;
 #[cfg(windows)]
 pub(crate) mod registry;
 
+#[cfg(windows)]
+pub mod elevate;
+
+/// The fully-qualified registry path of the Developer Mode switch, named in
+/// user-facing errors when a post-elevation re-read still shows the flag
+/// off (REQ-007). Spelled here as a single `&'static str` so the engine and
+/// CLI surface the identical path on every platform (the value is
+/// documentation-only off Windows).
+pub const DEV_MODE_REGISTRY_PATH: &str = r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock\AllowDevelopmentWithoutDevLicense";
+
 /// Result of querying the Windows Developer Mode registry flag.
 ///
 /// The flag in question is `AllowDevelopmentWithoutDevLicense` under
