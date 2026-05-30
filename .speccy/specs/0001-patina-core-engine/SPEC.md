@@ -755,12 +755,17 @@ then the JSON output's `profile` field equals `"desktop"`.
 ### REQ-009: MiniJinja with strict undefined behavior renders templates and evaluates `when` expressions
 
 The engine uses a single MiniJinja environment configured with
-`UndefinedBehavior::Strict` to render `*.tmpl` files and to evaluate
-`when` expressions on `[[file]]` and `[[hook]]` entries. A reference
-to an undefined variable in either context produces a typed engine
-error rather than silent empty-string substitution, with the
-Jinja2-inherited exception that an undefined value in an `{% else %}`
-fallback block renders as empty string (documented in assumptions).
+`UndefinedBehavior::SemiStrict` to render `*.tmpl` files and to
+evaluate `when` expressions on `[[file]]` and `[[hook]]` entries.
+`SemiStrict` (not `Strict`) is the variant that honours the
+Jinja2-inherited `{% else %}` carve-out described below: literal
+`Strict` raises whenever an undefined value is merely *tested*, which
+would make the mandated empty-string `{% else %}` fallback impossible.
+A reference to an undefined variable in either context produces a
+typed engine error rather than silent empty-string substitution, with
+the Jinja2-inherited exception that an undefined value in an
+`{% else %}` fallback block renders as empty string (documented in
+assumptions).
 
 <done-when>
 - A template referencing `{{ undefined_var }}` produces a typed error
@@ -941,7 +946,12 @@ per-operation fsyncs on the progress file.
 ### REQ-013: Crash recovery probes filesystem and converges to pre-apply or post-apply state
 
 When the engine starts and finds a plan file without a corresponding
-`COMMIT` sentinel, it enters recovery mode. Recovery probes the
+`COMMIT` sentinel, it enters recovery mode. Recovery runs only after
+the engine has acquired (or, under the `Held` policy, been handed) the
+exclusive advisory lock for the run per REQ-030 — never before lock
+resolution — so a concurrent apply can never observe or reverse another
+run's in-flight plan, and a contended `NonBlocking` attempt performs no
+recovery at all. Recovery probes the
 filesystem for each operation in the plan to determine whether the
 operation completed, partially completed, or did not start. The
 engine then reverses any completed operations using the journaled
@@ -961,6 +971,10 @@ to retry.
   the same final state as running it once.
 - Recovery never proceeds forward (it does not finish a partial
   apply); it always rolls back to pre-apply state.
+- Recovery is performed under the exclusive advisory lock acquired
+  for the run (REQ-030): the orphan scan and every reversal happen
+  after lock acquisition, so two concurrent applies serialize their
+  recovery passes and neither can reverse the other's in-flight plan.
 </done-when>
 
 <behavior>
@@ -1510,6 +1524,13 @@ holds an exclusive lock), it emits a warning to stderr and proceeds
 without the lock. If a mutating command cannot acquire the
 exclusive lock within sixty seconds, it exits with code 4.
 
+The acquisition *mechanism* the engine apply path uses is selectable
+per REQ-030, so a caller that already holds the exclusive lock, or one
+that needs a non-blocking attempt, drives the same apply without the
+engine self-acquiring a conflicting lock. The behaviour described here
+is the default (blocking) policy and is what `patina apply` /
+`patina rollback` use.
+
 <done-when>
 - Two concurrent `patina apply` invocations on the same machine do
   not interleave file mutations; the second blocks until the first
@@ -1663,10 +1684,15 @@ failure.
 
 The workspace defines an `output::Reporter` trait that is the single
 user-facing output sink for `patina-cli` (and any user-facing prints
-that originate inside `patina-core`). It has at least two
-implementations: `HumanReporter` (formatted text, colour where
-appropriate, the default) and `JsonReporter` (line-delimited JSON
-when `--json` is set). Every user-facing message routes through a
+that originate inside `patina-core`). The sole production
+implementation is `StreamReporter`, which writes to the process's
+stdout/stderr; the human-vs-JSON split is made by the command layer
+choosing which `Reporter` method to call rather than by two separate
+implementations — the human path calls the diff / line / prompt
+methods (formatted text, colour where appropriate, the default) and
+the JSON path calls the `json` method (line-delimited JSON when
+`--json` is set). A test-only `BufferReporter` captures output for
+assertions. Every user-facing message routes through a
 `Reporter` method. The `println!`, `eprintln!`, `print!`, and
 `eprint!` macros are denied by Clippy outside the `output` module.
 The `tracing` macros (`info!`, `warn!`, `error!`, `debug!`,
@@ -1678,8 +1704,9 @@ events, not user-facing output.
   (or equivalent path) with methods covering at minimum: progress
   events, diff rendering, prompt + response capture, and a final
   result line.
-- `HumanReporter` and `JsonReporter` implementations exist under
-  the `output` module and both satisfy the deterministic-stdout
+- A `StreamReporter` production implementation exists under the
+  `output` module; both its human-rendering methods (diff / line /
+  prompt) and its `json` method satisfy the deterministic-stdout
   property required by REQ-021 on identical inputs.
 - `clippy.toml` lists `std::println`, `std::eprintln`,
   `std::print`, and `std::eprint` under `disallowed-macros`. The
@@ -1696,10 +1723,11 @@ events, not user-facing output.
 
 <behavior>
 - Given `patina apply` with no `--json`, when it runs, then all
-  user-facing output is rendered by `HumanReporter`.
+  user-facing output is rendered through `StreamReporter`'s
+  human-rendering methods (diff / line).
 - Given `patina apply --json`, when it runs, then all user-facing
-  output is rendered by `JsonReporter` and stdout is a sequence
-  of one JSON document per line.
+  output is rendered through `StreamReporter`'s `json` method and
+  stdout is a sequence of one JSON document per line.
 - Given a contributor adds `eprintln!("debug")` to
   `patina-core/src/apply.rs`, when CI clippy runs, then it fails
   with a `clippy::disallowed_macros` error and the PR is blocked.
@@ -1729,10 +1757,10 @@ naming `patina-core/src/plan.rs` and the offending line.
 <scenario id="CHK-055">
 Given two consecutive invocations of `patina apply --json` against
 an unchanged source tree,
-when both invocations write to stdout via `JsonReporter`,
+when both invocations write to stdout via `StreamReporter`'s `json`
+method,
 then their stdout output is byte-identical (the deterministic
-property required by REQ-021 holds across both Reporter
-implementations).
+property required by REQ-021 holds for the Reporter's JSON path).
 </scenario>
 </requirement>
 
@@ -1971,6 +1999,128 @@ then the value equals `2`.
 </scenario>
 </requirement>
 
+<requirement id="REQ-030">
+### REQ-030: Engine apply entry points accept a lock-acquisition policy
+
+The engine apply entry points (`apply` / `execute_plan`) take an
+explicit lock-acquisition policy that selects how the exclusive
+advisory lock (REQ-023) is obtained for the run, rather than
+unconditionally self-acquiring a sixty-second blocking exclusive lock.
+The policy has three variants:
+
+- **Blocking** — acquire the exclusive lock with the REQ-023 sixty-second
+  cap and map a timeout to exit code 4. This is the default and the
+  policy `patina apply` and `patina rollback` use; their observable
+  behaviour is unchanged.
+- **NonBlocking** — make a single acquisition attempt; on contention
+  return a typed contention error and perform zero filesystem mutation
+  of any kind — no orphan recovery (REQ-013), no plan flush, no journal
+  write, no backups. This is the policy
+  the SPEC-0003 watcher uses to skip a re-apply cycle when the CLI
+  holds the lock.
+- **Held** — the caller supplies an already-acquired exclusive
+  [`LockGuard`]; the engine does not acquire the lock a second time.
+  This is the policy SPEC-0002 `remove` / `promote` use to mutate the
+  repository and then re-journal through a re-apply while holding a
+  single lock for the whole command, without self-contending.
+
+The engine resolves the lock per policy *before* it runs orphan
+recovery (REQ-013) and before any other filesystem work: lock first,
+then recover under the held lock, then compute and flush the fresh
+plan. This ordering is what makes the `NonBlocking` zero-mutation
+guarantee hold even when an orphan plan from a prior crashed apply is
+pending, and it prevents two concurrent applies from racing each
+other's recovery.
+
+For a single, uncontended process the default `Blocking` path is
+observably identical to the pre-amendment apply: the same lock, the
+same timeout, the same exit code, the same recovery-then-apply
+sequence. The one behavioural change relative to the pre-amendment
+engine is that orphan recovery now runs *under* the exclusive lock
+rather than before acquiring it, closing a concurrent-apply corruption
+hazard (a second apply's recovery could otherwise reverse a live
+in-flight apply's operations). The policy parameter otherwise only adds
+the two non-default acquisition strategies the downstream SPECs
+require; it introduces no new user-facing flag and no change to
+`patina apply` / `patina rollback`.
+
+<done-when>
+- The apply entry points accept a lock policy; invoking with the
+  default (Blocking) policy acquires the exclusive lock with the
+  REQ-023 sixty-second cap and is observably identical to the
+  pre-amendment apply for a single, uncontended process.
+- The engine resolves the lock per policy before running orphan
+  recovery (REQ-013); recovery and every subsequent filesystem
+  mutation occur under the held exclusive lock, so a concurrent apply
+  cannot observe or reverse another run's in-flight plan.
+- Under the NonBlocking policy, an apply that finds the lock held by
+  another holder returns a typed contention error and writes nothing
+  to the filesystem — no orphan recovery, no `<ts>.plan`, no
+  `<ts>.COMMIT`, no backup — even when an orphan plan from a prior
+  crashed apply is pending (recovery happens only after the lock is
+  acquired).
+- Under the Held policy, an apply driven by a caller that already
+  holds the exclusive guard performs no second lock acquisition and
+  does not self-contend, completing as if it held the lock for the
+  whole call.
+- `patina apply` and `patina rollback` use the Blocking policy and
+  still exit 4 when the exclusive lock cannot be acquired within the
+  REQ-023 cap (REQ-022 / REQ-023 unchanged).
+</done-when>
+
+<behavior>
+- Given a caller that drives the apply under the default Blocking
+  policy, when no other holder contends, then the apply acquires and
+  releases the exclusive lock exactly as the pre-amendment engine did.
+- Given a second process holding the exclusive lock and a caller that
+  drives the apply under the NonBlocking policy, when the apply runs,
+  then it returns a typed contention error and the state directory's
+  journal and backups are unchanged.
+- Given a caller that has already acquired the exclusive guard and
+  then drives the apply under the Held policy, when the apply runs,
+  then it completes without attempting a second acquisition (no
+  self-deadlock against its own held lock).
+</behavior>
+
+<scenario id="CHK-065">
+Given a tempdir state directory whose `<state>/patina/lock` is held
+exclusively by a test-controlled guard,
+when an apply is driven under the NonBlocking policy,
+then it returns the typed contention error and the
+`<state>/patina/journal/` directory contains no new `<ts>.plan` or
+`<ts>.COMMIT` file written by the contended attempt.
+</scenario>
+
+<scenario id="CHK-066">
+Given a test that acquires the exclusive lock at `<state>/patina/lock`
+and retains the guard,
+when it drives an apply under the Held policy passing that guard,
+then the apply completes successfully (it does not time out against
+its own held lock) and the resulting `<ts>.COMMIT` record is present.
+</scenario>
+
+<scenario id="CHK-067">
+Given a tempdir repository and an uncontended state directory,
+when `patina apply --yes` runs (Blocking policy) and then a second
+`patina apply --yes` runs against the unchanged source,
+then both complete with exit code 0 and the second produces
+byte-identical stdout to the first (REQ-021 determinism preserved
+under the default policy).
+</scenario>
+
+<scenario id="CHK-068">
+Given a tempdir state directory whose `<state>/patina/lock` is held
+exclusively by a test-controlled guard AND whose
+`<state>/patina/journal/` contains an orphan `<ts>.plan` (no matching
+`<ts>.COMMIT`, no `<ts>.ROLLED_BACK`) from a prior crashed apply,
+when an apply is driven under the NonBlocking policy,
+then it returns the typed contention error, the orphan `<ts>.plan`
+(and its `<ts>.progress`) is left untouched — not reversed, not
+deleted — and no new `<ts>.plan`, `<ts>.COMMIT`, or backup is written
+by the contended attempt.
+</scenario>
+</requirement>
+
 ## Decisions
 
 <decision id="DEC-001">
@@ -2186,6 +2336,8 @@ same revision.
 | 2026-05-27 | human/kevin via assistant | Close five gaps surfaced by north-star audit against AGENTS.md (no prior `state="completed"` task is invalidated; all 21 existing tasks remain `pending`). Add REQ-025 (CI matrix gates merge on macOS / Linux / Windows; quality-bar parity rule operationalised). Add REQ-026 (`output::Reporter` trait with `HumanReporter` + `JsonReporter` impls; `clippy.toml` `disallowed-macros` denies `std::println` / `std::eprintln` / `std::print` / `std::eprint` outside the `output` module; `tracing` macros stay permitted). Add REQ-027 (`docs/ARCHITECTURE.md` + `docs/USER_GUIDE.md` with named structural anchors; cloud-sync paths-to-avoid list lives under `## State directory` as a markdown bullet list). Add REQ-028 (`deny.toml` at repo root with `[licenses]` / `[advisories]` / `[bans]` / `[sources]` tables; `cargo deny check` runs as a required-status-check on `push` and `pull_request`). Amend REQ-020 in place to name `patina debug` as a clap subcommand group — extension point for SPEC-0003's `debug drift-cache` — and add CHK-050 covering `patina debug --help`. New scenarios CHK-050..061 follow the existing numbering. No prior REQ semantics changed. |
 | 2026-05-28 | human/kevin via assistant | Reconcile REQ-020 and REQ-011 with the file-operations-only on-disk plan format (surfaced by a blocking T-019 review). The serialized `Plan`/`PlannedOperation` model (T-011) records only file operations (symlink / render / copy with source + target); it carries no hooks, no resolved variable context, and no pre-state hash. REQ-020's `<done-when>` is narrowed to drop the "hooks, variable context" and "pre-state hash where applicable" rendering promises (`debug journal` now prints recorded operations + timestamps, identifying each op's mode / source / target); REQ-011's prose drops the stray "and hook invocations" (its own `<done-when>` only ever committed to file operations). No `<scenario>`, `<behavior>`, `<done-when>` test surface changed beyond the two narrowed REQ-020 bullets; CHK-034 and CHK-050 are untouched. Cross-spec verified: SPEC-0002/0003 read no hooks/variable-context/pre-state-hash from the plan — pre-state/expected hashes live in the COMMIT/backup record (REQ-017, rollback) and the SPEC-0003 drift-cache, and SPEC-0003 references `debug journal` only as a structural template for `debug drift-cache`. T-019 stays `pending`; the SPEC-drift blocker is resolved by this amendment, leaving only the style fix for the next implementer pass. No prior `state="completed"` task is invalidated. |
 | 2026-05-29 | human/kevin via assistant | Add REQ-029 to close cross-SPEC gaps the 2026-05-28 file-ops-only amendment left in the COMMIT record (caught while prepping SPEC-0002/0003 decomposition; the SPEC-0001 PR is not yet merged). The committed `ApplyRecord` now retains, per target, the canonical source path and — for content targets — a 32-byte `blake3` content hash (was a `u64` `std::hash` fingerprint with no source); the shared version-envelope major bumps `1`→`2`. Rationale: SPEC-0003 drift detection (REQ-007) compares `blake3` hashes and the SPEC-0003 watcher (REQ-005) needs per-target source paths from the committed journal because the `.plan` is deleted at commit; SPEC-0002 `remove`/`promote` (REQ-003/REQ-004) need the target→source map. Tiny clarifying cross-references added to REQ-011 (the COMMIT sentinel shares the envelope) and REQ-018 (the expected hash is the `blake3` content hash). New task T-026 implements the record widening end-to-end (type + write side + read side + `blake3` dependency + version bump) as one atomic, CI-green change; T-010 and T-017 stay `completed` (their REQ-011/012 and REQ-018 semantics are unchanged — T-026's review covers the files it touches). REPORT.md deleted and status flipped `implemented`→`in-progress`; speccy-ship re-runs once T-026 lands. |
+| 2026-05-30 | human/kevin via assistant | Add REQ-030 (engine apply-path lock-acquisition policy) to unblock SPEC-0002 and SPEC-0003, which a post-ship cross-SPEC review found cannot be implemented against the shipped engine. `execute_plan` (`apply/engine.rs`) and `run_rollback` (`rollback/mod.rs`) self-acquire the exclusive lock with `exclusive_timeout()` (60s blocking poll) and expose no non-blocking path and no apply-while-holding-lock path. Consequences: the SPEC-0003 watcher (REQ-006/REQ-008/CHK-013) cannot attempt the lock non-blocking and skip on contention — it would block ≤60s behind the CLI, and pre-acquiring then calling `apply()` self-deadlocks on a second `flock`/`LockFileEx` from the same process; and SPEC-0002 `remove`/`promote` (REQ-009) cannot mutate under the exclusive lock and then re-journal via re-apply without self-contending. REQ-030 adds a `LockPolicy` to the apply entry points with three variants — Blocking (default; byte-for-byte the pre-amendment behaviour, what `patina apply`/`rollback` use), NonBlocking (single attempt, typed contention error, zero filesystem mutation), and Held (caller supplies the acquired `LockGuard`; engine does not re-acquire). No new user-facing flag; `patina apply`/`rollback` behaviour and REQ-022/REQ-023 are unchanged. One clarifying cross-reference added to REQ-023 prose pointing at REQ-030; new scenarios CHK-065..067 follow the existing numbering. Since SPEC-0001 already shipped, this amendment reopens it on a fresh branch/PR: REPORT.md and `journal/VET.md` deleted, status flipped `implemented`→`in-progress`; new task T-027 implements the policy end-to-end (engine signature + the three variants + watcher/CLI call-site wiring stays in the downstream SPECs). No prior `state="completed"` task is invalidated — the default-policy path preserves existing apply/rollback behaviour. |
+| 2026-05-30 | human/kevin via assistant | Post-vet hardening amendment closing three items surfaced by a SPEC-0001-vs-code verification pass. **(1) Recovery-ordering concurrency hazard** (resolves SPEC-0003 open-question (e), originally flagged by the REQ-030 vet gate): the shipped engine ran `recover_orphans` (`apply/engine.rs`) *before* resolving the lock for all three policies, and orphan selection (`journal/recovery.rs`) has no lock/PID/age guard — so a concurrent apply's recovery could reverse a *live in-flight* apply's operations, and a contended `NonBlocking` attempt that found a pending orphan mutated the filesystem before returning the contention error (violating REQ-030's "writes nothing"). Adopt option (a) **acquire-then-recover for all policies**: REQ-030 now resolves the lock first and runs orphan recovery under the held lock; REQ-013 gains a done-when bullet + prose pinning recovery-under-lock; REQ-030's `NonBlocking` "writes nothing" is made unconditional (no orphan recovery on contention) and the "byte-for-byte Blocking" prose is reworded to "observably identical for a single/uncontended process" with the recovery-under-lock change called out. New scenario **CHK-068** asserts a contended `NonBlocking` attempt with a pending orphan writes nothing. New task **T-028** implements the reorder (engine currently recovers-before-lock); no prior `state="completed"` task is invalidated (single-process behaviour preserved). **(2)** REQ-009 prose `UndefinedBehavior::Strict`→`UndefinedBehavior::SemiStrict`, matching the shipped, correct implementation (`template/mod.rs`): literal `Strict` raises on a mere undefined *test*, incompatible with the `{% else %}` empty-string carve-out the same REQ and the Assumptions block mandate. Documentation-only; code already conformant; no task. **(3)** REQ-026 done-when/behaviour reworded to describe the shipped single-impl `StreamReporter` (human-vs-JSON split by which `Reporter` method the command layer calls) plus the test-only `BufferReporter`, rather than the never-built `HumanReporter`/`JsonReporter` pair. Documentation-only; code already conformant; no task. Since SPEC-0001 already shipped, this reopens it: `REPORT.md` and `journal/VET.md` deleted, status flipped `implemented`→`in-progress`; speccy-ship re-runs once T-028 lands. |
 </changelog>
 
 ## Notes

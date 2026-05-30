@@ -27,6 +27,7 @@ use anyhow::anyhow;
 use patina_core::ApplyRequest;
 use patina_core::ApplyResult;
 use patina_core::ForceDeploy;
+use patina_core::LockPolicy;
 use patina_core::ResolvedPlan;
 use patina_core::execute_plan;
 use patina_core::plan_apply;
@@ -106,7 +107,7 @@ pub async fn run(
         return Ok(ExitCode::UserDeclined.code());
     }
 
-    let result = execute_plan(&resolved, &request)
+    let result = execute_plan(&resolved, &request, LockPolicy::Blocking)
         .await
         .context("apply execution failed")?;
     report_result(&result, reporter);
@@ -127,7 +128,7 @@ async fn run_json(
         return Ok(ExitCode::Success.code());
     }
 
-    let result = execute_plan(resolved, request)
+    let result = execute_plan(resolved, request, LockPolicy::Blocking)
         .await
         .context("apply execution failed")?;
     let result_field = match &result {

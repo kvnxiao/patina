@@ -36,6 +36,7 @@ pub use apply::Materialization;
 pub use apply::ResolvedHook;
 pub use apply::engine::ApplyRequest;
 pub use apply::engine::ApplyResult;
+pub use apply::engine::LockPolicy;
 pub use apply::engine::ResolvedOperation;
 pub use apply::engine::ResolvedPlan;
 pub use apply::engine::execute as execute_plan;
@@ -150,7 +151,7 @@ pub struct RollbackOptions {}
 /// [`ApplyResult`], not as an error.
 pub async fn apply(options: ApplyOptions) -> Result<ApplyResult, EngineError> {
     let resolved = plan_apply(&options.request, options.timestamp)?;
-    execute_plan(&resolved, &options.request).await
+    execute_plan(&resolved, &options.request, LockPolicy::default()).await
 }
 
 /// Report drift between the resolved dotfiles repository and the current
