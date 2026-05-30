@@ -311,7 +311,8 @@ fn planned_operation(mode: FileMode, source: &Utf8Path, target: &Utf8Path) -> Pl
 
 /// Execute a [`ResolvedPlan`] against the filesystem.
 ///
-/// Recovers any orphan plan, takes the exclusive lock, flushes the
+/// Takes the exclusive lock, recovers any orphan plan under that held
+/// lock, flushes the
 /// journal, runs `pre_apply` hooks, materializes every operation (backing
 /// up each pre-existing target first), runs `post_apply` hooks, and
 /// commits — or rolls the file operations back when a `must_succeed`
@@ -333,12 +334,14 @@ pub async fn execute(
     let backups_dir = resolved.backups_dir();
     let template_engine = Engine::new();
 
-    // Recover any prior partial apply before computing fresh work.
-    recover_orphans(&journal_dir, &backups_dir)?;
-
-    // Resolve the exclusive lock per policy before any filesystem
-    // mutation. On the `NonBlocking` contention path this returns early,
-    // before the plan flush below, so the zero-mutation guarantee holds.
+    // Resolve the exclusive lock per policy BEFORE any filesystem
+    // mutation, including orphan recovery. On the `NonBlocking`
+    // contention path this returns early — before `recover_orphans` and
+    // the plan flush below — so a contended attempt mutates nothing
+    // (no recovery, no plan, no COMMIT, no backup), upholding REQ-030's
+    // zero-write guarantee. Recovering only under the held lock also
+    // prevents a second apply from reversing a live in-flight apply's
+    // operations (REQ-013 / REQ-030).
     let _guard = match policy {
         LockPolicy::Blocking => acquire_lock(
             &resolved.lock_path(),
@@ -348,6 +351,10 @@ pub async fn execute(
         LockPolicy::NonBlocking => try_acquire_lock(&resolved.lock_path(), LockKind::Exclusive)?,
         LockPolicy::Held(guard) => guard,
     };
+
+    // Recover any prior partial apply, under the held lock, before
+    // computing fresh work.
+    recover_orphans(&journal_dir, &backups_dir)?;
 
     // Resolve every hook's shell up front so an unresolved explicit shell
     // aborts before any file operation runs.
@@ -594,7 +601,9 @@ pub fn is_content_materialization(materialization: &Materialization) -> bool {
 
 #[cfg(test)]
 mod tests {
-    //! Unit coverage for the REQ-030 lock-acquisition policy (T-027).
+    //! Unit coverage for the REQ-030 lock-acquisition policy (T-027)
+    //! and the REQ-013/REQ-030 acquire-then-recover orphan-safety
+    //! reorder (T-028).
     //!
     //! These drive [`execute`] in-process so a `Held` policy can pass a
     //! test-controlled [`LockGuard`] and a `NonBlocking` policy can be
@@ -665,6 +674,21 @@ mod tests {
                 .journal_dir()
                 .join(format!("{TS}{suffix}"))
                 .exists()
+        }
+
+        /// Plant an orphan `<orphan_ts>.plan` and `<orphan_ts>.progress` in
+        /// the journal — a prior crashed apply with no COMMIT / `ROLLED_BACK`
+        /// sibling, the shape `recover_orphans` would otherwise reverse.
+        /// Returns the two paths so a test can assert their bytes are left
+        /// untouched.
+        fn plant_orphan(&self, orphan_ts: &str) -> (Utf8PathBuf, Utf8PathBuf, Vec<u8>) {
+            let journal = self.resolved.journal_dir();
+            let plan = journal.join(format!("{orphan_ts}{}", crate::journal::PLAN_SUFFIX));
+            let progress = journal.join(format!("{orphan_ts}{}", crate::journal::PROGRESS_SUFFIX));
+            let plan_bytes = b"orphan-plan-bytes".to_vec();
+            fs_err::write(&plan, &plan_bytes).expect("write orphan plan");
+            fs_err::write(&progress, b"orphan-progress").expect("write orphan progress");
+            (plan, progress, plan_bytes)
         }
     }
 
@@ -743,5 +767,71 @@ mod tests {
             !scene.journal_file_exists(crate::journal::PLAN_SUFFIX),
             "the plan file is removed after COMMIT"
         );
+    }
+
+    // CHK-068: under the NonBlocking policy against a lock held by a
+    // test-controlled guard AND with a pending orphan `<ts>.plan` in the
+    // journal, the apply returns the typed contention error, leaves the
+    // orphan plan and its progress untouched (recovery never runs because
+    // the lock is resolved first), and writes no new plan / COMMIT / backup.
+    // This is the regression that the acquire-then-recover reorder fixes.
+    #[tokio::test]
+    async fn non_blocking_contention_leaves_pending_orphan_untouched() {
+        const ORPHAN_TS: &str = "20260529T090000Z";
+        let scene = Scene::new();
+        let (orphan_plan, orphan_progress, orphan_bytes) = scene.plant_orphan(ORPHAN_TS);
+
+        let held = acquire_lock(
+            &scene.lock_path(),
+            LockKind::Exclusive,
+            Duration::from_secs(5),
+        )
+        .expect("hold the exclusive lock for the contended apply");
+
+        let result = execute(
+            &scene.resolved,
+            &ApplyRequest::default(),
+            LockPolicy::NonBlocking,
+        )
+        .await;
+
+        assert!(
+            matches!(
+                &result,
+                Err(EngineError::Lock(LockError::Contended {
+                    kind: LockKind::Exclusive,
+                    ..
+                }))
+            ),
+            "a NonBlocking apply against a held lock must return the typed contention error, got {result:?}"
+        );
+
+        // The orphan is left exactly as planted — not reversed, not deleted.
+        assert!(
+            orphan_plan.exists() && orphan_progress.exists(),
+            "the pending orphan plan and progress must survive a contended attempt"
+        );
+        assert_eq!(
+            fs_err::read(&orphan_plan).expect("read orphan plan"),
+            orphan_bytes,
+            "the orphan plan bytes must be untouched (recovery never ran)"
+        );
+
+        // No new journal records and no backup were written by the contended
+        // attempt.
+        assert!(
+            !scene.journal_file_exists(crate::journal::PLAN_SUFFIX),
+            "contended NonBlocking apply must not write a new plan file"
+        );
+        assert!(
+            !scene.journal_file_exists(crate::journal::COMMIT_SUFFIX),
+            "contended NonBlocking apply must not write a COMMIT file"
+        );
+        assert!(
+            !scene.resolved.backups_dir().exists(),
+            "contended NonBlocking apply must not write any backup"
+        );
+
+        drop(held);
     }
 }

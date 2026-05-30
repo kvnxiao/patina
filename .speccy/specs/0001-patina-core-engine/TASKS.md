@@ -2147,7 +2147,7 @@ Suggested files: `patina-core/src/lock.rs`,
 </task-scenarios>
 </task>
 
-<task id="T-028" state="pending" covers="REQ-013 REQ-030">
+<task id="T-028" state="completed" covers="REQ-013 REQ-030">
 ## Move orphan recovery under the exclusive lock (acquire-then-recover)
 
 The 2026-05-30 hardening amendment closed a concurrency hazard: the
