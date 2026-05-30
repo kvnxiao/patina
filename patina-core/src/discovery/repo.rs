@@ -189,8 +189,9 @@ pub fn default_repo_pointer_path(state_dir: &Utf8Path) -> Utf8PathBuf {
 /// Report whether the persisted default-repo pointer exists under
 /// `state_dir`.
 ///
-/// Backs `doctor`'s missing-pointer finding (REQ-008): a plain
-/// existence check on [`default_repo_pointer_path`], no read or
+/// Backs `doctor`'s missing-pointer finding (REQ-005, an info-level
+/// note suggesting `patina init`; `--fix` remediation in REQ-006): a
+/// plain existence check on [`default_repo_pointer_path`], no read or
 /// validation.
 ///
 /// # Examples
@@ -211,8 +212,8 @@ pub fn persisted_default_present(state_dir: &Utf8Path) -> bool {
 /// `state_dir`.
 ///
 /// Writes the path as one UTF-8 line with a trailing newline to
-/// `<state_dir>/default_repo`, matching the format
-/// [`read_persisted_default`] trims and parses. `repo` must already be
+/// `<state_dir>/default_repo`, matching the format the private
+/// `read_persisted_default` reader trims and parses. `repo` must already be
 /// the canonical absolute repository path — callers canonicalize via
 /// [`crate::paths::canonicalize`] before calling; this function does
 /// not canonicalize.
