@@ -2,7 +2,7 @@
 id: SPEC-0001
 slug: patina-core-engine
 title: Patina core engine — transactional apply with apply/status/rollback CLI
-status: in-progress
+status: implemented
 created: 2026-05-25
 supersedes: []
 ---
