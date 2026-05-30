@@ -531,9 +531,10 @@ exposes it.
   `[watcher] debounce_ms` key, and parsing such a key produces
   a typed warning (forward-compatible: future versions may add
   the knob without breaking older repositories).
-- The re-apply trigger acquires the exclusive advisory lock; if
-  the CLI holds the lock, the watcher's re-apply skips this
-  cycle and the next FS event re-arms the debounce.
+- The re-apply trigger runs under SPEC-0001 REQ-030's `NonBlocking`
+  lock policy (see REQ-008); if the CLI holds the lock, the engine
+  returns a contention error without mutating, the watcher's re-apply
+  skips this cycle, and the next FS event re-arms the debounce.
 </done-when>
 
 <behavior>
@@ -611,9 +612,18 @@ would contradict that, so the cache deliberately does not feed status.
   how many FS events fire.
 - The drift cache file is `postcard`-encoded with a `u16` major
   version envelope at offset 0, mirroring the journal version
-  envelope (SPEC-0001 REQ-011). A future format change bumps the
-  major; older binaries refuse to decode and emit a typed error
-  naming both versions. The schema records, per entry: the
+  envelope (SPEC-0001 REQ-011). The envelope read/write logic is the
+  same shape the journal uses; rather than hand-roll a third copy
+  (the journal currently duplicates it privately across
+  `journal/plan.rs` and `journal/record.rs`), this SPEC extracts a
+  shared `pub` version-envelope helper in `patina-core` and the drift
+  cache reuses it. The drift cache carries its OWN major-version
+  constant, independent of the journal's `FILE_MAJOR_VERSION` (today
+  `2`): the two formats version separately, so a journal-format bump
+  must not force a drift-cache bump or vice versa. A future format
+  change bumps the drift cache's own major; older binaries refuse to
+  decode and emit a typed error naming both versions. The schema
+  records, per entry: the
   target path (`Utf8PathBuf`), `expected_hash` (32-byte
   `blake3`), `actual_hash` (32 bytes), and an internal
   `detected_at_unix` integer (non-user-facing). The file's
@@ -683,7 +693,17 @@ timestamp, the target path (`.gitconfig`), and both hash values
 
 The watcher acquires the exclusive advisory file lock at
 `<state>/patina/lock` (defined in SPEC-0001 REQ-023) before each
-re-apply cycle. If the lock is held (by a manual `patina apply`,
+re-apply cycle, driving the engine re-apply under SPEC-0001 REQ-030's
+`NonBlocking` lock policy. (The shipped engine apply path self-acquires
+the exclusive lock with a 60-second blocking poll and offers no
+non-blocking path; REQ-030 adds the policy this requirement depends on.
+A `NonBlocking` re-apply makes a single acquisition attempt and, on
+contention, returns a typed contention error having mutated nothing —
+which is exactly the "skip this cycle" behaviour below. The watcher
+must NOT pre-acquire the lock itself and then call the engine apply,
+because the engine's own acquisition would self-contend against the
+watcher's guard; it lets the engine acquire under `NonBlocking`.)
+If the lock is held (by a manual `patina apply`,
 `patina rollback`, `patina promote`, `patina add`, or
 `patina remove`), the watcher skips this cycle and the next FS
 event re-arms the debounce. The CLI does NOT yield to the
@@ -694,8 +714,11 @@ CLI commands (`status`, `doctor` without `--fix`), the shared-lock
 semantics from SPEC-0001 REQ-023 apply.
 
 <done-when>
-- The watcher's re-apply path acquires the exclusive lock with a
-  non-blocking attempt; on contention, the cycle skips.
+- The watcher's re-apply runs under SPEC-0001 REQ-030's `NonBlocking`
+  lock policy: a single acquisition attempt, and on contention the
+  engine returns a typed contention error without mutating anything,
+  so the cycle skips. The watcher never blocks the full 60-second
+  exclusive cap waiting behind the CLI.
 - The watcher logs a `lock_contention_skip` event via `tracing`
   on each skip so the structured-log metrics (REQ-009) can count
   occurrences.
@@ -1028,6 +1051,7 @@ direction; SPEC content updated in the same revision.
 | 2026-05-27 | human/kevin via assistant | Rename the docs target from `docs/operating-environment.md` to `docs/USER_GUIDE.md` everywhere SPEC-0003 references it (4 body sites in Assumptions, Non-goals, REQ-001 prose, and DEC-005; the historical 2026-05-26 row above retains the original name as a point-in-time snapshot). SPEC-0001's REQ-027 now formalises `docs/USER_GUIDE.md` with named structural anchors. The `sudo loginctl enable-linger $USER` snippet for survive-logout watcher behavior lands inside `docs/USER_GUIDE.md` in a section SPEC-0003's implementer adds (e.g. extending `## Troubleshooting` or introducing a `## Watch service` section); REQ-027 does not constrain the section name. No requirement-level change in SPEC-0003; this is a cross-SPEC reference rename driven by the SPEC-0001 amend. |
 | 2026-05-29 | human/kevin via assistant | Align with the SPEC-0001 REQ-029 amendment and correct a phantom dependency. REQ-005: the watcher reads subscriptions from the committed `<ts>.COMMIT` record (not the `<ts>.plan`, which is deleted at commit), recovering per-target source paths via REQ-029's `Content.source` — fixes the previously unsatisfiable "read sources from the `.plan`". REQ-007: note the drift `blake3` now matches the journal's recorded `blake3` (REQ-029) — same algorithm, directly comparable. REQ-009 / DEC-009 / cross-SPEC handoffs: SPEC-0003 now OWNS the `<state>/patina/logs/` directory and the `tracing-appender` daily-rotation (keep-7) stack; dropped the false attribution to SPEC-0001 REQ-016, which defines only the state-directory root plus `journal/` and `backups/`. Not yet decomposed, so no TASKS reconciliation. |
 | 2026-05-29 | human/kevin via assistant | Resolve a status/drift-cache conflict surfaced by reviewing the shipped SPEC-0001 implementation. SPEC-0001's `patina status` already classifies a content target as DRIFTED by live `blake3` re-hash vs the recorded hash (REQ-018, `status/classify.rs`) — standalone and authoritative on *current* content. REQ-007's prior wording had `patina status` read the watcher's `drift.cache` and report DRIFTED from it, which is redundant and wrong for an edited-then-reverted file (live hash CLEAN, cache stale). Reword the Summary and REQ-007 so the drift cache is explicitly the watcher's *notification ledger* (per-target rate limit + `patina debug drift-cache` + watcher metrics), NOT a status input; add a `<done-when>` bullet pinning "the drift cache is not read by `patina status`"; reword CHK-012's premise to derive the DRIFTED verdict from the live H2 ≠ H1 divergence rather than a cache read. No new behaviour and no dependency change; not yet decomposed, so no TASKS reconciliation. |
+| 2026-05-30 | human/kevin via assistant | Resolve three gaps surfaced by reviewing the shipped SPEC-0001 code. (1) Lock model: the shipped engine apply path self-acquires the exclusive lock with a 60-second blocking poll and offers no non-blocking path, so the watcher could neither skip-on-contention (REQ-006/REQ-008/CHK-013) nor pre-acquire-then-apply without self-deadlock. SPEC-0001 gained REQ-030 (apply-path lock policy: Blocking / NonBlocking / Held); reword REQ-008 prose and the REQ-006/REQ-008 done-when bullets so the watcher re-apply runs under the `NonBlocking` policy (single attempt, typed contention error, zero mutation → skip), and add REQ-030 to the cross-SPEC handoffs. (2) Drift-cache envelope: REQ-007 now extracts a shared `pub` version-envelope helper in `patina-core` (the journal duplicates it privately across `plan.rs`/`record.rs`) instead of hand-rolling a third copy, and the drift cache carries its OWN major-version constant independent of the journal's `FILE_MAJOR_VERSION` so the two formats version separately. (3) Timestamp helper: note that the watcher re-apply reuses a hoisted shared compact-UTC timestamp helper (currently the private `current_timestamp()` in the CLI `cmd/apply.rs`) rather than duplicating it. No user-facing behaviour change; the new `notify` / `notify-rust` deps are unchanged. Not yet decomposed, so no TASKS reconciliation. |
 </changelog>
 
 ## Notes
@@ -1043,6 +1067,21 @@ SPEC-0003 depends on:
   `<state>/patina/lock`, and per-machine state-directory root. This
   SPEC adds the `logs/` subdirectory and the `tracing-appender`
   daily-rotation logging stack; SPEC-0001 does not define them.
+- **SPEC-0001 REQ-030** (the apply-path lock policy). The watcher
+  re-apply runs under the `NonBlocking` policy so it skips on lock
+  contention instead of blocking behind the CLI or self-deadlocking
+  (REQ-006 / REQ-008). REQ-030 was added to SPEC-0001 specifically
+  because the shipped engine self-acquired the lock with no
+  non-blocking path.
+- A shared compact-UTC timestamp helper. The watcher's re-apply keys
+  its journal `<ts>` exactly as `patina apply` does; that helper is
+  currently a private `current_timestamp()` in the CLI's
+  `cmd/apply.rs` (jiff, `%Y%m%dT%H%M%SZ`). This SPEC hoists it to a
+  location both the CLI apply path and the watcher re-apply can call,
+  rather than duplicating the format string.
+- The `patina-core` version-envelope helper this SPEC extracts for
+  the drift cache (REQ-007) — shared with the journal's plan/record
+  envelopes.
 - **SPEC-0002**'s `patina promote` command as the explicit-
   promotion path for drifted targets, `patina doctor` warnings
   for UNC paths and missing Developer Mode, and the `--json`

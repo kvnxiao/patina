@@ -1,7 +1,7 @@
 ---
 spec: SPEC-0001
-spec_hash_at_generation: 5e986d6eaf0c170c5093ab408a861bfff2b5f7763b3797910e9c50eb8c67f667
-generated_at: 2026-05-29T06:46:21Z
+spec_hash_at_generation: b89c36906479cdce4ee7af1326c028b4f256474a8344427a0668cfa783974ef7
+generated_at: 2026-05-30T04:28:11Z
 ---
 # Tasks: SPEC-0001 Patina core engine — transactional apply with apply/status/rollback CLI
 
@@ -2055,5 +2055,94 @@ Suggested files: `patina-core/src/journal/record.rs`,
 `patina-core/src/journal/recovery.rs`,
 `patina-core/Cargo.toml`,
 `patina-core/tests/commit_record.rs`
+</task-scenarios>
+</task>
+
+<task id="T-027" state="pending" covers="REQ-030">
+## Add a lock-acquisition policy to the engine apply path
+
+REQ-030 (added by the 2026-05-30 amendment) lets a caller select how
+the engine apply path obtains the exclusive advisory lock, so SPEC-0002
+`remove`/`promote` can re-journal while already holding the lock and the
+SPEC-0003 watcher can attempt the lock non-blocking and skip on
+contention. Today `execute_plan`
+(`patina-core/src/apply/engine.rs`, ~line 300) unconditionally calls
+`acquire_lock(&resolved.lock_path(), LockKind::Exclusive,
+exclusive_timeout())`, with no non-blocking and no
+apply-while-holding-lock path.
+
+Land this so the default path is byte-for-byte the pre-amendment
+behaviour; only the two new acquisition strategies are added.
+
+Policy type (`patina-core/src/lock.rs` or `apply/engine.rs`):
+
+- Add a `LockPolicy` with three variants: `Blocking` (the default),
+  `NonBlocking`, and `Held(LockGuard)` (carries the caller's
+  already-acquired exclusive guard). `Blocking` must be the `Default`.
+- Add a non-blocking acquisition primitive to `lock.rs` — either a
+  `try_acquire(path, kind) -> Result<LockGuard, LockError>` that makes
+  exactly one `try_lock_*` attempt, or reuse `acquire` with a
+  zero-duration cap — and surface contention as a distinct typed error
+  the engine can match (e.g. a `LockError::Contended` variant or an
+  `EngineError` mapping) rather than the generic `Timeout`.
+
+Wire through the apply entry points
+(`patina-core/src/apply/engine.rs`, `patina-core/src/lib.rs`):
+
+- `execute_plan` takes the policy (thread it via `ApplyRequest` /
+  `ApplyOptions`, defaulting to `Blocking`) and, before any filesystem
+  mutation, resolves the guard per policy:
+  - `Blocking`: acquire exclusive with `exclusive_timeout()` exactly as
+    today; a timeout still maps to exit 4.
+  - `NonBlocking`: one attempt; on contention return the typed
+    contention error and perform ZERO mutation. The lock is already
+    acquired at the very top of `execute_plan` before the plan flush,
+    so the zero-mutation guarantee falls out of returning early — keep
+    it that way.
+  - `Held(guard)`: do not acquire; use the supplied guard for the run.
+- `run_rollback` is unchanged (keeps its internal `Blocking` acquire);
+  REQ-030 scopes the policy to the apply entry points only.
+
+CLI call sites (`patina-cli/src/cmd/apply.rs`,
+`patina-cli/src/cmd/rollback.rs`): pass the default `Blocking` policy so
+`patina apply` / `patina rollback` behaviour and the REQ-022/REQ-023
+exit codes are unchanged. The watcher (`NonBlocking`) and
+`remove`/`promote` (`Held`) call-site wiring is owned by SPEC-0003 /
+SPEC-0002 respectively — not this task.
+
+<task-scenarios>
+Given a tempdir state directory whose `<state>/patina/lock` is held
+exclusively by a test-controlled guard,
+when an apply is driven under the `NonBlocking` policy,
+then it returns the typed contention error and
+`<state>/patina/journal/` contains no new `<ts>.plan` or `<ts>.COMMIT`
+written by the contended attempt (CHK-065).
+
+Given a test that acquires the exclusive lock at `<state>/patina/lock`
+and retains the guard,
+when it drives an apply under the `Held` policy passing that guard,
+then the apply completes successfully (it does not time out against its
+own held lock) and the resulting `<ts>.COMMIT` record is present
+(CHK-066).
+
+Given a tempdir repository and an uncontended state directory,
+when `patina apply --yes` runs (default `Blocking` policy) and then a
+second `patina apply --yes` runs against the unchanged source,
+then both exit 0 and the second produces byte-identical stdout to the
+first (CHK-067; REQ-021 determinism preserved under the default).
+
+Given the workspace at HEAD after this task,
+when `cargo test --workspace --locked`,
+`cargo clippy --workspace --all-targets --locked -- -D warnings`, and
+`cargo deny check` run,
+then all three exit 0.
+
+Suggested files: `patina-core/src/lock.rs`,
+`patina-core/src/apply/engine.rs`,
+`patina-core/src/lib.rs`,
+`patina-core/src/error.rs`,
+`patina-cli/src/cmd/apply.rs`,
+`patina-cli/src/cmd/rollback.rs`,
+`patina-core/tests/lock_policy.rs`
 </task-scenarios>
 </task>
