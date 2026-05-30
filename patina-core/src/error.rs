@@ -32,6 +32,11 @@ pub enum EngineError {
     #[error(transparent)]
     ConfigParse(#[from] crate::config::ConfigParseError),
 
+    /// Writing or editing a `patina.toml` manifest failed (SPEC-0002
+    /// REQ-002 / REQ-003).
+    #[error(transparent)]
+    ConfigWrite(#[from] crate::config::ConfigWriteError),
+
     /// Per-machine state directory resolution failed (REQ-016).
     #[error(transparent)]
     StateDir(#[from] crate::state_dir::StateDirError),

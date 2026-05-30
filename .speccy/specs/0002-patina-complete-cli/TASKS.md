@@ -5,7 +5,7 @@ generated_at: 2026-05-30T07:11:51Z
 ---
 # Tasks: SPEC-0002 Patina complete CLI surface and Windows symlink elevation — init/add/remove/promote/doctor plus the Windows Developer Mode UAC elevation flow
 
-<task id="T-001" state="pending" covers="REQ-002 REQ-003">
+<task id="T-001" state="completed" covers="REQ-002 REQ-003">
 ## Add a format-preserving `toml_edit` manifest writer to `patina-core::config`
 
 `patina-core::config` is parse-only today: `parse_module_config`

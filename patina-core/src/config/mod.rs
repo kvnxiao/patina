@@ -17,6 +17,7 @@
 
 pub mod file_entry;
 pub mod hook_entry;
+pub mod writer;
 
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
@@ -27,6 +28,10 @@ pub use hook_entry::HookEntry;
 pub use hook_entry::HookEntryError;
 pub use hook_entry::HookEvent;
 use serde::Deserialize;
+pub use writer::ConfigWriteError;
+pub use writer::append_file_entry;
+pub use writer::remove_file_entry;
+pub use writer::scaffold_root_manifest;
 
 /// Parsed and validated contents of a module's `patina.toml`.
 ///
