@@ -54,6 +54,9 @@ pub struct Cli {
 /// Top-level subcommands.
 #[derive(Debug, Subcommand)]
 pub enum Command {
+    /// Scaffold a root `patina.toml` and persist the default-repo pointer.
+    Init(InitArgs),
+
     /// Materialize the declared configuration at its targets.
     Apply(ApplyArgs),
 
@@ -82,6 +85,24 @@ pub struct DebugJournalArgs {
     /// Path to the `<ts>.plan` file to decode.
     #[arg(value_name = "path")]
     pub path: Utf8PathBuf,
+}
+
+/// Flags for `patina init`.
+#[derive(Debug, Args, Default)]
+pub struct InitArgs {
+    /// Target directory to initialize. Defaults to the current working
+    /// directory when omitted. Created if it does not yet exist.
+    #[arg(value_name = "path")]
+    pub path: Option<Utf8PathBuf>,
+
+    /// Emit a JSON envelope instead of human output.
+    #[arg(long)]
+    pub json: bool,
+
+    /// Proceed without prompting. `init` is a mutating command (REQ-009);
+    /// this is accepted for parity with the other mutating subcommands.
+    #[arg(long)]
+    pub yes: bool,
 }
 
 /// Flags for `patina rollback`.

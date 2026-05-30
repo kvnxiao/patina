@@ -29,6 +29,7 @@ async fn main() -> ! {
     let cli = Cli::parse();
     let mut reporter = StreamReporter::new();
     let outcome = match cli.command {
+        Command::Init(args) => cmd::init::run(&args, &mut reporter).await,
         Command::Apply(args) => {
             let tty = if std::io::stdin().is_terminal() {
                 Tty::Interactive

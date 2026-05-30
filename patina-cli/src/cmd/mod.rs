@@ -5,5 +5,6 @@
 
 pub mod apply;
 pub mod debug;
+pub mod init;
 pub mod rollback;
 pub mod status;

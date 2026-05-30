@@ -140,7 +140,7 @@ Suggested files: `patina-core/src/discovery/repo.rs`,
 </task-scenarios>
 </task>
 
-<task id="T-003" state="pending" covers="REQ-001 REQ-010">
+<task id="T-003" state="completed" covers="REQ-001 REQ-010">
 ## Implement `patina init` and generalize the integration test harness
 
 Land the first SPEC-0002 subcommand: `patina init` scaffolds a root
