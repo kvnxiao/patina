@@ -123,6 +123,18 @@ only the `patina` binary.
   flag is re-read on each apply that requires it (registry reads
   are microsecond-scale; the cache invalidation surface earns no
   net win).
+- No `--symlink-dir` or `--copy-tree` mode flag on `patina add`. In
+  v1.0 `patina add` offers exactly `--symlink`, `--copy`, and
+  `--template` (REQ-002). The two directory-oriented engine modes
+  from SPEC-0001 REQ-005 (`symlink-dir`, `copy-tree`) stay reachable
+  by hand-editing the module `patina.toml`, but `add` does not
+  generate them; exposing them as `add` flags is a v1.1 candidate.
+- No release / packaging pipeline. SPEC-0002 specifies which binaries
+  each OS's release artifact contains (`patina` everywhere;
+  `patina-elevate.exe` only on Windows — REQ-008), but the mechanics
+  of building, code-signing, and distributing those artifacts
+  (`cargo install`, Homebrew, MSI, etc.) are owned by the release
+  tooling, not a v1.0 feature requirement here.
 </non-goals>
 
 ## User stories
@@ -629,7 +641,7 @@ elevated.
   exits 1.
 - On user-declined UAC, the engine emits a typed error whose
   message names "Developer Mode" and "patina doctor
-  --fix-symlinks", and exits 5.
+  --fix", and exits 5.
 - The Developer Mode registry flag is read on every apply that
   contains symbolic link operations. There is no cache file; the
   registry read is microsecond-scale and the cache invalidation
@@ -651,7 +663,7 @@ elevated.
 - Given the same host, when `patina apply --yes` runs and the
   user clicks "No" on the UAC dialog, then no file operation
   occurs, stderr names `Developer Mode` and `patina doctor
-  --fix-symlinks`, and exit code is 5.
+  --fix`, and exit code is 5.
 - Given a macOS or Linux host, when `patina apply --yes` runs,
   then `patina-elevate.exe` is not present in the process tree
   and no registry read is attempted.
@@ -664,7 +676,7 @@ TTY harness configured to decline the UAC prompt,
 when `patina apply --yes` runs,
 then no symbolic link is created at the target path, stderr
 contains the substrings `Developer Mode` and
-`patina doctor --fix-symlinks`, and the process exits with
+`patina doctor --fix`, and the process exits with
 code 5.
 </scenario>
 
@@ -1033,6 +1045,7 @@ direction; SPEC content updated in the same revision.
 | 2026-05-29 | human/kevin via assistant | Align `patina remove` / `patina promote` with the SPEC-0001 REQ-029 amendment (committed `ApplyRecord` now retains per-target source + a 32-byte blake3 content hash). REQ-003: redefine the template-target "last-applied content" as re-rendering the journaled source at remove time (the journal records only a blake3 hash of the rendered bytes, not the bytes), and source the copy-mode content from the journaled source path; DEC-005 rewritten to match and to record why full rendered bytes are not journaled. CHK-007: "SHA of the new content" → "blake3 hash of the new content (SPEC-0001 REQ-029)". Add a cross-SPEC handoff bullet noting `remove`/`promote` read the target→source map and content hash from the committed record. Not yet decomposed, so no TASKS reconciliation. |
 | 2026-05-29 | human/kevin via assistant | Fix REQ-003's "status reports it as unmanaged" — there is no such state in SPEC-0001's classifier, which has exactly CLEAN/DRIFTED/MISSING/ORPHANED (`status/classify.rs`). Left as written, a removed-but-on-disk target would classify ORPHANED (removed from the plan, still present) until the next apply, surprising the user who just ran `remove`. Require `patina remove` to re-journal the new managed set after mutating (write a fresh `<ts>.COMMIT` omitting the removed target), so `patina status` simply omits the path (unmanaged/absent) and ORPHANED stays reserved for the *implicit* drop (hand-edited TOML / deleted source). Mirrors `promote`, which already re-journals (REQ-004). Reword the REQ-003 prose + done-when bullet, extend CHK-005 to assert status no longer lists the target, and update the cross-SPEC handoff bullet. No dependency change; not yet decomposed, so no TASKS reconciliation. |
 | 2026-05-30 | human/kevin via assistant | Close two gaps surfaced by reviewing the shipped SPEC-0001 code against this SPEC. (1) Lock re-entrancy: the shipped engine apply path self-acquires the exclusive lock, so `remove`/`promote` mutating-under-lock and then re-journaling via a re-apply would self-contend. SPEC-0001 gained REQ-030 (an apply-path lock policy: Blocking / NonBlocking / Held); REQ-009 and the cross-SPEC handoffs now require `remove`/`promote` to hold one exclusive lock for the whole command and drive the re-apply under the `Held` policy. Also pin that the fresh COMMIT is produced via the engine re-apply path (no bespoke COMMIT-writer) and that `remove`'s regular-file replacement is pre-re-apply fs work. (2) TOML writer: `patina-core::config` is parse-only (no serializer), but `init`/`add`/`remove` write and edit manifests. Add DEC-007 selecting `toml_edit` (format/comment-preserving — required so `remove` deletes one `[[file]]` entry without rewriting sibling entries/comments and so REQ-010 determinism holds) and add `toml_edit` to the tooling-notes dependency list. Not yet decomposed, so no TASKS reconciliation. |
+| 2026-05-30 | human/kevin via assistant | Harden against two discrepancies found by the SPEC-0001-vs-code + cross-SPEC verification pass. (1) Internal inconsistency: REQ-007's declined-UAC error message and CHK-012 named `patina doctor --fix-symlinks`, a flag defined nowhere — REQ-006 defines the remediation flag as `patina doctor --fix`. Changed all three `--fix-symlinks` references (REQ-007 done-when + behaviour, CHK-012) to `--fix` so the error points at the command that exists. (2) Added two non-goals: `patina add` exposes only `--symlink`/`--copy`/`--template` (not the `symlink-dir`/`copy-tree` engine modes — hand-edit the manifest for those), and the release/packaging pipeline (building/signing/distributing the per-OS artifacts) is out of scope for the feature SPECs. Also reviewed the SPEC-0001 2026-05-30 recovery-ordering amendment (orphan recovery now runs under the exclusive lock) for impact on `remove`/`promote`'s `Held`-policy re-apply: consistent — the re-apply recovers under the caller's already-held guard, no self-contention. Not yet decomposed, so no TASKS reconciliation. |
 </changelog>
 
 ## Notes

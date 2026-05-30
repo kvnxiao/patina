@@ -1,7 +1,7 @@
 ---
 spec: SPEC-0001
-spec_hash_at_generation: b89c36906479cdce4ee7af1326c028b4f256474a8344427a0668cfa783974ef7
-generated_at: 2026-05-30T04:28:11Z
+spec_hash_at_generation: eb841df16243f4132bf45932b4f939f35f5247ba507858fce46cfbb9ddfb8f57
+generated_at: 2026-05-30T05:55:19Z
 ---
 # Tasks: SPEC-0001 Patina core engine — transactional apply with apply/status/rollback CLI
 
@@ -2144,5 +2144,104 @@ Suggested files: `patina-core/src/lock.rs`,
 `patina-cli/src/cmd/apply.rs`,
 `patina-cli/src/cmd/rollback.rs`,
 `patina-core/tests/lock_policy.rs`
+</task-scenarios>
+</task>
+
+<task id="T-028" state="pending" covers="REQ-013 REQ-030">
+## Move orphan recovery under the exclusive lock (acquire-then-recover)
+
+The 2026-05-30 hardening amendment closed a concurrency hazard: the
+shipped engine runs `recover_orphans` *before* it resolves the lock,
+for all three `LockPolicy` variants. Today `execute`
+(`patina-core/src/apply/engine.rs`) calls
+`recover_orphans(&journal_dir, &backups_dir)?` at the top of the
+function (~line 337), and only *then* resolves the guard per policy
+(~line 342). Because `orphan_timestamps`
+(`patina-core/src/journal/recovery.rs`) treats any `<ts>.plan` lacking
+a `.COMMIT`/`.ROLLED_BACK` sibling as an orphan — with no lock, PID, or
+age guard — a second apply's recovery can reverse a *live in-flight*
+apply's operations, and a contended `NonBlocking` attempt that finds a
+pending orphan mutates the filesystem (reversing backups, deleting the
+orphan's plan/progress) before it returns the contention error,
+violating REQ-030's strengthened "writes nothing" guarantee that the
+SPEC-0003 watcher (REQ-006 / REQ-008) depends on.
+
+Reorder so the engine acquires/resolves the lock FIRST, then runs
+recovery UNDER the held lock, for every policy:
+
+- In `execute` (`apply/engine.rs`), move the `recover_orphans(...)`
+  call to AFTER the `let _guard = match policy { ... }` block, so it
+  runs only once the guard is held. The `Blocking` and `Held` paths
+  then recover with the lock held; the `NonBlocking` path, on
+  contention, returns the typed contention error via
+  `try_acquire_lock` BEFORE `recover_orphans` is ever reached — so it
+  performs zero filesystem mutation (no recovery, no plan, no COMMIT,
+  no backup) even when an orphan is pending.
+- Confirm the move does not change single-process / uncontended
+  behaviour: recovery still precedes the plan flush and the fresh
+  apply; only its position relative to lock acquisition changes. The
+  `Blocking` path must stay observably identical for one process
+  (CHK-067 determinism must still hold).
+- Keep `run_rollback` (`rollback/mod.rs`) as is — verify it does not
+  call `recover_orphans` before its own exclusive acquire.
+
+Secondary deliverable (test-only; same subsystem, and it protects this
+task's all-tests-green gate): harden the pre-existing flaky test
+`blocked_exclusive_exits_with_lock_timeout_code`
+(`patina-core/tests/lock_concurrency.rs`). It assumes the holder wins
+the exclusive lock within a hardcoded 150ms head-start before the
+contender starts; under machine load that is not enough (the
+freshly-built holder binary cold-starts slower than 150ms), the
+contender acquires the still-free lock, and the test fails by exiting 0
+instead of the timeout code 4 (observed during the verification pass
+that triggered this amendment — finding F2). Gate the contender's
+launch on the holder's *observed* acquisition (e.g. wait for the
+holder's `ACQUIRED` stdout marker) instead of a fixed sleep, so the
+outcome is deterministic under load. No production behaviour changes;
+it is bundled here only because it lives in the lock subsystem this
+task already edits and otherwise intermittently breaks this task's
+`cargo test` gate.
+
+<task-scenarios>
+Given a tempdir state directory whose `<state>/patina/lock` is held
+exclusively by a test-controlled guard AND whose
+`<state>/patina/journal/` contains an orphan `<ts>.plan` (no matching
+`<ts>.COMMIT`, no `<ts>.ROLLED_BACK`) from a prior crashed apply,
+when an apply is driven under the `NonBlocking` policy,
+then it returns the typed contention error, the orphan `<ts>.plan` and
+its `<ts>.progress` are left untouched (not reversed, not deleted), and
+no new `<ts>.plan`, `<ts>.COMMIT`, or backup is written by the
+contended attempt (CHK-068).
+
+Given an uncontended state directory with a pending orphan `<ts>.plan`,
+when an apply is driven under the default `Blocking` policy,
+then the orphan is recovered (overwrite-targets restored from backups,
+fresh targets deleted, plan/progress removed) under the held exclusive
+lock and the new apply proceeds — the same end state as before the
+reorder (REQ-013 recovery semantics unchanged for a single process).
+
+Given a tempdir repository and an uncontended state directory,
+when `patina apply --yes` runs and then a second `patina apply --yes`
+runs against the unchanged source,
+then both exit 0 and the second produces byte-identical stdout to the
+first (CHK-067; REQ-021 determinism preserved under the reorder).
+
+Given the lock-concurrency suite run repeatedly and under machine load,
+when `blocked_exclusive_exits_with_lock_timeout_code` runs,
+then it deterministically exits 4 with a `TIMEOUT exclusive` stderr —
+its outcome no longer depends on a fixed head-start sleep (the
+contender starts only after the holder's observed acquisition; F2).
+
+Given the workspace at HEAD after this task,
+when `cargo test --workspace --locked`,
+`cargo clippy --workspace --all-targets --locked -- -D warnings`, and
+`cargo deny check` run,
+then all three exit 0.
+
+Suggested files: `patina-core/src/apply/engine.rs`,
+`patina-core/src/journal/recovery.rs`,
+`patina-core/tests/recovery_crash.rs`,
+`patina-core/tests/lock_policy.rs`,
+`patina-core/tests/lock_concurrency.rs`
 </task-scenarios>
 </task>
