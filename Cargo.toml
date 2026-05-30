@@ -1,5 +1,5 @@
 [workspace]
-members = ["patina-cli", "patina-core"]
+members = ["patina-cli", "patina-core", "patina-elevate"]
 resolver = "2"
 
 [workspace.package]

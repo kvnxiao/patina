@@ -517,7 +517,7 @@ Suggested files: `patina-core/src/windows/mod.rs`,
 </task-scenarios>
 </task>
 
-<task id="T-008" state="pending" covers="REQ-008">
+<task id="T-008" state="completed" covers="REQ-008">
 ## Create the Windows-only `patina-elevate` helper crate
 
 Add the third workspace crate `patina-elevate`, building the standalone
