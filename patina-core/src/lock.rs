@@ -147,6 +147,20 @@ pub enum LockError {
         waited: Duration,
     },
 
+    /// A single non-blocking acquisition attempt found the lock held by
+    /// another holder. Returned only by [`try_acquire`]; distinct from
+    /// [`LockError::Timeout`] so a caller that deliberately does not wait
+    /// (the watcher's `NonBlocking` apply policy) can match contention
+    /// without conflating it with the mutating subcommands' wait-cap
+    /// expiry. The blocking [`acquire`] never produces this variant.
+    #[error("{} lock on `{path}` is held by another holder", kind.label())]
+    Contended {
+        /// Which acquisition mode found the lock contended.
+        kind: LockKind,
+        /// The lock-file path that is held.
+        path: Utf8PathBuf,
+    },
+
     /// Opening the lock file or issuing the advisory-lock syscall failed
     /// for a reason other than contention (a permissions problem, a
     /// missing parent directory, an unsupported filesystem).
@@ -213,17 +227,7 @@ impl LockGuard {
 /// lock file cannot be opened or the lock syscall fails for a
 /// non-contention reason.
 pub fn acquire(path: &Utf8Path, kind: LockKind, timeout: Duration) -> Result<LockGuard, LockError> {
-    let file = fs_err::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(path)
-        .map_err(|source| LockError::Io {
-            path: path.to_owned(),
-            source,
-        })?
-        .into();
+    let file = open_lock_file(path)?;
 
     let deadline = Instant::now() + timeout;
     loop {
@@ -256,6 +260,59 @@ pub fn acquire(path: &Utf8Path, kind: LockKind, timeout: Duration) -> Result<Loc
             }
         }
     }
+}
+
+/// Acquire the advisory lock at `path` in the requested `kind` with a
+/// single non-blocking attempt, never waiting for a conflicting holder.
+///
+/// This is the zero-wait counterpart to [`acquire`]: it makes exactly one
+/// `try_lock_*` attempt and, if the lock is already held, returns
+/// [`LockError::Contended`] immediately rather than polling. It exists for
+/// the apply path's `NonBlocking` policy (the SPEC-0003 watcher), which
+/// must skip on contention instead of blocking a background reapply.
+///
+/// On success the returned [`LockGuard`] holds the lock until it is
+/// dropped, exactly as for [`acquire`].
+///
+/// # Errors
+///
+/// Returns [`LockError::Contended`] when another holder currently holds a
+/// conflicting lock, and [`LockError::Io`] when the lock file cannot be
+/// opened or the lock syscall fails for a non-contention reason.
+pub fn try_acquire(path: &Utf8Path, kind: LockKind) -> Result<LockGuard, LockError> {
+    let file = open_lock_file(path)?;
+    match try_lock(&file, kind) {
+        Ok(()) => Ok(LockGuard {
+            _file: file,
+            path: path.to_owned(),
+            kind,
+        }),
+        Err(e) if is_contended(&e) => Err(LockError::Contended {
+            kind,
+            path: path.to_owned(),
+        }),
+        Err(source) => Err(LockError::Io {
+            path: path.to_owned(),
+            source,
+        }),
+    }
+}
+
+/// Open (creating if absent) the advisory-lock file at `path` for
+/// acquisition. The byte contents are irrelevant — only the advisory lock
+/// on the returned handle matters.
+fn open_lock_file(path: &Utf8Path) -> Result<std::fs::File, LockError> {
+    Ok(fs_err::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(path)
+        .map_err(|source| LockError::Io {
+            path: path.to_owned(),
+            source,
+        })?
+        .into())
 }
 
 /// Issue one non-blocking advisory-lock attempt in the requested mode.

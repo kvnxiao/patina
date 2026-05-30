@@ -2058,7 +2058,7 @@ Suggested files: `patina-core/src/journal/record.rs`,
 </task-scenarios>
 </task>
 
-<task id="T-027" state="pending" covers="REQ-030">
+<task id="T-027" state="completed" covers="REQ-030">
 ## Add a lock-acquisition policy to the engine apply path
 
 REQ-030 (added by the 2026-05-30 amendment) lets a caller select how
