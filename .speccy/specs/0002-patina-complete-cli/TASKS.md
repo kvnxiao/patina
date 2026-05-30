@@ -1,7 +1,7 @@
 ---
 spec: SPEC-0002
-spec_hash_at_generation: be12935e6ec27379cbeeb51b89deac5c097415d9a0c70b4f666dcec4ad9a0a6d
-generated_at: 2026-05-30T07:06:55Z
+spec_hash_at_generation: befdad68d2652a0421f16ee44208210e20eba5eac52efb4d05cdaf3cba2de167
+generated_at: 2026-05-30T07:11:51Z
 ---
 # Tasks: SPEC-0002 Patina complete CLI surface and Windows symlink elevation — init/add/remove/promote/doctor plus the Windows Developer Mode UAC elevation flow
 
@@ -438,7 +438,7 @@ non-Windows stubs and an injectable seam so the decision logic is testable
 on the macOS/Linux CI. This task delivers detection (read-side) and the
 pure helpers; the elevation launch and the engine gate land in T-009.
 
-Architecture note (resolves the engine/CLI layering tension in REQ-007):
+Architecture note (DEC-008 pins the engine/CLI layering split for REQ-007):
 `patina-core` must not perform user-facing IO (the Reporter layer and all
 prompting live in `patina-cli`; the no-`println!` hard rule applies). So the
 *capability* — read the registry flag, query elevation, query OS build —
@@ -615,7 +615,7 @@ Work:
   Developer Mode, or an `ApplyResult` outcome the CLI inspects — choose the
   shape that keeps `patina-core` prompt-free and lets the CLI render the
   prompt and re-drive `execute` under `LockPolicy::Held` after the helper
-  toggles the flag). When elevated, proceed but emit a `tracing` warning
+  toggles the flag, per DEC-008). When elevated, proceed but emit a `tracing` warning
   recommending against running Patina elevated. The pre-existing
   `ExecutorError::WindowsSymlinkPermission` remains the backstop if a
   symlink materialization is somehow attempted without dev mode.
