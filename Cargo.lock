@@ -500,6 +500,7 @@ dependencies = [
  "tokio",
  "toml",
  "toml_edit",
+ "winsafe",
 ]
 
 [[package]]
@@ -977,6 +978,12 @@ name = "winnow"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0592e1c9d151f854e6fd382574c3a0855250e1d9b2f99d9281c6e6391af352f1"
+
+[[package]]
+name = "winsafe"
+version = "0.0.27"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bcfff8264c3af1b0352006934e2265365ecb5a145aee88e770dc8b82e0456f4f"
 
 [[package]]
 name = "wit-bindgen"

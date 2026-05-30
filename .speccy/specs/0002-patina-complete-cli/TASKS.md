@@ -429,7 +429,7 @@ Suggested files: `patina-cli/src/cli.rs`, `patina-cli/src/cmd/promote.rs`,
 </task-scenarios>
 </task>
 
-<task id="T-007" state="pending" covers="REQ-007">
+<task id="T-007" state="completed" covers="REQ-007">
 ## Add the cross-platform Windows dev-mode detection module to `patina-core`
 
 Introduce a `patina-core::windows` module that provides the Developer Mode

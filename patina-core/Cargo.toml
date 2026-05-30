@@ -34,6 +34,11 @@ tokio = { workspace = true, features = [
 toml = { workspace = true }
 toml_edit = { workspace = true }
 
+# REQ-007 Developer Mode / elevation reads. Windows-only so non-Windows
+# builds never resolve `winsafe` into the graph.
+[target.'cfg(windows)'.dependencies]
+winsafe = { workspace = true }
+
 [dev-dependencies]
 tempfile = { workspace = true }
 

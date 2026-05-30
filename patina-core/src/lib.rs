@@ -26,6 +26,7 @@ pub mod state_dir;
 pub mod status;
 pub mod template;
 pub mod variables;
+pub mod windows;
 
 pub use apply::CompletionRecord;
 pub use apply::ExecutorError;
@@ -121,6 +122,17 @@ pub use template::TemplateError;
 pub use variables::Builtins;
 pub use variables::Resolver;
 pub use variables::VariableError;
+pub use windows::DevModeProbe;
+pub use windows::DevModeStatus;
+pub use windows::GateDecision;
+pub use windows::HostDevModeProbe;
+pub use windows::WindowsError;
+pub use windows::decide_symlink_gate;
+pub use windows::dev_mode_status;
+pub use windows::is_elevated;
+pub use windows::is_unc_path;
+pub use windows::plan_has_symlink_op;
+pub use windows::windows_build_supports_dev_mode;
 
 /// Options accepted by [`apply`](fn@crate::apply). The TTY-driven prompt,
 /// `--json` envelope, and `--pager` plumbing live in the CLI ([`plan_apply`] /
