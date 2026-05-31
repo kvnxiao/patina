@@ -2,7 +2,7 @@
 id: SPEC-0002
 slug: patina-complete-cli
 title: Patina complete CLI surface and Windows symlink elevation
-status: in-progress
+status: implemented
 created: 2026-05-25
 supersedes: []
 ---

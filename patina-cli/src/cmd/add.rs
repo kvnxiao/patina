@@ -122,10 +122,10 @@ pub async fn run(
 
     // Refuse a path that is already managed (REQ-002): scan every module's
     // manifest for a `[[file]]` whose target resolves to the same path.
-    if let Some(existing) = find_managed(&repo_root, &target, &home)? {
+    if let Some(existing_module) = find_managed(&repo_root, &target, &home)? {
         let message = format!(
-            "{} is already managed by module `{}`",
-            args.path, existing.module
+            "{} is already managed by module `{existing_module}`",
+            args.path
         );
         if args.json {
             reporter.json(&error_envelope(
@@ -182,13 +182,8 @@ pub async fn run(
     Ok(ExitCode::Success.code())
 }
 
-/// A managed-path match: the module owning the existing entry.
-struct ManagedMatch {
-    module: String,
-}
-
 /// Scan every module manifest for a `[[file]]` whose target resolves to the
-/// same absolute path as `target`. Returns the owning module on a match.
+/// same absolute path as `target`. Returns the owning module's name on a match.
 ///
 /// Targets are compared by tilde-expanded form (the manifest may store a
 /// `~`-relative target while the input is absolute, or vice versa), without
@@ -197,7 +192,7 @@ fn find_managed(
     repo_root: &Utf8Path,
     target: &Utf8Path,
     home: &Utf8Path,
-) -> Result<Option<ManagedMatch>> {
+) -> Result<Option<String>> {
     let modules = discover_modules(repo_root).map_err(EngineError::from)?;
     for module in modules {
         let manifest = module.path.join(MANIFEST_FILENAME);
@@ -205,9 +200,7 @@ fn find_managed(
         for entry in &config.files {
             for entry_target in &entry.targets {
                 if expand_tilde(entry_target, home) == target {
-                    return Ok(Some(ManagedMatch {
-                        module: module.name,
-                    }));
+                    return Ok(Some(module.name));
                 }
             }
         }

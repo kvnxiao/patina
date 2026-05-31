@@ -24,6 +24,16 @@ use cmd::apply::Tty;
 use is_terminal::IsTerminal;
 use output::reporter::StreamReporter;
 
+/// Classify the current stdin as an interactive terminal or not, so prompt
+/// flows fall through to plan-only / non-interactive behavior off a TTY.
+fn detect_tty() -> Tty {
+    if std::io::stdin().is_terminal() {
+        Tty::Interactive
+    } else {
+        Tty::NonInteractive
+    }
+}
+
 #[tokio::main]
 async fn main() -> ! {
     let cli = Cli::parse();
@@ -31,59 +41,29 @@ async fn main() -> ! {
     let outcome = match cli.command {
         Command::Init(args) => cmd::init::run(&args, &mut reporter).await,
         Command::Add(args) => {
-            let tty = if std::io::stdin().is_terminal() {
-                Tty::Interactive
-            } else {
-                Tty::NonInteractive
-            };
             let mut reader = StdinReader;
-            cmd::add::run(&args, tty, &mut reader, &mut reporter).await
+            cmd::add::run(&args, detect_tty(), &mut reader, &mut reporter).await
         }
         Command::Remove(args) => {
-            let tty = if std::io::stdin().is_terminal() {
-                Tty::Interactive
-            } else {
-                Tty::NonInteractive
-            };
             let mut reader = StdinReader;
-            cmd::remove::run(&args, tty, &mut reader, &mut reporter).await
+            cmd::remove::run(&args, detect_tty(), &mut reader, &mut reporter).await
         }
         Command::Promote(args) => {
-            let tty = if std::io::stdin().is_terminal() {
-                Tty::Interactive
-            } else {
-                Tty::NonInteractive
-            };
             let mut reader = StdinReader;
-            cmd::promote::run(&args, tty, &mut reader, &mut reporter).await
+            cmd::promote::run(&args, detect_tty(), &mut reader, &mut reporter).await
         }
         Command::Apply(args) => {
-            let tty = if std::io::stdin().is_terminal() {
-                Tty::Interactive
-            } else {
-                Tty::NonInteractive
-            };
             let mut reader = StdinReader;
-            cmd::apply::run(&args, tty, &mut reader, &mut reporter).await
+            cmd::apply::run(&args, detect_tty(), &mut reader, &mut reporter).await
         }
         Command::Status(args) => cmd::status::run(&args, &mut reporter).await,
         Command::Doctor(args) => {
-            let tty = if std::io::stdin().is_terminal() {
-                Tty::Interactive
-            } else {
-                Tty::NonInteractive
-            };
             let mut reader = StdinReader;
-            cmd::doctor::run(&args, tty, &mut reader, &mut reporter)
+            cmd::doctor::run(&args, detect_tty(), &mut reader, &mut reporter)
         }
         Command::Rollback(args) => {
-            let tty = if std::io::stdin().is_terminal() {
-                Tty::Interactive
-            } else {
-                Tty::NonInteractive
-            };
             let mut reader = StdinReader;
-            cmd::rollback::run(&args, tty, &mut reader, &mut reporter).await
+            cmd::rollback::run(&args, detect_tty(), &mut reader, &mut reporter).await
         }
         // `debug` reports its own terminal state as an exit code already.
         Command::Debug(command) => Ok(cmd::debug::run(&command, &mut reporter)),
