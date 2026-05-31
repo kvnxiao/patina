@@ -12,8 +12,13 @@
 //! macOS/Linux dev host. This file covers the cross-platform contract
 //! (CHK-016): on a non-Windows host an ordinary write failure surfaces on the
 //! first attempt with no `fs_write_retry` `tracing` event emitted. The
-//! Windows-only behaviour is exercised by the unit tests gated behind
-//! `#[cfg(windows)]` in `patina-core::apply::retry`.
+//! contract is asserted at two of the three engine write sites the wrapper
+//! guards — the byte-copy site and the forward-apply symlink site — so a
+//! regression that drops the wrapper from either path is caught here. The
+//! Windows-only retry behaviour is exercised by the unit tests gated behind
+//! `#[cfg(windows)]` in `patina-core::apply::retry`; the symlink site routes
+//! through that same wrapper, so it adds no new Windows-specific logic to
+//! cover.
 
 use camino::Utf8PathBuf;
 use patina_core::Builtins;
@@ -145,6 +150,75 @@ fn non_windows_write_failure_surfaces_without_retry_event() {
     assert!(
         result.is_err(),
         "write into a non-writable directory must surface an error"
+    );
+
+    let recorded = messages.lock().expect("lock messages");
+    assert!(
+        !recorded.iter().any(|m| m.contains("fs_write_retry")),
+        "no fs_write_retry event may be emitted off Windows; recorded: {recorded:?}"
+    );
+}
+
+/// CHK-016 at the forward-apply symlink site: a symlink whose creation fails
+/// with an ordinary I/O error surfaces on the first attempt with no
+/// `fs_write_retry` event off Windows.
+///
+/// REQ-010 names symlink creation as one of the "all file writes" the retry
+/// policy guards. The forward-apply symlink executor
+/// (`apply::symlink::create_symlink`) routes its OS primitive through
+/// `with_sharing_violation_retry`; this test pins that wiring by driving a
+/// real `FileMode::Symlink` apply into a non-writable directory (the symlink
+/// `create` fails with EACCES, the closest portable analogue to the Windows
+/// `FILE_SHARE_NONE` scenario). Since the wrapper is a pass-through off
+/// Windows, the error must surface immediately with no retry event. The
+/// parent directory already exists, so the failure originates at the wrapped
+/// `create_symlink` call, not at `ensure_parent`.
+#[cfg(unix)]
+#[test]
+fn non_windows_symlink_failure_surfaces_without_retry_event() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let (_td, dir) = utf8_tempdir();
+    let source = dir.join("source.txt");
+    fs_err::write(&source, b"payload").expect("write source");
+
+    // The symlink target lives inside a directory we strip of write
+    // permission: creating any entry (including a symlink) in it fails with
+    // EACCES, an ordinary I/O error that is not ERROR_SHARING_VIOLATION.
+    let locked_dir = dir.join("locked");
+    fs_err::create_dir(&locked_dir).expect("create locked dir");
+    let target = locked_dir.join("link");
+    let mut perms = fs_err::metadata(&locked_dir)
+        .expect("locked dir metadata")
+        .permissions();
+    perms.set_mode(0o500); // r-x: traversable but not writable
+    fs_err::set_permissions(&locked_dir, perms).expect("chmod locked dir");
+
+    let messages = Arc::new(Mutex::new(Vec::<String>::new()));
+    let subscriber = RecordingSubscriber {
+        messages: Arc::clone(&messages),
+    };
+
+    let result = tracing::subscriber::with_default(subscriber, || {
+        materialize(
+            FileMode::Symlink,
+            &source,
+            std::slice::from_ref(&target),
+            &TemplateEngine::new(),
+            &resolver(),
+        )
+    });
+
+    // Restore write permission so the tempdir can be cleaned up.
+    let mut restore = fs_err::metadata(&locked_dir)
+        .expect("locked dir metadata for restore")
+        .permissions();
+    restore.set_mode(0o700);
+    fs_err::set_permissions(&locked_dir, restore).expect("restore locked dir perms");
+
+    assert!(
+        result.is_err(),
+        "symlink creation in a non-writable directory must surface an error"
     );
 
     let recorded = messages.lock().expect("lock messages");

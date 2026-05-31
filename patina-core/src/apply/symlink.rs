@@ -17,6 +17,7 @@
 use super::CompletionRecord;
 use super::ExecutorError;
 use super::ensure_parent;
+use super::with_sharing_violation_retry;
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
 
@@ -132,12 +133,20 @@ enum LinkKind {
 /// Create a symbolic link at `target` pointing at `source`, picking the
 /// OS-appropriate primitive and mapping a Windows privilege error to the
 /// typed [`ExecutorError::WindowsSymlinkPermission`].
+///
+/// The OS primitive runs through [`with_sharing_violation_retry`] so the
+/// forward-apply symlink write honours REQ-010's retry policy on Windows
+/// (symlink creation is one of the "all file writes" the requirement names).
+/// Off Windows the wrapper is a pass-through. The retry only fires on
+/// `ERROR_SHARING_VIOLATION` (Win32 32), so it never masks the
+/// `PermissionDenied` signal that [`classify_symlink_error`] maps to the
+/// Developer-Mode / elevation error.
 fn create_symlink(
     source: &Utf8Path,
     target: &Utf8Path,
     kind: LinkKind,
 ) -> Result<(), ExecutorError> {
-    let result = create_symlink_os(source, target, kind);
+    let result = with_sharing_violation_retry(|| create_symlink_os(source, target, kind));
     result.map_err(|err| classify_symlink_error(target, err))
 }
 
