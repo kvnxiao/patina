@@ -3,7 +3,8 @@
 //!
 //! `remove` (REQ-003) and `promote` (REQ-004) both: take ONE exclusive
 //! advisory lock for the whole command (REQ-009), locate the journaled
-//! [`ExpectedTarget`] for an input path in the latest commit, do
+//! [`ExpectedTarget`](patina_core::ExpectedTarget) for an input path in the
+//! latest commit, do
 //! command-specific filesystem work, and then re-journal by driving the
 //! engine re-apply under [`LockPolicy::Held`] so the fresh `<ts>.COMMIT`
 //! reflects the new managed state. This module factors those two shared

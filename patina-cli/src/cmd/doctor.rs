@@ -8,7 +8,7 @@
 //!
 //! The read-only path (no `--fix`) acquires only the SHARED advisory lock
 //! (REQ-009) with the read-only escape hatch: a
-//! [`SHARED_TIMEOUT`](patina_core::SHARED_TIMEOUT) expiry warns and proceeds
+//! [`SHARED_TIMEOUT`] expiry warns and proceeds
 //! rather than blocking the user.
 //!
 //! The `--fix` path (REQ-006) is mutating: it acquires the EXCLUSIVE lock,
@@ -151,7 +151,7 @@ pub struct Inputs {
     /// findings never fire regardless of the other fields.
     pub is_windows: bool,
     /// The Developer Mode registry status (from
-    /// [`dev_mode_status`](patina_core::dev_mode_status)).
+    /// [`dev_mode_status`]).
     pub dev_mode: DevModeStatus,
     /// Whether the running OS build supports Developer Mode (Windows 10 1703+).
     pub build_supports_dev_mode: bool,

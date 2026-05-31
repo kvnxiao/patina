@@ -16,7 +16,7 @@
 //! launch and the engine gate wiring land in T-009.
 //!
 //! Everything here compiles on every platform. The Windows-specific
-//! registry and token reads live in the [`registry`] submodule behind
+//! registry and token reads live in the `registry` submodule behind
 //! `#[cfg(windows)]`; on every other platform the entry points reduce to
 //! the stubs documented on each function, so the macOS/Linux CI builds
 //! clean and the gate-decision logic is unit-testable on Linux against a
@@ -71,7 +71,7 @@ pub enum DevModeStatus {
     NotWindows,
 }
 
-/// Errors from the Windows registry / token reads in [`registry`].
+/// Errors from the Windows registry / token reads in the `registry` submodule.
 ///
 /// These only ever arise on Windows; on other platforms the entry points
 /// return a fixed value and never produce a [`WindowsError`]. The variant

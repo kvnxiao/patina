@@ -7,16 +7,24 @@
 //!
 //! The binary is gated behind the `windows` feature (DEC-003 / CHK-015), so
 //! it is only built when that feature is enabled. When it is absent (a plain
-//! `cargo test` on any host without `--features windows`) `option_env!`
-//! yields `None` and the process-spawning tests no-op. Run them with
+//! `cargo test` on any host without `--features windows`) the
+//! process-spawning tests no-op. Run them with
 //! `cargo test -p patina-elevate --features windows`.
 
 use std::process::Command;
 
 /// Path to the built `patina-elevate` binary, or `None` when the bin was not
 /// built (the `windows` feature was off, so Cargo skipped it).
+///
+/// Cargo sets `CARGO_BIN_EXE_patina-elevate` at compile time even when the
+/// bin's `required-features` (DEC-003: `windows`) are off and the bin was
+/// never produced, so the compile-time env var alone is not a reliable
+/// "was it built" signal. Guard on the file actually existing on disk;
+/// otherwise a plain `cargo test` (no `--features windows`) would spawn a
+/// non-existent path and panic instead of no-opping as intended.
 fn elevate_bin() -> Option<&'static str> {
-    option_env!("CARGO_BIN_EXE_patina-elevate")
+    let path = option_env!("CARGO_BIN_EXE_patina-elevate")?;
+    std::path::Path::new(path).exists().then_some(path)
 }
 
 #[test]
