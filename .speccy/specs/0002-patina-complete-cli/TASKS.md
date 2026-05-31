@@ -794,7 +794,7 @@ Suggested files: `patina-cli/src/cmd/doctor.rs`, `patina-cli/src/main.rs`,
 </task-scenarios>
 </task>
 
-<task id="T-012" state="pending" covers="REQ-005">
+<task id="T-012" state="completed" covers="REQ-005">
 ## Document the new commands and verify the cloud-sync callout in `docs/USER_GUIDE.md`
 
 SPEC-0002 adds five user-facing commands and a Windows elevation flow;
