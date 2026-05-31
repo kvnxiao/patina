@@ -38,13 +38,10 @@
 
 use super::JournalError;
 use super::plan::FILE_MAJOR_VERSION;
+use crate::version_envelope;
 use camino::Utf8Path;
 use serde::Deserialize;
 use serde::Serialize;
-
-/// Width in bytes of the version envelope prefix (a little-endian `u16`),
-/// shared with the plan-file layout in [`super::plan`].
-const ENVELOPE_LEN: usize = core::mem::size_of::<u16>();
 
 /// The expected state of one materialized target, recorded at commit so
 /// `patina status` can classify the live filesystem against it.
@@ -162,10 +159,10 @@ impl ApplyRecord {
     /// Returns [`JournalError::Encode`] if `postcard` serialization fails.
     pub fn encode(&self) -> Result<Vec<u8>, JournalError> {
         let body = postcard::to_stdvec(self).map_err(JournalError::Encode)?;
-        let mut bytes = Vec::with_capacity(ENVELOPE_LEN + body.len());
-        bytes.extend_from_slice(&FILE_MAJOR_VERSION.to_le_bytes());
-        bytes.extend_from_slice(&body);
-        Ok(bytes)
+        Ok(version_envelope::encode_with_envelope(
+            FILE_MAJOR_VERSION,
+            &body,
+        ))
     }
 
     /// Decode a record from a commit sentinel's bytes, refusing any record
@@ -178,23 +175,7 @@ impl ApplyRecord {
     ///   than this binary supports.
     /// - [`JournalError::Decode`] if the body fails to deserialize.
     pub fn decode(bytes: &[u8]) -> Result<Self, JournalError> {
-        let envelope = bytes.get(..ENVELOPE_LEN).ok_or(JournalError::Truncated {
-            got: bytes.len(),
-            need: ENVELOPE_LEN,
-        })?;
-        let mut raw = [0u8; ENVELOPE_LEN];
-        raw.copy_from_slice(envelope);
-        let found = u16::from_le_bytes(raw);
-        if found > FILE_MAJOR_VERSION {
-            return Err(JournalError::VersionMismatch {
-                found,
-                supported: FILE_MAJOR_VERSION,
-            });
-        }
-        let body = bytes.get(ENVELOPE_LEN..).ok_or(JournalError::Truncated {
-            got: bytes.len(),
-            need: ENVELOPE_LEN,
-        })?;
+        let body = version_envelope::decode_envelope(bytes, FILE_MAJOR_VERSION)?;
         postcard::from_bytes(body).map_err(JournalError::Decode)
     }
 }

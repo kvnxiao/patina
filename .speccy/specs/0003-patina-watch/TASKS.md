@@ -5,7 +5,7 @@ generated_at: 2026-05-31T09:24:44Z
 ---
 # Tasks: SPEC-0003 Patina watch — filesystem event loop, per-OS service install, drift detection
 
-<task id="T-001" state="pending" covers="REQ-007">
+<task id="T-001" state="completed" covers="REQ-007">
 ## Extract a shared `pub` version-envelope helper in `patina-core`
 
 REQ-007 requires the drift cache to carry a `u16` major-version envelope at

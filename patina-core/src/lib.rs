@@ -26,6 +26,7 @@ pub mod state_dir;
 pub mod status;
 pub mod template;
 pub mod variables;
+pub mod version_envelope;
 pub mod windows;
 
 pub use apply::CompletionRecord;
@@ -122,6 +123,10 @@ pub use template::TemplateError;
 pub use variables::Builtins;
 pub use variables::Resolver;
 pub use variables::VariableError;
+pub use version_envelope::ENVELOPE_LEN;
+pub use version_envelope::EnvelopeError;
+pub use version_envelope::decode_envelope;
+pub use version_envelope::encode_with_envelope;
 pub use windows::DEV_MODE_REGISTRY_PATH;
 pub use windows::DevModeProbe;
 pub use windows::DevModeStatus;
