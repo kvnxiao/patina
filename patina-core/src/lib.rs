@@ -139,6 +139,7 @@ pub use watch::drift_cache::render_drift_cache;
 pub use watch::logging::FileAppender;
 pub use watch::logging::LoggingError;
 pub use watch::logging::build_file_appender;
+pub use watch::subscriptions::compute_subscriptions;
 pub use windows::DEV_MODE_REGISTRY_PATH;
 pub use windows::DevModeProbe;
 pub use windows::DevModeStatus;

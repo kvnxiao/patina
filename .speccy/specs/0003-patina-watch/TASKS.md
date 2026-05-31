@@ -301,7 +301,7 @@ Suggested files: `patina-core/src/watch/logging.rs`,
 </task-scenarios>
 </task>
 
-<task id="T-007" state="pending" covers="REQ-005">
+<task id="T-007" state="completed" covers="REQ-005">
 ## Compute the watcher subscription set from the committed journal record
 
 REQ-005 (CHK-009): the watcher subscribes only to paths the most recent

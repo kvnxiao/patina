@@ -5,8 +5,11 @@
 //! format — the watcher's notification ledger at `<state>/patina/drift.cache`
 //! — via the [`drift_cache`] submodule, and the structured-log sink — the
 //! daily-rotating `<state>/patina/logs/` stack the watcher writes its metrics
-//! into (REQ-009) — via the [`logging`] submodule. The event loop, per-OS
-//! service install, and drift detection itself land in later tasks.
+//! into (REQ-009) — via the [`logging`] submodule; and the pure mapping from
+//! a committed journal record to the watcher's FS subscription set (REQ-005)
+//! — via the [`subscriptions`] submodule. The event loop, per-OS service
+//! install, and drift detection itself land in later tasks.
 
 pub mod drift_cache;
 pub mod logging;
+pub mod subscriptions;
