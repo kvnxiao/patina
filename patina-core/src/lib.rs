@@ -13,6 +13,7 @@
 
 pub mod apply;
 pub mod backups;
+pub mod clock;
 pub mod config;
 pub mod discovery;
 pub mod error;
@@ -53,6 +54,7 @@ pub use backups::BackupError;
 pub use backups::RETENTION_COUNT;
 pub use backups::backup_before_overwrite;
 pub use backups::gc_retain;
+pub use clock::current_timestamp;
 pub use config::ConfigParseError;
 pub use config::ConfigWriteError;
 pub use config::FileEntry;

@@ -62,7 +62,7 @@ Suggested files: `patina-core/src/version_envelope.rs`,
 </task-scenarios>
 </task>
 
-<task id="T-002" state="pending" covers="REQ-006">
+<task id="T-002" state="completed" covers="REQ-006">
 ## Hoist the compact-UTC timestamp helper from `patina-cli` to `patina-core`
 
 The watcher's re-apply (REQ-006) keys its journal `<ts>` exactly as
