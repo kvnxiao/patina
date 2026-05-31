@@ -1,7 +1,7 @@
 ---
 spec: SPEC-0003
-spec_hash_at_generation: 1e63e3d608b0c013dd6250618d7f1eaf34e2dc67c07fc2b34a8f2d4e87de94cc
-generated_at: 2026-05-31T09:24:44Z
+spec_hash_at_generation: c111c0f45b89ffe878237ef8b3879f4482ffa8583ff558b7c72e5060c8d6bc62
+generated_at: 2026-05-31T22:25:47Z
 ---
 # Tasks: SPEC-0003 Patina watch — filesystem event loop, per-OS service install, drift detection
 
@@ -118,10 +118,12 @@ the kind+raw_os_error matching pattern already used in
 `patina-core/src/lock.rs` for `fs2`'s contended-lock error) and retries on
 that code only, re-raising any other error immediately and re-raising the
 violation after the sixth failed attempt. Under `#[cfg(not(windows))]` it
-calls `op()` exactly once. Route the three engine write sites through it:
+calls `op()` exactly once. Route the engine write sites through it:
 `apply/copy.rs` (`fs_err::copy` in `copy_file` ~line 30 and `copy_tree`
 ~line 74), `apply/template.rs` (`fs_err::write` of rendered output ~line
-54), and the symlink creation in `fsx.rs` (`symlink_to`). The constant
+54), and symlink creation — the forward-apply executor
+`apply/symlink.rs::create_symlink_os` (patina's primary materialization
+write) plus the rollback/recovery `fsx.rs::symlink_to`. The constant
 backoff schedule lives as a private slice in `retry.rs`.
 
 <task-scenarios>
@@ -145,7 +147,8 @@ violation and the apply fails/rolls back via the normal pipeline.
 
 Suggested files: `patina-core/src/apply/retry.rs`,
 `patina-core/src/apply/copy.rs`, `patina-core/src/apply/template.rs`,
-`patina-core/src/fsx.rs`, `patina-core/tests/fs_retry.rs`
+`patina-core/src/apply/symlink.rs`, `patina-core/src/fsx.rs`,
+`patina-core/tests/fs_retry.rs`
 </task-scenarios>
 </task>
 
