@@ -100,7 +100,7 @@ Suggested files: `patina-core/src/clock.rs`, `patina-core/src/lib.rs`,
 </task-scenarios>
 </task>
 
-<task id="T-003" state="pending" covers="REQ-010">
+<task id="T-003" state="completed" covers="REQ-010">
 ## Windows `ERROR_SHARING_VIOLATION` retry-with-backoff wrapper in the apply pipeline
 
 REQ-010 / DEC-006: on Windows, file-write operations that fail with

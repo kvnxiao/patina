@@ -37,6 +37,7 @@ pub mod engine;
 pub mod hooks;
 
 mod copy;
+mod retry;
 mod symlink;
 mod template;
 
@@ -54,6 +55,7 @@ pub use hooks::resolve_on_path;
 pub use hooks::resolve_shells;
 pub use hooks::run_hook;
 pub use hooks::should_run;
+pub(crate) use retry::with_sharing_violation_retry;
 
 /// What an executor materialized at a target, for the
 /// [`CompletionRecord`] one-per-object handoff to T-010.

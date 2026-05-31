@@ -131,7 +131,7 @@ pub(crate) fn copy_tree(src: &Utf8Path, dst: &Utf8Path) -> std::io::Result<()> {
 /// Returns the underlying [`std::io::Error`] when the link cannot be created.
 #[cfg(unix)]
 pub(crate) fn symlink_to(link: &Utf8Path, target: &Utf8Path) -> std::io::Result<()> {
-    fs_err::os::unix::fs::symlink(link, target)
+    crate::apply::with_sharing_violation_retry(|| fs_err::os::unix::fs::symlink(link, target))
 }
 
 /// Create a symbolic link at `target` pointing at `link`, dispatching to the
@@ -146,11 +146,13 @@ pub(crate) fn symlink_to(link: &Utf8Path, target: &Utf8Path) -> std::io::Result<
 /// Returns the underlying [`std::io::Error`] when the link cannot be created.
 #[cfg(windows)]
 pub(crate) fn symlink_to(link: &Utf8Path, target: &Utf8Path) -> std::io::Result<()> {
-    if fs_err::symlink_metadata(link).is_ok_and(|meta| meta.is_dir()) {
-        fs_err::os::windows::fs::symlink_dir(link, target)
-    } else {
-        fs_err::os::windows::fs::symlink_file(link, target)
-    }
+    crate::apply::with_sharing_violation_retry(|| {
+        if fs_err::symlink_metadata(link).is_ok_and(|meta| meta.is_dir()) {
+            fs_err::os::windows::fs::symlink_dir(link, target)
+        } else {
+            fs_err::os::windows::fs::symlink_file(link, target)
+        }
+    })
 }
 
 /// Read the link target of the symbolic link at `path` as a UTF-8 path.
