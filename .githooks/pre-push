@@ -1,0 +1,46 @@
+#!/usr/bin/env sh
+# Patina pre-push hook.
+#
+# Runs the full local gate before anything leaves your machine, so a push
+# that reaches CI has already cleared everything CI can check on one box:
+#
+#   just check  ==  just lint  +  just test
+#     lint  = fmt (nightly) + clippy + docs (cargo doc -D warnings) + cargo deny
+#     test  = cargo test --workspace --locked
+#
+# The `docs` gate is the one a hand-typed checklist forgets — broken or
+# redundant intra-doc links fail ONLY under `cargo doc -D warnings`, never
+# under clippy. `just check` always includes it.
+#
+# CI still runs gates this hook cannot reproduce locally (the
+# Windows/macOS/Linux test matrix, the MSRV build, coverage), so watch the
+# PR checks after the push lands.
+#
+# Bypass for an emergency push: `git push --no-verify` (CI will still gate
+# the PR, so this is rarely the right call).
+
+set -e
+
+# No Cargo.toml means there is nothing to build or test (kept for parity with
+# pre-commit; a no-op now that the workspace exists).
+if [ ! -f Cargo.toml ]; then
+    exit 0
+fi
+
+if ! command -v just >/dev/null 2>&1; then
+    echo "pre-push: 'just' not found — it runs the local gate (just check)." >&2
+    echo "  Install it: https://github.com/casey/just#installation" >&2
+    echo "  (or 'brew install just' / 'cargo install just')" >&2
+    echo "  To push without the gate this once: git push --no-verify" >&2
+    exit 1
+fi
+
+echo "pre-push: just check (lint + test)"
+if ! just check; then
+    echo "" >&2
+    echo "pre-push: 'just check' failed — see the output above." >&2
+    echo "  Fix it, or bypass this once with: git push --no-verify" >&2
+    exit 1
+fi
+
+exit 0
