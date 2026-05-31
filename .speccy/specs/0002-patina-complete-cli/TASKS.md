@@ -738,7 +738,7 @@ Suggested files: `patina-cli/src/cli.rs`, `patina-cli/src/cmd/doctor.rs`,
 </task-scenarios>
 </task>
 
-<task id="T-011" state="pending" covers="REQ-006 REQ-009">
+<task id="T-011" state="completed" covers="REQ-006 REQ-009">
 ## Implement `patina doctor --fix` interactive remediation
 
 Extend `doctor` with `--fix`: enumerate each finding for which Patina knows

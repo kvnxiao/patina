@@ -99,6 +99,27 @@ impl Fixture {
         cmd.output().expect("spawn patina")
     }
 
+    /// Invoke `patina` with `args` and a working directory of `cwd`,
+    /// isolating repo + state + home exactly as [`Fixture::run`] does. Used by
+    /// commands whose behaviour depends on the process CWD (e.g.
+    /// `doctor --fix` records the CWD as the default repository).
+    pub fn run_in(&self, cwd: &Utf8Path, args: &[&str], extra: &[(&str, &str)]) -> Output {
+        let bin = env!("CARGO_BIN_EXE_patina");
+        let mut cmd = Command::new(bin);
+        cmd.args(args)
+            .current_dir(cwd.as_std_path())
+            .env("PATINA_REPO", self.root.as_str())
+            .env("HOME", self.home.as_str())
+            .env("USERPROFILE", self.home.as_str())
+            .env("XDG_STATE_HOME", self.state.as_str())
+            .env("LOCALAPPDATA", self.state.as_str())
+            .env_remove("PATINA_PROFILE");
+        for (k, v) in extra {
+            cmd.env(k, v);
+        }
+        cmd.output().expect("spawn patina")
+    }
+
     /// Invoke `patina apply` with `args`, isolating repo + state + home.
     /// Extra environment pairs are layered on last. Delegates to
     /// [`Fixture::run`] with `apply` prepended.

@@ -6,11 +6,19 @@
 //! finding set is the complete v1.0 set; adding to it requires a SPEC
 //! amendment (DEC-004 keeps cloud-sync detection out of scope).
 //!
-//! This module implements the read-only path only (no `--fix`); T-011 adds
-//! the interactive remediation. The read-only path acquires only the SHARED
-//! advisory lock (REQ-009) with the read-only escape hatch: a
+//! The read-only path (no `--fix`) acquires only the SHARED advisory lock
+//! (REQ-009) with the read-only escape hatch: a
 //! [`SHARED_TIMEOUT`](patina_core::SHARED_TIMEOUT) expiry warns and proceeds
 //! rather than blocking the user.
+//!
+//! The `--fix` path (REQ-006) is mutating: it acquires the EXCLUSIVE lock,
+//! then walks the fixable findings — Developer Mode missing on Windows and a
+//! missing `default_repo` pointer — prompting per finding (or auto-accepting
+//! under `--yes`) and remediating on accept. Non-fixable findings (UNC paths,
+//! OS-too-old) are still surfaced with their warning. A non-TTY `--fix`
+//! without `--yes` cannot prompt, so it refuses with exit 1 naming the missing
+//! flag. Each remediation that runs emits a structured `tracing` event
+//! recording the finding code, the chosen remediation, and the outcome.
 //!
 //! Exit codes follow REQ-005: 0 when only warning/info findings were raised;
 //! 1 only on an error-level finding. The v1.0 finding set has no error-level
@@ -24,8 +32,11 @@
 //! Windows-specific reads gated behind the [`Inputs`] struct the caller fills.
 
 use crate::cli::DoctorArgs;
+use crate::cmd::apply::PromptReader;
+use crate::cmd::apply::Tty;
 use crate::exit_code::ExitCode;
 use crate::output::reporter::Reporter;
+use anyhow::Context;
 use anyhow::Result;
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
@@ -37,14 +48,17 @@ use patina_core::LockError;
 use patina_core::LockKind;
 use patina_core::SHARED_TIMEOUT;
 use patina_core::acquire_lock;
+use patina_core::canonicalize_path;
 use patina_core::dev_mode_status;
 use patina_core::discover_modules;
+use patina_core::exclusive_timeout;
 use patina_core::is_unc_path;
 use patina_core::parse_module_config;
 use patina_core::persisted_default_present;
 use patina_core::resolve_repository_root;
 use patina_core::resolve_state_dir;
 use patina_core::windows_build_supports_dev_mode;
+use patina_core::write_persisted_default;
 
 /// A single doctor finding (REQ-005). Carries a stable [`FindingCode`], a
 /// [`Level`], a human message, and the path the finding concerns when one
@@ -151,22 +165,45 @@ pub struct Inputs {
     pub default_repo_present: bool,
 }
 
-/// Run `patina doctor` (read-only path). Returns the process exit code.
+/// Run `patina doctor`. Returns the process exit code.
+///
+/// Without `--fix` this is the read-only diagnostic path: acquire the SHARED
+/// lock (with the read-only escape hatch) and report findings. With `--fix`
+/// (REQ-006) it is the mutating remediation path: acquire the EXCLUSIVE lock,
+/// then prompt-and-remediate each fixable finding.
 ///
 /// # Errors
 ///
 /// Returns an error (exit 1) when the per-machine state directory cannot be
-/// resolved. Repository-discovery and manifest-parse failures are not fatal:
-/// doctor is a diagnostic, so it reports what it can and treats an
-/// unresolvable repository as "no repository-scoped findings" rather than
-/// aborting. A shared-lock timeout is likewise downgraded to a stderr warning
-/// (REQ-009 read-only escape hatch), not an error.
-pub fn run(args: &DoctorArgs, reporter: &mut impl Reporter) -> Result<i32> {
+/// resolved. On the read-only path, repository-discovery and manifest-parse
+/// failures are not fatal: doctor is a diagnostic, so it reports what it can
+/// and treats an unresolvable repository as "no repository-scoped findings"
+/// rather than aborting; a shared-lock timeout is downgraded to a stderr
+/// warning (REQ-009 read-only escape hatch). On the `--fix` path an
+/// exclusive-lock timeout maps to exit 4 via the engine-error chain, and a
+/// remediation failure (the persisted-default write, or the Windows helper
+/// running but leaving the flag off) is a hard error (exit 1).
+pub fn run(
+    args: &DoctorArgs,
+    tty: Tty,
+    reader: &mut impl PromptReader,
+    reporter: &mut impl Reporter,
+) -> Result<i32> {
     let state = resolve_state_dir().map_err(EngineError::from)?;
 
-    // REQ-009: acquire only the SHARED lock for the read-only path, with the
-    // read-only escape hatch — a timeout warns and proceeds rather than
-    // blocking the user behind a concurrent mutating apply.
+    if args.fix {
+        run_fix(args, &state, tty, reader, reporter)
+    } else {
+        run_report(args, &state, reporter)
+    }
+}
+
+/// The read-only diagnostic path (no `--fix`).
+///
+/// Acquires only the SHARED lock, with the read-only escape hatch — a timeout
+/// warns and proceeds rather than blocking the user behind a concurrent
+/// mutating apply.
+fn run_report(args: &DoctorArgs, state: &Utf8Path, reporter: &mut impl Reporter) -> Result<i32> {
     let lock_path = state.join("lock");
     let _guard = match acquire_lock(&lock_path, LockKind::Shared, SHARED_TIMEOUT) {
         Ok(guard) => Some(guard),
@@ -180,7 +217,7 @@ pub fn run(args: &DoctorArgs, reporter: &mut impl Reporter) -> Result<i32> {
         Err(other) => return Err(EngineError::Lock(other).into()),
     };
 
-    let inputs = gather_inputs(&state);
+    let inputs = gather_inputs(state);
     let findings = compute_findings(&inputs);
 
     if args.json {
@@ -189,6 +226,203 @@ pub fn run(args: &DoctorArgs, reporter: &mut impl Reporter) -> Result<i32> {
         render_human(&findings, reporter);
     }
     Ok(exit_code(&findings).code())
+}
+
+/// The interactive remediation path (`--fix`, REQ-006).
+///
+/// A non-TTY `--fix` without `--yes` cannot prompt, so it refuses up front
+/// with exit 1 (REQ-006) before taking any lock or mutating anything. With a
+/// TTY (or `--yes`) it acquires the EXCLUSIVE lock (REQ-009), recomputes the
+/// findings under the lock, then walks each fixable finding: prompt (or
+/// auto-accept under `--yes`) and remediate on accept. Non-fixable findings
+/// still surface as warnings. Each remediation that runs emits a structured
+/// `tracing` event (REQ-006).
+fn run_fix(
+    args: &DoctorArgs,
+    state: &Utf8Path,
+    tty: Tty,
+    reader: &mut impl PromptReader,
+    reporter: &mut impl Reporter,
+) -> Result<i32> {
+    // Non-TTY without --yes: no per-finding consent is possible, so refuse
+    // before acquiring the lock or mutating anything (REQ-006).
+    if !args.yes && tty == Tty::NonInteractive {
+        reporter.warn(
+            "`patina doctor --fix` cannot prompt in a non-TTY shell; \
+             pass --yes to accept every remediation automatically",
+        );
+        return Ok(ExitCode::Generic.code());
+    }
+
+    // REQ-009: take the EXCLUSIVE lock before any mutation — distinct from the
+    // read-only path's shared lock. A contention timeout reaches the exit-4
+    // mapping through the engine-error chain.
+    let lock_path = state.join("lock");
+    let _guard = acquire_lock(&lock_path, LockKind::Exclusive, exclusive_timeout())
+        .map_err(EngineError::from)
+        .context("failed to acquire the exclusive lock")?;
+
+    // Recompute findings under the lock so the remediation acts on the state
+    // no concurrent mutator can be racing.
+    let inputs = gather_inputs(state);
+    let findings = compute_findings(&inputs);
+
+    for finding in &findings {
+        match finding.code {
+            FindingCode::NoDefaultRepo => {
+                fix_default_repo(args, state, tty, reader, reporter)?;
+            }
+            FindingCode::WinDevMode => {
+                fix_dev_mode(args, tty, reader, reporter)?;
+            }
+            // Non-fixable findings: surface the warning, name why Patina
+            // cannot remedy them, and move on (REQ-006).
+            FindingCode::WinUnc | FindingCode::WinOsOld => {
+                reporter.warn(&format!(
+                    "[{}] {} is not auto-fixable: {}",
+                    finding.level.label(),
+                    finding.code.label(),
+                    finding.message
+                ));
+            }
+        }
+    }
+
+    if findings.is_empty() {
+        reporter.line("doctor --fix: no findings; nothing to remediate.");
+    }
+    Ok(ExitCode::Success.code())
+}
+
+/// Remediate the `DOC-NO-DEFAULT-REPO` finding by writing the current working
+/// directory's canonical absolute path as the persisted default (REQ-006). The
+/// CWD must be a valid Patina repository; canonicalization failure is a hard
+/// error (exit 1).
+fn fix_default_repo(
+    args: &DoctorArgs,
+    state: &Utf8Path,
+    tty: Tty,
+    reader: &mut impl PromptReader,
+    reporter: &mut impl Reporter,
+) -> Result<()> {
+    if !confirm(
+        args,
+        tty,
+        reader,
+        reporter,
+        "Record the current directory as the default repository?",
+    ) {
+        return Ok(());
+    }
+
+    let cwd = std::env::current_dir().context("failed to read the current directory")?;
+    let cwd = Utf8PathBuf::from_path_buf(cwd)
+        .map_err(|p| anyhow::anyhow!("current directory `{}` is not valid UTF-8", p.display()))?;
+    let canonical = canonicalize_path(&cwd).map_err(EngineError::from)?;
+    write_persisted_default(state, &canonical).map_err(EngineError::from)?;
+
+    tracing::info!(
+        finding = FindingCode::NoDefaultRepo.label(),
+        remediation = "write_default_repo",
+        outcome = "written",
+        repo = %canonical,
+        "doctor --fix wrote the persisted default repository pointer",
+    );
+    reporter.line(&format!("Recorded {canonical} as the default repository."));
+    Ok(())
+}
+
+/// Remediate the `DOC-WIN-DEVMODE` finding by driving the one-time UAC
+/// elevation flow (REQ-007) and re-checking the registry afterward (REQ-006).
+/// Off Windows this finding never fires, so the body is Windows-only; the
+/// non-Windows stub keeps the single call site compiling on every platform.
+#[cfg(windows)]
+fn fix_dev_mode(
+    args: &DoctorArgs,
+    tty: Tty,
+    reader: &mut impl PromptReader,
+    reporter: &mut impl Reporter,
+) -> Result<()> {
+    if !confirm(
+        args,
+        tty,
+        reader,
+        reporter,
+        "Enable Developer Mode via a one-time UAC elevation?",
+    ) {
+        return Ok(());
+    }
+
+    reporter.line("Requesting one-time elevation to enable Developer Mode…");
+    match patina_core::launch_elevate_helper().context("failed to launch the elevation helper")? {
+        patina_core::ElevationOutcome::EnabledNow => {
+            tracing::info!(
+                finding = FindingCode::WinDevMode.label(),
+                remediation = "elevate_dev_mode",
+                outcome = "enabled",
+                "doctor --fix enabled Developer Mode via the UAC helper",
+            );
+            reporter.line("Developer Mode is now enabled.");
+            Ok(())
+        }
+        patina_core::ElevationOutcome::Declined => {
+            tracing::info!(
+                finding = FindingCode::WinDevMode.label(),
+                remediation = "elevate_dev_mode",
+                outcome = "declined",
+                "doctor --fix elevation declined; Developer Mode left disabled",
+            );
+            reporter.warn(
+                "Developer Mode was not enabled (elevation declined); \
+                 re-run `patina doctor --fix` to try again.",
+            );
+            Ok(())
+        }
+        patina_core::ElevationOutcome::RanButStillDisabled => Err(anyhow::anyhow!(
+            "the elevation helper ran but Developer Mode is still disabled; \
+             the registry value {DEV_MODE_REGISTRY_PATH} did not change to 1"
+        )),
+    }
+}
+
+/// Non-Windows stub: the `DOC-WIN-DEVMODE` finding never fires off Windows
+/// (the three `DOC-WIN-*` findings are gated to `is_windows` in
+/// [`compute_findings`]), so this arm is unreachable in practice. It exists
+/// only so the `--fix` match compiles without a `#[cfg]` at the call site.
+#[cfg(not(windows))]
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "signature parity with the fallible #[cfg(windows)] variant so the single call site in run_fix compiles on every platform"
+)]
+fn fix_dev_mode(
+    _args: &DoctorArgs,
+    _tty: Tty,
+    _reader: &mut impl PromptReader,
+    _reporter: &mut impl Reporter,
+) -> Result<()> {
+    Ok(())
+}
+
+/// Decide whether a fixable finding's remediation should run: `--yes` accepts
+/// unconditionally; a TTY prompts and reads the answer; a non-TTY without
+/// `--yes` never reaches here (`run_fix` refuses up front), so the
+/// `NonInteractive` arm conservatively declines.
+fn confirm(
+    args: &DoctorArgs,
+    tty: Tty,
+    reader: &mut impl PromptReader,
+    reporter: &mut impl Reporter,
+    question: &str,
+) -> bool {
+    match (args.yes, tty) {
+        (true, _) => true,
+        (false, Tty::NonInteractive) => false,
+        (false, Tty::Interactive) => {
+            reporter.prompt(&format!("{question} [y/N] "));
+            let answer = reader.read_line().unwrap_or_default();
+            matches!(answer.trim(), "y" | "Y")
+        }
+    }
 }
 
 /// Gather the host-state [`Inputs`] the finding computation reads.
@@ -352,6 +586,107 @@ fn render_human(findings: &[Finding], reporter: &mut impl Reporter) {
 mod tests {
     use super::*;
     use crate::output::reporter::BufferReporter;
+
+    /// A scripted prompt reader yielding a fixed sequence of lines.
+    struct ScriptedReader {
+        lines: std::collections::VecDeque<String>,
+    }
+
+    impl ScriptedReader {
+        fn new(lines: &[&str]) -> Self {
+            Self {
+                lines: lines.iter().map(|s| (*s).to_owned()).collect(),
+            }
+        }
+    }
+
+    impl PromptReader for ScriptedReader {
+        fn read_line(&mut self) -> Option<String> {
+            self.lines.pop_front()
+        }
+    }
+
+    fn fix_args(yes: bool) -> DoctorArgs {
+        DoctorArgs {
+            fix: true,
+            json: false,
+            yes,
+        }
+    }
+
+    #[test]
+    fn confirm_yes_proceeds_without_reading() {
+        // --yes accepts unconditionally and never consults the reader.
+        let mut reader = ScriptedReader::new(&[]);
+        let mut reporter = BufferReporter::new();
+        assert!(confirm(
+            &fix_args(true),
+            Tty::NonInteractive,
+            &mut reader,
+            &mut reporter,
+            "Proceed?",
+        ));
+    }
+
+    #[test]
+    fn confirm_non_tty_without_yes_declines() {
+        // The NonInteractive arm declines; run_fix refuses before we get here,
+        // so this conservative default never auto-remediates.
+        let mut reader = ScriptedReader::new(&[]);
+        let mut reporter = BufferReporter::new();
+        assert!(!confirm(
+            &fix_args(false),
+            Tty::NonInteractive,
+            &mut reader,
+            &mut reporter,
+            "Proceed?",
+        ));
+    }
+
+    #[test]
+    fn confirm_tty_reads_the_answer() {
+        let mut reporter = BufferReporter::new();
+        let mut yes_reader = ScriptedReader::new(&["y\n"]);
+        assert!(confirm(
+            &fix_args(false),
+            Tty::Interactive,
+            &mut yes_reader,
+            &mut reporter,
+            "Proceed?",
+        ));
+
+        let mut no_reader = ScriptedReader::new(&["n\n"]);
+        assert!(!confirm(
+            &fix_args(false),
+            Tty::Interactive,
+            &mut no_reader,
+            &mut reporter,
+            "Proceed?",
+        ));
+    }
+
+    #[test]
+    fn fix_in_non_tty_without_yes_refuses_exit_one() {
+        // REQ-006: a non-TTY --fix without --yes cannot prompt, so it refuses
+        // with exit 1 naming the missing --yes flag — before any lock or
+        // mutation. The state path is never touched because we return first.
+        let mut reader = ScriptedReader::new(&[]);
+        let mut reporter = BufferReporter::new();
+        let code = run_fix(
+            &fix_args(false),
+            Utf8Path::new("/nonexistent/state"),
+            Tty::NonInteractive,
+            &mut reader,
+            &mut reporter,
+        )
+        .expect("the non-TTY refusal is a clean exit, not an error");
+        assert_eq!(code, ExitCode::Generic.code());
+        assert!(
+            reporter.err.contains("--yes"),
+            "the refusal must name --yes, got: {}",
+            reporter.err
+        );
+    }
 
     fn base_inputs() -> Inputs {
         Inputs {

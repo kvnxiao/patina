@@ -67,7 +67,15 @@ async fn main() -> ! {
             cmd::apply::run(&args, tty, &mut reader, &mut reporter).await
         }
         Command::Status(args) => cmd::status::run(&args, &mut reporter).await,
-        Command::Doctor(args) => cmd::doctor::run(&args, &mut reporter),
+        Command::Doctor(args) => {
+            let tty = if std::io::stdin().is_terminal() {
+                Tty::Interactive
+            } else {
+                Tty::NonInteractive
+            };
+            let mut reader = StdinReader;
+            cmd::doctor::run(&args, tty, &mut reader, &mut reporter)
+        }
         Command::Rollback(args) => {
             let tty = if std::io::stdin().is_terminal() {
                 Tty::Interactive
