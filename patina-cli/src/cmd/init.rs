@@ -199,9 +199,13 @@ mod tests {
             doc.get("initialized").and_then(serde_json::Value::as_str),
             Some("/repo/dot")
         );
+        // Derive the expectation from the same public API the envelope uses
+        // so the assertion is platform-correct: `default_repo_pointer_path`
+        // joins with the OS separator (`\` on Windows, `/` elsewhere), and a
+        // hardcoded forward-slash literal would spuriously fail on Windows.
         assert_eq!(
             doc.get("default_repo").and_then(serde_json::Value::as_str),
-            Some("/state/patina/default_repo")
+            Some(patina_core::default_repo_pointer_path(state).as_str())
         );
     }
 
