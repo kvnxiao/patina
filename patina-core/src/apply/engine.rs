@@ -64,8 +64,12 @@ use crate::state_dir::resolve as resolve_state_dir;
 use crate::template::Engine;
 use crate::variables::Builtins;
 use crate::variables::Resolver;
+use crate::windows::GateDecision;
+use crate::windows::HostDevModeProbe;
+use crate::windows::decide_symlink_gate;
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
+use tracing::warn;
 
 /// Manifest filename for the repository root and each module.
 const MANIFEST_FILENAME: &str = "patina.toml";
@@ -355,6 +359,27 @@ pub async fn execute(
     // Recover any prior partial apply, under the held lock, before
     // computing fresh work.
     recover_orphans(&journal_dir, &backups_dir)?;
+
+    // Windows-only symlink-elevation gate (SPEC-0002 REQ-007). Runs after
+    // recovery and BEFORE the first backup / materialize, so a plan that
+    // needs Developer Mode cannot mutate the filesystem without consent.
+    // This is the engine-side backstop: the CLI normally drives the UAC
+    // prompt before calling `execute`, so a `RequireElevation` verdict here
+    // means the gate was reached without that orchestration — refuse to
+    // proceed with a typed signal (REQ-007). On a host that is already
+    // elevated, proceed but warn (running Patina elevated is discouraged).
+    // On macOS / Linux `HostDevModeProbe` reports `NotWindows`, so the
+    // decision is always `Proceed`: no registry read, no early return.
+    match decide_symlink_gate(resolved, &HostDevModeProbe::default()) {
+        GateDecision::Proceed => {}
+        GateDecision::ProceedElevatedWarning => {
+            warn!(
+                "running Patina elevated to create symbolic links; prefer enabling \
+                 Developer Mode (`patina doctor --fix`) and running unelevated"
+            );
+        }
+        GateDecision::RequireElevation => return Err(EngineError::DevModeRequired),
+    }
 
     // Resolve every hook's shell up front so an unresolved explicit shell
     // aborts before any file operation runs.

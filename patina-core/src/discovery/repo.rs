@@ -79,6 +79,16 @@ pub enum RepoDiscoveryError {
         #[source]
         source: crate::paths::PathError,
     },
+
+    /// Writing the persisted-default pointer file failed.
+    #[error("failed to write persisted default-repo pointer at {path}: {source}")]
+    WritePersistedDefault {
+        /// The pointer-file path that could not be written.
+        path: Utf8PathBuf,
+        /// The underlying filesystem error.
+        #[source]
+        source: std::io::Error,
+    },
 }
 
 /// Resolve the dotfiles repository root.
@@ -149,6 +159,92 @@ pub fn resolve_repository_root_with(
         env_attempt,
         walk_up_from: cwd.to_path_buf(),
         persisted_default_attempt: persisted_attempt,
+    })
+}
+
+/// Compute the path of the persisted default-repo pointer under an
+/// explicit state directory (`<state_dir>/default_repo`).
+///
+/// Takes the resolved per-machine state directory (the output of
+/// `state_dir::resolve()`) rather than re-resolving from the
+/// environment, so callers — including the integration harness — can
+/// point it at an isolated tempdir. Reuses
+/// [`PERSISTED_DEFAULT_FILENAME`] so the write path cannot drift from
+/// the read path on the filename.
+///
+/// # Examples
+///
+/// ```
+/// use camino::Utf8Path;
+/// use patina_core::discovery::repo::default_repo_pointer_path;
+///
+/// let pointer = default_repo_pointer_path(Utf8Path::new("/var/state/patina"));
+/// assert_eq!(pointer, Utf8Path::new("/var/state/patina/default_repo"));
+/// ```
+#[must_use = "the computed pointer path should be used"]
+pub fn default_repo_pointer_path(state_dir: &Utf8Path) -> Utf8PathBuf {
+    state_dir.join(PERSISTED_DEFAULT_FILENAME)
+}
+
+/// Report whether the persisted default-repo pointer exists under
+/// `state_dir`.
+///
+/// Backs `doctor`'s missing-pointer finding (REQ-005, an info-level
+/// note suggesting `patina init`; `--fix` remediation in REQ-006): a
+/// plain existence check on [`default_repo_pointer_path`], no read or
+/// validation.
+///
+/// # Examples
+///
+/// ```
+/// use camino::Utf8Path;
+/// use patina_core::discovery::repo::persisted_default_present;
+///
+/// // A state directory with no pointer file reports absent.
+/// assert!(!persisted_default_present(Utf8Path::new("/nonexistent/state")));
+/// ```
+#[must_use = "the presence result should be inspected"]
+pub fn persisted_default_present(state_dir: &Utf8Path) -> bool {
+    default_repo_pointer_path(state_dir).exists()
+}
+
+/// Write `repo` as the persisted default-repo pointer under
+/// `state_dir`.
+///
+/// Writes the path as one UTF-8 line with a trailing newline to
+/// `<state_dir>/default_repo`, matching the format the private
+/// `read_persisted_default` reader trims and parses. `repo` must already be
+/// the canonical absolute repository path — callers canonicalize via
+/// [`crate::paths::canonicalize`] before calling; this function does
+/// not canonicalize.
+///
+/// # Errors
+///
+/// Returns [`RepoDiscoveryError::WritePersistedDefault`] when the
+/// pointer file cannot be written.
+///
+/// # Examples
+///
+/// ```no_run
+/// use camino::Utf8Path;
+/// use patina_core::discovery::repo::write_persisted_default;
+///
+/// write_persisted_default(
+///     Utf8Path::new("/var/state/patina"),
+///     Utf8Path::new("/home/alice/dotfiles"),
+/// )?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+pub fn write_persisted_default(
+    state_dir: &Utf8Path,
+    repo: &Utf8Path,
+) -> Result<(), RepoDiscoveryError> {
+    let pointer = default_repo_pointer_path(state_dir);
+    fs_err::write(pointer.as_std_path(), format!("{repo}\n")).map_err(|source| {
+        RepoDiscoveryError::WritePersistedDefault {
+            path: pointer,
+            source,
+        }
     })
 }
 

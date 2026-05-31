@@ -221,3 +221,126 @@ fn missing_pager_falls_back_with_warning() {
         "stderr must warn about the missing pager, got: {stderr}"
     );
 }
+
+#[cfg(not(windows))]
+#[test]
+fn non_windows_symlink_apply_skips_dev_mode_flow() {
+    // CHK-013 mirror / task scenario 1: on macOS or Linux, a symlink
+    // `[[file]]` apply proceeds exactly as in SPEC-0001 — the Developer
+    // Mode gate reports `Proceed` (the probe is `NotWindows`), so no
+    // registry read happens and `patina-elevate` is never spawned. The
+    // proof is positive: the symlink lands and the command exits 0, which
+    // is only possible if the gate did not short-circuit the apply.
+    let f = Fixture::new();
+    let module = f.module(
+        "shell",
+        "[[file]]\nsource = \"rc\"\ntarget = \"~/.rc\"\nmode = \"symlink\"\n",
+    );
+    fs_err::write(module.join("rc"), "export A=1\n").expect("write source");
+
+    let out = f.apply(&["--yes"]);
+
+    assert_eq!(
+        code(&out),
+        0,
+        "non-Windows symlink apply must exit 0; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    // The symlink materialized, pointing back at the repo source: the gate
+    // proceeded rather than refusing to mutate.
+    let target = f.home.join(".rc");
+    let meta = fs_err::symlink_metadata(&target).expect("symlink target must exist");
+    assert!(
+        meta.file_type().is_symlink(),
+        "the target must be a symbolic link, proving the apply mutated"
+    );
+
+    // Nothing in the output mentions the elevation helper or Developer Mode
+    // — the Windows-only flow was not entered.
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        !combined.contains("patina-elevate"),
+        "the elevation helper must never be named on non-Windows, got: {combined}"
+    );
+    assert!(
+        !combined.contains("Developer Mode"),
+        "the Developer Mode flow must not run on non-Windows, got: {combined}"
+    );
+}
+
+// CHK-012: on a Windows host with Developer Mode OFF and a symlink
+// `[[file]]`, a `patina apply --yes` whose UAC consent is declined creates
+// no symbolic link, names `Developer Mode` and `patina doctor --fix` on
+// stderr, and exits 5. Gated `#[ignore]` because it needs a real Windows
+// host and a human (or harness) to decline the UAC dialog; CI is not
+// Windows.
+#[cfg(windows)]
+#[test]
+#[ignore = "requires a Windows host with Developer Mode off and a declined UAC dialog"]
+fn windows_declined_uac_exits_5_and_creates_no_symlink() {
+    let f = Fixture::new();
+    let module = f.module(
+        "shell",
+        "[[file]]\nsource = \"rc\"\ntarget = \"~/.rc\"\nmode = \"symlink\"\n",
+    );
+    fs_err::write(module.join("rc"), "export A=1\n").expect("write source");
+
+    let out = f.apply(&["--yes"]);
+
+    assert_eq!(code(&out), 5, "declined UAC must exit 5");
+    let target = f.home.join(".rc");
+    assert!(
+        fs_err::symlink_metadata(&target).is_err(),
+        "no symbolic link may be created when elevation is declined"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("Developer Mode") && stderr.contains("patina doctor --fix"),
+        "stderr must name Developer Mode and `patina doctor --fix`, got: {stderr}"
+    );
+}
+
+// CHK-013: on a Windows host with Developer Mode ON, the apply creates the
+// symlink with no UAC prompt and no `patina-elevate.exe` spawn. Gated
+// `#[ignore]` because it needs a real Windows host with Developer Mode
+// enabled; CI is not Windows.
+#[cfg(windows)]
+#[test]
+#[ignore = "requires a Windows host with Developer Mode enabled"]
+fn windows_dev_mode_on_creates_symlink_without_prompt() {
+    let f = Fixture::new();
+    let module = f.module(
+        "shell",
+        "[[file]]\nsource = \"rc\"\ntarget = \"~/.rc\"\nmode = \"symlink\"\n",
+    );
+    fs_err::write(module.join("rc"), "export A=1\n").expect("write source");
+
+    let out = f.apply(&["--yes"]);
+
+    assert_eq!(
+        code(&out),
+        0,
+        "Developer Mode ON must apply cleanly; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let target = f.home.join(".rc");
+    let meta = fs_err::symlink_metadata(&target).expect("symlink target must exist");
+    assert!(
+        meta.file_type().is_symlink(),
+        "the symbolic link must be created when Developer Mode is on"
+    );
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        !combined.contains("patina-elevate"),
+        "no elevation helper may be spawned when Developer Mode is on, got: {combined}"
+    );
+}

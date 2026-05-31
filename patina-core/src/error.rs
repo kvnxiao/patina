@@ -32,6 +32,11 @@ pub enum EngineError {
     #[error(transparent)]
     ConfigParse(#[from] crate::config::ConfigParseError),
 
+    /// Writing or editing a `patina.toml` manifest failed (SPEC-0002
+    /// REQ-002 / REQ-003).
+    #[error(transparent)]
+    ConfigWrite(#[from] crate::config::ConfigWriteError),
+
     /// Per-machine state directory resolution failed (REQ-016).
     #[error(transparent)]
     StateDir(#[from] crate::state_dir::StateDirError),
@@ -79,4 +84,19 @@ pub enum EngineError {
     /// `patina rollback` failed to reverse a prior apply (REQ-019).
     #[error(transparent)]
     Rollback(#[from] crate::rollback::RollbackError),
+
+    /// On Windows, the plan creates symbolic links but Developer Mode is
+    /// disabled and the process is not elevated, so the engine refused to
+    /// mutate the filesystem (SPEC-0002 REQ-007). This is the engine-side
+    /// backstop: the CLI normally drives the one-time UAC elevation flow
+    /// *before* calling `execute`, so this variant only surfaces when the
+    /// gate is reached without that orchestration. The message names
+    /// Developer Mode and `patina doctor --fix` so even the backstop path
+    /// is actionable.
+    #[error(
+        "Developer Mode is disabled; creating symbolic links requires it. \
+         Run `patina doctor --fix` to enable Developer Mode, or re-run \
+         `patina apply` and accept the elevation prompt"
+    )]
+    DevModeRequired,
 }

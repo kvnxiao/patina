@@ -54,6 +54,23 @@ pub struct Cli {
 /// Top-level subcommands.
 #[derive(Debug, Subcommand)]
 pub enum Command {
+    /// Scaffold a root `patina.toml` and persist the default-repo pointer.
+    Init(InitArgs),
+
+    /// Bring an existing dotfile under management: move it into a module and
+    /// write a `[[file]]` entry.
+    Add(AddArgs),
+
+    /// Unmanage a target: remove its `[[file]]` entry and replace the target
+    /// with a regular file holding the last-applied content. `--purge`
+    /// deletes the target outright.
+    Remove(RemoveArgs),
+
+    /// Promote a drifted copy-mode target: copy its current bytes back into
+    /// its repository source, then re-apply so the journal records the new
+    /// content. Refuses on template-rendered and symbolic-link targets.
+    Promote(PromoteArgs),
+
     /// Materialize the declared configuration at its targets.
     Apply(ApplyArgs),
 
@@ -62,6 +79,12 @@ pub enum Command {
 
     /// Reverse the most recent successful apply via the journal and backups.
     Rollback(RollbackArgs),
+
+    /// Inspect the environment for known problems (UNC repository paths,
+    /// missing Windows Developer Mode, OS-too-old, missing default repo).
+    /// Read-only by default; `--fix` interactively remediates fixable
+    /// findings.
+    Doctor(DoctorArgs),
 
     /// Debugging utilities. Hidden from the top-level help summary but
     /// documented; `journal` decodes a binary plan file post-mortem.
@@ -84,6 +107,107 @@ pub struct DebugJournalArgs {
     pub path: Utf8PathBuf,
 }
 
+/// Flags for `patina init`.
+#[derive(Debug, Args, Default)]
+pub struct InitArgs {
+    /// Target directory to initialize. Defaults to the current working
+    /// directory when omitted. Created if it does not yet exist.
+    #[arg(value_name = "path")]
+    pub path: Option<Utf8PathBuf>,
+
+    /// Emit a JSON envelope instead of human output.
+    #[arg(long)]
+    pub json: bool,
+
+    /// Proceed without prompting. `init` is a mutating command (REQ-009);
+    /// this is accepted for parity with the other mutating subcommands.
+    #[arg(long)]
+    pub yes: bool,
+}
+
+/// Flags for `patina add` (REQ-002).
+///
+/// The three mode flags (`--symlink` / `--copy` / `--template`) form a
+/// mutually-exclusive clap group: declaring two produces a usage error
+/// (exit 2). In v1.0 `add` exposes only these three modes — not
+/// `symlink-dir` / `copy-tree` (a v1.0 non-goal).
+#[derive(Debug, Args, Default)]
+#[command(group = clap::ArgGroup::new("mode").multiple(false))]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "this is a clap-derived flag struct: each bool is an independent CLI flag (the three mode flags plus --json / --yes), not a state machine that would be better modelled as an enum. The mode flags are unified at use-site into the AddMode enum."
+)]
+pub struct AddArgs {
+    /// The dotfile to bring under management. Absolute or HOME-relative
+    /// (a leading `~` is expanded).
+    #[arg(value_name = "path")]
+    pub path: Utf8PathBuf,
+
+    /// The module subdirectory to file the entry under. Prompted for in a
+    /// TTY when omitted; required in a non-TTY shell.
+    #[arg(long, value_name = "name")]
+    pub module: Option<String>,
+
+    /// File the entry as a symbolic link.
+    #[arg(long, group = "mode")]
+    pub symlink: bool,
+
+    /// File the entry as a byte copy.
+    #[arg(long, group = "mode")]
+    pub copy: bool,
+
+    /// File the entry as a rendered template.
+    #[arg(long, group = "mode")]
+    pub template: bool,
+
+    /// Emit a JSON envelope instead of human output.
+    #[arg(long)]
+    pub json: bool,
+
+    /// Proceed without prompting. `add` is a mutating command (REQ-009).
+    #[arg(long)]
+    pub yes: bool,
+}
+
+/// Flags for `patina remove` (REQ-003).
+#[derive(Debug, Args, Default)]
+pub struct RemoveArgs {
+    /// The managed target to unmanage. Absolute or HOME-relative (a leading
+    /// `~` is expanded).
+    #[arg(value_name = "path")]
+    pub path: Utf8PathBuf,
+
+    /// Delete the target from disk entirely instead of replacing it with a
+    /// regular file holding the last-applied content.
+    #[arg(long)]
+    pub purge: bool,
+
+    /// Emit a JSON envelope instead of human output.
+    #[arg(long)]
+    pub json: bool,
+
+    /// Proceed without prompting. `remove` is a mutating command (REQ-009).
+    #[arg(long)]
+    pub yes: bool,
+}
+
+/// Flags for `patina promote` (REQ-004).
+#[derive(Debug, Args, Default)]
+pub struct PromoteArgs {
+    /// The drifted copy-mode target to promote. Absolute or HOME-relative (a
+    /// leading `~` is expanded).
+    #[arg(value_name = "target")]
+    pub target: Utf8PathBuf,
+
+    /// Emit a JSON envelope instead of human output.
+    #[arg(long)]
+    pub json: bool,
+
+    /// Proceed without prompting. `promote` is a mutating command (REQ-009).
+    #[arg(long)]
+    pub yes: bool,
+}
+
 /// Flags for `patina rollback`.
 #[derive(Debug, Args, Default)]
 pub struct RollbackArgs {
@@ -94,6 +218,29 @@ pub struct RollbackArgs {
     /// Emit a JSON envelope instead of human output.
     #[arg(long)]
     pub json: bool,
+}
+
+/// Flags for `patina doctor` (REQ-005, REQ-006).
+///
+/// The read-only path (no `--fix`) acquires only the shared lock and emits
+/// findings; `--fix` (wired in T-011) acquires the exclusive lock and
+/// interactively remediates fixable findings, with `--yes` auto-accepting
+/// every prompt.
+#[derive(Debug, Args, Default)]
+pub struct DoctorArgs {
+    /// Interactively remediate fixable findings instead of only reporting
+    /// them. Mutating: acquires the exclusive lock (T-011).
+    #[arg(long)]
+    pub fix: bool,
+
+    /// Emit a JSON envelope instead of human output.
+    #[arg(long)]
+    pub json: bool,
+
+    /// With `--fix`, accept every remediation prompt automatically. Required
+    /// to run `--fix` in a non-TTY shell (T-011).
+    #[arg(long)]
+    pub yes: bool,
 }
 
 /// Flags for `patina status`.

@@ -26,9 +26,14 @@ use anyhow::Result;
 use anyhow::anyhow;
 use patina_core::ApplyRequest;
 use patina_core::ApplyResult;
+#[cfg(windows)]
+use patina_core::DEV_MODE_REGISTRY_PATH;
 use patina_core::ForceDeploy;
+use patina_core::GateDecision;
+use patina_core::HostDevModeProbe;
 use patina_core::LockPolicy;
 use patina_core::ResolvedPlan;
+use patina_core::decide_symlink_gate;
 use patina_core::execute_plan;
 use patina_core::plan_apply;
 
@@ -107,11 +112,92 @@ pub async fn run(
         return Ok(ExitCode::UserDeclined.code());
     }
 
+    // Windows-only Developer Mode gate (REQ-007): if the plan creates
+    // symbolic links and Developer Mode is off (and we are not elevated),
+    // drive the one-time UAC elevation flow before mutating. On macOS /
+    // Linux this is always `Proceed`.
+    if let Some(exit) = drive_dev_mode_gate(&resolved, reporter)? {
+        return Ok(exit);
+    }
+
     let result = execute_plan(&resolved, &request, LockPolicy::Blocking)
         .await
         .context("apply execution failed")?;
     report_result(&result, reporter);
     Ok(exit_code_for(&result))
+}
+
+/// Drive the Windows Developer Mode symlink-elevation gate (REQ-007).
+///
+/// Returns `Ok(None)` when the apply may proceed (no symlink in the plan,
+/// not on Windows, Developer Mode already on, or the helper just enabled
+/// it). Returns `Ok(Some(code))` to short-circuit the command with a
+/// terminal exit code: `5` when the user declines the UAC consent dialog,
+/// honouring CHK-012's stderr-substring contract. Returns `Err` when the
+/// helper ran but the flag still reads off afterward (exit 1, REQ-007).
+///
+/// On macOS / Linux [`decide_symlink_gate`] reports `Proceed` (the probe is
+/// `NotWindows`), so this never reads the registry and never spawns the
+/// helper — proving the cross-platform guarantee.
+fn drive_dev_mode_gate(
+    resolved: &ResolvedPlan,
+    reporter: &mut impl Reporter,
+) -> Result<Option<i32>> {
+    match decide_symlink_gate(resolved, &HostDevModeProbe::default()) {
+        GateDecision::Proceed => Ok(None),
+        GateDecision::ProceedElevatedWarning => {
+            reporter.warn(
+                "Patina is running elevated; prefer enabling Developer Mode \
+                 (`patina doctor --fix`) and running unelevated",
+            );
+            Ok(None)
+        }
+        GateDecision::RequireElevation => drive_elevation(reporter),
+    }
+}
+
+/// Launch the one-time UAC helper and map its outcome to the command's
+/// control flow. Split out so the `#[cfg(windows)]` launch is isolated from
+/// the cross-platform gate decision above.
+#[cfg(windows)]
+fn drive_elevation(reporter: &mut impl Reporter) -> Result<Option<i32>> {
+    reporter.line(
+        "Developer Mode is required to create symbolic links. \
+         Requesting one-time elevation…",
+    );
+    match patina_core::launch_elevate_helper().context("failed to launch the elevation helper")? {
+        patina_core::ElevationOutcome::EnabledNow => Ok(None),
+        patina_core::ElevationOutcome::Declined => {
+            // CHK-012: stderr must name `Developer Mode` and
+            // `patina doctor --fix`; exit 5 (user declined).
+            reporter.warn(
+                "Developer Mode was not enabled (elevation declined). \
+                 Run `patina doctor --fix` to enable it, then re-run \
+                 `patina apply`.",
+            );
+            Ok(Some(ExitCode::UserDeclined.code()))
+        }
+        patina_core::ElevationOutcome::RanButStillDisabled => Err(anyhow!(
+            "the elevation helper ran but Developer Mode is still disabled; \
+             the registry value {DEV_MODE_REGISTRY_PATH} did not change to 1"
+        )),
+    }
+}
+
+/// Non-Windows builds never reach a `RequireElevation` verdict (the probe
+/// reports `NotWindows`), so this arm is unreachable in practice; it exists
+/// only so the cross-platform gate compiles without a `#[cfg]` at the call
+/// site. The `_reporter` is unused here.
+// The `Result` is never an `Err` on this platform, but the return type must
+// match the Windows variant above (which genuinely is fallible) so the
+// single call site compiles on every platform — hence the allow.
+#[cfg(not(windows))]
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "signature parity with the fallible #[cfg(windows)] variant"
+)]
+fn drive_elevation(_reporter: &mut impl Reporter) -> Result<Option<i32>> {
+    Ok(None)
 }
 
 /// JSON path: build the envelope and (when `--yes`) mutate.
@@ -126,6 +212,13 @@ async fn run_json(
         let document = json_envelope(resolved, "previewed");
         reporter.json(&document);
         return Ok(ExitCode::Success.code());
+    }
+
+    // Windows Developer Mode gate (REQ-007) applies to the JSON apply path
+    // too: a symlink-bearing plan on a dev-mode-disabled host drives the
+    // UAC flow before any mutation. No-op on macOS / Linux.
+    if let Some(exit) = drive_dev_mode_gate(resolved, reporter)? {
+        return Ok(exit);
     }
 
     let result = execute_plan(resolved, request, LockPolicy::Blocking)
@@ -264,7 +357,7 @@ fn parse_override(raw: &str) -> Result<(String, String)> {
 /// formatted `YYYYMMDDTHHMMSSZ` (matches the journal fixtures). The
 /// timestamp keys the journal filename only; it never appears in user
 /// output, so determinism of stdout is preserved.
-fn current_timestamp() -> String {
+pub(crate) fn current_timestamp() -> String {
     jiff::Timestamp::now()
         .strftime("%Y%m%dT%H%M%SZ")
         .to_string()

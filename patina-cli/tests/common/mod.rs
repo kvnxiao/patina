@@ -75,13 +75,14 @@ impl Fixture {
         .expect("resolve fixture state dir")
     }
 
-    /// Invoke `patina apply` with `args`, isolating repo + state + home.
-    /// Extra environment pairs are layered on last.
-    pub fn apply_with_env(&self, args: &[&str], extra: &[(&str, &str)]) -> Output {
+    /// Invoke `patina` with an arbitrary `args` vector, isolating repo +
+    /// state + home the same way every subcommand requires. The caller
+    /// supplies the subcommand and its flags as the leading elements of
+    /// `args`; extra environment pairs are layered on last.
+    pub fn run(&self, args: &[&str], extra: &[(&str, &str)]) -> Output {
         let bin = env!("CARGO_BIN_EXE_patina");
         let mut cmd = Command::new(bin);
-        cmd.arg("apply")
-            .args(args)
+        cmd.args(args)
             .env("PATINA_REPO", self.root.as_str())
             .env("HOME", self.home.as_str())
             .env("USERPROFILE", self.home.as_str())
@@ -96,6 +97,37 @@ impl Fixture {
             cmd.env(k, v);
         }
         cmd.output().expect("spawn patina")
+    }
+
+    /// Invoke `patina` with `args` and a working directory of `cwd`,
+    /// isolating repo + state + home exactly as [`Fixture::run`] does. Used by
+    /// commands whose behaviour depends on the process CWD (e.g.
+    /// `doctor --fix` records the CWD as the default repository).
+    pub fn run_in(&self, cwd: &Utf8Path, args: &[&str], extra: &[(&str, &str)]) -> Output {
+        let bin = env!("CARGO_BIN_EXE_patina");
+        let mut cmd = Command::new(bin);
+        cmd.args(args)
+            .current_dir(cwd.as_std_path())
+            .env("PATINA_REPO", self.root.as_str())
+            .env("HOME", self.home.as_str())
+            .env("USERPROFILE", self.home.as_str())
+            .env("XDG_STATE_HOME", self.state.as_str())
+            .env("LOCALAPPDATA", self.state.as_str())
+            .env_remove("PATINA_PROFILE");
+        for (k, v) in extra {
+            cmd.env(k, v);
+        }
+        cmd.output().expect("spawn patina")
+    }
+
+    /// Invoke `patina apply` with `args`, isolating repo + state + home.
+    /// Extra environment pairs are layered on last. Delegates to
+    /// [`Fixture::run`] with `apply` prepended.
+    pub fn apply_with_env(&self, args: &[&str], extra: &[(&str, &str)]) -> Output {
+        let mut full = Vec::with_capacity(args.len() + 1);
+        full.push("apply");
+        full.extend_from_slice(args);
+        self.run(&full, extra)
     }
 
     /// Invoke `patina apply` with `args` and no extra environment.

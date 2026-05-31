@@ -73,6 +73,70 @@ Re-running `patina apply` against unchanged source is a no-op: the same
 plan, no writes, and byte-identical stdout. Patina never overwrites a
 file it does not own without taking a backup first.
 
+## Commands
+
+Beyond `apply`, `status`, `rollback`, and `debug journal`, Patina ships
+five commands for setting up a repository and migrating existing
+dotfiles into management. Each of the mutating commands accepts two
+common flags:
+
+- `--json` emits a structured JSON envelope instead of human-readable
+  output. For read-only commands this is a pure formatting switch.
+- `--yes` proceeds without the interactive confirmation prompt. The
+  commands that overwrite or delete data — `remove`, `promote`, and
+  `doctor --fix` — follow the same prompt semantics as `apply`: a bare
+  invocation in an interactive terminal prompts before mutating; a
+  non-interactive shell refuses to mutate unless you pass `--yes`.
+  `init` and `add` do not have a confirm-before-mutate gate. `init`
+  writes unconditionally (it refuses only if a manifest already
+  exists), and accepts `--yes` for parity without acting on it. `add`
+  prompts only for an omitted mode or module when run in an interactive
+  terminal — and refuses *those specific* missing inputs in a
+  non-interactive shell — so once mode and module are supplied it
+  writes without prompting.
+
+| Command   | Purpose                                                                                       |
+| --------- | --------------------------------------------------------------------------------------------- |
+| `init`    | Scaffold a root `patina.toml` and persist the default-repository pointer.                     |
+| `add`     | Bring an existing dotfile under management: copy it into a module and write a `[[file]]` entry.|
+| `remove`  | Unmanage a target: drop its `[[file]]` entry and replace the target with a regular file holding the last-applied content. |
+| `promote` | Copy a drifted copy-mode target's current bytes back into its repository source, then re-apply. |
+| `doctor`  | Inspect the environment for known problems (UNC repository paths, missing Windows Developer Mode, OS-too-old, missing default repo). |
+
+`patina remove` has a `--purge` flag: instead of leaving a regular file
+behind with the last-applied content, `--purge` deletes the target
+outright.
+
+`patina doctor` is read-only by default and reports its findings as
+warnings. With `--fix`, it walks the findings it knows how to remediate,
+prompts for confirmation on each, and applies the fix on accept. In a
+non-interactive shell, `--fix` requires `--yes`.
+
+These commands reuse the exit codes established for `apply` in
+SPEC-0001:
+
+- `0` — success.
+- `1` — a generic error (config parse, IO, an undefined template
+  variable, and so on).
+- `4` — exclusive-lock acquisition timed out (another `patina` process
+  held the lock).
+- `5` — the interactive prompt was declined, or — on Windows — the
+  one-time elevation UAC prompt was refused.
+
+### Windows symbolic-link elevation
+
+Creating symbolic links on Windows requires either Developer Mode or an
+elevated session. When Patina needs the privilege and Developer Mode is
+off, it offers a one-time elevation: a single UAC prompt appears, and
+accepting it toggles Developer Mode on via the bundled
+`patina-elevate.exe` helper so future runs need no elevation. If you
+decline the UAC prompt, Patina exits with code `5` and points you at
+`patina doctor --fix`, which offers the same Developer Mode remediation.
+
+(Enabling the Linux watcher service to survive logout —
+`sudo loginctl enable-linger $USER` — is a SPEC-0003 concern and is not
+covered here.)
+
 ## State directory
 
 Patina writes its journal, backups, advisory lock, and drift cache to a
