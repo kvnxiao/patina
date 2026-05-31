@@ -668,7 +668,7 @@ Suggested files: `patina-core/src/windows/elevate.rs`,
 </task-scenarios>
 </task>
 
-<task id="T-010" state="pending" covers="REQ-005 REQ-010">
+<task id="T-010" state="completed" covers="REQ-005 REQ-010">
 ## Implement `patina doctor` read-only findings with `--json`
 
 `patina doctor` inspects the environment and emits an exhaustively-specified

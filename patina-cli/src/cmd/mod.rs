@@ -6,6 +6,7 @@
 pub mod add;
 pub mod apply;
 pub mod debug;
+pub mod doctor;
 pub mod init;
 pub mod managed;
 pub mod promote;

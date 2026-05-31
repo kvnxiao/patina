@@ -80,6 +80,12 @@ pub enum Command {
     /// Reverse the most recent successful apply via the journal and backups.
     Rollback(RollbackArgs),
 
+    /// Inspect the environment for known problems (UNC repository paths,
+    /// missing Windows Developer Mode, OS-too-old, missing default repo).
+    /// Read-only by default; `--fix` interactively remediates fixable
+    /// findings.
+    Doctor(DoctorArgs),
+
     /// Debugging utilities. Hidden from the top-level help summary but
     /// documented; `journal` decodes a binary plan file post-mortem.
     #[command(hide = true, subcommand)]
@@ -212,6 +218,29 @@ pub struct RollbackArgs {
     /// Emit a JSON envelope instead of human output.
     #[arg(long)]
     pub json: bool,
+}
+
+/// Flags for `patina doctor` (REQ-005, REQ-006).
+///
+/// The read-only path (no `--fix`) acquires only the shared lock and emits
+/// findings; `--fix` (wired in T-011) acquires the exclusive lock and
+/// interactively remediates fixable findings, with `--yes` auto-accepting
+/// every prompt.
+#[derive(Debug, Args, Default)]
+pub struct DoctorArgs {
+    /// Interactively remediate fixable findings instead of only reporting
+    /// them. Mutating: acquires the exclusive lock (T-011).
+    #[arg(long)]
+    pub fix: bool,
+
+    /// Emit a JSON envelope instead of human output.
+    #[arg(long)]
+    pub json: bool,
+
+    /// With `--fix`, accept every remediation prompt automatically. Required
+    /// to run `--fix` in a non-TTY shell (T-011).
+    #[arg(long)]
+    pub yes: bool,
 }
 
 /// Flags for `patina status`.
