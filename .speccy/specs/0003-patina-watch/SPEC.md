@@ -1011,6 +1011,77 @@ init systems past v1.0 due to low user count and high template-
 maintenance burden.
 </decision>
 
+<decision id="DEC-011">
+The watcher runs on the existing `#[tokio::main]` runtime, not a
+bespoke thread pool. `notify` / `notify-debouncer-full` deliver
+filesystem events on their own OS-managed thread via a synchronous
+callback; the engine re-apply path (`execute_plan`) is `async`. The
+bridge is a `tokio::sync::mpsc` channel: the `notify` callback sends
+debounced event batches into the channel, and the foreground
+watcher's core is a single `tokio::select!` loop awaiting either the
+next event batch or the shutdown signal (`tokio::signal::ctrl_c` on
+all platforms, plus a `unix::signal(SIGTERM)` arm under
+`#[cfg(unix)]`). This keeps the re-apply, drift-check, and
+journal-rescan handlers on the async runtime where `execute_plan`
+already lives, and gives shutdown a single cancellation point that
+releases subscriptions before the process exits (REQ-004).
+Alternatives considered:
+
+- **Dedicated std thread running a blocking event loop, calling a
+  `block_on` per re-apply** — duplicates a runtime, and the CLI is
+  already `#[tokio::main]`; rejected as redundant.
+- **Spawning a task per FS event** — loses the natural
+  serialization the single select-loop gives (one re-apply at a
+  time under the `NonBlocking` lock), and complicates the
+  debounce-then-coalesce contract (REQ-006); rejected.
+</decision>
+
+<decision id="DEC-012">
+`patina watch status` recovers the watcher-internal counters
+(`subscriptions_count`, `re_applies_since_start`) by reading the
+most recent rotated structured-log file under `<state>/patina/logs/`
+(REQ-009 / DEC-009), not via any cross-process shared-memory or IPC
+surface. `status` is a separate, short-lived process from the
+running watcher and cannot observe its in-memory state directly;
+since DEC-009 already makes the structured log the sole metrics
+egress, deriving these two fields from the log keeps a single source
+of truth. The supervisor-derived fields (`installed`, `running`,
+`last_fired_at`, `last_exit_code`) come from the platform supervisor
+query (`launchctl print` / `systemctl show` / Scheduled Task query),
+as REQ-003 specifies. If the log is absent or unparseable (watcher
+never started since the last rotation), the two counters report
+`null` rather than failing the command. Alternatives considered:
+
+- **Sidecar state file the watcher rewrites each cycle** — a second
+  on-disk surface that can desync from the log and adds a write to
+  every re-apply; rejected as redundant with the log.
+- **Dropping the two counters to supervisor-only fields** — REQ-003
+  names them explicitly; rejected.
+</decision>
+
+<decision id="DEC-013">
+Drift-notification tests drive a capture/no-op notification sink
+rather than emitting real OS desktop notifications. Headless CI
+runners (and the Linux test matrix in particular) have no
+notification daemon, so the `notify-rust` emit path is abstracted
+behind a small internal trait whose production implementation calls
+`notify-rust` and whose test implementation records
+`(title, body)` tuples in memory; the drift scenarios (CHK-011,
+rate-limit) assert against the captured tuples. This keeps REQ-007's
+"exactly one notification" assertions deterministic and
+platform-independent. Separately, `notify-rust` and its transitive
+notification stack (zbus/DBus on Linux, `mac-notification-sys` on
+macOS, WinRT on Windows) must clear `cargo deny check`
+(license / advisory / bans) at the dependency-add task before the
+drift requirement is built on it; if any transitive crate fails
+`deny.toml`, that is surfaced at the dep-add gate, not discovered
+mid-implementation. Alternative considered:
+
+- **Letting tests emit real notifications and skipping assertions on
+  CI** — non-deterministic, and silently un-tested on the very
+  platforms parity matters for; rejected.
+</decision>
+
 ## Open Questions
 
 All four self-review questions resolved 2026-05-26 by user
@@ -1080,6 +1151,8 @@ direction; SPEC content updated in the same revision.
 | 2026-05-30 | human/kevin via assistant | Add open question (e): orphan recovery vs. `NonBlocking` lock ordering. The SPEC-0001 REQ-030 vet gate surfaced that `recover_orphans` runs before lock resolution in the shipped engine `execute`, so a contended `NonBlocking` re-apply that also finds an orphan would mutate the filesystem before returning the typed contention error — in tension with the "writes nothing" guarantee REQ-006/REQ-008/CHK-013 depend on. Captured as an open item (not yet resolved) because the watcher is the sole `NonBlocking` consumer and the fix interacts with REQ-030's byte-for-byte-`Blocking` constraint. Must be resolved before wiring the watcher re-apply to `NonBlocking`. No requirement-level change; not yet decomposed, so no TASKS reconciliation. |
 | 2026-05-30 | human/kevin via assistant | Resolve three gaps surfaced by reviewing the shipped SPEC-0001 code. (1) Lock model: the shipped engine apply path self-acquires the exclusive lock with a 60-second blocking poll and offers no non-blocking path, so the watcher could neither skip-on-contention (REQ-006/REQ-008/CHK-013) nor pre-acquire-then-apply without self-deadlock. SPEC-0001 gained REQ-030 (apply-path lock policy: Blocking / NonBlocking / Held); reword REQ-008 prose and the REQ-006/REQ-008 done-when bullets so the watcher re-apply runs under the `NonBlocking` policy (single attempt, typed contention error, zero mutation → skip), and add REQ-030 to the cross-SPEC handoffs. (2) Drift-cache envelope: REQ-007 now extracts a shared `pub` version-envelope helper in `patina-core` (the journal duplicates it privately across `plan.rs`/`record.rs`) instead of hand-rolling a third copy, and the drift cache carries its OWN major-version constant independent of the journal's `FILE_MAJOR_VERSION` so the two formats version separately. (3) Timestamp helper: note that the watcher re-apply reuses a hoisted shared compact-UTC timestamp helper (currently the private `current_timestamp()` in the CLI `cmd/apply.rs`) rather than duplicating it. No user-facing behaviour change; the new `notify` / `notify-rust` deps are unchanged. Not yet decomposed, so no TASKS reconciliation. |
 | 2026-05-30 | human/kevin via assistant | Resolve open-question (e) (orphan recovery vs. `NonBlocking` lock ordering), closed the same day by the SPEC-0001 post-vet hardening amendment. SPEC-0001 adopted acquire-then-recover for all policies — the engine now resolves the lock before running orphan recovery, so a contended `NonBlocking` re-apply returns the contention error having mutated nothing (no orphan recovery, no plan/COMMIT/backups; SPEC-0001 CHK-068), and concurrent applies serialize their recovery passes. Marked (e) `[x]` with the resolution (and dropped its now-dead `journal/VET.md` reference); refreshed the now-stale REQ-008 parenthetical (the engine no longer "offers no non-blocking path" — REQ-030 shipped, and recovery now runs under the lock) and strengthened the REQ-006 done-when bullet to state the `NonBlocking` skip mutates nothing including recovery. REQ-006/REQ-008 are now safe to wire to `NonBlocking`. No requirement-level behaviour change; not yet decomposed, so no TASKS reconciliation. |
+| 2026-05-31 | human/kevin via assistant | Correct the `winsafe` `taskschd` characterization against the shipped SPEC-0002 code. Two Notes-prose sites (Cross-SPEC handoffs, Tooling notes) claimed the `taskschd` feature was "already declared as a SPEC-0002 dependency" and "reused here." It is not: SPEC-0002 deliberately left `taskschd` disabled (root `Cargo.toml` and `patina-elevate/Cargo.toml` pin `winsafe` to `advapi`/`kernel`, with a comment explicitly deferring `taskschd` to "SPEC-0003's watcher service install" under the enable-only-needed-features rule). Reworded both sites: this SPEC *enables* `taskschd` on `patina-core`'s `winsafe` (today `features = ["shell"]`); the HKCU-scoped, non-elevated Scheduled Task lives in `patina-core`, not `patina-elevate`. No requirement-level change — REQ-001's done-when already says "registered via `winsafe`'s `taskschd` feature" without asserting it is pre-enabled, so no `<requirement>`/`<done-when>`/`<scenario>` block changed. SPEC not yet decomposed (no `TASKS.md`, so not lock-protected); no TASKS reconciliation. |
+| 2026-05-31 | human/kevin via assistant | Promote three load-bearing design decisions surfaced by the pre-decompose `plan-architect` blueprint into DEC blocks (the SPEC was silent on all three). DEC-011: the watcher runs on the existing tokio runtime, bridging `notify`'s OS-thread callback into a `tokio::select!` loop via an mpsc channel, with `ctrl_c` + `#[cfg(unix)]` SIGTERM shutdown. DEC-012: `patina watch status` recovers the `subscriptions_count` / `re_applies_since_start` counters by reading the rotated structured log under `<state>/patina/logs/` (single source of truth per DEC-009), with supervisor-derived fields from the native query and `null` when the log is absent. DEC-013: drift-notification tests drive a capture/no-op notification sink behind an internal trait (headless CI has no notification daemon), and `notify-rust`'s transitive stack must clear `cargo deny` at the dep-add gate. Pure decision-surface additions; no `<requirement>`/`<done-when>`/`<scenario>` block changed. Done immediately before the initial decompose; the subsequent `speccy lock` binds these into the task-generation hash. |
 </changelog>
 
 ## Notes
@@ -1114,9 +1187,15 @@ SPEC-0003 depends on:
   promotion path for drifted targets, `patina doctor` warnings
   for UNC paths and missing Developer Mode, and the `--json`
   conventions across all CLI commands.
-- The `winsafe` crate's `taskschd` feature, already declared as
-  a SPEC-0002 dependency, is reused here for the Windows
-  Scheduled Task creation.
+- The `winsafe` crate's `taskschd` feature, which SPEC-0002
+  deliberately left disabled (the workspace `Cargo.toml` and
+  `patina-elevate/Cargo.toml` both pin `winsafe` to
+  `advapi`/`kernel` only, with a comment deferring `taskschd` to
+  "SPEC-0003's watcher service install"). This SPEC enables
+  `taskschd` on `patina-core`'s `winsafe` (today `features =
+  ["shell"]`) for the Windows Scheduled Task creation. The
+  Scheduled Task is HKCU-scoped and non-elevated, so it lives in
+  `patina-core`, not the elevation-only `patina-elevate` helper.
 
 SPEC-0003 introduces no new dependencies on subsequent SPECs
 (there are no v1.0 SPECs after this one).
@@ -1164,8 +1243,10 @@ SPEC-0003 introduces these new direct dependencies in
   `notify-debouncer-full` (debounce wrapper).
 - `notify-rust` (cross-platform desktop notifications).
 
-`winsafe`'s `taskschd` feature, already declared in SPEC-0002,
-is reused for the Windows Scheduled Task code path.
+`winsafe`'s `taskschd` feature is enabled by this SPEC on
+`patina-core`'s `winsafe` for the Windows Scheduled Task code
+path; SPEC-0002 deliberately deferred it (see the Cross-SPEC
+handoffs note above).
 
 The `patina watch --foreground` mode is the integration-test
 target for SPEC-0003: every scenario above is testable by
