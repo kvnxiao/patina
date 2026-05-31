@@ -26,6 +26,18 @@ generated_at: 2026-05-21T19:45:00Z
 ---
 
 <implementer date="2026-05-21T19:45:00Z" model="claude-opus-4-8[1m]/low" round="1">
+- Reuse survey: Mapped the task area (covered REQ-001 / REQ-002,
+  suggested files `widget-cli/src/args.rs` and
+  `widget-core/src/render.rs`, and their immediate neighbours).
+  Decisions: reuse-as-is — the existing `clap` range-value-parser
+  helper `widget-cli::args::bounded_u32` validates the new
+  `--timeout-ms` bound, so no new parser. Extend — added the
+  `TimedOut` variant to the existing `widget_core::render::RenderError`
+  enum rather than introducing a parallel error type. Write-fresh —
+  the per-iteration elapsed-budget poll; searched `widget-core` for an
+  existing deadline/budget helper and found none. No new top-level
+  symbol beyond the `RenderError::TimedOut` variant and the
+  `timeout_ms` field.
 - Completed: Landed `--timeout-ms <N>` on `widget render` end-to-end.
   Added `timeout_ms: u32` to the `clap`-derived `RenderArgs` struct
   in `widget-cli/src/args.rs` with a range value parser bounded
@@ -90,7 +102,7 @@ generated_at: 2026-05-21T19:45:00Z
   of this turn. No shipped skill
   bodies under `skills/` required edits during this task — the
   implementer prompt at HEAD already documents the canonical
-  six-field handoff template, so no friction-to-skill-update was
+  seven-field handoff template, so no friction-to-skill-update was
   triggered.
 </implementer>
 ```
@@ -117,11 +129,19 @@ All three are required; there are no optional attributes:
   attempt writes `round="2"`, and so on. Do not skip values; do not
   reset.
 
-## Six-field handoff template
+## Seven-field handoff template
 
-The body of every `<implementer>` block uses these six fields in
+The body of every `<implementer>` block uses these seven fields in
 this order, each as a bullet line prefixed by `- <Field>:`.
 
+- **Reuse survey**: the recorded pre-implementation survey — the
+  task-area map and the per-tier decisions with named symbols
+  (reuse-as-is / extend each name the existing symbol; write-fresh
+  names the search that came up empty). A pre-implementation design
+  input, so it leads the body. Round semantics: round-1 records the
+  full survey; a retry round that adds no new top-level symbol and
+  addresses a non-reuse blocker records `unchanged — no new symbols,
+  no reuse blocker` (or just the delta), not a fresh re-survey.
 - **Completed**: what landed in this turn, named concretely
   (files touched, behaviours observed). Past tense.
 - **Undone**: what is deliberately deferred and why; what is left
