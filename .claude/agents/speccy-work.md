@@ -2,7 +2,7 @@
 name: speccy-work
 description: Implements one Speccy task per invocation. Invoke via /agent speccy-work for the pinned execution path defined in this file's frontmatter.
 model: opus[1m]
-effort: medium
+effort: high
 ---
 
 # /speccy-work
@@ -108,9 +108,10 @@ in place and appends `<implementer round="N+1">`.
 3. Branch on the rule result.
 
    **First-attempt branch.** Proceed with the recipe below
-   (steps 4–9) unchanged: flip state to `in-progress`, read
-   scenarios, implement from scratch, self-review, run the hygiene
-   gate, flip to `in-review`, append `<implementer round="1">`.
+   (steps 4–10) unchanged: flip state to `in-progress`, read
+   scenarios, run the bounded reuse survey, implement from scratch,
+   self-review, run the hygiene gate, flip to `in-review`, append
+   `<implementer round="1">`.
 
    **Retry branch.** Enter retry mode:
 
@@ -143,13 +144,62 @@ in place and appends `<implementer round="N+1">`.
    speccy check SPEC-NNNN/T-003
    ```
 
-6. Implement the task. Write tests first, then code. Run the
+6. Bounded reuse survey. Before writing any code, survey the
+   task-relevant area and classify the code you are about to add into
+   reuse-as-is / extend / write-fresh, so reuse is a design input
+   rather than a post-hoc cleanup. Scope the survey to the task's
+   area — its covered REQs, the suggested-files hint, and the
+   immediate module / neighbouring files — and **not** the whole repo.
+   Let the survey inform what you write in the next step.
+
+   ## Reuse survey (implementer: survey-and-build)
+
+Before writing any code, survey the task-relevant area and decide,
+for the code you are about to add, whether to reuse, extend, or write
+fresh. Reuse is a design input here, not a post-hoc cleanup: you
+classify what already exists *before* you commit to a shape, so you
+build on it instead of laying down a parallel implementation that a
+later review round has to unwind.
+
+**Bounded to the task's area.** Map only the area the task touches:
+its covered REQs, the suggested-files hint in the task body, and the
+immediate module plus its neighbouring files. This is explicitly
+**not** a whole-repo scan — reusable code far outside the task's area
+is out of scope by design, and hunting for it is wasted budget.
+
+**The three tiers.** Classify the relevant existing code you find,
+and for each thing you decide to add, place it in one tier:
+
+- **Reuse-as-is.** An existing symbol already does what you need —
+  call it. Name the specific existing symbol (function, type,
+  constant, helper) you are reusing.
+- **Extend.** An existing symbol nearly does what you need and should
+  grow to cover your case rather than be duplicated. Name the
+  specific existing symbol you are extending.
+- **Write-fresh.** Nothing existing fits, so you write something new.
+  Name the search that came up empty (what you looked for and where),
+  so the absence is auditable rather than assumed.
+
+**Round semantics.**
+
+- The **full area-map** is round-1 only. Re-run it on a retry round
+  *only* when a reuse-related blocker was raised against the prior
+  round; a retry that addresses a non-reuse blocker does not re-survey
+  the area.
+- The **per-symbol floor** is round-agnostic. For every new top-level
+  symbol the implementation introduces — in any round — name the
+  existing thing it reuses or extends, or the search that found
+  nothing. A retry that adds a new top-level symbol still owes this
+  per-symbol accounting even when the full area-map is not re-run.
+
+
+7. Implement the task. Write tests first, then code. Run the
    project's own test command (`cargo test`, `pnpm test`, etc.)
    locally. Use `speccy check SPEC-NNNN/T-NNN` to re-read the
    scenarios being satisfied (it renders them, it does not run
    them).
 
-7. Self-review before handoff. Immediately after implementation and
+8. Self-review before handoff. Immediately after implementation and
    **before** the exit transition's `in-review` flip, re-read your
    own diff through the reviewers' lens and fix what you find in
    place. This is the cheap place to catch drift: a fix here is a
@@ -186,11 +236,6 @@ where mechanical and convention drift slips through a green hygiene
 gate yet still costs a later review round. Catching them here — in the
 diff you already have open — is far cheaper than a bounce-and-respawn.
 
-- **Reuse over reinvent.** Before adding a new helper, type, or
-  utility, check whether one already exists — including a few
-  directories away, where it is easy to miss. Call the existing one
-  rather than introducing a parallel implementation.
-
 - **Match local conventions.** Make the diff read as though the
   surrounding code's author wrote it: follow the established naming,
   error-handling, and import-ordering patterns of the files you touch.
@@ -221,7 +266,7 @@ diff you already have open — is far cheaper than a bounce-and-respawn.
     silencer.
 
 
-8. Exit transition. **Hygiene gate (REQ-001):** before flipping `state` from `in-progress` to `in-review`, run the four standard hygiene gates in sequence — `cargo test --workspace`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, `cargo +nightly fmt --all --check`, `cargo deny check`. Any non-zero exit refuses the flip and keeps the task at `in-progress`; on all zeros, proceed with the flip and record one line per gate naming its exit code in the appended `<implementer>` block's `Hygiene checks` field. When the implementation is done, flip the task's
+9. Exit transition. **Hygiene gate (REQ-001):** before flipping `state` from `in-progress` to `in-review`, run the four standard hygiene gates in sequence — `cargo test --workspace`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, `cargo +nightly fmt --all --check`, `cargo deny check`. Any non-zero exit refuses the flip and keeps the task at `in-progress`; on all zeros, proceed with the flip and record one line per gate naming its exit code in the appended `<implementer>` block's `Hygiene checks` field. When the implementation is done, flip the task's
    `state="..."` attribute from `in-progress` to `in-review` in
    TASKS.md, then append one `<implementer>` block to the per-task
    journal file at `.speccy/specs/NNNN-slug/journal/T-NNN.md` (a
@@ -299,9 +344,10 @@ name, the persona name, or an inherited environment variable.
   value.
 
 
-   Body content. Use the six-field handoff template the implementer
-   prompt supplies (`Completed`, `Undone`, `Hygiene checks`,
-   `Evidence`, `Discovered issues`, `Procedural compliance`). The
+   Body content. Use the seven-field handoff template the implementer
+   prompt supplies (`Reuse survey`, `Completed`, `Undone`,
+   `Hygiene checks`, `Evidence`, `Discovered issues`,
+   `Procedural compliance`). The
    `Evidence` field must include a CHK-by-CHK roll call labelling
    each CHK under the task's covered REQs as `demonstrated`,
    `hygiene`, or `judgment-only` -- see the canonical reference for
@@ -335,7 +381,7 @@ name, the persona name, or an inherited environment variable.
    unparseable. Re-read the appended block before exiting and confirm
    the closing tag is present.
 
-9. Exit. Do not continue to the next task. If the caller wants
+10. Exit. Do not continue to the next task. If the caller wants
    another task, the caller invokes this skill again.
 
 After exit, the next reasonable step depends on TASKS.md state: if
