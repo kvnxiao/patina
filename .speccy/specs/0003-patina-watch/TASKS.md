@@ -149,7 +149,7 @@ Suggested files: `patina-core/src/apply/retry.rs`,
 </task-scenarios>
 </task>
 
-<task id="T-004" state="pending" covers="REQ-007">
+<task id="T-004" state="completed" covers="REQ-007">
 ## Drift-cache format and module (postcard + version envelope, atomic write)
 
 REQ-007: introduce the watcher's drift notification ledger at
