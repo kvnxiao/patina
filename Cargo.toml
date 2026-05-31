@@ -22,6 +22,8 @@ fs2 = "0.4"
 is-terminal = "0.4"
 jiff = "0.2"
 minijinja = "2.20"
+notify = "8.2"
+notify-debouncer-full = "0.7"
 postcard = { version = "1.1", default-features = false, features = ["use-std"] }
 pulldown-cmark = { version = "0.13", default-features = false }
 serde = { version = "1.0", features = ["derive"] }
@@ -34,6 +36,7 @@ toml = "1.1"
 toml_edit = "0.23"
 tracing = "0.1"
 tracing-appender = "0.2"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Windows-only: registry (Developer Mode flag) + process-token elevation
 # read for REQ-007. `advapi` covers registry + tokens; `kernel` covers the
 # base handle types. `taskschd` is deliberately NOT enabled — that surface

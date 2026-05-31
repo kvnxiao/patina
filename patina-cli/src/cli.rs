@@ -86,10 +86,33 @@ pub enum Command {
     /// findings.
     Doctor(DoctorArgs),
 
+    /// Watch the repository and re-apply on source changes. `--foreground`
+    /// runs the watcher inline in the current terminal (REQ-004); the per-OS
+    /// service install lands in a later task.
+    Watch(WatchArgs),
+
     /// Debugging utilities. Hidden from the top-level help summary but
     /// documented; `journal` decodes a binary plan file post-mortem.
     #[command(hide = true, subcommand)]
     Debug(DebugCommand),
+}
+
+/// Flags for `patina watch` (REQ-004 / REQ-006).
+///
+/// In this slice `--foreground` is the only supported mode: it runs the
+/// watcher loop inline, attached to the invoking shell, and exits cleanly on
+/// Ctrl-C / SIGTERM. Without `--foreground` the command reports that the
+/// background service install is not yet wired (a later task).
+#[derive(Debug, Args, Default)]
+pub struct WatchArgs {
+    /// Run the watcher inline in the current terminal instead of installing a
+    /// background service. Ctrl-C (SIGINT) or SIGTERM shuts it down cleanly.
+    #[arg(long)]
+    pub foreground: bool,
+
+    /// Emit a JSON envelope instead of human output.
+    #[arg(long)]
+    pub json: bool,
 }
 
 /// Subcommands under the `patina debug` namespace.

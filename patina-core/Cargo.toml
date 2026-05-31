@@ -19,6 +19,8 @@ fs-err = { workspace = true }
 fs2 = { workspace = true }
 jiff = { workspace = true }
 minijinja = { workspace = true }
+notify = { workspace = true }
+notify-debouncer-full = { workspace = true }
 postcard = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
@@ -36,6 +38,7 @@ toml = { workspace = true }
 toml_edit = { workspace = true }
 tracing = { workspace = true }
 tracing-appender = { workspace = true }
+tracing-subscriber = { workspace = true }
 
 # REQ-007 Developer Mode / elevation reads + the one-time UAC launch.
 # Windows-only so non-Windows builds never resolve `winsafe` into the

@@ -65,6 +65,7 @@ async fn main() -> ! {
             let mut reader = StdinReader;
             cmd::rollback::run(&args, detect_tty(), &mut reader, &mut reporter).await
         }
+        Command::Watch(args) => cmd::watch::run(&args, &mut reporter).await,
         // `debug` reports its own terminal state as an exit code already.
         Command::Debug(command) => Ok(cmd::debug::run(&command, &mut reporter)),
     };

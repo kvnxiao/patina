@@ -341,7 +341,7 @@ Suggested files: `patina-core/src/watch/subscriptions.rs`,
 </task-scenarios>
 </task>
 
-<task id="T-008" state="pending" covers="REQ-004 REQ-006">
+<task id="T-008" state="completed" covers="REQ-004 REQ-006">
 ## `patina watch --foreground`: event loop, 500ms debounce, clean shutdown
 
 REQ-004 / REQ-006 / DEC-002 / DEC-011: stand up the `patina watch` command
