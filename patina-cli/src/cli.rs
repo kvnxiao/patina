@@ -97,12 +97,23 @@ pub enum Command {
 pub enum DebugCommand {
     /// Decode a `<ts>.plan` journal file into a human-readable view.
     Journal(DebugJournalArgs),
+
+    /// Decode a `drift.cache` file into a human-readable view.
+    DriftCache(DebugDriftCacheArgs),
 }
 
 /// Flags for `patina debug journal`.
 #[derive(Debug, Args)]
 pub struct DebugJournalArgs {
     /// Path to the `<ts>.plan` file to decode.
+    #[arg(value_name = "path")]
+    pub path: Utf8PathBuf,
+}
+
+/// Flags for `patina debug drift-cache`.
+#[derive(Debug, Args)]
+pub struct DebugDriftCacheArgs {
+    /// Path to the `drift.cache` file to decode.
     #[arg(value_name = "path")]
     pub path: Utf8PathBuf,
 }

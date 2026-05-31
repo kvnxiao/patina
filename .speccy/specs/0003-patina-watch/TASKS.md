@@ -213,7 +213,7 @@ Suggested files: `patina-core/src/watch/mod.rs`,
 </task-scenarios>
 </task>
 
-<task id="T-005" state="pending" covers="REQ-007">
+<task id="T-005" state="completed" covers="REQ-007">
 ## `patina debug drift-cache <path>` decode subcommand
 
 REQ-007 (CHK-018): add a `patina debug drift-cache <path>` subcommand that
