@@ -33,6 +33,7 @@ tokio = { version = "1.52", default-features = false }
 toml = "1.1"
 toml_edit = "0.23"
 tracing = "0.1"
+tracing-appender = "0.2"
 # Windows-only: registry (Developer Mode flag) + process-token elevation
 # read for REQ-007. `advapi` covers registry + tokens; `kernel` covers the
 # base handle types. `taskschd` is deliberately NOT enabled — that surface

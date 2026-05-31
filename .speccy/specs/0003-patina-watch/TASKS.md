@@ -257,7 +257,7 @@ Suggested files: `patina-cli/src/cli.rs`, `patina-cli/src/cmd/debug.rs`,
 </task-scenarios>
 </task>
 
-<task id="T-006" state="pending" covers="REQ-009">
+<task id="T-006" state="completed" covers="REQ-009">
 ## `<state>/patina/logs/` directory and the `tracing-appender` rotating-log stack
 
 REQ-009 / DEC-009: SPEC-0003 owns `<state>/patina/logs/` and the watcher's
