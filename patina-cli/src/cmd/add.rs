@@ -7,8 +7,8 @@
 //! the original target as a regular file containing the original bytes. The
 //! command does NOT drive the engine apply path — materialization (turning
 //! the target into a symlink / copy / rendered template) is deferred to a
-//! later `patina apply` (move-on-add, resolved open-question (a): the bytes
-//! move into the repo, while the target stays a plain file so apply
+//! later `patina apply` (copy-on-add, resolved open-question (a): the bytes
+//! are copied into the repo, while the target stays a plain file so apply
 //! converges it).
 //!
 //! `add` is a mutating command (REQ-009): it acquires the engine's
@@ -89,7 +89,7 @@ impl AddMode {
 /// the engine-error chain) when: the repository root cannot be resolved;
 /// the module is missing in a non-TTY shell; the mode is missing in a
 /// non-TTY shell; the target path is already managed; the target file does
-/// not exist or cannot be moved; or the manifest read/write fails.
+/// not exist or cannot be copied; or the manifest read/write fails.
 #[expect(
     clippy::unused_async,
     reason = "the subcommand dispatch in main.rs awaits every command uniformly; add's work is synchronous filesystem and lock I/O but keeps the async signature for parity."
@@ -147,7 +147,7 @@ pub async fn run(
     // `~/.zshrc` → `<repo>/zsh/zshrc`).
     let basename = repo_source_name(file_name);
     // A `--template` source records the `.tmpl` suffix so the engine derives
-    // the implicit template mode; the on-disk moved file keeps that suffix.
+    // the implicit template mode; the on-disk copied file keeps that suffix.
     let source = match mode {
         AddMode::Template => format!("{basename}.tmpl"),
         AddMode::Symlink | AddMode::Copy => basename.clone(),

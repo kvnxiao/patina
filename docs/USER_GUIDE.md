@@ -98,7 +98,7 @@ common flags:
 | Command   | Purpose                                                                                       |
 | --------- | --------------------------------------------------------------------------------------------- |
 | `init`    | Scaffold a root `patina.toml` and persist the default-repository pointer.                     |
-| `add`     | Bring an existing dotfile under management: move it into a module and write a `[[file]]` entry.|
+| `add`     | Bring an existing dotfile under management: copy it into a module and write a `[[file]]` entry.|
 | `remove`  | Unmanage a target: drop its `[[file]]` entry and replace the target with a regular file holding the last-applied content. |
 | `promote` | Copy a drifted copy-mode target's current bytes back into its repository source, then re-apply. |
 | `doctor`  | Inspect the environment for known problems (UNC repository paths, missing Windows Developer Mode, OS-too-old, missing default repo). |
