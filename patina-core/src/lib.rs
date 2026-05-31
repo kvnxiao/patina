@@ -26,6 +26,7 @@ pub mod state_dir;
 pub mod status;
 pub mod template;
 pub mod variables;
+pub mod windows;
 
 pub use apply::CompletionRecord;
 pub use apply::ExecutorError;
@@ -52,17 +53,25 @@ pub use backups::RETENTION_COUNT;
 pub use backups::backup_before_overwrite;
 pub use backups::gc_retain;
 pub use config::ConfigParseError;
+pub use config::ConfigWriteError;
 pub use config::FileEntry;
 pub use config::FileMode;
 pub use config::HookEntry;
 pub use config::HookEvent;
 pub use config::ModuleConfig;
+pub use config::append_file_entry;
 pub use config::parse_module_config;
+pub use config::remove_file_entry;
+pub use config::scaffold_root_manifest;
 pub use discovery::ModuleDiscoveryError;
 pub use discovery::ModuleHandle;
+pub use discovery::PERSISTED_DEFAULT_FILENAME;
 pub use discovery::RepoDiscoveryError;
+pub use discovery::default_repo_pointer_path;
 pub use discovery::discover_modules;
+pub use discovery::persisted_default_present;
 pub use discovery::resolve_repository_root;
+pub use discovery::write_persisted_default;
 pub use error::EngineError;
 pub use journal::ApplyRecord;
 pub use journal::ExpectedTarget;
@@ -106,12 +115,29 @@ pub use status::StatusEntry;
 pub use status::StatusReport;
 pub use status::TargetState;
 pub use status::current_plan_targets;
+pub use status::manage_key;
 pub use status::report as status_report;
 pub use template::Engine as TemplateEngine;
 pub use template::TemplateError;
 pub use variables::Builtins;
 pub use variables::Resolver;
 pub use variables::VariableError;
+pub use windows::DEV_MODE_REGISTRY_PATH;
+pub use windows::DevModeProbe;
+pub use windows::DevModeStatus;
+pub use windows::GateDecision;
+pub use windows::HostDevModeProbe;
+pub use windows::WindowsError;
+pub use windows::decide_symlink_gate;
+pub use windows::dev_mode_status;
+#[cfg(windows)]
+pub use windows::elevate::ElevationOutcome;
+#[cfg(windows)]
+pub use windows::elevate::launch_elevate_helper;
+pub use windows::is_elevated;
+pub use windows::is_unc_path;
+pub use windows::plan_has_symlink_op;
+pub use windows::windows_build_supports_dev_mode;
 
 /// Options accepted by [`apply`](fn@crate::apply). The TTY-driven prompt,
 /// `--json` envelope, and `--pager` plumbing live in the CLI ([`plan_apply`] /

@@ -12,7 +12,12 @@
 #   lint-deny       Cargo deny
 #
 # The cross-platform `cargo test` matrix is `just test`, kept separate
-# because it exercises behaviour rather than lints.
+# because it exercises behaviour rather than lints. `just check` runs both
+# (`lint` then `test`) — the full local gate, and what the pre-push hook runs.
+#
+# CI-only gates `just` cannot reproduce on one dev box: the Windows/macOS
+# test matrix, the MSRV (Rust 1.95) build, and coverage. A green `just check`
+# is necessary, not sufficient — watch the PR checks after pushing.
 #
 # One-time tooling the lints assume:
 #   rustup toolchain install nightly --component rustfmt   # lint-fmt
@@ -21,6 +26,9 @@
 # List the available recipes.
 default:
     @just --list
+
+# Full local gate (lint + test) — what the pre-push hook runs; stops at first failure.
+check: lint test
 
 # Run every CI lint/quality gate locally, in CI's order (stops at first failure).
 lint: lint-fmt lint-clippy lint-docs lint-deny

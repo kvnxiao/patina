@@ -1,11 +1,11 @@
 ---
 spec: SPEC-0002
-spec_hash_at_generation: befdad68d2652a0421f16ee44208210e20eba5eac52efb4d05cdaf3cba2de167
-generated_at: 2026-05-30T07:11:51Z
+spec_hash_at_generation: e628dfb9ea0c079f20bc0db6edadd66e8b6dc1b81b04602681bc77debcc90a9d
+generated_at: 2026-05-31T07:07:45Z
 ---
 # Tasks: SPEC-0002 Patina complete CLI surface and Windows symlink elevation — init/add/remove/promote/doctor plus the Windows Developer Mode UAC elevation flow
 
-<task id="T-001" state="pending" covers="REQ-002 REQ-003">
+<task id="T-001" state="completed" covers="REQ-002 REQ-003">
 ## Add a format-preserving `toml_edit` manifest writer to `patina-core::config`
 
 `patina-core::config` is parse-only today: `parse_module_config`
@@ -89,7 +89,7 @@ Suggested files: `patina-core/src/config/writer.rs`,
 </task-scenarios>
 </task>
 
-<task id="T-002" state="pending" covers="REQ-001">
+<task id="T-002" state="completed" covers="REQ-001">
 ## Add a persisted `default_repo` pointer writer to `patina-core::discovery`
 
 Repo discovery already *reads* the persisted default
@@ -140,7 +140,7 @@ Suggested files: `patina-core/src/discovery/repo.rs`,
 </task-scenarios>
 </task>
 
-<task id="T-003" state="pending" covers="REQ-001 REQ-010">
+<task id="T-003" state="completed" covers="REQ-001 REQ-010">
 ## Implement `patina init` and generalize the integration test harness
 
 Land the first SPEC-0002 subcommand: `patina init` scaffolds a root
@@ -214,7 +214,7 @@ Suggested files: `patina-cli/src/cli.rs`, `patina-cli/src/cmd/init.rs`,
 </task-scenarios>
 </task>
 
-<task id="T-004" state="pending" covers="REQ-002 REQ-009">
+<task id="T-004" state="completed" covers="REQ-002 REQ-009">
 ## Implement `patina add <path>`
 
 `patina add <path>` brings an existing dotfile under management: it moves
@@ -287,7 +287,7 @@ Suggested files: `patina-cli/src/cli.rs`, `patina-cli/src/cmd/add.rs`,
 </task-scenarios>
 </task>
 
-<task id="T-005" state="pending" covers="REQ-003 REQ-009">
+<task id="T-005" state="completed" covers="REQ-003 REQ-009">
 ## Implement `patina remove <path>` with `--purge` and `Held`-policy re-journal
 
 `patina remove <path>` unmanages a target: it removes the `[[file]]` entry,
@@ -366,7 +366,7 @@ Suggested files: `patina-cli/src/cli.rs`, `patina-cli/src/cmd/remove.rs`,
 </task-scenarios>
 </task>
 
-<task id="T-006" state="pending" covers="REQ-004 REQ-009">
+<task id="T-006" state="completed" covers="REQ-004 REQ-009">
 ## Implement `patina promote <target>` for drifted copy-mode targets
 
 `patina promote <target>` copies an externally-edited copy-mode target's
@@ -429,7 +429,7 @@ Suggested files: `patina-cli/src/cli.rs`, `patina-cli/src/cmd/promote.rs`,
 </task-scenarios>
 </task>
 
-<task id="T-007" state="pending" covers="REQ-007">
+<task id="T-007" state="completed" covers="REQ-007">
 ## Add the cross-platform Windows dev-mode detection module to `patina-core`
 
 Introduce a `patina-core::windows` module that provides the Developer Mode
@@ -517,7 +517,7 @@ Suggested files: `patina-core/src/windows/mod.rs`,
 </task-scenarios>
 </task>
 
-<task id="T-008" state="pending" covers="REQ-008">
+<task id="T-008" state="completed" covers="REQ-008">
 ## Create the Windows-only `patina-elevate` helper crate
 
 Add the third workspace crate `patina-elevate`, building the standalone
@@ -587,7 +587,7 @@ Suggested files: `Cargo.toml`, `patina-elevate/Cargo.toml`,
 </task-scenarios>
 </task>
 
-<task id="T-009" state="pending" covers="REQ-007">
+<task id="T-009" state="completed" covers="REQ-007">
 ## Wire the dev-mode elevation flow: helper launch, engine gate, CLI prompt
 
 Complete REQ-007 by connecting T-007's detection to T-008's helper: add the
@@ -668,7 +668,7 @@ Suggested files: `patina-core/src/windows/elevate.rs`,
 </task-scenarios>
 </task>
 
-<task id="T-010" state="pending" covers="REQ-005 REQ-010">
+<task id="T-010" state="completed" covers="REQ-005 REQ-010">
 ## Implement `patina doctor` read-only findings with `--json`
 
 `patina doctor` inspects the environment and emits an exhaustively-specified
@@ -738,7 +738,7 @@ Suggested files: `patina-cli/src/cli.rs`, `patina-cli/src/cmd/doctor.rs`,
 </task-scenarios>
 </task>
 
-<task id="T-011" state="pending" covers="REQ-006 REQ-009">
+<task id="T-011" state="completed" covers="REQ-006 REQ-009">
 ## Implement `patina doctor --fix` interactive remediation
 
 Extend `doctor` with `--fix`: enumerate each finding for which Patina knows
@@ -794,7 +794,7 @@ Suggested files: `patina-cli/src/cmd/doctor.rs`, `patina-cli/src/main.rs`,
 </task-scenarios>
 </task>
 
-<task id="T-012" state="pending" covers="REQ-005">
+<task id="T-012" state="completed" covers="REQ-005">
 ## Document the new commands and verify the cloud-sync callout in `docs/USER_GUIDE.md`
 
 SPEC-0002 adds five user-facing commands and a Windows elevation flow;

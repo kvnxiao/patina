@@ -209,7 +209,14 @@ pub fn current_plan_targets() -> Result<BTreeSet<Utf8PathBuf>, EngineError> {
 /// prefix. Applied symmetrically to recorded and current-plan paths, the
 /// same declared target yields the same key regardless of when it was
 /// computed.
-fn manage_key(path: &camino::Utf8Path) -> Utf8PathBuf {
+///
+/// Public so the SPEC-0002 `remove` / `promote` commands can match a
+/// user-supplied target path against a journaled
+/// [`ExpectedTarget::target`](crate::ExpectedTarget::target) under the same
+/// cross-time key, rather than re-deriving the parent-canonical+verbatim-leaf
+/// technique at the call site.
+#[must_use = "the manage key is the cross-time comparison key for a target path"]
+pub fn manage_key(path: &camino::Utf8Path) -> Utf8PathBuf {
     let parent_key = match path.parent() {
         Some(parent) if !parent.as_str().is_empty() => parent
             .canonicalize_utf8()

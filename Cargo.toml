@@ -1,5 +1,5 @@
 [workspace]
-members = ["patina-cli", "patina-core"]
+members = ["patina-cli", "patina-core", "patina-elevate"]
 resolver = "2"
 
 [workspace.package]
@@ -31,7 +31,14 @@ tempfile = "3.10"
 thiserror = "2.0"
 tokio = { version = "1.52", default-features = false }
 toml = "1.1"
+toml_edit = "0.23"
 tracing = "0.1"
+# Windows-only: registry (Developer Mode flag) + process-token elevation
+# read for REQ-007. `advapi` covers registry + tokens; `kernel` covers the
+# base handle types. `taskschd` is deliberately NOT enabled — that surface
+# belongs to SPEC-0003's watcher service install, and enabling an unused
+# feature now violates the enable-only-needed-features rule.
+winsafe = { version = "0.0.27", features = ["advapi", "kernel"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

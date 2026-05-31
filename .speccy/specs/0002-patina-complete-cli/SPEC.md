@@ -2,7 +2,7 @@
 id: SPEC-0002
 slug: patina-complete-cli
 title: Patina complete CLI surface and Windows symlink elevation
-status: in-progress
+status: implemented
 created: 2026-05-25
 supersedes: []
 ---
@@ -144,7 +144,7 @@ only the `patina` binary.
   `patina init` to scaffold a sensible `patina.toml` so I can start
   registering dotfiles without learning the TOML schema cold.
 - As a user with a pre-existing `~/.zshrc` I want to bring under
-  management, I want `patina add ~/.zshrc` to move my file into a
+  management, I want `patina add ~/.zshrc` to copy my file into a
   sensible module directory, write the right `[[file]]` entry, and
   leave my system in working order so that `patina apply` would be
   a no-op.
@@ -272,14 +272,14 @@ The `patina add <path>` subcommand takes an absolute or
 HOME-relative path on the local filesystem, determines the
 appropriate module subdirectory inside the dotfiles repository
 (prompting the user when ambiguous, or accepting `--module <name>`
-to skip the prompt), moves the file into that module's directory,
+to skip the prompt), copies the file into that module's directory,
 writes a `[[file]]` entry into the module's `patina.toml` (creating
 the module's `patina.toml` if it does not yet exist), and leaves
 the original target path in a state that subsequent `patina apply`
 would converge from.
 
 <done-when>
-- `patina add ~/.zshrc --module zsh --symlink` moves `~/.zshrc`
+- `patina add ~/.zshrc --module zsh --symlink` copies `~/.zshrc`
   into `<repo>/zsh/zshrc`, creates `<repo>/zsh/patina.toml` if
   absent, and appends a `[[file]]` entry with
   `source = "zshrc"`, `target = "~/.zshrc"`, `mode = "symlink"`
@@ -304,7 +304,7 @@ would converge from.
 - Given a pre-existing `~/.zshrc` and a repository whose root
   `patina.toml` exists but has no module subdirectories, when
   `patina add ~/.zshrc --module zsh --symlink` runs, then
-  `~/.zshrc` is moved into the repository at `<repo>/zsh/zshrc`,
+  `~/.zshrc` is copied into the repository at `<repo>/zsh/zshrc`,
   a new file `<repo>/zsh/patina.toml` is created containing the
   `[[file]]` entry, and `~/.zshrc` is left as a regular file
   containing the original bytes (apply has not yet run).
@@ -1041,11 +1041,16 @@ prompt-injection seam.
 All five self-review questions resolved 2026-05-26 by user
 direction; SPEC content updated in the same revision.
 
-- [x] a. **`patina add` move vs copy semantics.** Move-on-add
-  confirmed (REQ-002 stays as drafted). Matches the chezmoi/dotter
+- [x] a. **`patina add` move vs copy semantics.** Copy-on-add
+  confirmed (REQ-002 copies the file into the repo; the original
+  target survives as a regular file until a follow-up `patina apply`
+  replaces it with a symbolic link). Matches the chezmoi/dotter
   convention; the user's file is not lost — it lives in the repo
-  at `<repo>/<module>/<source>` and a follow-up `patina apply`
-  materializes the target back.
+  at `<repo>/<module>/<source>` and `patina apply` materializes the
+  target back. (Corrected 2026-05-31: the 2026-05-26 resolution note
+  read "move-on-add", but REQ-002's done-when/behavior and CHK-003
+  always required the original target to survive — copy, not rename.
+  See the Changelog.)
 - [x] b. **Cloud-sync detection.** Removed entirely from v1.0.
   REQ-005 drops the cloud-sync findings; the hardcoded provider
   list and DEC-004 are repurposed to record the "no detection,
@@ -1085,6 +1090,7 @@ direction; SPEC content updated in the same revision.
 | 2026-05-30 | human/kevin via assistant | Close two gaps surfaced by reviewing the shipped SPEC-0001 code against this SPEC. (1) Lock re-entrancy: the shipped engine apply path self-acquires the exclusive lock, so `remove`/`promote` mutating-under-lock and then re-journaling via a re-apply would self-contend. SPEC-0001 gained REQ-030 (an apply-path lock policy: Blocking / NonBlocking / Held); REQ-009 and the cross-SPEC handoffs now require `remove`/`promote` to hold one exclusive lock for the whole command and drive the re-apply under the `Held` policy. Also pin that the fresh COMMIT is produced via the engine re-apply path (no bespoke COMMIT-writer) and that `remove`'s regular-file replacement is pre-re-apply fs work. (2) TOML writer: `patina-core::config` is parse-only (no serializer), but `init`/`add`/`remove` write and edit manifests. Add DEC-007 selecting `toml_edit` (format/comment-preserving — required so `remove` deletes one `[[file]]` entry without rewriting sibling entries/comments and so REQ-010 determinism holds) and add `toml_edit` to the tooling-notes dependency list. Not yet decomposed, so no TASKS reconciliation. |
 | 2026-05-30 | human/kevin via assistant | Harden against two discrepancies found by the SPEC-0001-vs-code + cross-SPEC verification pass. (1) Internal inconsistency: REQ-007's declined-UAC error message and CHK-012 named `patina doctor --fix-symlinks`, a flag defined nowhere — REQ-006 defines the remediation flag as `patina doctor --fix`. Changed all three `--fix-symlinks` references (REQ-007 done-when + behaviour, CHK-012) to `--fix` so the error points at the command that exists. (2) Added two non-goals: `patina add` exposes only `--symlink`/`--copy`/`--template` (not the `symlink-dir`/`copy-tree` engine modes — hand-edit the manifest for those), and the release/packaging pipeline (building/signing/distributing the per-OS artifacts) is out of scope for the feature SPECs. Also reviewed the SPEC-0001 2026-05-30 recovery-ordering amendment (orphan recovery now runs under the exclusive lock) for impact on `remove`/`promote`'s `Held`-policy re-apply: consistent — the re-apply recovers under the caller's already-held guard, no self-contention. Not yet decomposed, so no TASKS reconciliation. |
 | 2026-05-30 | human/kevin via assistant | Pin the engine/CLI layering split for the Windows Developer Mode flow as DEC-008 (surfaced during SPEC-0002 decomposition). REQ-007's prose ("the engine emits an interactive prompt … spawns the helper") sits in tension with the `patina-core` IO boundary (no `println!`/`eprintln!`; the `Reporter` and all prompts live in `patina-cli`). DEC-008 records the resolution that satisfies REQ-007 without altering it: the *capability* (registry read, elevation/OS queries, `ShellExecuteEx`/`runas` helper launch, flag re-read) lives in `patina-core::windows` as IO-free functions; the *orchestration* (UAC prompt via `Reporter`, decline → exit 5, re-drive `execute_plan` under `LockPolicy::Held` on accept) lives in `patina-cli`. Decisions-block-only edit: no `<requirement>` / `<done-when>` / `<scenario>` / `<goals>` / `<non-goals>` / `<assumptions>` content changed. TASKS.md T-007 / T-009 already describe this split, so reconcile records no task-content change; re-lock the spec hash. |
+| 2026-05-31 | human/kevin via assistant | Correct REQ-002's move-vs-copy prose to match its own authoritative scenario and the shipped/reviewed implementation. The requirement description, the `patina add ~/.zshrc` done-when bullet, the `<behavior>` bullet, and user-story-2 said `patina add` "moves" the file into the repo, but the same requirement's `<behavior>` ("`~/.zshrc` is left as a regular file containing the original bytes") and `<scenario>` CHK-003 ("`~/.zshrc` is a regular file with content \"foo\"") always required the original target to survive — i.e. copy, not rename. T-004 implemented copy (`stage_into_repo` uses `fs_err::copy`) to satisfy CHK-003, and the holistic vet drift review flagged the prose as the stale side. Reworded "moves/moved"→"copies/copied" in those four prose sites and updated the resolved Open Question (a) note (which had read "move-on-add confirmed", contradicting the criteria it shipped with). No `<done-when>` assertion semantics, no `<scenario>`, and no code changed — CHK-003 and the implementation are untouched; this is a prose-consistency correction only. TASKS.md task content is unchanged; re-lock the spec hash. |
 </changelog>
 
 ## Notes
