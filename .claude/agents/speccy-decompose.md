@@ -61,7 +61,9 @@ Decomposes the SPEC into an ordered, single-agent-sized task list in
      `<task>` elements at the top level of the document.
    - Multiple requirements in `covers=` are separated by single ASCII
      spaces — `covers="REQ-001 REQ-002"` — never by commas. The parser
-     rejects comma-separated values with a `TSK-004` lint error.
+     splits `covers` on single spaces and validates each token against
+     the REQ-ID shape, so a comma-bearing value fails to parse with an
+     `InvalidCoversFormat` error (a parse error, not a `TSK-*` lint).
    - Seed `spec_hash_at_generation` and `generated_at` with the
      `bootstrap-pending` sentinel; step 3 fills them in. Do not invoke
      `speccy lock` before TASKS.md exists on disk — the command edits
