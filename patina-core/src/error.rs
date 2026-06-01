@@ -9,6 +9,7 @@
 //! `todo!()` / `panic!()` (forbidden by REQ-024). The `non_exhaustive`
 //! attribute keeps downstream `match` arms forward compatible.
 
+use camino::Utf8PathBuf;
 use thiserror::Error;
 
 /// Errors returned from [`apply`](fn@crate::apply),
@@ -104,4 +105,44 @@ pub enum EngineError {
          `patina apply` and accept the elevation prompt"
     )]
     DevModeRequired,
+
+    /// A managed entry's declared kind does not match the kind of its
+    /// source on disk: a `[[file]]` entry whose source is a directory, or a
+    /// `[[directory]]` entry whose source is a file (SPEC-0004 REQ-002 /
+    /// DEC-008). Raised at plan time — after the entry survives `when`-gating
+    /// and its source is canonicalized, but before the advisory lock, the
+    /// journal flush, or any mutation — so a mismatched entry mutates
+    /// nothing. The message names the offending source path and directs the
+    /// author to the table the source kind actually belongs under. The
+    /// executor retains its own check as a materialize-time TOCTOU backstop.
+    #[error(
+        "the source {path} is a {found}, but it is declared under a \
+         {declared_table} table; move it to a {expected_table} entry"
+    )]
+    SourceKindMismatch {
+        /// The canonical source path whose on-disk kind was wrong.
+        path: Utf8PathBuf,
+        /// The on-disk kind of the source (`"directory"` or `"file"`).
+        found: &'static str,
+        /// The table the entry is declared under (`"[[file]]"` or
+        /// `"[[directory]]"`).
+        declared_table: &'static str,
+        /// The table the entry should use instead (`"[[directory]]"` or
+        /// `"[[file]]"`).
+        expected_table: &'static str,
+    },
+
+    /// A managed entry survived `when`-gating but its source does not exist
+    /// on disk (SPEC-0004 REQ-002 / DEC-008). Raised at plan time — before
+    /// the advisory lock, the journal flush, or any mutation — rather than
+    /// surfacing later from the executor. Because `paths::canonicalize`
+    /// falls back to lexical resolution for a non-existent path, a missing
+    /// source does not fail at canonicalization; this is an explicit
+    /// existence probe on the canonical source. The executor retains its own
+    /// existence check as a materialize-time TOCTOU backstop.
+    #[error("the source {path} declared by a managed entry does not exist")]
+    SourceNotFound {
+        /// The canonical source path that was not found on disk.
+        path: Utf8PathBuf,
+    },
 }

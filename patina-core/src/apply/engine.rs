@@ -32,6 +32,7 @@ use crate::apply::hooks;
 use crate::apply::materialize;
 use crate::backups::backup_before_overwrite;
 use crate::backups::gc_retain;
+use crate::config::EntryKind;
 use crate::config::FileMode;
 use crate::config::HookEntry;
 use crate::config::HookEvent;
@@ -428,8 +429,11 @@ fn assemble_plan_operations(
 /// entry the gate is above the target loop, so `when` gates all targets
 /// together (REQ-003).
 ///
-/// The plan-time source existence-and-kind validation (step 3 of REQ-009)
-/// lands in T-006 and slots in after canonicalization here.
+/// Step (3) of the REQ-009 order — the plan-time source existence-and-kind
+/// validation — runs inside [`resolve_entry`], right after the source is
+/// canonicalized, so a `when`-false entry (which returns `Ok(None)` here
+/// before `resolve_entry` is ever called) is never canonicalized or
+/// validated (REQ-002 / CHK-022).
 fn gate_and_resolve_entry(
     entry: &ManagedEntry,
     module_path: &Utf8Path,
@@ -446,15 +450,25 @@ fn gate_and_resolve_entry(
 }
 
 /// Canonicalize one managed entry's source and targets under `module_path`
-/// and `home`, independent of its declared kind. The file/directory order
-/// and the entry-index space are imposed by the caller; this only resolves
-/// paths.
+/// and `home`, then validate the canonical source's existence and kind
+/// against the entry's declared table (REQ-002, step 3 of the REQ-009
+/// order). The file/directory order and the entry-index space are imposed by
+/// the caller; this resolves paths and performs the plan-time source check.
+///
+/// # Errors
+///
+/// Returns [`EngineError::SourceNotFound`] when the canonical source does
+/// not exist on disk, and [`EngineError::SourceKindMismatch`] when a
+/// `[[file]]` entry's source is a directory or a `[[directory]]` entry's
+/// source is a file. Both are raised here, in the plan phase, before any
+/// mutation. Path canonicalization failures surface as [`EngineError::Path`].
 fn resolve_entry(
     entry: &ManagedEntry,
     module_path: &Utf8Path,
     home: &Utf8Path,
 ) -> Result<ResolvedEntry, EngineError> {
     let source = canonicalize(&module_path.join(&entry.source))?;
+    validate_source_kind(&source, entry.kind)?;
     let mut targets = Vec::with_capacity(entry.targets.len());
     for target in &entry.targets {
         let expanded = expand_tilde(target, home);
@@ -465,6 +479,58 @@ fn resolve_entry(
         source,
         targets,
     })
+}
+
+/// Validate a canonical source path against the kind declared by its
+/// table-array (REQ-002 / DEC-008).
+///
+/// `paths::canonicalize` falls back to a *lexical* resolution for a
+/// non-existent path, so a missing source does not fail at canonicalization;
+/// the existence check is therefore an explicit `symlink_metadata` probe on
+/// the canonical source rather than a reliance on canonicalization failing.
+/// The kind check (`is_dir` / `is_file`) reads the same already-fetched
+/// metadata, so this adds a single `stat`, not a second IO pass. A symlinked
+/// source resolves through the metadata follow so the *kind it points at* is
+/// what is validated — the same kind the executor will materialize.
+///
+/// # Errors
+///
+/// Returns [`EngineError::SourceNotFound`] when the source does not exist,
+/// and [`EngineError::SourceKindMismatch`] when a `[[file]]` source is a
+/// directory or a `[[directory]]` source is a file.
+fn validate_source_kind(source: &Utf8Path, kind: EntryKind) -> Result<(), EngineError> {
+    // `metadata` follows symlinks, so the kind validated is the kind the
+    // source ultimately resolves to — matching what the executor materializes.
+    let metadata = match fs_err::metadata(source) {
+        Ok(metadata) => metadata,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return Err(EngineError::SourceNotFound {
+                path: source.to_path_buf(),
+            });
+        }
+        Err(err) => {
+            return Err(EngineError::Path(crate::paths::PathError::Filesystem {
+                path: source.to_path_buf(),
+                source: err,
+            }));
+        }
+    };
+
+    match kind {
+        EntryKind::File if metadata.is_dir() => Err(EngineError::SourceKindMismatch {
+            path: source.to_path_buf(),
+            found: "directory",
+            declared_table: "[[file]]",
+            expected_table: "[[directory]]",
+        }),
+        EntryKind::Directory if !metadata.is_dir() => Err(EngineError::SourceKindMismatch {
+            path: source.to_path_buf(),
+            found: "file",
+            declared_table: "[[directory]]",
+            expected_table: "[[file]]",
+        }),
+        EntryKind::File | EntryKind::Directory => Ok(()),
+    }
 }
 
 /// Build the durable [`PlannedOperation`] for one resolved
@@ -975,6 +1041,98 @@ mod tests {
             "the gated-off entry occupies index 1, leaving a gap rather than \
              renumbering the survivors"
         );
+    }
+
+    /// REQ-002: a `[[file]]` entry whose canonical source is a directory is
+    /// a plan-time kind mismatch directing the author to `[[directory]]`. The
+    /// error names the source path and both tables so the message is
+    /// actionable.
+    #[test]
+    fn file_entry_with_directory_source_is_a_kind_mismatch() {
+        let temp = TempDir::new().expect("tempdir");
+        let root = Utf8Path::from_path(temp.path()).expect("utf8 temp path");
+        let dir_source = root.join("confdir");
+        fs_err::create_dir(&dir_source).expect("mkdir source");
+
+        let err = validate_source_kind(&dir_source, EntryKind::File)
+            .expect_err("a directory source under `[[file]]` must be rejected");
+
+        assert!(
+            matches!(
+                &err,
+                EngineError::SourceKindMismatch {
+                    path,
+                    found: "directory",
+                    declared_table: "[[file]]",
+                    expected_table: "[[directory]]",
+                } if *path == dir_source
+            ),
+            "a `[[file]]` directory source must yield a mismatch naming the source, \
+             `directory`, `[[file]]`, and `[[directory]]`, got: {err:?}"
+        );
+    }
+
+    /// REQ-002 (symmetric): a `[[directory]]` entry whose canonical source is
+    /// a regular file is a kind mismatch directing the author to `[[file]]`.
+    #[test]
+    fn directory_entry_with_file_source_is_a_kind_mismatch() {
+        let temp = TempDir::new().expect("tempdir");
+        let root = Utf8Path::from_path(temp.path()).expect("utf8 temp path");
+        let file_source = root.join("gitconfig");
+        fs_err::write(&file_source, "[user]\n").expect("write source");
+
+        let err = validate_source_kind(&file_source, EntryKind::Directory)
+            .expect_err("a file source under `[[directory]]` must be rejected");
+
+        assert!(
+            matches!(
+                &err,
+                EngineError::SourceKindMismatch {
+                    path,
+                    found: "file",
+                    declared_table: "[[directory]]",
+                    expected_table: "[[file]]",
+                } if *path == file_source
+            ),
+            "a `[[directory]]` file source must yield a mismatch naming the source, \
+             `file`, `[[directory]]`, and `[[file]]`, got: {err:?}"
+        );
+    }
+
+    /// REQ-002: a source that does not exist on disk is a "source not found"
+    /// error, not a kind mismatch. `paths::canonicalize` resolves a missing
+    /// path lexically, so the existence check is this explicit probe.
+    #[test]
+    fn absent_source_is_source_not_found() {
+        let temp = TempDir::new().expect("tempdir");
+        let root = Utf8Path::from_path(temp.path()).expect("utf8 temp path");
+        let ghost = root.join("ghost");
+
+        let err = validate_source_kind(&ghost, EntryKind::File)
+            .expect_err("an absent source must be rejected");
+
+        assert!(
+            matches!(&err, EngineError::SourceNotFound { path } if *path == ghost),
+            "an absent source must yield SourceNotFound naming the source, got: {err:?}"
+        );
+    }
+
+    /// REQ-002: a `[[file]]` source that is a file and a `[[directory]]`
+    /// source that is a directory both validate cleanly — the matched-kind
+    /// path raises no error.
+    #[test]
+    fn matching_kinds_validate_cleanly() {
+        let temp = TempDir::new().expect("tempdir");
+        let root = Utf8Path::from_path(temp.path()).expect("utf8 temp path");
+        let file_source = root.join("zshrc");
+        fs_err::write(&file_source, "export EDITOR=vim\n").expect("write file source");
+        let dir_source = root.join("mpv");
+        fs_err::create_dir(&dir_source).expect("mkdir dir source");
+
+        validate_source_kind(&file_source, EntryKind::File)
+            .expect("a file source under `[[file]]` validates");
+        validate_source_kind(&dir_source, EntryKind::Directory)
+            .expect("a directory source under `[[directory]]` validates");
     }
 
     /// A tempdir state directory plus a minimal empty-operation plan that

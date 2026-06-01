@@ -299,7 +299,7 @@ Suggested files: `patina-core/src/apply/engine.rs`,
 </task-scenarios>
 </task>
 
-<task id="T-006" state="pending" covers="REQ-002 REQ-009">
+<task id="T-006" state="completed" covers="REQ-002 REQ-009">
 ## Add the plan-time source existence-and-kind check after `when`-gating
 
 After a surviving (`when`-true or no-`when`) entry is canonicalized in
