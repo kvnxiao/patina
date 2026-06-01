@@ -2,7 +2,7 @@
 id: SPEC-0003
 slug: patina-watch
 title: Patina watch — filesystem event loop, per-OS service install, drift detection
-status: in-progress
+status: implemented
 created: 2026-05-25
 supersedes: []
 ---
