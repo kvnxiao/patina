@@ -12,21 +12,26 @@
 //!   subscription set (REQ-005) — via the [`subscriptions`] submodule;
 //! - the 500ms debounce wrapper and the OS-thread→async bridge (REQ-006 /
 //!   DEC-011) — via the [`debounce`] submodule;
+//! - the `NonBlocking` re-apply handler driven on a source edit (REQ-006 /
+//!   REQ-008) — via the [`reapply`] submodule;
 //! - the foreground watcher loop itself ([`run_foreground`], REQ-004 /
-//!   REQ-006).
+//!   REQ-006), which classifies each debounced batch and dispatches it.
 //!
-//! The re-apply handler body (T-009), the drift handler (T-010), and the
-//! per-OS service install land in later tasks; the foreground loop here logs
-//! receipt of each debounced batch and leaves the mutating work to those tasks.
+//! The drift handler (T-010) and the per-OS service install land in later
+//! tasks; until the drift handler arrives, a batch touching only content-target
+//! paths is a no-op.
 
 pub mod debounce;
 pub mod drift_cache;
 pub mod logging;
+pub mod reapply;
 pub mod subscriptions;
 
+use crate::journal::COMMIT_SUFFIX;
 use crate::journal::read_latest_commit;
 use crate::state_dir;
 use camino::Utf8Path;
+use camino::Utf8PathBuf;
 use std::future::Future;
 use thiserror::Error;
 use tracing::instrument::WithSubscriber;
@@ -111,17 +116,20 @@ pub fn watcher_config_warning(manifest_text: &str) -> Option<String> {
 /// The watcher: resolves the per-machine state directory, initializes the
 /// structured-log stack (a rotating file layer plus a stderr layer), reads the
 /// most recent committed apply and computes its FS subscription set
-/// ([`subscriptions::compute_subscriptions`]), arms the 500ms debouncer over
+/// ([`subscriptions::compute_watch_set`]), arms the 500ms debouncer over
 /// that set ([`debounce::spawn`]), and runs a single `tokio::select!` loop that
 /// awaits either the next debounced event batch or `shutdown`. On `shutdown` it
 /// logs a `shutdown` event, drops the debouncer (releasing every FS
 /// subscription), and returns `Ok(())`.
 ///
-/// This task wires the loop and shutdown only. Each received batch is logged
-/// (`watch_event`) but not yet acted on: the re-apply handler lands in T-009
-/// and the drift handler in T-010. The foreground process does **not** acquire
-/// the exclusive advisory lock (REQ-004); the watcher takes per-re-apply locks
-/// internally in T-009.
+/// Each received batch is classified and dispatched (REQ-005 / REQ-006): a
+/// journal-directory event re-reads the latest commit and re-arms the debouncer
+/// over the recomputed subscription set ([`reapply`] is *not* invoked); a
+/// source-path event drives a `NonBlocking` re-apply
+/// ([`reapply::run_reapply`]); a content-target-only event is left for the
+/// drift handler (T-010). The foreground process does **not** acquire the
+/// exclusive advisory lock (REQ-004); the engine takes the per-re-apply lock
+/// under `NonBlocking` inside [`reapply::run_reapply`].
 ///
 /// When no apply has ever committed, the subscription set is just the
 /// journal-rescan directory, so the watcher idles until an apply writes a
@@ -206,15 +214,18 @@ where
     async {
         let record =
             read_latest_commit(&journal_dir).map_err(|source| WatchError::Journal { source })?;
-        let subscriptions = record.as_ref().map_or_else(
-            || vec![journal_dir.clone()],
-            |record| subscriptions::compute_subscriptions(record, state),
+        let mut watch_set = record.as_ref().map_or_else(
+            || subscriptions::WatchSet {
+                watched: vec![journal_dir.clone()],
+                sources: Vec::new(),
+            },
+            |record| subscriptions::compute_watch_set(record, state),
         );
 
-        let mut debouncer = debounce::spawn(&subscriptions)?;
+        let mut debouncer = debounce::spawn(&watch_set.watched)?;
         tracing::info!(
             target: "patina_core",
-            subscriptions = subscriptions.len(),
+            subscriptions = watch_set.watched.len(),
             "watch_started"
         );
 
@@ -228,18 +239,42 @@ where
                 batch = debouncer.events.recv() => {
                     match batch {
                         Some(batch) => {
-                            // T-008 wires the loop; the re-apply (T-009) and
-                            // drift (T-010) handlers land later. Log receipt so
-                            // the loop is observable and the later tasks have a
-                            // dispatch point. When those tasks spawn handlers,
-                            // they must carry this subscriber forward (e.g.
-                            // `handler.with_current_subscriber()`) so their
-                            // post-await emissions are not dropped.
                             tracing::info!(
                                 target: "patina_core",
                                 paths = batch.paths.len(),
                                 "watch_event"
                             );
+                            // Classify the coalesced batch (T-009), journal
+                            // first so the watcher's own writes never re-trigger
+                            // a re-apply:
+                            //
+                            // - A batch touching `<state>/patina/journal/` is a
+                            //   new `.plan`/`.COMMIT` from some apply (the
+                            //   watcher's own re-apply, or a parallel CLI run):
+                            //   re-read the latest commit and recompute the watch
+                            //   set, re-arming the debouncer (REQ-005 rescan). It
+                            //   does NOT re-apply, so a re-apply's own journal
+                            //   write cannot drive an unbounded loop.
+                            // - Otherwise, a batch touching a repository **source**
+                            //   path is a source edit: drive a `NonBlocking`
+                            //   re-apply (REQ-006 / REQ-008).
+                            // - Otherwise the batch touched only content-target
+                            //   paths — a re-apply's own target rewrite or an
+                            //   external edit. That is drift detection's concern
+                            //   (T-010), NOT a re-apply, so it must not re-apply
+                            //   here (re-applying would rewrite the target and
+                            //   re-trigger itself). The drift handler lands in
+                            //   T-010; until then a content-only batch is a no-op.
+                            if journal_event(&batch) {
+                                if let Some((rebuilt, rebuilt_set)) =
+                                    rescan(&journal_dir, state, &batch)
+                                {
+                                    debouncer = rebuilt;
+                                    watch_set = rebuilt_set;
+                                }
+                            } else if source_event(&batch, &watch_set.sources) {
+                                let _outcome = reapply::run_reapply().await;
+                            }
                         }
                         None => break,
                     }
@@ -261,6 +296,113 @@ where
 fn env_filter() -> tracing_subscriber::EnvFilter {
     tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"))
+}
+
+/// Whether a debounced batch is a journal-directory event — a new
+/// `.plan`/`.COMMIT` written under `<state>/patina/journal/` by some apply
+/// (the watcher's own re-apply, or a parallel CLI invocation). Such a batch
+/// triggers a subscription rescan rather than a re-apply (REQ-005), so the
+/// watcher's own journal writes cannot drive an unbounded re-apply loop.
+///
+/// A batch counts as a journal event when any touched path is a journal
+/// sentinel (a file with a `.plan` / `.COMMIT` / `.progress` /
+/// `.ROLLED_BACK` suffix) whose parent directory is named `journal`. The
+/// classifier matches on the path *leaf* rather than a `starts_with` against
+/// the resolved journal directory because `notify` reports canonicalized event
+/// paths (on macOS `/tmp` resolves to `/private/tmp`), which would never share
+/// a prefix with the un-canonicalized state directory the watcher resolved.
+fn journal_event(batch: &debounce::EventBatch) -> bool {
+    batch.paths.iter().any(|p| is_journal_sentinel(p))
+}
+
+/// Whether `path` is a journal sentinel: a `.plan` / `.COMMIT` / `.progress` /
+/// `.ROLLED_BACK` file directly inside a directory named `journal`.
+fn is_journal_sentinel(path: &Utf8Path) -> bool {
+    let in_journal_dir = path
+        .parent()
+        .and_then(Utf8Path::file_name)
+        .is_some_and(|name| name == "journal");
+    let is_sentinel = path.file_name().is_some_and(|name| {
+        name.ends_with(crate::journal::PLAN_SUFFIX)
+            || name.ends_with(crate::journal::COMMIT_SUFFIX)
+            || name.ends_with(crate::journal::PROGRESS_SUFFIX)
+            || name.ends_with(crate::journal::ROLLED_BACK_SUFFIX)
+    });
+    in_journal_dir && is_sentinel
+}
+
+/// Whether a debounced batch touched a repository **source** path — the only
+/// kind of event that drives a re-apply (REQ-006). Content-target events route
+/// to drift detection (T-010), not re-apply, so a re-apply's own target rewrite
+/// does not re-trigger itself.
+fn source_event(batch: &debounce::EventBatch, sources: &[Utf8PathBuf]) -> bool {
+    batch.paths.iter().any(|path| sources.contains(path))
+}
+
+/// Re-read the latest committed apply and recompute the watcher's subscription
+/// set, re-arming a fresh debouncer over it (REQ-005 / CHK-017).
+///
+/// Logs a `journal_rescan` event naming the `.COMMIT` file(s) the triggering
+/// batch touched and the recomputed subscription count. On success it returns
+/// the rebuilt [`debounce::Debouncer`] paired with the recomputed
+/// [`subscriptions::WatchSet`] for the caller to install. On a journal read
+/// failure or a debouncer rebuild failure it logs a warning and returns `None`,
+/// leaving the existing debouncer and watch set in place — a transient rescan
+/// failure must not crash the watcher.
+fn rescan(
+    journal_dir: &Utf8Path,
+    state: &Utf8Path,
+    batch: &debounce::EventBatch,
+) -> Option<(debounce::Debouncer, subscriptions::WatchSet)> {
+    // Name the COMMIT file(s) the batch touched so a log reader can join the
+    // rescan to the apply that triggered it (CHK-017). The `.COMMIT` suffix is
+    // the journal's commit sentinel; a `.plan` arrives first but the COMMIT is
+    // the durable record the rescan reads.
+    let commits: Vec<&str> = batch
+        .paths
+        .iter()
+        .filter(|path| path.file_name().is_some_and(|n| n.ends_with(COMMIT_SUFFIX)))
+        .filter_map(|path| path.file_name())
+        .collect();
+
+    let record = match read_latest_commit(journal_dir) {
+        Ok(record) => record,
+        Err(error) => {
+            tracing::warn!(
+                target: "patina_core",
+                error = %error,
+                "journal_rescan_failed"
+            );
+            return None;
+        }
+    };
+    let watch_set = record.as_ref().map_or_else(
+        || subscriptions::WatchSet {
+            watched: vec![journal_dir.to_path_buf()],
+            sources: Vec::new(),
+        },
+        |record| subscriptions::compute_watch_set(record, state),
+    );
+
+    let rebuilt = match debounce::spawn(&watch_set.watched) {
+        Ok(debouncer) => debouncer,
+        Err(error) => {
+            tracing::warn!(
+                target: "patina_core",
+                error = %error,
+                "journal_rescan_failed"
+            );
+            return None;
+        }
+    };
+
+    tracing::info!(
+        target: "patina_core",
+        commits = %commits.join("\t"),
+        subscriptions = watch_set.watched.len(),
+        "journal_rescan"
+    );
+    Some((rebuilt, watch_set))
 }
 
 #[cfg(test)]
@@ -301,6 +443,57 @@ mod tests {
         // diagnoses only the one forward-compatible key and defers real parse
         // errors to the apply path.
         assert!(watcher_config_warning("this is not = = toml").is_none());
+    }
+
+    fn batch(paths: &[&str]) -> debounce::EventBatch {
+        debounce::EventBatch {
+            paths: paths.iter().map(Utf8PathBuf::from).collect(),
+        }
+    }
+
+    #[test]
+    fn journal_sentinels_in_a_journal_dir_classify_as_journal_events() {
+        // A `.plan` / `.COMMIT` / `.progress` / `.ROLLED_BACK` file inside a
+        // `journal` directory is a journal event regardless of the absolute
+        // prefix (the macOS `/tmp` vs `/private/tmp` canonicalization is why we
+        // match the leaf, not a `starts_with`).
+        assert!(journal_event(&batch(&[
+            "/private/tmp/x/patina/journal/20260531T000000Z.COMMIT"
+        ])));
+        assert!(journal_event(&batch(&[
+            "/state/patina/journal/20260531T000000Z.plan"
+        ])));
+        assert!(journal_event(&batch(&[
+            "/state/patina/journal/20260531T000000Z.progress"
+        ])));
+    }
+
+    #[test]
+    fn non_journal_paths_do_not_classify_as_journal_events() {
+        // A source edit and a content-target rewrite are not journal events,
+        // so they never route to the rescan path. A `.plan`-suffixed file that
+        // is NOT inside a `journal` directory is also not a journal event (the
+        // parent-dir-name guard rejects it).
+        assert!(!journal_event(&batch(&["/repo/git/gitconfig"])));
+        assert!(!journal_event(&batch(&["/home/u/.gitconfig"])));
+        assert!(!journal_event(&batch(&["/repo/weird/notes.plan"])));
+    }
+
+    #[test]
+    fn only_source_paths_classify_as_source_events() {
+        // The re-apply trigger fires only for a repository source path. A
+        // content-target path is watched (for drift) but is NOT a source, so a
+        // batch naming only the target does not re-apply — this is the loop
+        // guard that stops a re-apply's own target rewrite from re-triggering.
+        let sources = vec![Utf8PathBuf::from("/repo/git/gitconfig")];
+        assert!(source_event(&batch(&["/repo/git/gitconfig"]), &sources));
+        assert!(!source_event(&batch(&["/home/u/.gitconfig"]), &sources));
+        // A batch coalescing a source edit with the target rewrite still counts
+        // as a source event (the source path is present).
+        assert!(source_event(
+            &batch(&["/home/u/.gitconfig", "/repo/git/gitconfig"]),
+            &sources
+        ));
     }
 
     #[tokio::test]

@@ -403,7 +403,7 @@ Suggested files: `patina-core/src/watch/mod.rs`,
 </task-scenarios>
 </task>
 
-<task id="T-009" state="pending" covers="REQ-006 REQ-008">
+<task id="T-009" state="completed" covers="REQ-006 REQ-008">
 ## Watcher re-apply under `NonBlocking` lock, contention-skip, and journal rescan
 
 REQ-006 / REQ-008 / DEC-007 (and SPEC-0001 REQ-030): on a debounced source
