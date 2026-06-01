@@ -19,7 +19,7 @@
 //! `patina-elevate` helper.
 //!
 //! The task definition is built as Task Scheduler 2.0 registration XML
-//! ([`render_task_xml`]) and handed to `ITaskService` via `put_XmlText` +
+//! (`render_task_xml`) and handed to `ITaskService` via `put_XmlText` +
 //! `RegisterTaskDefinition`. Building the descriptor as a pure string mirrors
 //! the `launchd` plist and `systemd` unit siblings and lets CHK-003's
 //! trigger / run-level assertions be unit-tested as a string property on any
