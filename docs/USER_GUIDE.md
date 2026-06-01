@@ -40,14 +40,22 @@ copy-tree, or template render).
 A minimal example:
 
 ```toml
-[[link]]
+# A symlink — `mode` defaults to "symlink" when omitted.
+[[file]]
 source = "git/gitconfig"
 target = "~/.gitconfig"
 
-[[template]]
-source = "shell/zshrc.j2"
+# A template — a `.tmpl` source is rendered with MiniJinja. The mode is
+# implicit for `.tmpl` sources and must not be declared.
+[[file]]
+source = "shell/zshrc.tmpl"
 target = "~/.zshrc"
 ```
+
+Each entry is a `[[file]]` table. `mode` accepts `symlink` (the default),
+`symlink-dir`, `copy`, or `copy-tree`; a `.tmpl` source is always rendered as
+a template and takes no explicit `mode`. Use `target` for a single
+destination or `targets = [...]` to fan one source out to many.
 
 Templates are rendered with MiniJinja under strict-undefined semantics:
 referencing a variable that was never defined is an error at render
