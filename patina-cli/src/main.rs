@@ -21,8 +21,8 @@ use cli::Command;
 use cli::resolve_exit_code;
 use cmd::apply::StdinReader;
 use cmd::apply::Tty;
-use is_terminal::IsTerminal;
 use output::reporter::StreamReporter;
+use std::io::IsTerminal;
 
 /// Classify the current stdin as an interactive terminal or not, so prompt
 /// flows fall through to plan-only / non-interactive behavior off a TTY.

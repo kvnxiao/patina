@@ -21,11 +21,11 @@ pub struct Builtins {
     /// Host CPU architecture from `std::env::consts::ARCH` (e.g.
     /// `"x86_64"`, `"aarch64"`).
     pub arch: String,
-    /// Host name reported by the operating system. Empty when the
-    /// platform-appropriate environment variable is unset.
+    /// Host name from the operating system (via `whoami`, a `gethostname` /
+    /// `GetComputerNameExW` syscall). Empty when the OS query fails.
     pub hostname: String,
-    /// Current user name. Empty when the platform-appropriate
-    /// environment variable is unset.
+    /// Current user name from the operating system (via `whoami`, a
+    /// `getpwuid` / `GetUserNameW` syscall). Empty when the OS query fails.
     pub user: String,
     /// Current user's home directory. Empty when neither `HOME` (unix)
     /// nor `USERPROFILE` (Windows) is set.
@@ -95,24 +95,19 @@ fn normalized_os(raw: &str) -> String {
     }
 }
 
-#[cfg(windows)]
+/// Host name from the OS, via `whoami` (a `gethostname` /
+/// `GetComputerNameExW` syscall) rather than the `$HOSTNAME` env var, which
+/// is a non-exported bash shell variable on Unix and is absent under the
+/// systemd/launchd watcher services. Empty when the query fails.
 fn current_hostname() -> String {
-    std::env::var("COMPUTERNAME").unwrap_or_default()
+    whoami::hostname().unwrap_or_default()
 }
 
-#[cfg(not(windows))]
-fn current_hostname() -> String {
-    std::env::var("HOSTNAME").unwrap_or_default()
-}
-
-#[cfg(windows)]
+/// Current user name from the OS, via `whoami` (a `getpwuid` /
+/// `GetUserNameW` syscall) rather than `$USER` / `$USERNAME`. Empty when the
+/// query fails.
 fn current_user() -> String {
-    std::env::var("USERNAME").unwrap_or_default()
-}
-
-#[cfg(not(windows))]
-fn current_user() -> String {
-    std::env::var("USER").unwrap_or_default()
+    whoami::username().unwrap_or_default()
 }
 
 #[cfg(windows)]
