@@ -57,17 +57,26 @@ fn start_with_no_installed_service_exits_one_with_a_clear_message() {
         String::from_utf8_lossy(&out.stderr)
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
-    if cfg!(target_os = "macos") {
-        assert!(
-            stderr.contains("service not installed") && stderr.contains("patina watch install"),
-            "macOS: the not-installed message must point at install, got: {stderr}"
-        );
-    } else {
-        assert!(
-            stderr.contains("--foreground"),
-            "non-macOS: the unsupported backend must point at the foreground hatch, got: {stderr}"
-        );
-    }
+    assert!(
+        not_installed_or_unsupported(&stderr),
+        "the not-installed message must point at install, or the unsupported \
+         backend at the foreground hatch, got: {stderr}"
+    );
+}
+
+/// Whether a lifecycle command's stderr is one of the two valid not-installed
+/// outcomes: a backend with an installed-service supervisor (launchd on macOS,
+/// `systemd --user` on a systemd Linux host) reports the "service not
+/// installed; run `patina watch install`" no-op; a host with no implemented or
+/// reachable backend (non-systemd Linux, Windows until its task lands) reports
+/// the unsupported `--foreground` escape hatch (DEC-010). Which one fires
+/// depends on the test host's OS *and* (on Linux) whether `systemd --user` is
+/// reachable, so the lifecycle tests accept either rather than pinning to one.
+fn not_installed_or_unsupported(stderr: &str) -> bool {
+    let not_installed =
+        stderr.contains("service not installed") && stderr.contains("patina watch install");
+    let unsupported = stderr.contains("--foreground");
+    not_installed || unsupported
 }
 
 /// `patina watch stop` / `restart` / `uninstall` on a not-installed service

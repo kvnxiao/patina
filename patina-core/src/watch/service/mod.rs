@@ -10,11 +10,19 @@
 //!
 //! [`current`] is the factory: it dispatches on [`crate::state_dir::HostOs`]
 //! and
-//! returns the backend for the running host. The macOS backend ([`launchd`])
-//! lands first (it is locally testable on the developer platform); the Linux
-//! and Windows backends land in their own tasks, and until then the factory
-//! returns the [`unsupported`] stub on those hosts, whose lifecycle methods
-//! return a typed error directing the user to `patina watch --foreground`.
+//! returns the backend for the running host. macOS returns the `launchd`
+//! backend; Linux returns the `systemd` backend when `systemd --user` is
+//! reachable and the [`unsupported`] stub otherwise (non-systemd init systems
+//! are served by `patina watch --foreground` under the user's own supervisor,
+//! DEC-010). The Windows backend lands in its own task; until then the factory
+//! returns the [`unsupported`] stub on Windows, whose lifecycle methods return
+//! a typed error directing the user to `patina watch --foreground`.
+//!
+//! The `launchd` and `systemd` backend modules are each gated to their own
+//! target OS, so they are referenced as plain code spans rather than
+//! intra-doc links: a link to a cfg-excluded module would break the docs
+//! build on the other OS (the docs gate runs on Linux, where `launchd` is
+//! compiled out).
 //!
 //! ## Counter recovery (DEC-012)
 //!
@@ -31,6 +39,8 @@
 
 #[cfg(target_os = "macos")]
 pub mod launchd;
+#[cfg(target_os = "linux")]
+pub mod systemd;
 pub mod unsupported;
 
 use crate::state_dir::HostOs;
@@ -224,11 +234,12 @@ pub trait ServiceBackend {
 
 /// Return the background-service backend for the running host (REQ-001).
 ///
-/// Dispatches on [`HostOs::current`]: macOS returns the [`launchd`] backend;
-/// every other host returns the [`unsupported`] stub until its concrete
-/// backend lands (Linux and Windows are separate tasks). The backend is
-/// bound to `state_dir`, the resolved per-machine state root, so `status` can
-/// recover the watcher's log counters from `<state_dir>/logs/`.
+/// Dispatches on [`HostOs::current`]: macOS returns the `launchd` backend;
+/// Linux returns the `systemd` backend when `systemd --user` is reachable
+/// and the [`unsupported`] stub otherwise (non-systemd init, DEC-010); Windows
+/// returns the [`unsupported`] stub until its concrete backend lands. The
+/// backend is bound to `state_dir`, the resolved per-machine state root, so
+/// `status` can recover the watcher's log counters from `<state_dir>/logs/`.
 ///
 /// # Examples
 ///
@@ -244,9 +255,16 @@ pub fn current(state_dir: &Utf8Path) -> Box<dyn ServiceBackend> {
     match HostOs::current() {
         #[cfg(target_os = "macos")]
         HostOs::MacOs => Box::new(launchd::LaunchdBackend::new(state_dir.to_path_buf())),
-        // The Linux (`systemd --user`) and Windows (Scheduled Task) backends
-        // land in their own tasks; until then the factory returns the
-        // foreground-escape-hatch stub on those hosts (DEC-010).
+        // Linux: drive `systemd --user` when its user bus is reachable; on a
+        // non-systemd init the user manager is absent, so fall back to the
+        // foreground-escape-hatch stub (DEC-010).
+        #[cfg(target_os = "linux")]
+        HostOs::Linux if systemd::SystemdBackend::is_available() => {
+            Box::new(systemd::SystemdBackend::new(state_dir.to_path_buf()))
+        }
+        // The Windows (Scheduled Task) backend lands in its own task; until
+        // then the factory returns the foreground-escape-hatch stub on Windows,
+        // as it does on a non-systemd Linux host (DEC-010).
         _ => Box::new(unsupported::UnsupportedBackend),
     }
 }

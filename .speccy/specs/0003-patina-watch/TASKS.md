@@ -585,7 +585,7 @@ Suggested files: `patina-core/src/watch/service/mod.rs`,
 </task-scenarios>
 </task>
 
-<task id="T-012" state="pending" covers="REQ-001 REQ-003">
+<task id="T-012" state="completed" covers="REQ-001 REQ-003">
 ## Linux `systemd --user` backend and the non-systemd `--foreground` fallback
 
 REQ-001 / REQ-003 / DEC-005 / DEC-010: implement the Linux service backend
