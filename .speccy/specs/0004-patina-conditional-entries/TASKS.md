@@ -421,7 +421,7 @@ Suggested files: `patina-core/src/apply/symlink.rs`,
 </task-scenarios>
 </task>
 
-<task id="T-008" state="pending" covers="REQ-007 REQ-003">
+<task id="T-008" state="completed" covers="REQ-007 REQ-003">
 ## Report and reap `symlink-tree` orphan leaves, and make the status managed-set `when`-aware
 
 Teach `patina status` to classify a `symlink-tree` leaf as orphaned when

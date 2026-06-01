@@ -32,7 +32,6 @@
 
 mod classify;
 
-use crate::discovery::resolve_repository_root;
 use crate::error::EngineError;
 use crate::journal::LastApply;
 use crate::journal::read_latest_commit;
@@ -155,40 +154,26 @@ pub fn report(current_plan_targets: &BTreeSet<Utf8PathBuf>) -> Result<StatusRepo
 /// plan manages. Used to distinguish a still-managed target (classified
 /// against its content) from one the repo has since dropped (ORPHANED).
 ///
-/// This enumerates the declared `[[file]]` targets across every module
-/// (the same discovery, manifest parse, and tilde expansion the apply
-/// planner performs) but keys each target by its declared **location**
-/// via `manage_key` rather than a full canonicalization. A full
-/// canonicalization would follow an already-materialized symlink target
+/// Delegates to [`crate::apply::engine::current_managed_targets`], the single
+/// `when`-aware, `symlink-tree`-aware managed-set computation shared with the
+/// apply-time orphan reap so status and apply agree on which targets are
+/// still managed. That computation keys each target by its declared
+/// **location** via [`manage_key`] rather than a full canonicalization: a
+/// full canonicalization would follow an already-materialized symlink target
 /// through to the repo source, so the target would never appear to be its
 /// own managed location and every applied symlink would falsely report as
-/// ORPHANED at status time.
+/// ORPHANED at status time. It drops `when`-false entries (so a flipped-off
+/// entry's prior target classifies ORPHANED, CHK-019) and expands a
+/// `symlink-tree` entry into one key per live source leaf (so a deleted
+/// source leaf's prior target classifies ORPHANED, CHK-014).
 ///
 /// # Errors
 ///
-/// Returns an [`EngineError`] when repository discovery, module
-/// enumeration, or manifest parsing fails.
+/// Returns an [`EngineError`] when repository discovery, profile resolution,
+/// module enumeration, manifest parsing, or a `when` predicate evaluation
+/// fails.
 pub fn current_plan_targets() -> Result<BTreeSet<Utf8PathBuf>, EngineError> {
-    use crate::config::parse_module_config;
-    use crate::discovery::discover_modules;
-    use crate::paths::expand_tilde;
-    use crate::variables::Builtins;
-
-    let repo_root = resolve_repository_root()?;
-    let home = Utf8PathBuf::from(Builtins::current().home);
-
-    let mut targets = BTreeSet::new();
-    for module in &discover_modules(&repo_root)? {
-        let manifest = module.path.join("patina.toml");
-        let config = parse_module_config(&manifest)?;
-        for entry in &config.files {
-            for target in &entry.targets {
-                let expanded = expand_tilde(target, &home);
-                targets.insert(manage_key(&expanded));
-            }
-        }
-    }
-    Ok(targets)
+    crate::apply::engine::current_managed_targets()
 }
 
 /// Compute the cross-time comparison key for a target path.

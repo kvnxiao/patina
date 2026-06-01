@@ -72,6 +72,7 @@ use crate::windows::HostDevModeProbe;
 use crate::windows::decide_symlink_gate;
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
+use std::collections::BTreeSet;
 use tracing::warn;
 
 /// Manifest filename for the repository root and each module.
@@ -240,47 +241,16 @@ pub fn plan(
     request: &ApplyRequest,
     timestamp: impl Into<String>,
 ) -> Result<ResolvedPlan, EngineError> {
-    let repo_root = resolve_repository_root()?;
-    let state_dir = resolve_state_dir()?;
     let host_os = HostOs::current();
-    let builtins = Builtins::current();
-
-    let root_manifest = repo_root.join(MANIFEST_FILENAME);
-    let auto_match_rules = load_auto_match_rules(&root_manifest)?;
-    let profile = resolve_profile(
-        std::env::var("PATINA_PROFILE").ok(),
-        &state_dir.join("profile"),
-        &auto_match_rules,
-        &builtins,
-    )?;
-
-    // The root manifest's repo-shared `[variables]` table and the active
-    // profile's `[profiles.<name>.variables]` table are the two layers this
-    // pass populates (REQ-005). Resolution precedence is fixed by the
-    // resolver's layer order (CLI > per-machine > per-profile > per-module >
-    // repo-shared > built-ins); pushing them here changes no precedence.
-    let root_config = parse_root_config(&root_manifest)?;
-
-    let home = Utf8PathBuf::from(builtins.home.clone());
-    let mut resolver = Resolver::new(builtins)
-        .with_profile(profile.name.clone())
-        .with_cli_overrides(request.cli_overrides.iter().cloned())?
-        .with_repo_shared(table_to_layer(&root_config.repo_shared))?;
-
-    // The no-profile fallback (empty profile name) selects no per-profile
-    // table; a named profile selects its table when the root declares one.
-    if let Some(table) = root_config.per_profile.get(&profile.name) {
-        resolver = resolver.with_per_profile(table_to_layer(table))?;
-    }
-
-    let modules = discover_modules(&repo_root)?;
-
-    // The shared `MiniJinja` engine that evaluates each entry's `when`
-    // predicate (REQ-004 / DEC-006). It is the same evaluator the hook
-    // `when` and template renders use; constructing it here (it is cheap
-    // and clone-shares one `Arc` environment) lets planning gate entries
-    // before any source is canonicalized.
-    let engine = Engine::new();
+    let PlanningContext {
+        repo_root,
+        state_dir,
+        home,
+        profile,
+        mut resolver,
+        engine,
+        modules,
+    } = build_planning_context(&request.cli_overrides)?;
 
     // Resolve every managed entry into its canonical source/targets, kept
     // in two ordered buckets — `[[file]]` entries and `[[directory]]`
@@ -344,6 +314,199 @@ pub fn plan(
         timestamp: timestamp.into(),
         resolver,
     })
+}
+
+/// The repository, profile, variable resolver, and `when` engine shared by
+/// the two passes that must agree on which entries are active and how their
+/// `when` predicates resolve: [`plan`] (which builds the apply plan) and
+/// [`current_managed_targets`] (which recomputes the managed-target set for
+/// `patina status` and the apply-time orphan reap).
+///
+/// Everything up to — but not including — the per-module entry loop is
+/// identical between the two passes (REQ-005's repo-shared / per-profile
+/// layer pushes, the active-profile resolution, the shared `MiniJinja`
+/// engine). Factoring it here keeps the `when` gate seeing the same variable
+/// context in planning and in status, so an entry that plans on this host is
+/// the same entry status counts as managed (and the reap leaves alone).
+struct PlanningContext {
+    repo_root: Utf8PathBuf,
+    state_dir: Utf8PathBuf,
+    home: Utf8PathBuf,
+    profile: crate::profile::Resolution,
+    resolver: Resolver,
+    engine: Engine,
+    modules: Vec<crate::discovery::ModuleHandle>,
+}
+
+/// Build the [`PlanningContext`] both [`plan`] and [`current_managed_targets`]
+/// consume.
+///
+/// Resolves the repository and state directory, the active profile, and the
+/// resolver's repo-shared (`[variables]`) and active-profile
+/// (`[profiles.<name>.variables]`) layers (REQ-005). The per-module layer is
+/// *not* pushed here — each pass pushes it during its own module loop, in
+/// declaration order, so a module's `[variables]` is in scope for that
+/// module's entries' `when` predicates.
+///
+/// # Errors
+///
+/// Returns an [`EngineError`] when repository / state-directory resolution,
+/// profile resolution, root-manifest parsing, module enumeration, or a
+/// reserved-key violation in a variable layer fails.
+fn build_planning_context(
+    cli_overrides: &[(String, String)],
+) -> Result<PlanningContext, EngineError> {
+    let repo_root = resolve_repository_root()?;
+    let state_dir = resolve_state_dir()?;
+    let builtins = Builtins::current();
+
+    let root_manifest = repo_root.join(MANIFEST_FILENAME);
+    let auto_match_rules = load_auto_match_rules(&root_manifest)?;
+    let profile = resolve_profile(
+        std::env::var("PATINA_PROFILE").ok(),
+        &state_dir.join("profile"),
+        &auto_match_rules,
+        &builtins,
+    )?;
+
+    // The root manifest's repo-shared `[variables]` table and the active
+    // profile's `[profiles.<name>.variables]` table are the two layers this
+    // pass populates (REQ-005). Resolution precedence is fixed by the
+    // resolver's layer order (CLI > per-machine > per-profile > per-module >
+    // repo-shared > built-ins); pushing them here changes no precedence.
+    let root_config = parse_root_config(&root_manifest)?;
+
+    let home = Utf8PathBuf::from(builtins.home.clone());
+    let mut resolver = Resolver::new(builtins)
+        .with_profile(profile.name.clone())
+        .with_cli_overrides(cli_overrides.iter().cloned())?
+        .with_repo_shared(table_to_layer(&root_config.repo_shared))?;
+
+    // The no-profile fallback (empty profile name) selects no per-profile
+    // table; a named profile selects its table when the root declares one.
+    if let Some(table) = root_config.per_profile.get(&profile.name) {
+        resolver = resolver.with_per_profile(table_to_layer(table))?;
+    }
+
+    let modules = discover_modules(&repo_root)?;
+
+    // The shared `MiniJinja` engine that evaluates each entry's `when`
+    // predicate (REQ-004 / DEC-006). It is the same evaluator the hook
+    // `when` and template renders use; constructing it here (it is cheap
+    // and clone-shares one `Arc` environment) lets both planning and the
+    // status managed-set gate entries through one evaluator.
+    let engine = Engine::new();
+
+    Ok(PlanningContext {
+        repo_root,
+        state_dir,
+        home,
+        profile,
+        resolver,
+        engine,
+        modules,
+    })
+}
+
+/// Recompute the set of canonical target paths the *current* repository plan
+/// manages, keyed by [`crate::status::manage_key`] for cross-time comparison
+/// against the recorded commit (REQ-007 / REQ-003).
+///
+/// This is the `when`-aware, `symlink-tree`-aware managed set both
+/// `patina status` (to classify a dropped target ORPHANED) and the apply-time
+/// orphan reap consume. It mirrors [`plan`]'s entry walk with two
+/// differences that make it safe to run for status, where the plan would
+/// refuse:
+///
+/// - **`when` gating (REQ-003).** An entry whose `when` is false on this host
+///   contributes no managed target, so a `[[file]]` whose `when` has been
+///   edited to false has its prior target fall out of the set and classify
+///   ORPHANED (CHK-019). The gate uses the same [`Engine::eval_when`] and
+///   layered resolver as planning, so the two passes agree on which entries are
+///   active.
+/// - **`symlink-tree` leaf expansion (REQ-007).** A `symlink-tree`
+///   `[[directory]]` entry is expanded into one managed key per *live* source
+///   leaf, walked in the same `walk_files` order the executor used, so a
+///   deleted source leaf is absent from the set and its recorded target leaf
+///   classifies ORPHANED (CHK-014). Every other mode contributes its declared
+///   target(s) directly, as before.
+///
+/// Unlike [`plan`], this never canonicalizes the source or kind-checks it:
+/// status must not fail because a `when`-true entry's source is missing or
+/// wrong-shaped (that is the apply plan's job to report). A `symlink-tree`
+/// source that is missing simply yields no leaves.
+///
+/// # Errors
+///
+/// Returns an [`EngineError`] when repository discovery, profile resolution,
+/// module enumeration, manifest parsing, a reserved-key violation, or a
+/// `when` predicate evaluation fails.
+pub fn current_managed_targets() -> Result<BTreeSet<Utf8PathBuf>, EngineError> {
+    let PlanningContext {
+        home,
+        mut resolver,
+        engine,
+        modules,
+        ..
+    } = build_planning_context(&[])?;
+
+    let mut targets = BTreeSet::new();
+    for module in &modules {
+        let manifest = module.path.join(MANIFEST_FILENAME);
+        let config = parse_module_config(&manifest)?;
+
+        if let Some(table) = config.variables.as_ref() {
+            resolver = resolver.with_per_module(table_to_layer(table))?;
+        }
+
+        for entry in config.files.iter().chain(&config.directories) {
+            // `when`-false entries manage nothing this run (REQ-003): their
+            // prior targets fall out of the set and classify ORPHANED.
+            if let Some(expr) = entry.when.as_deref()
+                && !engine.eval_when(expr, &resolver)?
+            {
+                continue;
+            }
+            insert_managed_targets(entry, &module.path, &home, &mut targets);
+        }
+    }
+    Ok(targets)
+}
+
+/// Insert the managed `manage_key`(s) for one surviving (`when`-true) entry.
+///
+/// A `symlink-tree` entry expands to one key per live source leaf, mirrored
+/// under each declared target the same way the executor materializes them
+/// (`target.join(rel)`); a missing source contributes no leaves. Every other
+/// mode contributes its declared targets directly.
+fn insert_managed_targets(
+    entry: &ManagedEntry,
+    module_path: &Utf8Path,
+    home: &Utf8Path,
+    targets: &mut BTreeSet<Utf8PathBuf>,
+) {
+    use crate::status::manage_key;
+
+    if entry.mode == FileMode::SymlinkTree {
+        let source = module_path.join(&entry.source);
+        // The executor walks the live source for leaves; a source that no
+        // longer exists yields none, so every recorded leaf is then orphaned.
+        let Ok(leaves) = crate::apply::walk_files(&source) else {
+            return;
+        };
+        for target in &entry.targets {
+            let expanded = expand_tilde(target, home);
+            for rel in &leaves {
+                targets.insert(manage_key(&expanded.join(rel)));
+            }
+        }
+        return;
+    }
+
+    for target in &entry.targets {
+        let expanded = expand_tilde(target, home);
+        targets.insert(manage_key(&expanded));
+    }
 }
 
 /// Project a raw TOML variable table into the resolver's string-keyed
@@ -577,6 +740,16 @@ pub async fn execute(
     let backups_dir = resolved.backups_dir();
     let template_engine = Engine::new();
 
+    // Whether this run reaps targets a prior apply committed that the current
+    // plan no longer manages (REQ-007 / REQ-003). A full `apply` (`Blocking`)
+    // and a watcher re-apply (`NonBlocking`) reconcile the whole plan, so they
+    // reap. The `Held` path is a surgical single-target re-journal driven by
+    // `patina remove` / `patina promote` under a caller-held lock: those
+    // commands intentionally convert one managed target into an owned regular
+    // file and drop its entry, so reaping would delete the very file they just
+    // promoted — they must not reap.
+    let reap = !matches!(policy, LockPolicy::Held(_));
+
     // Resolve the exclusive lock per policy BEFORE any filesystem
     // mutation, including orphan recovery. On the `NonBlocking`
     // contention path this returns early — before `recover_orphans` and
@@ -700,6 +873,18 @@ pub async fn execute(
             failed_hook: failed,
         })
     } else {
+        // Reap targets a prior apply committed that the current plan no
+        // longer manages — a removed entry, a `when` flipped to false
+        // (REQ-003), or a deleted `symlink-tree` source leaf (REQ-007). Each
+        // orphan's prior bytes are backed up into this run's backup tree
+        // before it is removed (REQ-014); a directory is never removed
+        // (DEC-005). Runs after the post_apply hooks succeed, so a hook
+        // failure rolls back the materializations without having reaped.
+        // Skipped on the `Held` path (`patina remove` / `promote`), which
+        // re-journals one surgically-modified target and must not reap.
+        if reap {
+            reap_orphans(resolved, &backups_dir)?;
+        }
         let record = build_apply_record(resolved, &completed)?;
         journal.commit(&record, &OsSyncer)?;
         // Retention prunes the oldest backup cycles, then the journal
@@ -762,6 +947,68 @@ fn build_apply_record(
         }
     }
     Ok(ApplyRecord::new(last_apply, targets))
+}
+
+/// Reap targets a prior committed apply materialized that the current plan
+/// no longer manages (REQ-007 / REQ-003).
+///
+/// Reads the last committed [`ApplyRecord`] and the current managed-target
+/// set ([`current_managed_targets`], the same `when`-aware /
+/// `symlink-tree`-aware set `patina status` classifies against). A recorded
+/// target whose [`manage_key`](crate::status::manage_key) is absent from the
+/// current set is an orphan: the entry was removed, its `when` flipped false
+/// (CHK-019), or — for a `symlink-tree` leaf — its source leaf was deleted
+/// (CHK-014, CHK-015). Each orphan still present on disk is backed up into
+/// this run's backup tree — the same never-overwrite-without-backup
+/// guarantee every mutating path upholds (REQ-014) — and then removed.
+///
+/// A directory is never removed, even one left empty after its last leaf
+/// link is reaped: Patina cannot prove it owns a directory that may also
+/// hold files written outside Patina (DEC-005). The check is on the live
+/// entry's kind, so an intermediate `symlink-tree` directory survives while
+/// its orphaned leaf links are removed.
+///
+/// # Errors
+///
+/// Returns an [`EngineError`] when the commit read, the managed-set
+/// recomputation, a backup, or a removal fails.
+fn reap_orphans(resolved: &ResolvedPlan, backups_dir: &Utf8Path) -> Result<(), EngineError> {
+    use crate::status::manage_key;
+
+    let journal_dir = resolved.journal_dir();
+    let Some(record) = crate::journal::read_latest_commit(&journal_dir)? else {
+        // No prior committed apply: nothing was ever materialized to orphan.
+        return Ok(());
+    };
+
+    let managed = current_managed_targets()?;
+
+    for expected in &record.targets {
+        let target = Utf8PathBuf::from(expected.target());
+        if managed.contains(&manage_key(&target)) {
+            // Still managed by the current plan: leave it for materialize /
+            // status to handle. Never reaped.
+            continue;
+        }
+        // The current plan dropped this target. Only act on one that is still
+        // on disk; an already-gone orphan needs no work.
+        let Ok(meta) = fs_err::symlink_metadata(&target) else {
+            continue;
+        };
+        // Never remove a directory (DEC-005): Patina cannot prove it owns a
+        // directory that may also hold files written by another tool. This
+        // is the guard that keeps a `symlink-tree` intermediate directory in
+        // place while its orphaned leaf links are reaped.
+        if meta.is_dir() {
+            continue;
+        }
+        // Record the prior bytes in a backup before removal (CHK-019 /
+        // REQ-014). The stash uses this run's timestamped backup tree, the
+        // same one materialize stashes overwrites into.
+        backup_before_overwrite(backups_dir, &resolved.timestamp, &target)?;
+        remove_target(&target)?;
+    }
+    Ok(())
 }
 
 /// Run every hook whose event matches `event`, returning the command of
@@ -1337,5 +1584,89 @@ mod tests {
         );
 
         drop(held);
+    }
+
+    /// A `symlink-tree` entry expands to one managed key per *live* source
+    /// leaf, mirrored under the declared target the same way the executor
+    /// materializes them — so a source leaf that no longer exists contributes
+    /// no key and its recorded target leaf will classify ORPHANED (CHK-014).
+    #[test]
+    fn insert_managed_targets_expands_symlink_tree_per_live_leaf() {
+        use crate::status::manage_key;
+
+        let td = TempDir::new().expect("tempdir");
+        let root = Utf8PathBuf::from_path_buf(td.path().to_path_buf()).expect("utf8 temp path");
+        // The module's source directory `d/` holds `a.conf` and `sub/b.conf`.
+        let module = root.join("mod");
+        let source = module.join("d");
+        fs_err::create_dir_all(source.join("sub")).expect("mkdir sub");
+        fs_err::write(source.join("a.conf"), b"a").expect("write a");
+        fs_err::write(source.join("sub").join("b.conf"), b"b").expect("write b");
+        // The target lives under the tempdir (real, canonicalizable parent).
+        let target = root.join("dest");
+        fs_err::create_dir_all(&target).expect("mkdir target");
+
+        let entry = ManagedEntry {
+            kind: EntryKind::Directory,
+            mode: FileMode::SymlinkTree,
+            source: Utf8PathBuf::from("d"),
+            targets: vec![target.clone()],
+            when: None,
+        };
+
+        let mut got = BTreeSet::new();
+        insert_managed_targets(&entry, &module, &root, &mut got);
+
+        let expected: BTreeSet<Utf8PathBuf> = [
+            manage_key(&target.join("a.conf")),
+            manage_key(&target.join("sub").join("b.conf")),
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(
+            got, expected,
+            "a symlink-tree entry must contribute exactly one key per live leaf"
+        );
+
+        // Delete a source leaf: it drops out of the managed set, so its
+        // recorded target leaf would now classify ORPHANED.
+        fs_err::remove_file(source.join("sub").join("b.conf")).expect("delete leaf");
+        let mut after = BTreeSet::new();
+        insert_managed_targets(&entry, &module, &root, &mut after);
+        assert_eq!(
+            after,
+            [manage_key(&target.join("a.conf"))].into_iter().collect(),
+            "a deleted source leaf must no longer be a managed target"
+        );
+    }
+
+    /// A non-`symlink-tree` entry contributes its declared target(s)
+    /// directly, with no source walk — the prior behaviour for `[[file]]`
+    /// symlink/copy/template and atomic `[[directory]]` symlink entries.
+    #[test]
+    fn insert_managed_targets_inserts_declared_targets_for_non_tree_modes() {
+        use crate::status::manage_key;
+
+        let td = TempDir::new().expect("tempdir");
+        let root = Utf8PathBuf::from_path_buf(td.path().to_path_buf()).expect("utf8 temp path");
+        let module = root.join("mod");
+        fs_err::create_dir_all(&module).expect("mkdir module");
+        let t1 = root.join("a");
+        let t2 = root.join("b");
+
+        let entry = ManagedEntry {
+            kind: EntryKind::File,
+            mode: FileMode::Symlink,
+            source: Utf8PathBuf::from("zshrc"),
+            targets: vec![t1.clone(), t2.clone()],
+            when: None,
+        };
+
+        let mut got = BTreeSet::new();
+        insert_managed_targets(&entry, &module, &root, &mut got);
+
+        let expected: BTreeSet<Utf8PathBuf> =
+            [manage_key(&t1), manage_key(&t2)].into_iter().collect();
+        assert_eq!(got, expected);
     }
 }

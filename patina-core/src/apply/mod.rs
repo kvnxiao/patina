@@ -248,10 +248,12 @@ fn ensure_parent(target: &Utf8Path) -> Result<(), ExecutorError> {
 /// `root`, in deterministic (sorted) order so the same source tree
 /// produces the same record sequence across runs and platforms.
 ///
-/// Shared by the directory-source symlink walk ([`symlink`]) and the
-/// recursive copy ([`copy`]): both mirror a source tree to each target
-/// one file at a time, so both need the same relative-file enumeration.
-fn walk_files(root: &Utf8Path) -> Result<Vec<Utf8PathBuf>, ExecutorError> {
+/// Shared by the directory-source symlink walk ([`symlink`]), the recursive
+/// copy ([`copy`]), and the status managed-set's `symlink-tree` leaf
+/// expansion ([`engine::current_managed_targets`]): all mirror a source tree
+/// to each target one file at a time, so all need the same relative-file
+/// enumeration in the same deterministic order.
+pub(crate) fn walk_files(root: &Utf8Path) -> Result<Vec<Utf8PathBuf>, ExecutorError> {
     let mut out = Vec::new();
     walk_into(root, root, &mut out)?;
     out.sort();
