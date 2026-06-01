@@ -182,35 +182,19 @@ impl ApplyRecord {
 
 /// Reformat a compact journal timestamp (`YYYYMMDDTHHMMSSZ`) as an RFC
 /// 3339 string (`YYYY-MM-DDTHH:MM:SSZ`). Returns the input unchanged if it
-/// does not match the compact 16-character shape, so a non-standard
-/// timestamp is surfaced rather than silently mangled.
+/// does not match the compact shape, so a non-standard timestamp is
+/// surfaced rather than silently mangled.
 #[must_use = "the RFC 3339 timestamp is the `at` field status reports"]
 pub fn timestamp_to_rfc3339(ts: &str) -> String {
-    let bytes = ts.as_bytes();
-    if bytes.len() != 16 || bytes.get(8) != Some(&b'T') || bytes.last() != Some(&b'Z') {
-        return ts.to_owned();
-    }
-    // The verified shape is `YYYYMMDDTHHMMSSZ` (16 ASCII bytes): 8 date
-    // bytes, the `T` at index 8, 6 time bytes, then the trailing `Z`. The
-    // slices below are total against that shape.
-    let (date, rest) = ts.split_at(8);
-    // `rest` is `THHMMSSZ` (8 bytes); drop the leading `T`, then keep the
-    // first 6 of the remaining `HHMMSSZ` to get `HHMMSS`. Using `split_at`
-    // (char-boundary safe) rather than range indexing keeps the slicing
-    // panic-free for the verified ASCII shape.
-    let after_t = date_time_after_t(rest);
-    let (time, _z) = after_t.split_at(6);
-    let (year, monthday) = date.split_at(4);
-    let (month, day) = monthday.split_at(2);
-    let (hour, minsec) = time.split_at(2);
-    let (minute, second) = minsec.split_at(2);
-    format!("{year}-{month}-{day}T{hour}:{minute}:{second}Z")
-}
-
-/// Drop the leading `T` from the `THHMMSSZ` time portion, returning
-/// `HHMMSSZ`. Split-based so it cannot panic on a non-char-boundary.
-fn date_time_after_t(rest: &str) -> &str {
-    rest.split_at(1).1
+    // The compact form is produced by `clock::current_timestamp` via jiff's
+    // `strftime`, so jiff round-trips it: parse it back as a civil datetime
+    // (the trailing `Z` is matched as a literal — no timezone math) and
+    // re-emit it hyphenated. An input that does not match the compact shape
+    // fails to parse and is returned unchanged.
+    jiff::civil::DateTime::strptime("%Y%m%dT%H%M%SZ", ts).map_or_else(
+        |_| ts.to_owned(),
+        |dt| dt.strftime("%Y-%m-%dT%H:%M:%SZ").to_string(),
+    )
 }
 
 /// Whether `path` currently resolves to a symbolic link, reading its

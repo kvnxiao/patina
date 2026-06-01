@@ -22,7 +22,6 @@ anyhow = { workspace = true }
 camino = { workspace = true }
 clap = { workspace = true }
 fs-err = { workspace = true }
-is-terminal = { workspace = true }
 jiff = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
