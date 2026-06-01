@@ -23,7 +23,10 @@ use tempfile::TempDir;
 fn utf8_tempdir() -> (TempDir, Utf8PathBuf) {
     let td = TempDir::new().expect("create tempdir");
     let path = Utf8PathBuf::from_path_buf(td.path().to_path_buf()).expect("tempdir path is utf-8");
-    let canonical = path.canonicalize_utf8().expect("canonicalize tempdir");
+    // Mirror the engine's `canonicalize`: strip the Windows `\\?\` verbatim
+    // prefix so fixture paths match the stripped form production returns.
+    let canon = dunce::canonicalize(path.as_std_path()).expect("canonicalize tempdir");
+    let canonical = Utf8PathBuf::from_path_buf(canon).expect("canonical tempdir is utf-8");
     (td, canonical)
 }
 

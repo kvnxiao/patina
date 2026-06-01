@@ -172,8 +172,12 @@ fn content_hash_of(entry: &ExpectedTarget) -> [u8; 32] {
 /// test's expectation matches the recorded source byte-for-byte regardless
 /// of the platform's verbatim-prefix representation.
 fn canonical(path: &Utf8Path) -> String {
-    path.canonicalize_utf8()
-        .expect("canonicalize path")
+    // `dunce::canonicalize` mirrors the engine's `canonicalize_path`: a
+    // filesystem canonicalize with the Windows `\\?\` verbatim prefix
+    // stripped where the plain form is equivalent.
+    let canon = dunce::canonicalize(path.as_std_path()).expect("canonicalize path");
+    camino::Utf8PathBuf::from_path_buf(canon)
+        .expect("canonical path is utf8")
         .into_string()
 }
 

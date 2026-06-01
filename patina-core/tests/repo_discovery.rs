@@ -33,8 +33,11 @@ fn utf8_tempdir() -> (TempDir, Utf8PathBuf) {
     let td = TempDir::new().expect("create tempdir");
     let path = Utf8PathBuf::from_path_buf(td.path().to_path_buf()).expect("tempdir path is utf-8");
     // Canonicalize so test expectations match the function's own
-    // post-resolution canonicalization.
-    let canonical = path.canonicalize_utf8().expect("canonicalize tempdir");
+    // post-resolution canonicalization. `dunce::canonicalize` mirrors the
+    // engine: it strips the Windows `\\?\` verbatim prefix that plain
+    // `canonicalize_utf8` would leave on the fixture path.
+    let canon = dunce::canonicalize(path.as_std_path()).expect("canonicalize tempdir");
+    let canonical = Utf8PathBuf::from_path_buf(canon).expect("canonical tempdir is utf-8");
     (td, canonical)
 }
 

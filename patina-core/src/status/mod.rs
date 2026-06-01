@@ -220,32 +220,13 @@ pub fn manage_key(path: &camino::Utf8Path) -> Utf8PathBuf {
     let parent_key = match path.parent() {
         Some(parent) if !parent.as_str().is_empty() => parent
             .canonicalize_utf8()
-            .map_or_else(|_| parent.to_owned(), |p| strip_verbatim(&p)),
-        _ => return strip_verbatim(path),
+            .map_or_else(|_| parent.to_owned(), |p| crate::paths::simplified(&p)),
+        _ => return crate::paths::simplified(path),
     };
     match path.file_name() {
         Some(name) => parent_key.join(name),
         None => parent_key,
     }
-}
-
-/// Strip a Windows `\\?\` / `\\?\UNC\` verbatim prefix from a path string,
-/// leaving non-Windows and already-plain strings unchanged.
-///
-/// Shared by [`manage_key`] (managed-location keys) and the sibling
-/// [`classify`](classify::classify) symlink comparison: a recorded path
-/// and a freshly-read one may differ only by this prefix for the same
-/// destination, so both fold through one helper before comparison.
-pub(super) fn strip_verbatim_str(path: &str) -> String {
-    path.strip_prefix(r"\\?\UNC\")
-        .map(|rest| format!(r"\\{rest}"))
-        .or_else(|| path.strip_prefix(r"\\?\").map(str::to_owned))
-        .unwrap_or_else(|| path.to_owned())
-}
-
-/// Path-typed wrapper over [`strip_verbatim_str`] for [`manage_key`].
-fn strip_verbatim(path: &camino::Utf8Path) -> Utf8PathBuf {
-    Utf8PathBuf::from(strip_verbatim_str(path.as_str()))
 }
 
 #[cfg(test)]
@@ -263,24 +244,6 @@ mod tests {
         assert_eq!(report.drifted, 1);
         assert_eq!(report.missing, 0);
         assert_eq!(report.files.len(), 3);
-    }
-
-    #[test]
-    fn strip_verbatim_removes_windows_prefixes() {
-        assert_eq!(
-            strip_verbatim(&Utf8PathBuf::from(r"\\?\C:\Users\u\.rc")),
-            Utf8PathBuf::from(r"C:\Users\u\.rc")
-        );
-        assert_eq!(
-            strip_verbatim(&Utf8PathBuf::from(r"\\?\UNC\server\share\f")),
-            Utf8PathBuf::from(r"\\server\share\f")
-        );
-        // A plain path (no verbatim prefix, e.g. any Unix path) is
-        // unchanged.
-        assert_eq!(
-            strip_verbatim(&Utf8PathBuf::from("/home/u/.rc")),
-            Utf8PathBuf::from("/home/u/.rc")
-        );
     }
 
     #[test]

@@ -15,6 +15,7 @@ categories = ["config", "filesystem"]
 [dependencies]
 blake3 = { workspace = true }
 camino = { workspace = true }
+dunce = { workspace = true }
 fs-err = { workspace = true }
 fs2 = { workspace = true }
 jiff = { workspace = true }

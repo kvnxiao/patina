@@ -184,7 +184,10 @@ fn init_json_success_emits_deterministic_schema() {
 /// returning the UTF-8 string form. The test computes the expected pointer
 /// value independently of the binary under test.
 fn canonical_string(path: &camino::Utf8Path) -> String {
-    let canon = fs_err::canonicalize(path.as_std_path()).expect("canonicalize target");
+    // `dunce::canonicalize` mirrors the engine's `canonicalize_path`: a
+    // filesystem canonicalize with the Windows `\\?\` verbatim prefix
+    // stripped where the plain form is equivalent.
+    let canon = dunce::canonicalize(path.as_std_path()).expect("canonicalize target");
     camino::Utf8PathBuf::from_path_buf(canon)
         .expect("canonical path is utf8")
         .to_string()

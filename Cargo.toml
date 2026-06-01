@@ -17,6 +17,10 @@ anyhow = "1.0"
 blake3 = "1.5"
 camino = { version = "1.1", features = ["serde1"] }
 clap = { version = "4.5", features = ["derive"] }
+# Strips Windows' `\\?\` verbatim path prefix from canonicalized paths where
+# the plain form is equivalent. De-facto standard (Cargo, rustup, ripgrep all
+# depend on it); zero dependencies; identity on non-Windows targets.
+dunce = "1.0"
 fs-err = "3.0"
 fs2 = "0.4"
 is-terminal = "0.4"
