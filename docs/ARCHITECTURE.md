@@ -10,9 +10,11 @@ contributor can jump from the narrative to the authoritative
 
 ## Engine layers
 
-Patina is a two-crate Cargo workspace (SPEC-0001 REQ-001). The split
-keeps engine logic free of CLI concerns and lets the engine be tested
-without spawning a process.
+Patina is a three-crate Cargo workspace. The `patina-core` /
+`patina-cli` split (SPEC-0001 REQ-001) keeps engine logic free of CLI
+concerns and lets the engine be tested without spawning a process;
+`patina-elevate` is a standalone Windows-only helper added later for the
+one-time Developer Mode elevation flow.
 
 ```mermaid
 flowchart TD
@@ -53,6 +55,12 @@ flowchart TD
   `output::Reporter` abstraction (REQ-026) — human-readable by default,
   JSON under `--json`. All process exit codes flow through a single
   funnel that maps engine outcomes onto the formalized codes (REQ-022).
+- **`patina-elevate`** is a standalone Windows-only helper binary. It
+  carries the smallest possible trust surface — no dependency on
+  `patina-core` or `patina-cli` — and exists solely to toggle the
+  Developer Mode registry flag under a single UAC prompt. It is gated
+  behind a `windows` Cargo feature, so a non-Windows build produces no
+  such artifact.
 
 User-facing output never uses `println!` / `eprintln!` outside the
 `Reporter` layer; everything else logs through `tracing`. See
