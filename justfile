@@ -67,3 +67,16 @@ fmt:
 # Workspace test suite, as each CI matrix OS runs it.
 test:
     cargo test --workspace --locked
+
+# Build the release binary `patina`, plus the `patina-elevate` helper on Windows.
+build:
+    cargo build --release --locked -p patina-cli
+    {{ if os() == "windows" { "cargo build --release --locked -p patina-elevate --features patina-elevate/windows" } else { "echo 'build: skipping patina-elevate (Windows-only Developer Mode UAC helper)'" } }}
+
+# patina.exe resolves its UAC Developer Mode helper as a sibling executable, so on
+# Windows patina-elevate.exe must land in the same dir; --force reinstalls the
+# current working-tree build despite the unchanged 0.1.0 version.
+# Install `patina` into the cargo bin path (and `patina-elevate` on Windows).
+install:
+    cargo install --path patina-cli --locked --force
+    {{ if os() == "windows" { "cargo install --path patina-elevate --features windows --locked --force" } else { "echo 'install: skipping patina-elevate (Windows-only Developer Mode UAC helper)'" } }}

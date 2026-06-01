@@ -336,9 +336,20 @@ mod foreground {
 
     #[test]
     fn five_touches_within_the_debounce_window_coalesce_to_one_reapply() {
-        // CHK-010: five touches of a watched source within a 100ms burst, then
-        // a wait, must coalesce into exactly one `re_apply` event (the 500ms
-        // debounce window swallowed the burst).
+        // CHK-010: a burst of writes to a watched source must coalesce into
+        // exactly one `re_apply` event (the 500ms debounce window swallows the
+        // burst).
+        //
+        // The five writes are issued back-to-back with NO inter-write sleep, on
+        // purpose. An earlier revision slept 20ms between writes to mimic an
+        // editor's multi-event save; under a loaded CI runner those sleeps
+        // stretched (a 20ms `sleep` is a yield point and can be descheduled into
+        // hundreds of ms), spreading the burst across more than the 500ms
+        // window. It then split into several debounce batches and fired one
+        // re-apply per straggler — up to one per write — flaking the `== 1`
+        // assertion below. A bare `write` loop has no yield point, so the burst
+        // stays well inside one window regardless of scheduler load; do not
+        // reintroduce a per-write sleep here.
         let f = applied_copy_fixture();
         let watcher = Watcher::spawn(&f);
 
@@ -348,12 +359,11 @@ mod foreground {
             watcher.stderr_snapshot()
         );
 
-        // Five rapid writes to the watched source within ~100ms.
+        // Five rapid writes to the watched source, back-to-back.
         let source = f.root.join("git").join("gitconfig");
         for i in 0..5 {
             fs_err::write(source.as_std_path(), format!("[user]\n  name = a{i}\n"))
                 .expect("rewrite source");
-            std::thread::sleep(Duration::from_millis(20));
         }
 
         // Wait for the single coalesced re-apply to fire and settle.
