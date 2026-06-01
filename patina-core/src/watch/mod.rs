@@ -17,16 +17,19 @@
 //! - the drift-detection handler driven on a content-target edit (REQ-007 /
 //!   DEC-004 / DEC-008 / DEC-013) — via the [`drift`] submodule;
 //! - the foreground watcher loop itself ([`run_foreground`], REQ-004 /
-//!   REQ-006), which classifies each debounced batch and dispatches it.
+//!   REQ-006), which classifies each debounced batch and dispatches it;
+//! - the per-OS background-service abstraction and lifecycle backends (REQ-001
+//!   / REQ-003) — via the [`service`] submodule.
 //!
-//! The per-OS service install lands in a later task; the foreground watcher is
-//! the end-to-end engine the service supervises.
+//! The foreground watcher is the end-to-end engine the per-OS service
+//! ([`service`]) supervises.
 
 pub mod debounce;
 pub mod drift;
 pub mod drift_cache;
 pub mod logging;
 pub mod reapply;
+pub mod service;
 pub mod subscriptions;
 
 use crate::journal::COMMIT_SUFFIX;

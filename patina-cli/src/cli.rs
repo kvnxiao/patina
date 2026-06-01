@@ -87,8 +87,9 @@ pub enum Command {
     Doctor(DoctorArgs),
 
     /// Watch the repository and re-apply on source changes. `--foreground`
-    /// runs the watcher inline in the current terminal (REQ-004); the per-OS
-    /// service install lands in a later task.
+    /// runs the watcher inline in the current terminal (REQ-004); the
+    /// `install` / `uninstall` / `start` / `stop` / `restart` / `status`
+    /// subcommands manage the per-OS background service (REQ-001 / REQ-003).
     Watch(WatchArgs),
 
     /// Debugging utilities. Hidden from the top-level help summary but
@@ -97,22 +98,62 @@ pub enum Command {
     Debug(DebugCommand),
 }
 
-/// Flags for `patina watch` (REQ-004 / REQ-006).
+/// Flags for `patina watch` (REQ-001 / REQ-003 / REQ-004 / REQ-006).
 ///
-/// In this slice `--foreground` is the only supported mode: it runs the
-/// watcher loop inline, attached to the invoking shell, and exits cleanly on
-/// Ctrl-C / SIGTERM. Without `--foreground` the command reports that the
-/// background service install is not yet wired (a later task).
+/// `--foreground` runs the watcher loop inline, attached to the invoking
+/// shell, and exits cleanly on Ctrl-C / SIGTERM (REQ-004). The lifecycle
+/// subcommands (`install` / `uninstall` / `start` / `stop` / `restart` /
+/// `status`) manage the per-OS background service (REQ-001 / REQ-003). With
+/// neither, the command reports that a mode must be chosen.
 #[derive(Debug, Args, Default)]
 pub struct WatchArgs {
+    /// The background-service lifecycle subcommand. Mutually exclusive with
+    /// `--foreground`; omit both to see the usage hint.
+    #[command(subcommand)]
+    pub command: Option<WatchCommand>,
+
     /// Run the watcher inline in the current terminal instead of installing a
     /// background service. Ctrl-C (SIGINT) or SIGTERM shuts it down cleanly.
     #[arg(long)]
     pub foreground: bool,
 
-    /// Emit a JSON envelope instead of human output.
-    #[arg(long)]
+    /// Emit a JSON envelope instead of human output. Global, so it is accepted
+    /// both before and after a lifecycle subcommand (`patina watch status
+    /// --json`).
+    #[arg(long, global = true)]
     pub json: bool,
+}
+
+/// Background-service lifecycle subcommands under `patina watch` (REQ-001 /
+/// REQ-003). Each operates on the per-OS service registration through the
+/// `patina_core::watch::service` backend; all but `status` acquire the
+/// exclusive advisory lock, `status` the shared lock (SPEC-0001 REQ-023).
+#[derive(Debug, Subcommand, Clone)]
+pub enum WatchCommand {
+    /// Register the watcher as a per-user background service that launches at
+    /// login. Exits 1 if already installed.
+    Install,
+
+    /// Stop the running watcher and remove the service registration.
+    Uninstall {
+        /// Proceed without prompting. Mutating: acquires the exclusive lock.
+        #[arg(long)]
+        yes: bool,
+    },
+
+    /// Ask the platform supervisor to start the installed service.
+    Start,
+
+    /// Ask the platform supervisor to stop the running service without
+    /// removing its registration.
+    Stop,
+
+    /// Stop then start the installed service.
+    Restart,
+
+    /// Report the service's installed / running state, last-exit code, and the
+    /// watcher's recovered subscription / re-apply counters. Read-only.
+    Status,
 }
 
 /// Subcommands under the `patina debug` namespace.

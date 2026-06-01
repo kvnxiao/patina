@@ -523,7 +523,7 @@ Suggested files: `patina-core/src/watch/drift.rs`,
 </task-scenarios>
 </task>
 
-<task id="T-011" state="pending" covers="REQ-001 REQ-003">
+<task id="T-011" state="completed" covers="REQ-001 REQ-003">
 ## Service abstraction, cross-platform `watch` lifecycle CLI, and the macOS LaunchAgent backend
 
 REQ-001 / REQ-003: introduce the per-OS service abstraction and the lifecycle

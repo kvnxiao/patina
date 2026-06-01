@@ -35,8 +35,10 @@ use tracing_appender::non_blocking::WorkerGuard;
 use tracing_appender::rolling::Builder;
 use tracing_appender::rolling::Rotation;
 
-/// Name of the log subdirectory under the per-machine state root.
-const LOGS_DIR: &str = "logs";
+/// Name of the log subdirectory under the per-machine state root. Promoted to
+/// `pub(super)` so the sibling [`crate::watch::service`] counter-recovery code
+/// reuses this single definition rather than duplicating the literal.
+pub(super) const LOGS_DIR: &str = "logs";
 
 /// Filename prefix for the watcher's rotating log files. Daily rotation
 /// appends a `.YYYY-MM-DD` date suffix, yielding files such as
