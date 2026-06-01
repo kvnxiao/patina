@@ -83,6 +83,10 @@ pub enum PathError {
 /// This function never expands `~`; expand it with [`expand_tilde`]
 /// first if the input may carry a home-relative prefix.
 ///
+/// On Windows, any `\\?\` verbatim prefix is stripped where the plain form
+/// is equivalent, so canonical paths never carry the verbatim prefix into
+/// user-facing output or persisted state.
+///
 /// # Examples
 ///
 /// ```
@@ -107,12 +111,13 @@ pub enum PathError {
 /// UTF-8.
 pub fn canonicalize(p: &Utf8Path) -> Result<Utf8PathBuf, PathError> {
     if p.exists() {
-        return p
+        let canonical = p
             .canonicalize_utf8()
             .map_err(|source| PathError::Filesystem {
                 path: p.to_path_buf(),
                 source,
-            });
+            })?;
+        return Ok(simplified(&canonical));
     }
     canonicalize_lexical(p)
 }
@@ -137,7 +142,7 @@ fn canonicalize_lexical(p: &Utf8Path) -> Result<Utf8PathBuf, PathError> {
                     path: parent.to_path_buf(),
                     source,
                 })?;
-        return Ok(canonical_parent.join(file_name));
+        return Ok(simplified(&canonical_parent).join(file_name));
     }
 
     let base = if p.is_absolute() {
@@ -154,6 +159,33 @@ fn canonicalize_lexical(p: &Utf8Path) -> Result<Utf8PathBuf, PathError> {
     };
 
     Ok(fold_dot_segments(&base.join(p)))
+}
+
+/// Strip a Windows verbatim (`\\?\` / `\\?\UNC\`) path prefix where the
+/// plain form is equivalent, delegating to [`dunce::simplified`].
+///
+/// `canonicalize_utf8` (like `std::fs::canonicalize`) returns the verbatim
+/// form on Windows; left intact it surfaces as `\\?\C:\…` in user-facing
+/// hints, the persisted default-repo pointer, and journal records. `dunce`
+/// is the de-facto-standard crate for this normalization and preserves the
+/// verbatim prefix for paths that genuinely require it (those exceeding the
+/// legacy `MAX_PATH`). On non-Windows targets it is the identity function.
+#[must_use = "simplified returns the normalized path; the input is not mutated"]
+pub(crate) fn simplified(path: &Utf8Path) -> Utf8PathBuf {
+    // `dunce::simplified` only ever strips an ASCII prefix, so a UTF-8 input
+    // always yields a UTF-8 result; the fallback is unreachable but keeps the
+    // conversion total without a panic path.
+    Utf8PathBuf::from_path_buf(dunce::simplified(path.as_std_path()).to_path_buf())
+        .unwrap_or_else(|_| path.to_path_buf())
+}
+
+/// String-typed wrapper over [`simplified`] for byte-exact comparison of a
+/// recorded path string against a freshly-read one (the `status` symlink
+/// classifier): the two may differ only by a verbatim prefix for the same
+/// destination, so both fold through this before comparison.
+#[must_use = "simplified_str returns the normalized path string"]
+pub(crate) fn simplified_str(path: &str) -> String {
+    simplified(Utf8Path::new(path)).into_string()
 }
 
 /// Fold `.` and `..` segments out of an absolute path lexically,
@@ -230,7 +262,9 @@ mod tests {
         let td = TempDir::new().expect("create tempdir");
         let path =
             Utf8PathBuf::from_path_buf(td.path().to_path_buf()).expect("tempdir path is utf-8");
-        let canonical = path.canonicalize_utf8().expect("canonicalize tempdir");
+        // Match the production `canonicalize` path: strip the Windows
+        // verbatim prefix so equality assertions hold on every target.
+        let canonical = simplified(&path.canonicalize_utf8().expect("canonicalize tempdir"));
         (td, canonical)
     }
 
