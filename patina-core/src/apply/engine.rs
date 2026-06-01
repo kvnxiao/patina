@@ -37,6 +37,7 @@ use crate::config::HookEntry;
 use crate::config::HookEvent;
 use crate::config::ManagedEntry;
 use crate::config::parse_module_config;
+use crate::config::parse_root_config;
 use crate::discovery::discover_modules;
 use crate::discovery::resolve_repository_root;
 use crate::error::EngineError;
@@ -252,10 +253,24 @@ pub fn plan(
         &builtins,
     )?;
 
+    // The root manifest's repo-shared `[variables]` table and the active
+    // profile's `[profiles.<name>.variables]` table are the two layers this
+    // pass populates (REQ-005). Resolution precedence is fixed by the
+    // resolver's layer order (CLI > per-machine > per-profile > per-module >
+    // repo-shared > built-ins); pushing them here changes no precedence.
+    let root_config = parse_root_config(&root_manifest)?;
+
     let home = Utf8PathBuf::from(builtins.home.clone());
     let mut resolver = Resolver::new(builtins)
         .with_profile(profile.name.clone())
-        .with_cli_overrides(request.cli_overrides.iter().cloned())?;
+        .with_cli_overrides(request.cli_overrides.iter().cloned())?
+        .with_repo_shared(table_to_layer(&root_config.repo_shared))?;
+
+    // The no-profile fallback (empty profile name) selects no per-profile
+    // table; a named profile selects its table when the root declares one.
+    if let Some(table) = root_config.per_profile.get(&profile.name) {
+        resolver = resolver.with_per_profile(table_to_layer(table))?;
+    }
 
     let modules = discover_modules(&repo_root)?;
 
@@ -275,11 +290,7 @@ pub fn plan(
         let config = parse_module_config(&manifest)?;
 
         if let Some(table) = config.variables.as_ref() {
-            let layer: Vec<(String, String)> = table
-                .iter()
-                .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_owned())))
-                .collect();
-            resolver = resolver.with_per_module(layer)?;
+            resolver = resolver.with_per_module(table_to_layer(table))?;
         }
 
         for entry in &config.files {
@@ -305,6 +316,21 @@ pub fn plan(
         timestamp: timestamp.into(),
         resolver,
     })
+}
+
+/// Project a raw TOML variable table into the resolver's string-keyed
+/// layer form, keeping only string-valued entries.
+///
+/// The variable layers are string→string; a non-string TOML value (an
+/// array or sub-table) is not a variable binding and is dropped here, the
+/// same way the per-module ingestion has always treated its `[variables]`
+/// table. Shared by the repo-shared, per-profile, and per-module pushes in
+/// [`plan`] so the three sites agree on the projection.
+fn table_to_layer(table: &toml::value::Table) -> Vec<(String, String)> {
+    table
+        .iter()
+        .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_owned())))
+        .collect()
 }
 
 /// A managed entry with its source and targets canonicalized, held in the

@@ -37,6 +37,11 @@ pub enum EngineError {
     #[error(transparent)]
     ConfigWrite(#[from] crate::config::ConfigWriteError),
 
+    /// Parsing the root manifest's repo-shared `[variables]` or
+    /// `[profiles.<name>.variables]` tables failed (REQ-005).
+    #[error(transparent)]
+    RootConfig(#[from] crate::config::RootConfigError),
+
     /// Per-machine state directory resolution failed (REQ-016).
     #[error(transparent)]
     StateDir(#[from] crate::state_dir::StateDirError),

@@ -199,7 +199,7 @@ Suggested files: `patina-core/src/config/mod.rs` (or a new
 </task-scenarios>
 </task>
 
-<task id="T-004" state="pending" covers="REQ-005">
+<task id="T-004" state="completed" covers="REQ-005">
 ## Wire the repo-shared and active-profile variable layers into apply planning
 
 In `apply::plan` (`apply/engine.rs:227`), load the root manifest's
