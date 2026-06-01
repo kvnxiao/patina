@@ -551,7 +551,7 @@ Suggested files: `patina-core/src/profile.rs`,
 </task-scenarios>
 </task>
 
-<task id="T-010" state="pending" covers="REQ-008">
+<task id="T-010" state="completed" covers="REQ-008">
 ## `patina add` writes the table matching the source kind, with kind-checked mode flags
 
 Update `patina add` to detect whether the registered path is a file or a

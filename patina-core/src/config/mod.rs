@@ -37,6 +37,7 @@ pub use root::parse_root_config;
 pub use root::parse_root_config_str;
 use serde::Deserialize;
 pub use writer::ConfigWriteError;
+pub use writer::append_directory_entry;
 pub use writer::append_file_entry;
 pub use writer::remove_file_entry;
 pub use writer::scaffold_root_manifest;

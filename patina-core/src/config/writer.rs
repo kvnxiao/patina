@@ -52,6 +52,23 @@ pub enum ConfigWriteError {
     /// array of tables, so a new entry could not be appended to it.
     #[error("manifest `file` key is not a [[file]] array of tables")]
     MalformedFileArray,
+
+    /// The manifest declared a `directory` key that was not a
+    /// `[[directory]]` array of tables, so a new entry could not be
+    /// appended to it.
+    #[error("manifest `directory` key is not a [[directory]] array of tables")]
+    MalformedDirectoryArray,
+
+    /// [`append_directory_entry`] was asked to write a mode that is not a
+    /// `[[directory]]`-table mode (only `symlink` / `symlink-tree` /
+    /// `copy` are valid for a directory entry).
+    #[error(
+        "mode {mode:?} is not a valid [[directory]] mode (expected symlink, symlink-tree, or copy)"
+    )]
+    ModeNotDirectoryValid {
+        /// The offending file-only mode.
+        mode: FileMode,
+    },
 }
 
 /// Emit a root manifest declaring the repository-root marker.
@@ -146,6 +163,79 @@ pub fn append_file_entry(
         // An existing `file` key of the wrong shape is a malformed
         // manifest; surface it as a typed error rather than panicking.
         return Err(ConfigWriteError::MalformedFileArray);
+    }
+
+    Ok(doc.to_string())
+}
+
+/// Append one `[[directory]]` array-of-tables element to a module manifest.
+///
+/// Mirrors [`append_file_entry`] for the `[[directory]]` table-array: it
+/// pushes a single `[[directory]]` element carrying `source`, `target`,
+/// and `mode`, preserving every pre-existing table, comment, key ordering,
+/// and whitespace.
+///
+/// `mode` must be one of the three directory-table executor modes —
+/// [`FileMode::SymlinkDir`] (rendered `symlink`), [`FileMode::SymlinkTree`]
+/// (rendered `symlink-tree`), or [`FileMode::CopyTree`] (rendered `copy`).
+/// A file-only mode ([`FileMode::Symlink`], [`FileMode::Copy`],
+/// [`FileMode::TemplateRender`]) is rejected with
+/// [`ConfigWriteError::ModeNotDirectoryValid`]: a `[[directory]]` entry must
+/// never be written with a file-table mode.
+///
+/// # Arguments
+///
+/// * `doc_text` - The existing manifest text (`""` for a fresh module).
+/// * `source` - The `source` value for the new entry.
+/// * `target` - The `target` value for the new entry.
+/// * `mode` - The directory materialization mode.
+///
+/// # Errors
+///
+/// Returns [`ConfigWriteError::Parse`] when `doc_text` is not a
+/// well-formed TOML document, [`ConfigWriteError::MalformedDirectoryArray`]
+/// when `doc_text` already declares a `directory` key that is not an array
+/// of tables, and [`ConfigWriteError::ModeNotDirectoryValid`] when `mode`
+/// is not a directory-table mode.
+///
+/// # Examples
+///
+/// ```
+/// use patina_core::{append_directory_entry, FileMode};
+///
+/// let text = append_directory_entry("", "mpv", "~/.config/mpv", FileMode::SymlinkTree)?;
+/// assert!(text.contains("mode = \"symlink-tree\""));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+pub fn append_directory_entry(
+    doc_text: &str,
+    source: &str,
+    target: &str,
+    mode: FileMode,
+) -> Result<String, ConfigWriteError> {
+    let mode_str = match mode {
+        FileMode::SymlinkDir => "symlink",
+        FileMode::SymlinkTree => "symlink-tree",
+        FileMode::CopyTree => "copy",
+        FileMode::Symlink | FileMode::Copy | FileMode::TemplateRender => {
+            return Err(ConfigWriteError::ModeNotDirectoryValid { mode });
+        }
+    };
+
+    let mut doc = parse_document(doc_text)?;
+
+    let mut entry = Table::new();
+    entry.insert("source", value(source));
+    entry.insert("target", value(target));
+    entry.insert("mode", value(mode_str));
+
+    let directories = doc
+        .entry("directory")
+        .or_insert_with(|| Item::ArrayOfTables(toml_edit::ArrayOfTables::new()));
+    if let Item::ArrayOfTables(array) = directories {
+        array.push(entry);
+    } else {
+        return Err(ConfigWriteError::MalformedDirectoryArray);
     }
 
     Ok(doc.to_string())
@@ -329,6 +419,113 @@ editor = \"vim\"
                 "removed mode spellings must never be emitted, got:\n{text}"
             );
         }
+    }
+
+    #[test]
+    fn append_directory_symlink_tree_round_trips_through_parser() {
+        use crate::config::EntryKind;
+
+        let text = append_directory_entry("", "mpv", "~/.config/mpv", FileMode::SymlinkTree)
+            .expect("append succeeds");
+        assert!(
+            text.contains("mode = \"symlink-tree\""),
+            "directory symlink-tree must serialize as `symlink-tree`, got:\n{text}"
+        );
+
+        let config = parse_module_config_str(&text).expect("appended text parses");
+        assert!(config.files.is_empty(), "no [[file]] entry was written");
+        assert_eq!(config.directories.len(), 1, "one [[directory]] entry");
+        let entry = config.directories.first().expect("the directory entry");
+        assert_eq!(entry.kind, EntryKind::Directory);
+        assert_eq!(entry.mode, FileMode::SymlinkTree);
+        assert_eq!(entry.source, "mpv");
+        assert_eq!(entry.targets, vec!["~/.config/mpv"]);
+    }
+
+    #[test]
+    fn append_directory_copy_round_trips_through_parser() {
+        use crate::config::EntryKind;
+
+        let text = append_directory_entry("", "themes", "~/.themes", FileMode::CopyTree)
+            .expect("append succeeds");
+        assert!(
+            text.contains("mode = \"copy\""),
+            "directory copy must serialize as `copy`, got:\n{text}"
+        );
+        assert!(
+            !text.contains("copy-tree"),
+            "the removed `copy-tree` spelling must never be emitted, got:\n{text}"
+        );
+
+        let config = parse_module_config_str(&text).expect("appended text parses");
+        let entry = config.directories.first().expect("the directory entry");
+        assert_eq!(entry.kind, EntryKind::Directory);
+        assert_eq!(entry.mode, FileMode::CopyTree);
+    }
+
+    #[test]
+    fn append_directory_default_symlink_round_trips_through_parser() {
+        use crate::config::EntryKind;
+
+        let text = append_directory_entry("", "nvim", "~/.config/nvim", FileMode::SymlinkDir)
+            .expect("append succeeds");
+        assert!(
+            text.contains("mode = \"symlink\""),
+            "directory symlink must serialize as `symlink`, got:\n{text}"
+        );
+        assert!(
+            !text.contains("symlink-dir"),
+            "the removed `symlink-dir` spelling must never be emitted, got:\n{text}"
+        );
+
+        let config = parse_module_config_str(&text).expect("appended text parses");
+        let entry = config.directories.first().expect("the directory entry");
+        assert_eq!(entry.kind, EntryKind::Directory);
+        assert_eq!(entry.mode, FileMode::SymlinkDir);
+    }
+
+    #[test]
+    fn append_directory_rejects_a_file_only_mode() {
+        for mode in [FileMode::Symlink, FileMode::Copy, FileMode::TemplateRender] {
+            let err = append_directory_entry("", "src", "~/.dst", mode)
+                .expect_err("a file-only mode must be rejected for a [[directory]]");
+            assert!(
+                matches!(err, ConfigWriteError::ModeNotDirectoryValid { .. }),
+                "expected ModeNotDirectoryValid for {mode:?}, got {err:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn append_directory_preserves_existing_file_entry() {
+        // Appending a [[directory]] to a manifest that already carries a
+        // [[file]] leaves the file entry intact: the two table-arrays are
+        // independent.
+        let with_file = append_file_entry("", "zshrc", "~/.zshrc", FileMode::Symlink)
+            .expect("file append succeeds");
+        let with_both =
+            append_directory_entry(&with_file, "nvim", "~/.config/nvim", FileMode::SymlinkDir)
+                .expect("directory append succeeds");
+
+        let config = parse_module_config_str(&with_both).expect("combined text parses");
+        assert_eq!(config.files.len(), 1, "the [[file]] entry survives");
+        assert_eq!(
+            config.directories.len(),
+            1,
+            "the [[directory]] entry is added"
+        );
+    }
+
+    #[test]
+    fn append_directory_to_non_array_directory_key_surfaces_malformed_error() {
+        let err = append_directory_entry(
+            "directory = \"not an array\"\n",
+            "nvim",
+            "~/.config/nvim",
+            FileMode::SymlinkDir,
+        )
+        .expect_err("a non-array `directory` key must error");
+        assert!(matches!(err, ConfigWriteError::MalformedDirectoryArray));
     }
 
     #[test]

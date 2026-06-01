@@ -65,6 +65,7 @@ pub use config::HookEvent;
 pub use config::ModuleConfig;
 pub use config::RootConfig;
 pub use config::RootConfigError;
+pub use config::append_directory_entry;
 pub use config::append_file_entry;
 pub use config::parse_module_config;
 pub use config::parse_root_config;
