@@ -51,16 +51,35 @@ jobs:
           components: rustfmt
       - run: cargo +nightly fmt --all --check
 
+  # Cross-platform lint gate. Clippy is metadata-only (it never links), so a
+  # single Linux runner can lint every OS target's `#[cfg(...)]`-gated code:
+  # the matrix cross-compiles clippy to all three target families. This catches
+  # a `cfg(windows)` / `cfg(target_os = "macos")` lint or compile error in the
+  # fast lint lane instead of only in that OS's slow `Test` job (which halts at
+  # the first error and runs the whole suite first). `x86_64-pc-windows-gnu` is
+  # a faithful proxy for the MSVC runner — there is no `target_env = "msvc"`
+  # code in the tree — and the macOS target needs no SDK because the only
+  # platform crate (`notify-rust` -> `mac-notification-sys` -> `objc2`) is pure
+  # Rust with no C/Objective-C build script. `fail-fast: false` so every target
+  # reports independently. Mirrored locally by `just lint-clippy`.
   clippy:
-    name: Clippy
+    name: Clippy (${{ matrix.target }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - x86_64-unknown-linux-gnu
+          - x86_64-pc-windows-gnu
+          - aarch64-apple-darwin
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
+          targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
-      - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - run: cargo clippy --workspace --all-targets --all-features --target ${{ matrix.target }} -- -D warnings
 
   # Cross-platform parity gate (REQ-025). Each OS runs the workspace
   # test suite and clippy with `--locked` so a lockfile drift or an
