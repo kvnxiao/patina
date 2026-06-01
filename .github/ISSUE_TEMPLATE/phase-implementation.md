@@ -1,35 +1,34 @@
 ---
-name: Phase implementation
-about: Track a phase of an existing SPEC
-title: "[SPEC <NNNN>] Phase <N>: <phase title>"
-labels: ["phase", "spec-<NNNN>"]
+name: Implementation work item
+about: Track a unit of implementation work
+title: "<short title>"
+labels: ["implementation"]
 assignees: []
 ---
 
-## SPEC reference
+## Reference
 
-- **SPEC:** `specs/<NNNN>-<slug>/SPEC.md`
-- **Phase:** Phase `<N>` — `<title>`
-- **STATUS:** `specs/<NNNN>-<slug>/STATUS.md`
+- **Design / issue:** <link to the design doc or originating issue>
+- **Scope:** <one-line description of what this work item covers>
 
-## Goals (copied from SPEC)
+## Goals
 
-<!-- Paste the phase's "Goals" bullets verbatim. -->
+<!-- What this work item should accomplish. -->
 
 ## Dependencies
 
-- [ ] Phase X complete
-- [ ] Phase Y complete
+- [ ] <prerequisite work item X complete>
+- [ ] <prerequisite work item Y complete>
 
-If any are not yet ✅ Complete, this issue should be 📋 Ready only after they are.
+If any are not yet complete, this issue should be picked up only after they are.
 
-## Deliverables (copied from SPEC)
+## Deliverables
 
-<!-- Paste the phase's "Deliverables" bullets verbatim. -->
+<!-- The concrete artifacts this work item produces. -->
 
-## Validation criteria (copied from SPEC)
+## Validation criteria
 
-<!-- Paste the phase's "Validation Criteria" bullets verbatim. -->
+<!-- How we know the work is correct. -->
 
 - [ ] ✅ <criterion 1>
 - [ ] ✅ <criterion 2>
@@ -38,8 +37,8 @@ If any are not yet ✅ Complete, this issue should be 📋 Ready only after they
 ## Implementer notes
 
 <!-- Anything specific to this implementation attempt. Useful when:
-     - A phase has been attempted before and rolled back.
-     - There are open questions in the SPEC that need resolving first.
+     - The work has been attempted before and rolled back.
+     - There are open questions that need resolving first.
      - Manual validation steps need scheduling. -->
 
 ## Definition of done
@@ -49,4 +48,3 @@ If any are not yet ✅ Complete, this issue should be 📋 Ready only after they
 - [ ] Documentation under `docs/` updated.
 - [ ] Manual validation checklist (if any) signed off.
 - [ ] PR reviewed and merged.
-- [ ] STATUS.md updated to ✅ Complete with PR number and date.
