@@ -182,6 +182,17 @@ pub enum ExecutorError {
         source: std::io::Error,
     },
 
+    /// The `symlink-tree` per-leaf executor is not yet implemented
+    /// (lands in T-007). The schema split (T-001) accepts the mode, but
+    /// the plan loop must not dispatch it to the executor until T-007
+    /// wires the walk-and-link path; this guards that gap with a typed
+    /// error rather than a panic.
+    #[error("symlink-tree executor for source {path} is not yet implemented")]
+    SymlinkTreeNotImplemented {
+        /// The directory source the unimplemented mode was asked to walk.
+        path: Utf8PathBuf,
+    },
+
     /// Rendering a `.tmpl` source through `MiniJinja` failed (an undefined
     /// variable under strict-undefined, or a syntax/evaluation error).
     #[error(transparent)]
@@ -217,6 +228,13 @@ pub fn materialize(
     match mode {
         FileMode::Symlink => symlink::per_file_symlink(source, targets),
         FileMode::SymlinkDir => symlink::dir_symlink(source, targets),
+        // T-007 implements the per-leaf `symlink-tree` executor and wires
+        // it here; until then the engine never plans a `SymlinkTree`
+        // operation (the plan loop in T-002 leaves its dispatch point
+        // marked), so reaching this arm is a not-yet-implemented mode.
+        FileMode::SymlinkTree => Err(ExecutorError::SymlinkTreeNotImplemented {
+            path: source.to_path_buf(),
+        }),
         FileMode::Copy => copy::copy_file(source, targets),
         FileMode::CopyTree => copy::copy_tree(source, targets),
         FileMode::TemplateRender => template::render(source, targets, engine, resolver),

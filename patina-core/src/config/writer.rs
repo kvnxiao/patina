@@ -210,16 +210,19 @@ fn parse_document(doc_text: &str) -> Result<DocumentMut, ConfigWriteError> {
         })
 }
 
-/// Map a [`FileMode`] to the manifest `mode` string the parser accepts,
-/// or `None` for the implicit [`FileMode::TemplateRender`] which never
-/// declares a `mode`. The spellings mirror those in
-/// [`FileEntry::from_raw`](super::FileEntry).
+/// Map a [`FileMode`] to the collapsed manifest `mode` string the parser
+/// accepts, or `None` for the implicit [`FileMode::TemplateRender`] which
+/// never declares a `mode`. The collapsed spellings (DEC-002) mirror the
+/// per-table allowlists in
+/// [`ManagedEntry`](super::ManagedEntry): the redundant `symlink-dir` /
+/// `copy-tree` strings no longer exist — a `[[directory]]` `symlink`
+/// renders as `symlink` and a `[[directory]]` `copy` as `copy`, the table
+/// supplying the directory context.
 fn mode_manifest_str(mode: FileMode) -> Option<&'static str> {
     match mode {
-        FileMode::Symlink => Some("symlink"),
-        FileMode::SymlinkDir => Some("symlink-dir"),
-        FileMode::Copy => Some("copy"),
-        FileMode::CopyTree => Some("copy-tree"),
+        FileMode::Symlink | FileMode::SymlinkDir => Some("symlink"),
+        FileMode::SymlinkTree => Some("symlink-tree"),
+        FileMode::Copy | FileMode::CopyTree => Some("copy"),
         FileMode::TemplateRender => None,
     }
 }
@@ -305,17 +308,25 @@ editor = \"vim\"
     }
 
     #[test]
-    fn append_each_mode_uses_the_parser_accepted_spelling() {
+    fn append_each_mode_uses_the_collapsed_parser_accepted_spelling() {
+        // DEC-002: the table supplies the file/dir context, so the
+        // executor modes collapse onto the parser-accepted strings — the
+        // removed `symlink-dir` / `copy-tree` spellings must never appear.
         for (mode, spelling) in [
             (FileMode::Symlink, "symlink"),
-            (FileMode::SymlinkDir, "symlink-dir"),
+            (FileMode::SymlinkDir, "symlink"),
+            (FileMode::SymlinkTree, "symlink-tree"),
             (FileMode::Copy, "copy"),
-            (FileMode::CopyTree, "copy-tree"),
+            (FileMode::CopyTree, "copy"),
         ] {
             let text = append_file_entry("", "src", "~/.dst", mode).expect("append succeeds");
             assert!(
                 text.contains(&format!("mode = \"{spelling}\"")),
                 "mode {mode:?} should serialize as `{spelling}`, got:\n{text}"
+            );
+            assert!(
+                !text.contains("symlink-dir") && !text.contains("copy-tree"),
+                "removed mode spellings must never be emitted, got:\n{text}"
             );
         }
     }

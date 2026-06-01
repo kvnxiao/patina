@@ -303,7 +303,11 @@ pub fn plan(
 /// `(mode, source, target)`.
 fn planned_operation(mode: FileMode, source: &Utf8Path, target: &Utf8Path) -> PlannedOperation {
     match mode {
-        FileMode::Symlink | FileMode::SymlinkDir => {
+        // `SymlinkTree` is the clearly-marked dispatch point T-007 fills
+        // in; the plan loop does not yet emit directory entries (T-002),
+        // so this maps to the durable symlink op shape for now and is
+        // never reached until directory planning lands.
+        FileMode::Symlink | FileMode::SymlinkDir | FileMode::SymlinkTree => {
             PlannedOperation::symlink(source.as_str(), target.as_str())
         }
         FileMode::Copy | FileMode::CopyTree => {

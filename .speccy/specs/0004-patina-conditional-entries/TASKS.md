@@ -5,7 +5,7 @@ generated_at: 2026-06-01T20:33:56Z
 ---
 # Tasks: SPEC-0004 Conditional entries, the file/directory schema split, recurse symlinks, and complete variable layering
 
-<task id="T-001" state="pending" covers="REQ-001">
+<task id="T-001" state="completed" covers="REQ-001">
 ## Split the entry schema into kind-typed `[[file]]` / `[[directory]]` table-arrays with collapsed mode names and a `when` field
 
 Restructure `patina-core/src/config/file_entry.rs` and
