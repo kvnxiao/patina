@@ -57,19 +57,16 @@ pub(crate) fn with_sharing_violation_retry<T>(
 ) -> std::io::Result<T> {
     #[cfg(windows)]
     {
-        let mut attempt: usize = 0;
-        loop {
+        for (index, &delay_ms) in BACKOFF_SCHEDULE_MS.iter().enumerate() {
             match op() {
                 Ok(value) => return Ok(value),
                 Err(err) => {
-                    let is_violation = err.raw_os_error() == Some(ERROR_SHARING_VIOLATION);
-                    if !is_violation || attempt >= BACKOFF_SCHEDULE_MS.len() {
-                        // Not a sharing violation, or the six-retry budget is
-                        // spent: surface the error to the apply pipeline.
+                    if err.raw_os_error() != Some(ERROR_SHARING_VIOLATION) {
+                        // Not a sharing violation: surface it to the apply
+                        // pipeline without consuming the retry budget.
                         return Err(err);
                     }
-                    let delay_ms = BACKOFF_SCHEDULE_MS[attempt];
-                    attempt += 1;
+                    let attempt = index + 1;
                     tracing::debug!(
                         target: "patina_core",
                         attempt,
@@ -81,6 +78,10 @@ pub(crate) fn with_sharing_violation_retry<T>(
                 }
             }
         }
+        // Six-retry budget spent: make the final attempt and surface its
+        // result verbatim — the last `ERROR_SHARING_VIOLATION`, any other
+        // error, or a success if the contention just cleared.
+        op()
     }
 
     #[cfg(not(windows))]

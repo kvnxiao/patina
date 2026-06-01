@@ -1,3 +1,17 @@
+// Every test and helper below is unix-only: they drive failures through
+// `PermissionsExt`, and the retry path is covered for Windows by the
+// `#[cfg(windows)]` unit tests in `patina_core::apply::retry`. On non-unix
+// targets the imports and helpers are therefore unused by design, so silence
+// the dead-code/unused-import lints there (the crate doc keeps `missing_docs`
+// satisfied on all platforms).
+#![cfg_attr(
+    not(unix),
+    allow(
+        unused_imports,
+        dead_code,
+        reason = "all tests in this file are #[cfg(unix)]; the imports and helpers are unused on other targets by design"
+    )
+)]
 #![expect(
     clippy::expect_used,
     reason = "integration tests use .expect() on fixture setup; allow-expect-in-tests covers #[cfg(test)] modules but not the helper functions in tests/*.rs integration crates."

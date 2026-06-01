@@ -1,7 +1,15 @@
-#![expect(
-    clippy::expect_used,
-    clippy::indexing_slicing,
-    reason = "integration tests use .expect() on fixtures and a bounded read-buffer slice; allow-*-in-tests covers #[cfg(test)] modules but not the helper methods in tests/*.rs integration crates."
+// Both lints are triggered only from the `#[cfg(unix)] mod foreground` helper
+// methods below (their `.expect()` calls and the `&buf[..n]` read slice);
+// `allow-*-in-tests` covers `#[cfg(test)]` modules but not the helper methods
+// in tests/*.rs integration crates. On non-unix targets that module is absent,
+// so the expectation would be unfulfilled — gate it to unix to match.
+#![cfg_attr(
+    unix,
+    expect(
+        clippy::expect_used,
+        clippy::indexing_slicing,
+        reason = "integration tests use .expect() on fixtures and a bounded read-buffer slice; allow-*-in-tests covers #[cfg(test)] modules but not the helper methods in tests/*.rs integration crates."
+    )
 )]
 
 //! Integration tests for `patina watch --foreground` (SPEC-0003 REQ-004 /
@@ -18,7 +26,11 @@
 mod common;
 
 use common::Fixture;
+// `code` and `Command` are used only by the `#[cfg(unix)] mod foreground`
+// (through its `use super::*`); they are unused on non-unix targets.
+#[cfg(unix)]
 use common::code;
+#[cfg(unix)]
 use std::process::Command;
 
 /// `patina watch` without `--foreground` reports the not-yet-wired service
