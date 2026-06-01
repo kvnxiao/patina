@@ -1,8 +1,8 @@
 ---
-name: SPEC proposal
-about: Propose a new design specification for patina
-title: "SPEC: <short title>"
-labels: ["spec", "proposal"]
+name: Design proposal
+about: Propose a new design for patina
+title: "Proposal: <short title>"
+labels: ["proposal"]
 assignees: []
 ---
 
@@ -13,7 +13,7 @@ assignees: []
 
 ## Proposed scope
 
-<!-- Bulleted list of what would be in scope for this SPEC, and what would
+<!-- Bulleted list of what would be in scope for this proposal, and what would
      explicitly be out of scope. -->
 
 **In scope:**
@@ -31,8 +31,7 @@ assignees: []
 
 ## Dependencies
 
-- Depends on SPEC 0001 phases: <list, or "all of v1.0">
-- Depends on SPEC 0002 phases: <or remove this line>
+- Depends on: <existing features or work, or "all of v1.0">
 - Other dependencies (external libraries, OS support, etc.):
 
 ## Alternatives considered
@@ -41,7 +40,7 @@ assignees: []
 
 ## Open questions
 
-<!-- Things the SPEC author would want feedback on before drafting. -->
+<!-- Things you'd want feedback on before the design is drafted. -->
 
 ---
 
@@ -49,8 +48,6 @@ assignees: []
 
 If this proposal gains traction:
 
-1. Reserve the next SPEC number: `ls specs | sort | tail`.
-2. Copy `specs/_template/` to `specs/<NNNN>-<slug>/`.
-3. Draft the SPEC.
-4. Open a PR. Discuss in review.
-5. On acceptance, initialize `STATUS.md`.
+1. Draft the design.
+2. Open a PR. Discuss in review.
+3. On acceptance, begin implementation.

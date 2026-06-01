@@ -61,7 +61,7 @@ mutating commands accept `--yes` to skip the confirmation prompt.
 
 - **Users** — [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md): install, declaring
   dotfiles, the apply flow, the watch service, recovery, and troubleshooting.
-- **Operations** — [`docs/operating-environment.md`](docs/operating-environment.md):
+- **Operations** — [`docs/OPERATING_ENVIRONMENT.md`](docs/OPERATING_ENVIRONMENT.md):
   state-directory layout, the cloud-sync caveat, and Linux `enable-linger`.
 - **Architecture** — [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md): crate
   layout, journal format, apply phases, and recovery.
@@ -70,15 +70,14 @@ mutating commands accept `--yes` to skip the confirmation prompt.
 ## Design
 
 `patina` is built spec-first. Each slice of the product is designed,
-decomposed, implemented, and reviewed as a SPEC under
-[`.speccy/`](.speccy/specs/) before it ships, and every requirement there
-carries acceptance scenarios that gate the work. See [`AGENTS.md`](AGENTS.md)
-for the product north star and the spec-driven workflow.
+decomposed, implemented, and reviewed against written requirements with
+acceptance scenarios before it ships. See [`AGENTS.md`](AGENTS.md) for the
+product north star and the contributor workflow.
 
 ## Contributing
 
 Read [`AGENTS.md`](AGENTS.md) first — it explains the conventions, the
-spec-driven loop, and what "done" means. Both human and AI-agent
+development loop, and what "done" means. Both human and AI-agent
 contributions follow the same rules.
 
 ### One-time setup (per clone)
