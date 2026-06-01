@@ -268,6 +268,13 @@ stderr contains the substring `already exists` and the path of
 <requirement id="REQ-002">
 ### REQ-002: `patina add <path>` registers an existing dotfile under a module
 
+> **Superseded in part by SPEC-0004 REQ-008.** This requirement defined
+> `patina add` writing a `[[file]]` entry. SPEC-0004 updates `add` to
+> emit a `[[file]]` entry for a file source or a `[[directory]]` entry
+> for a directory source (selected by the source's on-disk kind, with a
+> `--symlink-tree` flag for the directory per-leaf mode); the rest of
+> the `add` flow below is unchanged.
+
 The `patina add <path>` subcommand takes an absolute or
 HOME-relative path on the local filesystem, determines the
 appropriate module subdirectory inside the dotfiles repository

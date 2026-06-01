@@ -33,14 +33,15 @@ when it lacks the privilege rather than failing cryptically.
 
 Configuration lives in `patina.toml` files inside your dotfiles
 repository. Each entry declares a source path in the repo and one or
-more targets on the machine, plus the file mode Patina uses to
-materialize it (per-file symlink, atomic directory symlink, byte copy,
-copy-tree, or template render).
+more targets on the machine. Entries are declared under one of two
+kind-typed table-arrays — `[[file]]` for a file source, `[[directory]]`
+for a directory source — and each carries an optional `mode` choosing
+how Patina materializes it.
 
 A minimal example:
 
 ```toml
-# A symlink — `mode` defaults to "symlink" when omitted.
+# A file symlink — `mode` defaults to "symlink" when omitted.
 [[file]]
 source = "git/gitconfig"
 target = "~/.gitconfig"
@@ -50,17 +51,79 @@ target = "~/.gitconfig"
 [[file]]
 source = "shell/zshrc.tmpl"
 target = "~/.zshrc"
+
+# A directory materialized as one symbolic link per leaf file.
+[[directory]]
+source = "config/mpv"
+target = "~/.config/mpv"
+mode = "symlink-tree"
 ```
 
-Each entry is a `[[file]]` table. `mode` accepts `symlink` (the default),
-`symlink-dir`, `copy`, or `copy-tree`; a `.tmpl` source is always rendered as
-a template and takes no explicit `mode`. Use `target` for a single
-destination or `targets = [...]` to fan one source out to many.
+The table you declare an entry under fixes its source kind, and the
+`mode` names are shared across both tables — they mean "symlink this
+thing" or "copy this thing", with the table supplying the file/dir
+context:
 
-Templates are rendered with MiniJinja under strict-undefined semantics:
-referencing a variable that was never defined is an error at render
-time, not a silent empty string. Variables resolve through a defined
-precedence chain, and profiles select machine-specific variable sets.
+- A `[[file]]` accepts `mode = "symlink"` (the default — a symbolic link
+  to the source file) or `mode = "copy"` (a byte copy). A `.tmpl` source
+  is always rendered as a template and takes no explicit `mode`.
+- A `[[directory]]` accepts `mode = "symlink"` (the default — a single
+  atomic symbolic link to the whole directory), `mode = "symlink-tree"`
+  (one symbolic link per leaf file, mirroring the source tree), or
+  `mode = "copy"` (a recursive byte copy of the tree).
+
+Use `target` for a single destination or `targets = [...]` to fan one
+source out to many. (The earlier single `[[file]]` table with the
+`symlink-dir` / `copy-tree` mode names is no longer accepted; declare a
+`[[directory]]` entry instead.)
+
+### Conditional entries with `when`
+
+Any entry may carry a `when` expression — a MiniJinja predicate gating
+whether the entry applies on this host. When `when` evaluates false, the
+entry contributes no operations and its target is left untouched (and is
+classified orphaned if a prior apply had materialized it):
+
+```toml
+# Only symlinked on Windows.
+[[file]]
+source = "windows/profile.ps1"
+target = "~/Documents/PowerShell/profile.ps1"
+when = "patina.os == 'windows'"
+```
+
+`when` expressions are evaluated by the same MiniJinja engine that
+renders templates and resolves `[[auto_match]]` profile rules — one
+unified predicate engine across every `when` site. It uses
+strict-undefined semantics: referencing a variable that was never
+defined (for example a typo like `patina.oss` instead of `patina.os`)
+is an error that fails the run, not a silently-false predicate. Built-in
+facts such as `patina.os` and `patina.hostname` are always available;
+`patina.profile` is not defined during profile resolution, so an
+`[[auto_match]]` rule must not reference it.
+
+### Variables
+
+Templates and `when` expressions resolve variables through a layered
+precedence chain. From lowest to highest priority: built-in `patina.*`
+facts, the repo-shared `[variables]` table, each module's own
+`[variables]` table, the active profile's `[profiles.<name>.variables]`
+table, per-machine variables, and finally CLI overrides. A higher layer
+overrides a lower one for the same key.
+
+```toml
+# Root patina.toml — repo-shared defaults plus a per-profile override.
+[variables]
+editor = "nvim"
+
+[profiles.work.variables]
+editor = "code"
+```
+
+Templates are rendered with MiniJinja under the same strict-undefined
+semantics as `when`: referencing a variable that was never defined is an
+error at render time, not a silent empty string. Profiles select the
+machine-specific variable set layered on top of the repo-shared one.
 
 ## Apply flow
 
@@ -106,8 +169,8 @@ common flags:
 | Command   | Purpose                                                                                       |
 | --------- | --------------------------------------------------------------------------------------------- |
 | `init`    | Scaffold a root `patina.toml` and persist the default-repository pointer.                     |
-| `add`     | Bring an existing dotfile under management: copy it into a module and write a `[[file]]` entry.|
-| `remove`  | Unmanage a target: drop its `[[file]]` entry and replace the target with a regular file holding the last-applied content. |
+| `add`     | Bring an existing dotfile under management: copy it into a module and write a `[[file]]` entry for a file source or a `[[directory]]` entry for a directory source.|
+| `remove`  | Unmanage a target: drop its entry and replace the target with a regular file holding the last-applied content. |
 | `promote` | Copy a drifted copy-mode target's current bytes back into its repository source, then re-apply. |
 | `doctor`  | Inspect the environment for known problems (UNC repository paths, missing Windows Developer Mode, OS-too-old, missing default repo). |
 
@@ -200,8 +263,8 @@ these init systems in v1.0.
 
 ### Drift notifications
 
-For every non-symlink managed target (copy-mode files, copy-tree files,
-rendered templates), the watcher hashes the target when it changes and
+For every non-symlink managed target (copy-mode files, copied directory
+trees, rendered templates), the watcher hashes the target when it changes and
 compares against the hash recorded at the last apply. On divergence it
 emits a desktop notification titled "Patina: drift detected" naming the
 target, and records the event in a drift cache at

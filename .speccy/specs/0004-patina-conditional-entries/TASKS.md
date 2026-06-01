@@ -652,7 +652,7 @@ Suggested files: `patina-core/src/config/writer.rs`,
 </task-scenarios>
 </task>
 
-<task id="T-012" state="pending" covers="REQ-001 REQ-002 REQ-003 REQ-004 REQ-005 REQ-006 REQ-007 REQ-008 REQ-009">
+<task id="T-012" state="completed" covers="REQ-001 REQ-002 REQ-003 REQ-004 REQ-005 REQ-006 REQ-007 REQ-008 REQ-009">
 ## Update docs and cross-SPEC superseded-by notes for the schema/predicate/variable changes
 
 Refresh the user- and agent-facing docs so they no longer describe the
