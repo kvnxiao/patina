@@ -35,6 +35,7 @@ use crate::backups::gc_retain;
 use crate::config::FileMode;
 use crate::config::HookEntry;
 use crate::config::HookEvent;
+use crate::config::ManagedEntry;
 use crate::config::parse_module_config;
 use crate::discovery::discover_modules;
 use crate::discovery::resolve_repository_root;
@@ -142,6 +143,15 @@ pub struct ResolvedOperation {
     pub source: Utf8PathBuf,
     /// Canonical absolute target paths the source fans out to.
     pub targets: Vec<Utf8PathBuf>,
+    /// Index of the managed entry that produced this operation, assigned
+    /// at plan time over the full declared sequence (every `[[file]]`
+    /// entry across all modules first, then every `[[directory]]` entry)
+    /// as a single monotonic `u32` space. This index — not a re-derivation
+    /// from operation position — is what [`execute`] records on each
+    /// [`ExpectedTarget`], so a `[[file]]` and a `[[directory]]` entry can
+    /// never collide on an index and per-entry atomic rollback (REQ-019 /
+    /// DEC-009) groups targets by their declared entry.
+    pub entry_index: u32,
 }
 
 /// Everything an apply needs after planning, with no mutation performed
@@ -249,8 +259,15 @@ pub fn plan(
 
     let modules = discover_modules(&repo_root)?;
 
-    let mut operations: Vec<PlannedOperation> = Vec::new();
-    let mut resolved_ops: Vec<ResolvedOperation> = Vec::new();
+    // Resolve every managed entry into its canonical source/targets, kept
+    // in two ordered buckets — `[[file]]` entries and `[[directory]]`
+    // entries — each in declaration order across all modules as the modules
+    // are iterated. Emitting from these buckets files-then-directories
+    // gives the single deterministic order REQ-009 mandates while a managed
+    // entry's canonicalization stays where it always was (per-module, under
+    // that module's tilde/home context).
+    let mut file_entries: Vec<ResolvedEntry> = Vec::new();
+    let mut directory_entries: Vec<ResolvedEntry> = Vec::new();
     let mut hooks: Vec<HookEntry> = Vec::new();
 
     for module in &modules {
@@ -266,25 +283,16 @@ pub fn plan(
         }
 
         for entry in &config.files {
-            let abs_source = canonicalize(&module.path.join(&entry.source))?;
-            let mut abs_targets = Vec::with_capacity(entry.targets.len());
-            for target in &entry.targets {
-                let expanded = expand_tilde(target, &home);
-                abs_targets.push(canonicalize(&expanded)?);
-            }
-
-            for target in &abs_targets {
-                operations.push(planned_operation(entry.mode, &abs_source, target));
-            }
-            resolved_ops.push(ResolvedOperation {
-                mode: entry.mode,
-                source: abs_source,
-                targets: abs_targets,
-            });
+            file_entries.push(resolve_entry(entry, &module.path, &home)?);
+        }
+        for entry in &config.directories {
+            directory_entries.push(resolve_entry(entry, &module.path, &home)?);
         }
 
         hooks.extend(config.hooks.iter().cloned());
     }
+
+    let (operations, resolved_ops) = assemble_plan_operations(file_entries, directory_entries);
 
     Ok(ResolvedPlan {
         repo_root,
@@ -299,14 +307,86 @@ pub fn plan(
     })
 }
 
+/// A managed entry with its source and targets canonicalized, held in the
+/// declared-order buckets before the single monotonic entry-index space is
+/// assigned. Kept private to [`plan`]: the public per-operation surface is
+/// [`ResolvedOperation`], which additionally carries the assigned index.
+struct ResolvedEntry {
+    /// The executor mode the entry resolves to.
+    mode: FileMode,
+    /// Canonical absolute source path.
+    source: Utf8PathBuf,
+    /// Canonical absolute target paths the source fans out to.
+    targets: Vec<Utf8PathBuf>,
+}
+
+/// Impose REQ-009's single deterministic order on the resolved entries and
+/// assign each managed entry its index over the full declared sequence.
+///
+/// Every `[[file]]` entry (in declaration order across all modules) is
+/// emitted before every `[[directory]]` entry, and each managed entry is
+/// assigned a single monotonic `u32` `entry_index` (files first, then
+/// directories). That index is carried on each [`ResolvedOperation`] so
+/// [`execute`] records the planned index rather than re-deriving one from
+/// operation position — guaranteeing no `[[file]]` and `[[directory]]`
+/// entry collide on an index and that targets sharing an entry form one
+/// atomic rollback unit (DEC-009 / REQ-019). The returned
+/// [`PlannedOperation`] vec is the per-target durable plan, parallel to the
+/// engine's existing wire format; the index lives on the resolved-op side
+/// only, so the `entry: u32` journal layout is unchanged (no version bump).
+fn assemble_plan_operations(
+    file_entries: Vec<ResolvedEntry>,
+    directory_entries: Vec<ResolvedEntry>,
+) -> (Vec<PlannedOperation>, Vec<ResolvedOperation>) {
+    let mut operations: Vec<PlannedOperation> = Vec::new();
+    let mut resolved_ops: Vec<ResolvedOperation> = Vec::new();
+    let mut entry_index: u32 = 0;
+    for resolved in file_entries.into_iter().chain(directory_entries) {
+        for target in &resolved.targets {
+            operations.push(planned_operation(resolved.mode, &resolved.source, target));
+        }
+        resolved_ops.push(ResolvedOperation {
+            mode: resolved.mode,
+            source: resolved.source,
+            targets: resolved.targets,
+            entry_index,
+        });
+        entry_index = entry_index.saturating_add(1);
+    }
+    (operations, resolved_ops)
+}
+
+/// Canonicalize one managed entry's source and targets under `module_path`
+/// and `home`, independent of its declared kind. The file/directory order
+/// and the entry-index space are imposed by the caller; this only resolves
+/// paths.
+fn resolve_entry(
+    entry: &ManagedEntry,
+    module_path: &Utf8Path,
+    home: &Utf8Path,
+) -> Result<ResolvedEntry, EngineError> {
+    let source = canonicalize(&module_path.join(&entry.source))?;
+    let mut targets = Vec::with_capacity(entry.targets.len());
+    for target in &entry.targets {
+        let expanded = expand_tilde(target, home);
+        targets.push(canonicalize(&expanded)?);
+    }
+    Ok(ResolvedEntry {
+        mode: entry.mode,
+        source,
+        targets,
+    })
+}
+
 /// Build the durable [`PlannedOperation`] for one resolved
 /// `(mode, source, target)`.
 fn planned_operation(mode: FileMode, source: &Utf8Path, target: &Utf8Path) -> PlannedOperation {
     match mode {
-        // `SymlinkTree` is the clearly-marked dispatch point T-007 fills
-        // in; the plan loop does not yet emit directory entries (T-002),
-        // so this maps to the durable symlink op shape for now and is
-        // never reached until directory planning lands.
+        // A `[[directory]]` `symlink` (the atomic whole-directory
+        // `SymlinkDir`) maps to the same durable symlink op shape as a
+        // `[[file]]` `symlink`. `SymlinkTree` is the clearly-marked
+        // dispatch point T-007's per-leaf executor fills in; until then it
+        // shares the symlink op shape so the plan is well-formed.
         FileMode::Symlink | FileMode::SymlinkDir | FileMode::SymlinkTree => {
             PlannedOperation::symlink(source.as_str(), target.as_str())
         }
@@ -422,8 +502,13 @@ pub async fn execute(
     // rollback units (REQ-019).
     let mut completed: Vec<(u32, CompletionRecord)> = Vec::new();
     let mut op_index: u32 = 0;
-    for (entry_index, op) in resolved.operations.iter().enumerate() {
-        let entry_index = u32::try_from(entry_index).unwrap_or(u32::MAX);
+    for op in &resolved.operations {
+        // Use the entry index assigned at plan time over the full declared
+        // sequence (files then directories) rather than re-deriving one from
+        // operation position, so a `[[file]]` and a `[[directory]]` entry can
+        // never collide on an index and rollback groups targets by their
+        // declared entry (DEC-009).
+        let entry_index = op.entry_index;
         for target in &op.targets {
             backup_before_overwrite(&backups_dir, &resolved.timestamp, target)?;
         }
@@ -659,6 +744,98 @@ mod tests {
     use tempfile::TempDir;
 
     const TS: &str = "20260530T120000Z";
+
+    /// Build a synthetic resolved entry with the given mode, a distinct
+    /// source tag, and one target per `target_tag`. Lets the ordering /
+    /// index tests assert over identifiable paths without touching the
+    /// filesystem or repo discovery.
+    fn resolved_entry(mode: FileMode, source_tag: &str, target_tags: &[&str]) -> ResolvedEntry {
+        ResolvedEntry {
+            mode,
+            source: Utf8PathBuf::from(format!("/repo/{source_tag}")),
+            targets: target_tags
+                .iter()
+                .map(|t| Utf8PathBuf::from(format!("/home/{t}")))
+                .collect(),
+        }
+    }
+
+    // REQ-009 / DEC-009 ordering: with two `[[file]]` entries and one
+    // `[[directory]]` entry, both file operations are emitted before the
+    // directory operation, each block in declaration order. The directory
+    // entry is the `[[directory]]` `symlink` default (atomic `SymlinkDir`).
+    #[test]
+    fn files_are_planned_before_directories_in_declaration_order() {
+        let files = vec![
+            resolved_entry(FileMode::Symlink, "f0", &["f0.target"]),
+            resolved_entry(FileMode::Copy, "f1", &["f1.target"]),
+        ];
+        let directories = vec![resolved_entry(FileMode::SymlinkDir, "d0", &["d0.target"])];
+
+        let (operations, _resolved) = assemble_plan_operations(files, directories);
+
+        // Three single-target entries → three operations, in files-then-
+        // directories declared order.
+        let sources: Vec<&str> = operations
+            .iter()
+            .map(|op| match op {
+                PlannedOperation::Symlink { source, .. }
+                | PlannedOperation::Copy { source, .. }
+                | PlannedOperation::Render { source, .. } => source.as_str(),
+            })
+            .collect();
+        assert_eq!(
+            sources,
+            vec!["/repo/f0", "/repo/f1", "/repo/d0"],
+            "both `[[file]]` operations must precede the `[[directory]]` operation, each in declaration order"
+        );
+    }
+
+    // REQ-009 / DEC-009 index space: entry indices form a single monotonic
+    // sequence across both tables (all `[[file]]` entries, then all
+    // `[[directory]]` entries), and no `[[file]]` and `[[directory]]` entry
+    // share an index.
+    #[test]
+    fn entry_indices_are_a_single_monotonic_space_across_both_tables() {
+        let files = vec![
+            resolved_entry(FileMode::Symlink, "f0", &["f0a", "f0b"]),
+            resolved_entry(FileMode::Copy, "f1", &["f1.target"]),
+        ];
+        let directories = vec![
+            resolved_entry(FileMode::SymlinkDir, "d0", &["d0.target"]),
+            resolved_entry(FileMode::CopyTree, "d1", &["d1.target"]),
+        ];
+
+        let (_operations, resolved) = assemble_plan_operations(files, directories);
+
+        // One resolved op per managed entry (target fan-out lives inside the
+        // op), indexed 0..N over the declared file-then-directory sequence.
+        let indices: Vec<u32> = resolved.iter().map(|op| op.entry_index).collect();
+        assert_eq!(
+            indices,
+            vec![0, 1, 2, 3],
+            "indices must be a gapless monotonic 0..N over files-then-directories"
+        );
+
+        // The two file entries own indices 0,1; the two directory entries own
+        // 2,3 — disjoint, so no file/directory entry collides on an index.
+        let file_indices: Vec<u32> = resolved
+            .iter()
+            .filter(|op| matches!(op.mode, FileMode::Symlink | FileMode::Copy))
+            .map(|op| op.entry_index)
+            .collect();
+        let dir_indices: Vec<u32> = resolved
+            .iter()
+            .filter(|op| matches!(op.mode, FileMode::SymlinkDir | FileMode::CopyTree))
+            .map(|op| op.entry_index)
+            .collect();
+        assert_eq!(file_indices, vec![0, 1]);
+        assert_eq!(dir_indices, vec![2, 3]);
+        assert!(
+            file_indices.iter().all(|fi| !dir_indices.contains(fi)),
+            "no `[[file]]` and `[[directory]]` entry may share an entry index"
+        );
+    }
 
     /// A tempdir state directory plus a minimal empty-operation plan that
     /// resolves its journal / backups / lock under that directory.

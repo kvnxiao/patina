@@ -89,7 +89,7 @@ Suggested files: `patina-core/src/config/file_entry.rs`,
 </task-scenarios>
 </task>
 
-<task id="T-002" state="pending" covers="REQ-009 REQ-001">
+<task id="T-002" state="completed" covers="REQ-009 REQ-001">
 ## Emit both table-arrays in one deterministic files-then-directories order with a single monotonic entry-index space
 
 Rework the per-module entry loop in `apply::plan`
