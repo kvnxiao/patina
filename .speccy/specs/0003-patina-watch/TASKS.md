@@ -674,7 +674,7 @@ Suggested files: `patina-core/src/watch/service/scheduled_task.rs`,
 </task-scenarios>
 </task>
 
-<task id="T-014" state="pending" covers="REQ-001">
+<task id="T-014" state="completed" covers="REQ-001">
 ## Document the watch service, the Linux linger opt-in, and the drift-cache decode
 
 REQ-001 / DEC-005 and the "never let docs drift" hard rule: document the
