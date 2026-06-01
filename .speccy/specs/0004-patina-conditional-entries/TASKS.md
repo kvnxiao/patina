@@ -479,7 +479,7 @@ Suggested files: `patina-core/src/status/mod.rs`,
 </task-scenarios>
 </task>
 
-<task id="T-009" state="pending" covers="REQ-004">
+<task id="T-009" state="completed" covers="REQ-004">
 ## Route `[[auto_match]]` through the shared engine and delete the narrow predicate evaluator
 
 Remove the narrow single-equality predicate evaluator from

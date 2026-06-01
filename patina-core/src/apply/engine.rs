@@ -360,6 +360,15 @@ fn build_planning_context(
     let state_dir = resolve_state_dir()?;
     let builtins = Builtins::current();
 
+    // The shared `MiniJinja` engine that evaluates every `when` predicate
+    // (REQ-004 / DEC-006): `[[file]]` / `[[directory]]` / `[[hook]]` and
+    // `[[auto_match]]` all route through this one instance. It is built
+    // before profile resolution because auto-match `when` predicates are
+    // evaluated through it (against a built-ins-only resolver, since the
+    // user variable layers are not yet assembled). It is cheap and
+    // clone-shares one `Arc` environment.
+    let engine = Engine::new();
+
     let root_manifest = repo_root.join(MANIFEST_FILENAME);
     let auto_match_rules = load_auto_match_rules(&root_manifest)?;
     let profile = resolve_profile(
@@ -367,6 +376,7 @@ fn build_planning_context(
         &state_dir.join("profile"),
         &auto_match_rules,
         &builtins,
+        &engine,
     )?;
 
     // The root manifest's repo-shared `[variables]` table and the active
@@ -389,13 +399,6 @@ fn build_planning_context(
     }
 
     let modules = discover_modules(&repo_root)?;
-
-    // The shared `MiniJinja` engine that evaluates each entry's `when`
-    // predicate (REQ-004 / DEC-006). It is the same evaluator the hook
-    // `when` and template renders use; constructing it here (it is cheap
-    // and clone-shares one `Arc` environment) lets both planning and the
-    // status managed-set gate entries through one evaluator.
-    let engine = Engine::new();
 
     Ok(PlanningContext {
         repo_root,
