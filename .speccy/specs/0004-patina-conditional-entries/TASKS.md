@@ -603,7 +603,7 @@ Suggested files: `patina-cli/src/cli.rs`,
 </task-scenarios>
 </task>
 
-<task id="T-011" state="pending" covers="REQ-008 REQ-001">
+<task id="T-011" state="completed" covers="REQ-008 REQ-001">
 ## Add a `[[directory]]` manifest writer and update the file writer to the collapsed mode names
 
 Extend `patina-core/src/config/writer.rs` to emit `[[directory]]`
