@@ -246,7 +246,7 @@ Suggested files: `patina-core/src/apply/engine.rs`,
 </task-scenarios>
 </task>
 
-<task id="T-005" state="pending" covers="REQ-003 REQ-009">
+<task id="T-005" state="completed" covers="REQ-003 REQ-009">
 ## Gate a managed entry's plan presence on its `when`, evaluated before canonicalization
 
 Make `apply::plan` evaluate each managed entry's `when` predicate first,

@@ -274,6 +274,13 @@ pub fn plan(
 
     let modules = discover_modules(&repo_root)?;
 
+    // The shared `MiniJinja` engine that evaluates each entry's `when`
+    // predicate (REQ-004 / DEC-006). It is the same evaluator the hook
+    // `when` and template renders use; constructing it here (it is cheap
+    // and clone-shares one `Arc` environment) lets planning gate entries
+    // before any source is canonicalized.
+    let engine = Engine::new();
+
     // Resolve every managed entry into its canonical source/targets, kept
     // in two ordered buckets — `[[file]]` entries and `[[directory]]`
     // entries — each in declaration order across all modules as the modules
@@ -281,8 +288,16 @@ pub fn plan(
     // gives the single deterministic order REQ-009 mandates while a managed
     // entry's canonicalization stays where it always was (per-module, under
     // that module's tilde/home context).
-    let mut file_entries: Vec<ResolvedEntry> = Vec::new();
-    let mut directory_entries: Vec<ResolvedEntry> = Vec::new();
+    //
+    // Each bucket slot is an `Option<ResolvedEntry>`: a `when`-false entry
+    // contributes `None`, so it still occupies its position in the declared
+    // sequence (and thus its `entry_index`, REQ-009) but emits no operation
+    // and no diff line (DEC-004). The `when` gate runs at the top of the
+    // per-entry body, before `resolve_entry` canonicalizes the source — so a
+    // gated-off entry whose source is absent or wrong-kind on this OS is
+    // never canonicalized or validated (REQ-009 ordering).
+    let mut file_entries: Vec<Option<ResolvedEntry>> = Vec::new();
+    let mut directory_entries: Vec<Option<ResolvedEntry>> = Vec::new();
     let mut hooks: Vec<HookEntry> = Vec::new();
 
     for module in &modules {
@@ -294,10 +309,22 @@ pub fn plan(
         }
 
         for entry in &config.files {
-            file_entries.push(resolve_entry(entry, &module.path, &home)?);
+            file_entries.push(gate_and_resolve_entry(
+                entry,
+                &module.path,
+                &home,
+                &engine,
+                &resolver,
+            )?);
         }
         for entry in &config.directories {
-            directory_entries.push(resolve_entry(entry, &module.path, &home)?);
+            directory_entries.push(gate_and_resolve_entry(
+                entry,
+                &module.path,
+                &home,
+                &engine,
+                &resolver,
+            )?);
         }
 
         hooks.extend(config.hooks.iter().cloned());
@@ -352,34 +379,70 @@ struct ResolvedEntry {
 /// Every `[[file]]` entry (in declaration order across all modules) is
 /// emitted before every `[[directory]]` entry, and each managed entry is
 /// assigned a single monotonic `u32` `entry_index` (files first, then
-/// directories). That index is carried on each [`ResolvedOperation`] so
-/// [`execute`] records the planned index rather than re-deriving one from
-/// operation position — guaranteeing no `[[file]]` and `[[directory]]`
-/// entry collide on an index and that targets sharing an entry form one
-/// atomic rollback unit (DEC-009 / REQ-019). The returned
-/// [`PlannedOperation`] vec is the per-target durable plan, parallel to the
-/// engine's existing wire format; the index lives on the resolved-op side
-/// only, so the `entry: u32` journal layout is unchanged (no version bump).
+/// directories). The index advances for **every** declared entry,
+/// including a `when`-false one (passed as `None`): a gated-off entry
+/// occupies its index but emits no [`PlannedOperation`] and no
+/// [`ResolvedOperation`] (REQ-009 / DEC-004). That index is carried on each
+/// [`ResolvedOperation`] so [`execute`] records the planned index rather
+/// than re-deriving one from operation position — guaranteeing no
+/// `[[file]]` and `[[directory]]` entry collide on an index and that
+/// targets sharing an entry form one atomic rollback unit (DEC-009 /
+/// REQ-019). The returned [`PlannedOperation`] vec is the per-target
+/// durable plan, parallel to the engine's existing wire format; the index
+/// lives on the resolved-op side only, so the `entry: u32` journal layout
+/// is unchanged (no version bump).
 fn assemble_plan_operations(
-    file_entries: Vec<ResolvedEntry>,
-    directory_entries: Vec<ResolvedEntry>,
+    file_entries: Vec<Option<ResolvedEntry>>,
+    directory_entries: Vec<Option<ResolvedEntry>>,
 ) -> (Vec<PlannedOperation>, Vec<ResolvedOperation>) {
     let mut operations: Vec<PlannedOperation> = Vec::new();
     let mut resolved_ops: Vec<ResolvedOperation> = Vec::new();
     let mut entry_index: u32 = 0;
-    for resolved in file_entries.into_iter().chain(directory_entries) {
-        for target in &resolved.targets {
-            operations.push(planned_operation(resolved.mode, &resolved.source, target));
+    for slot in file_entries.into_iter().chain(directory_entries) {
+        // A `when`-false entry still consumes its index but emits nothing.
+        if let Some(resolved) = slot {
+            for target in &resolved.targets {
+                operations.push(planned_operation(resolved.mode, &resolved.source, target));
+            }
+            resolved_ops.push(ResolvedOperation {
+                mode: resolved.mode,
+                source: resolved.source,
+                targets: resolved.targets,
+                entry_index,
+            });
         }
-        resolved_ops.push(ResolvedOperation {
-            mode: resolved.mode,
-            source: resolved.source,
-            targets: resolved.targets,
-            entry_index,
-        });
         entry_index = entry_index.saturating_add(1);
     }
     (operations, resolved_ops)
+}
+
+/// Evaluate one managed entry's `when` predicate, then — only if it holds —
+/// canonicalize the entry's source and targets.
+///
+/// This enforces the REQ-009 per-entry order: step (1) the `when` gate runs
+/// first, so a `when`-false entry returns `Ok(None)` and is **never**
+/// canonicalized; step (2) canonicalization happens only for a surviving
+/// (`when`-true or no-`when`) entry. Returning `None` lets the caller keep
+/// the entry's slot in the declared sequence (and thus its `entry_index`)
+/// while emitting no operation or diff line (DEC-004). For a multi-target
+/// entry the gate is above the target loop, so `when` gates all targets
+/// together (REQ-003).
+///
+/// The plan-time source existence-and-kind validation (step 3 of REQ-009)
+/// lands in T-006 and slots in after canonicalization here.
+fn gate_and_resolve_entry(
+    entry: &ManagedEntry,
+    module_path: &Utf8Path,
+    home: &Utf8Path,
+    engine: &Engine,
+    resolver: &Resolver,
+) -> Result<Option<ResolvedEntry>, EngineError> {
+    if let Some(expr) = entry.when.as_deref()
+        && !engine.eval_when(expr, resolver)?
+    {
+        return Ok(None);
+    }
+    Ok(Some(resolve_entry(entry, module_path, home)?))
 }
 
 /// Canonicalize one managed entry's source and targets under `module_path`
@@ -793,10 +856,14 @@ mod tests {
     #[test]
     fn files_are_planned_before_directories_in_declaration_order() {
         let files = vec![
-            resolved_entry(FileMode::Symlink, "f0", &["f0.target"]),
-            resolved_entry(FileMode::Copy, "f1", &["f1.target"]),
+            Some(resolved_entry(FileMode::Symlink, "f0", &["f0.target"])),
+            Some(resolved_entry(FileMode::Copy, "f1", &["f1.target"])),
         ];
-        let directories = vec![resolved_entry(FileMode::SymlinkDir, "d0", &["d0.target"])];
+        let directories = vec![Some(resolved_entry(
+            FileMode::SymlinkDir,
+            "d0",
+            &["d0.target"],
+        ))];
 
         let (operations, _resolved) = assemble_plan_operations(files, directories);
 
@@ -824,12 +891,12 @@ mod tests {
     #[test]
     fn entry_indices_are_a_single_monotonic_space_across_both_tables() {
         let files = vec![
-            resolved_entry(FileMode::Symlink, "f0", &["f0a", "f0b"]),
-            resolved_entry(FileMode::Copy, "f1", &["f1.target"]),
+            Some(resolved_entry(FileMode::Symlink, "f0", &["f0a", "f0b"])),
+            Some(resolved_entry(FileMode::Copy, "f1", &["f1.target"])),
         ];
         let directories = vec![
-            resolved_entry(FileMode::SymlinkDir, "d0", &["d0.target"]),
-            resolved_entry(FileMode::CopyTree, "d1", &["d1.target"]),
+            Some(resolved_entry(FileMode::SymlinkDir, "d0", &["d0.target"])),
+            Some(resolved_entry(FileMode::CopyTree, "d1", &["d1.target"])),
         ];
 
         let (_operations, resolved) = assemble_plan_operations(files, directories);
@@ -860,6 +927,53 @@ mod tests {
         assert!(
             file_indices.iter().all(|fi| !dir_indices.contains(fi)),
             "no `[[file]]` and `[[directory]]` entry may share an entry index"
+        );
+    }
+
+    // REQ-009 / DEC-004: a `when`-false entry (a `None` slot) occupies its
+    // index in the declared sequence but emits no operation and no resolved
+    // op, so the surviving entries keep the indices they would have had if
+    // the gated-off entry were present-but-empty rather than compacted away.
+    #[test]
+    fn when_false_entry_occupies_its_index_but_emits_no_operation() {
+        // Declared file sequence: f0 (survives), f1 (when-false → None),
+        // f2 (survives). One surviving directory entry d0.
+        let files = vec![
+            Some(resolved_entry(FileMode::Symlink, "f0", &["f0.target"])),
+            None,
+            Some(resolved_entry(FileMode::Copy, "f2", &["f2.target"])),
+        ];
+        let directories = vec![Some(resolved_entry(
+            FileMode::SymlinkDir,
+            "d0",
+            &["d0.target"],
+        ))];
+
+        let (operations, resolved) = assemble_plan_operations(files, directories);
+
+        // The gated-off f1 contributes no operation: only f0, f2, d0 plan.
+        let sources: Vec<&str> = operations
+            .iter()
+            .map(|op| match op {
+                PlannedOperation::Symlink { source, .. }
+                | PlannedOperation::Copy { source, .. }
+                | PlannedOperation::Render { source, .. } => source.as_str(),
+            })
+            .collect();
+        assert_eq!(
+            sources,
+            vec!["/repo/f0", "/repo/f2", "/repo/d0"],
+            "a `when`-false entry must emit no planned operation"
+        );
+
+        // f1 still consumed index 1, so f2 keeps index 2 and d0 keeps index 3
+        // — the indices are not compacted to fill the gap.
+        let indices: Vec<u32> = resolved.iter().map(|op| op.entry_index).collect();
+        assert_eq!(
+            indices,
+            vec![0, 2, 3],
+            "the gated-off entry occupies index 1, leaving a gap rather than \
+             renumbering the survivors"
         );
     }
 
