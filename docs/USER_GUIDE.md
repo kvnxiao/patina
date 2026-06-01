@@ -133,9 +133,93 @@ accepting it toggles Developer Mode on via the bundled
 decline the UAC prompt, Patina exits with code `5` and points you at
 `patina doctor --fix`, which offers the same Developer Mode remediation.
 
-(Enabling the Linux watcher service to survive logout —
-`sudo loginctl enable-linger $USER` — is a SPEC-0003 concern and is not
-covered here.)
+## Watch service
+
+`patina watch` runs a per-user background watcher that re-applies your
+configuration when the source repository changes and surfaces drift when
+a managed target is edited outside Patina. It never needs admin or sudo
+on its default path.
+
+The watcher has two shapes. The lifecycle subcommands manage a background
+service registered with your OS supervisor:
+
+| Command                  | Purpose                                                            |
+| ------------------------ | ------------------------------------------------------------------ |
+| `patina watch install`   | Register the watcher to launch at login. Exits 1 if already installed; run `uninstall` first to re-register. |
+| `patina watch uninstall` | Stop the running watcher and remove the service registration.      |
+| `patina watch start`     | Ask the supervisor to start the installed service.                 |
+| `patina watch stop`      | Ask the supervisor to stop the service without removing it.        |
+| `patina watch restart`   | Stop then start the installed service.                             |
+| `patina watch status`    | Report the service's installed / running state, last-exit code, and the watcher's subscription and re-apply counters. Read-only. |
+
+`patina watch --foreground` instead runs the watcher loop inline,
+attached to the current terminal, and shuts down cleanly on Ctrl-C
+(SIGINT) or SIGTERM. The installed background service runs the same
+foreground loop under your supervisor.
+
+`install` writes a per-user service descriptor whose location depends on
+the OS:
+
+| OS      | Service descriptor                                      | Supervisor       |
+| ------- | ------------------------------------------------------- | ---------------- |
+| macOS   | `~/Library/LaunchAgents/com.patina.watcher.plist`       | `launchd`        |
+| Linux   | `~/.config/systemd/user/patina-watcher.service`         | `systemd --user` |
+| Windows | Scheduled Task named `Patina Watcher` (HKCU, logon trigger) | Task Scheduler |
+
+### Surviving logout on Linux
+
+A `systemd --user` service stops when you log out and starts again when
+you next log in. If you want the watcher to keep running across logout —
+for example on a server you SSH in and out of — enable lingering for your
+user once:
+
+```sh
+sudo loginctl enable-linger $USER
+```
+
+Patina does not run this for you and ships no `--linger` flag: the
+command needs sudo, and Patina's invariant is that it never prompts for
+elevated privilege on your behalf. Run it yourself when you need
+survive-logout behavior; skip it on a desktop where the watcher only
+needs to run while you are logged in.
+
+### Non-systemd init systems
+
+`patina watch install` targets `systemd --user` on Linux. On a
+distribution without systemd (Void, Devuan with a non-systemd init,
+Alpine), run `patina watch --foreground` under your own supervisor
+(runit, s6, OpenRC) instead — Patina does not ship service templates for
+these init systems in v1.0.
+
+### Drift notifications
+
+For every non-symlink managed target (copy-mode files, copy-tree files,
+rendered templates), the watcher hashes the target when it changes and
+compares against the hash recorded at the last apply. On divergence it
+emits a desktop notification titled "Patina: drift detected" naming the
+target, and records the event in a drift cache at
+`<state>/patina/drift.cache`. Notifications are rate-limited to at most
+one per target per 60-second window. Symlink targets are not watched for
+drift — editing a symlinked file is editing the source, which the source
+watcher already catches.
+
+Drift surfaces two ways, and you do not need the watcher running to see
+it the second way:
+
+- As the desktop notification above, **only while the watcher is
+  running**.
+- As `DRIFTED` in `patina status`, **always**. `patina status` decides
+  drift by re-hashing the target live, independent of the watcher, so a
+  file you edit and then revert to its recorded bytes reports `CLEAN`
+  even though the watcher logged the intervening edit. The drift cache is
+  the watcher's own notification ledger; `patina status` does not read
+  it.
+
+Resolve a drifted target either way:
+
+- `patina apply` reverts the target to the source content.
+- `patina promote` updates the source from the target's current bytes,
+  then re-applies.
 
 ## State directory
 
@@ -187,7 +271,13 @@ Two commands help you recover deliberately:
 
 For a post-mortem, `patina debug journal <path>` decodes the binary
 journal into human-readable form so you can see exactly what the
-interrupted or completed apply intended to do.
+interrupted or completed apply intended to do. The parallel
+`patina debug drift-cache <path>` decodes the watcher's binary drift
+cache (`<state>/patina/drift.cache`), printing its version envelope, the
+journal timestamp it is bound to, and one block per recorded divergence
+naming the target path, the expected and actual hashes, and the
+detection time. Both refuse a file written by a newer Patina with a typed
+error naming the version mismatch, and exit 1 on an invalid path.
 
 ## Troubleshooting
 
@@ -210,3 +300,13 @@ interrupted or completed apply intended to do.
   directory is on local disk and not a cloud-sync mount (see "State
   directory"). Use `patina debug journal` to inspect the journal that
   recovery read.
+- **The watcher stops when you log out of a Linux box.** A `systemd
+  --user` service ends with your session by default. Run `sudo loginctl
+  enable-linger $USER` once to keep it running across logout (see "Watch
+  service").
+- **`patina status` reports `DRIFTED` but no desktop notification
+  appeared.** Notifications only fire while the watcher is running, and
+  are rate-limited to one per target per 60 seconds; `patina status`
+  reports drift from a live re-hash regardless. Resolve with `patina
+  apply` (revert to source) or `patina promote` (update source from
+  target).

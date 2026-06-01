@@ -12,7 +12,6 @@
 //! duplicates the lock path, the engine-error mapping, or the re-plan /
 //! re-execute sequence.
 
-use crate::cmd::apply::current_timestamp;
 use anyhow::Context;
 use anyhow::Result;
 use camino::Utf8PathBuf;
@@ -22,6 +21,7 @@ use patina_core::LockGuard;
 use patina_core::LockKind;
 use patina_core::LockPolicy;
 use patina_core::acquire_lock;
+use patina_core::current_timestamp;
 use patina_core::exclusive_timeout;
 use patina_core::execute_plan;
 use patina_core::plan_apply;
