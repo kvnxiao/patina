@@ -364,7 +364,7 @@ Suggested files: `patina-core/src/apply/engine.rs`,
 </task-scenarios>
 </task>
 
-<task id="T-007" state="pending" covers="REQ-006">
+<task id="T-007" state="completed" covers="REQ-006">
 ## Implement the `symlink-tree` per-leaf directory executor
 
 Add a `symlink-tree` executor that walks a source directory and creates
