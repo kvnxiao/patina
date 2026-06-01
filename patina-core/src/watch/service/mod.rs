@@ -14,15 +14,14 @@
 //! backend; Linux returns the `systemd` backend when `systemd --user` is
 //! reachable and the [`unsupported`] stub otherwise (non-systemd init systems
 //! are served by `patina watch --foreground` under the user's own supervisor,
-//! DEC-010). The Windows backend lands in its own task; until then the factory
-//! returns the [`unsupported`] stub on Windows, whose lifecycle methods return
-//! a typed error directing the user to `patina watch --foreground`.
+//! DEC-010); Windows returns the `scheduled_task` backend, which registers a
+//! per-user, non-elevated Scheduled Task.
 //!
-//! The `launchd` and `systemd` backend modules are each gated to their own
-//! target OS, so they are referenced as plain code spans rather than
-//! intra-doc links: a link to a cfg-excluded module would break the docs
-//! build on the other OS (the docs gate runs on Linux, where `launchd` is
-//! compiled out).
+//! The `launchd`, `systemd`, and `scheduled_task` backend modules are each
+//! gated to their own target OS, so they are referenced as plain code spans
+//! rather than intra-doc links: a link to a cfg-excluded module would break
+//! the docs build on the other OS (the docs gate runs on Linux, where
+//! `launchd` and `scheduled_task` are compiled out).
 //!
 //! ## Counter recovery (DEC-012)
 //!
@@ -39,6 +38,8 @@
 
 #[cfg(target_os = "macos")]
 pub mod launchd;
+#[cfg(windows)]
+pub mod scheduled_task;
 #[cfg(target_os = "linux")]
 pub mod systemd;
 pub mod unsupported;
@@ -237,9 +238,10 @@ pub trait ServiceBackend {
 /// Dispatches on [`HostOs::current`]: macOS returns the `launchd` backend;
 /// Linux returns the `systemd` backend when `systemd --user` is reachable
 /// and the [`unsupported`] stub otherwise (non-systemd init, DEC-010); Windows
-/// returns the [`unsupported`] stub until its concrete backend lands. The
-/// backend is bound to `state_dir`, the resolved per-machine state root, so
-/// `status` can recover the watcher's log counters from `<state_dir>/logs/`.
+/// returns the `scheduled_task` backend (a per-user, non-elevated Scheduled
+/// Task). The backend is bound to `state_dir`, the resolved per-machine state
+/// root, so `status` can recover the watcher's log counters from
+/// `<state_dir>/logs/`.
 ///
 /// # Examples
 ///
@@ -262,9 +264,14 @@ pub fn current(state_dir: &Utf8Path) -> Box<dyn ServiceBackend> {
         HostOs::Linux if systemd::SystemdBackend::is_available() => {
             Box::new(systemd::SystemdBackend::new(state_dir.to_path_buf()))
         }
-        // The Windows (Scheduled Task) backend lands in its own task; until
-        // then the factory returns the foreground-escape-hatch stub on Windows,
-        // as it does on a non-systemd Linux host (DEC-010).
+        // Windows: a per-user, non-elevated Scheduled Task (REQ-001). HKCU-
+        // scoped, so it lives in `patina-core` rather than `patina-elevate`.
+        #[cfg(windows)]
+        HostOs::Windows => Box::new(scheduled_task::ScheduledTaskBackend::new(
+            state_dir.to_path_buf(),
+        )),
+        // Non-systemd Linux (and any other host without a reachable supervisor)
+        // falls back to the foreground escape hatch (DEC-010).
         _ => Box::new(unsupported::UnsupportedBackend),
     }
 }

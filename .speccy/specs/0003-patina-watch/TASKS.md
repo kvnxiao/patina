@@ -630,7 +630,7 @@ Suggested files: `patina-core/src/watch/service/systemd.rs`,
 </task-scenarios>
 </task>
 
-<task id="T-013" state="pending" covers="REQ-001 REQ-003">
+<task id="T-013" state="completed" covers="REQ-001 REQ-003">
 ## Windows per-user Scheduled Task backend via `winsafe` `taskschd`
 
 REQ-001 / REQ-003: implement the Windows service backend behind the T-011

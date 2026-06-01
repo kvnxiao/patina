@@ -66,12 +66,12 @@ fn start_with_no_installed_service_exits_one_with_a_clear_message() {
 
 /// Whether a lifecycle command's stderr is one of the two valid not-installed
 /// outcomes: a backend with an installed-service supervisor (launchd on macOS,
-/// `systemd --user` on a systemd Linux host) reports the "service not
-/// installed; run `patina watch install`" no-op; a host with no implemented or
-/// reachable backend (non-systemd Linux, Windows until its task lands) reports
-/// the unsupported `--foreground` escape hatch (DEC-010). Which one fires
-/// depends on the test host's OS *and* (on Linux) whether `systemd --user` is
-/// reachable, so the lifecycle tests accept either rather than pinning to one.
+/// `systemd --user` on a systemd Linux host, the Scheduled Task on Windows)
+/// reports the "service not installed; run `patina watch install`" no-op; a
+/// host with no reachable backend (non-systemd Linux) reports the unsupported
+/// `--foreground` escape hatch (DEC-010). Which one fires depends on the test
+/// host's OS *and* (on Linux) whether `systemd --user` is reachable, so the
+/// lifecycle tests accept either rather than pinning to one.
 fn not_installed_or_unsupported(stderr: &str) -> bool {
     let not_installed =
         stderr.contains("service not installed") && stderr.contains("patina watch install");

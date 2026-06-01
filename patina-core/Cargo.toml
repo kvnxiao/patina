@@ -41,14 +41,16 @@ tracing = { workspace = true }
 tracing-appender = { workspace = true }
 tracing-subscriber = { workspace = true }
 
-# REQ-007 Developer Mode / elevation reads + the one-time UAC launch.
-# Windows-only so non-Windows builds never resolve `winsafe` into the
-# graph. On top of the workspace `advapi` + `kernel` (registry + token
-# reads), this crate also needs `shell` for `ShellExecuteEx` (the `runas`
-# launch of `patina-elevate.exe`); the helper crate does NOT, so the
-# feature is added here per-crate rather than at the workspace level.
+# REQ-007 Developer Mode / elevation reads + the one-time UAC launch, and
+# the SPEC-0003 REQ-001 watcher Scheduled Task. Windows-only so non-Windows
+# builds never resolve `winsafe` into the graph. On top of the workspace
+# `advapi` + `kernel` (registry + token reads), this crate also needs
+# `shell` for `ShellExecuteEx` (the `runas` launch of `patina-elevate.exe`)
+# and `taskschd` for the HKCU-scoped, non-elevated watcher Scheduled Task
+# (`ITaskService` register / delete). The helper crate needs neither, so the
+# features are added here per-crate rather than at the workspace level.
 [target.'cfg(windows)'.dependencies]
-winsafe = { workspace = true, features = ["shell"] }
+winsafe = { workspace = true, features = ["shell", "taskschd"] }
 
 [dev-dependencies]
 tempfile = { workspace = true }
