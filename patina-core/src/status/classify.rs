@@ -81,8 +81,8 @@ pub fn classify(expected: &ExpectedTarget, still_managed: bool) -> TargetState {
                 // target and the on-disk link may differ only by a Windows
                 // `\\?\` prefix for the same destination.
                 Some(actual)
-                    if super::strip_verbatim_str(&actual)
-                        == super::strip_verbatim_str(link_target) =>
+                    if crate::paths::simplified_str(&actual)
+                        == crate::paths::simplified_str(link_target) =>
                 {
                     TargetState::Clean
                 }
