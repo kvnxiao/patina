@@ -33,6 +33,7 @@ use patina_core::GateDecision;
 use patina_core::HostDevModeProbe;
 use patina_core::LockPolicy;
 use patina_core::ResolvedPlan;
+use patina_core::current_timestamp;
 use patina_core::decide_symlink_gate;
 use patina_core::execute_plan;
 use patina_core::plan_apply;
@@ -353,16 +354,6 @@ fn parse_override(raw: &str) -> Result<(String, String)> {
     Ok((key.to_owned(), value.to_owned()))
 }
 
-/// A monotonic UTC timestamp keying this run's journal and backup files,
-/// formatted `YYYYMMDDTHHMMSSZ` (matches the journal fixtures). The
-/// timestamp keys the journal filename only; it never appears in user
-/// output, so determinism of stdout is preserved.
-pub(crate) fn current_timestamp() -> String {
-    jiff::Timestamp::now()
-        .strftime("%Y%m%dT%H%M%SZ")
-        .to_string()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -400,14 +391,5 @@ mod tests {
             }),
             3
         );
-    }
-
-    #[test]
-    fn timestamp_is_compact_utc() {
-        let ts = current_timestamp();
-        // YYYYMMDDTHHMMSSZ is 16 chars; ends in Z, has the T separator.
-        assert_eq!(ts.len(), 16, "timestamp {ts} should be 16 chars");
-        assert!(ts.ends_with('Z'));
-        assert_eq!(ts.as_bytes().get(8), Some(&b'T'));
     }
 }

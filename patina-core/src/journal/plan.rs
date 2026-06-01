@@ -19,6 +19,7 @@
 //! rather than risk mis-decoding a future format.
 
 use super::JournalError;
+use crate::version_envelope;
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -26,9 +27,6 @@ use serde::Serialize;
 /// [`Plan`] layout changes incompatibly; older binaries then refuse the
 /// newer file via the version envelope.
 pub const FILE_MAJOR_VERSION: u16 = 2;
-
-/// Width in bytes of the version envelope prefix (a little-endian `u16`).
-const ENVELOPE_LEN: usize = core::mem::size_of::<u16>();
 
 /// One planned filesystem operation. This is the minimal record the
 /// journal needs in v1; the executor (T-014) and recovery (T-011) extend
@@ -139,10 +137,10 @@ impl Plan {
     /// Returns [`JournalError::Encode`] if `postcard` serialization fails.
     pub fn encode(&self) -> Result<Vec<u8>, JournalError> {
         let body = postcard::to_stdvec(self).map_err(JournalError::Encode)?;
-        let mut bytes = Vec::with_capacity(ENVELOPE_LEN + body.len());
-        bytes.extend_from_slice(&FILE_MAJOR_VERSION.to_le_bytes());
-        bytes.extend_from_slice(&body);
-        Ok(bytes)
+        Ok(version_envelope::encode_with_envelope(
+            FILE_MAJOR_VERSION,
+            &body,
+        ))
     }
 
     /// Read the major version from a plan file's envelope without
@@ -153,13 +151,7 @@ impl Plan {
     /// Returns [`JournalError::Truncated`] if `bytes` is shorter than the
     /// envelope.
     pub fn read_envelope_version(bytes: &[u8]) -> Result<u16, JournalError> {
-        let envelope = bytes.get(..ENVELOPE_LEN).ok_or(JournalError::Truncated {
-            got: bytes.len(),
-            need: ENVELOPE_LEN,
-        })?;
-        let mut raw = [0u8; ENVELOPE_LEN];
-        raw.copy_from_slice(envelope);
-        Ok(u16::from_le_bytes(raw))
+        Ok(version_envelope::read_envelope_version(bytes)?)
     }
 
     /// Decode a plan from its on-disk byte form, refusing any plan whose
@@ -172,17 +164,7 @@ impl Plan {
     ///   than this binary supports.
     /// - [`JournalError::Decode`] if the body fails to deserialize.
     pub fn decode(bytes: &[u8]) -> Result<Self, JournalError> {
-        let found = Self::read_envelope_version(bytes)?;
-        if found > FILE_MAJOR_VERSION {
-            return Err(JournalError::VersionMismatch {
-                found,
-                supported: FILE_MAJOR_VERSION,
-            });
-        }
-        let body = bytes.get(ENVELOPE_LEN..).ok_or(JournalError::Truncated {
-            got: bytes.len(),
-            need: ENVELOPE_LEN,
-        })?;
+        let body = version_envelope::decode_envelope(bytes, FILE_MAJOR_VERSION)?;
         postcard::from_bytes(body).map_err(JournalError::Decode)
     }
 }

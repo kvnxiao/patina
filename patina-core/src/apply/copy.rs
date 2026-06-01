@@ -10,6 +10,7 @@
 use super::CompletionRecord;
 use super::ExecutorError;
 use super::ensure_parent;
+use super::with_sharing_violation_retry;
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
 
@@ -27,9 +28,11 @@ pub(super) fn copy_file(
     let mut records = Vec::with_capacity(targets.len());
     for target in targets {
         ensure_parent(target)?;
-        fs_err::copy(source, target).map_err(|source_err| ExecutorError::Io {
-            path: target.to_path_buf(),
-            source: source_err,
+        with_sharing_violation_retry(|| fs_err::copy(source, target)).map_err(|source_err| {
+            ExecutorError::Io {
+                path: target.to_path_buf(),
+                source: source_err,
+            }
         })?;
         records.push(CompletionRecord::copy(
             source.to_path_buf(),
@@ -71,10 +74,12 @@ pub(super) fn copy_tree(
             let file_source = source.join(rel);
             let file_target = target.join(rel);
             ensure_parent(&file_target)?;
-            fs_err::copy(&file_source, &file_target).map_err(|source_err| ExecutorError::Io {
-                path: file_target.clone(),
-                source: source_err,
-            })?;
+            with_sharing_violation_retry(|| fs_err::copy(&file_source, &file_target)).map_err(
+                |source_err| ExecutorError::Io {
+                    path: file_target.clone(),
+                    source: source_err,
+                },
+            )?;
             records.push(CompletionRecord::copy(file_source, file_target));
         }
     }

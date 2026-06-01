@@ -51,24 +51,19 @@ jobs:
           components: rustfmt
       - run: cargo +nightly fmt --all --check
 
+  # Cross-platform lint gate. Clippy runs natively on each OS runner so every
+  # `#[cfg(...)]`-gated path is type-checked and linted on its real target —
+  # the MSVC Windows target, not a `gnu` proxy, and the macOS target with its
+  # native toolchain (`notify-rust` -> `mac-notification-sys` compiles
+  # Objective-C in a build script, so it cannot be cross-compiled from Linux).
+  # This is a dedicated fast lane: a `cfg(windows)` / `cfg(target_os = "macos")`
+  # lint or compile error fails here without waiting for that OS's full `Test`
+  # suite to run first. `--locked` also catches lockfile drift. `fail-fast:
+  # false` so every OS reports independently. Mirrored locally by `just
+  # lint-clippy`, which cross-compiles the non-host targets (the only way to
+  # catch another OS's `cfg` code from a single dev machine).
   clippy:
-    name: Clippy
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
-
-  # Cross-platform parity gate (REQ-025). Each OS runs the workspace
-  # test suite and clippy with `--locked` so a lockfile drift or an
-  # OS-specific regression fails that OS's job and blocks merge.
-  # `fail-fast: false` ensures all three OSes report independently
-  # rather than the first failure cancelling the others.
-  test:
-    name: Test (${{ matrix.os }})
+    name: Clippy (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -80,8 +75,25 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+
+  # Cross-platform parity gate (REQ-025). Each OS runs the workspace test
+  # suite with `--locked` so a lockfile drift or an OS-specific regression
+  # fails that OS's job and blocks merge. Clippy is a separate per-OS job
+  # above. `fail-fast: false` ensures all three OSes report independently
+  # rather than the first failure cancelling the others.
+  test:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace --locked
-      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
   docs:
     name: Docs

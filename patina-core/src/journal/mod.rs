@@ -134,6 +134,22 @@ pub enum JournalError {
     },
 }
 
+impl From<crate::version_envelope::EnvelopeError> for JournalError {
+    /// Map the shared envelope codec's failure arms onto the journal's own
+    /// error vocabulary so the journal's public error type is unchanged by
+    /// the extraction (REQ-007).
+    fn from(err: crate::version_envelope::EnvelopeError) -> Self {
+        match err {
+            crate::version_envelope::EnvelopeError::Truncated { got, need } => {
+                Self::Truncated { got, need }
+            }
+            crate::version_envelope::EnvelopeError::VersionMismatch { found, supported } => {
+                Self::VersionMismatch { found, supported }
+            }
+        }
+    }
+}
+
 /// A live handle to the journal for one apply run, bound to its `<ts>`
 /// and journal directory. Created by [`Journal::flush_plan_and_fsync`]
 /// once the plan is durable; subsequent calls record progress and write

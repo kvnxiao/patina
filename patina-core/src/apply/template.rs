@@ -14,6 +14,7 @@
 use super::CompletionRecord;
 use super::ExecutorError;
 use super::ensure_parent;
+use super::with_sharing_violation_retry;
 use crate::template::Engine;
 use crate::variables::Resolver;
 use camino::Utf8Path;
@@ -51,10 +52,12 @@ pub(super) fn render(
     let mut records = Vec::with_capacity(targets.len());
     for target in targets {
         ensure_parent(target)?;
-        fs_err::write(target, rendered.as_bytes()).map_err(|err| ExecutorError::Io {
-            path: target.clone(),
-            source: err,
-        })?;
+        with_sharing_violation_retry(|| fs_err::write(target, rendered.as_bytes())).map_err(
+            |err| ExecutorError::Io {
+                path: target.clone(),
+                source: err,
+            },
+        )?;
         records.push(CompletionRecord::render(
             source.to_path_buf(),
             target.clone(),
