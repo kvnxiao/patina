@@ -462,7 +462,7 @@ Suggested files: `patina-core/src/watch/reapply.rs`,
 </task-scenarios>
 </task>
 
-<task id="T-010" state="pending" covers="REQ-007">
+<task id="T-010" state="completed" covers="REQ-007">
 ## Drift detection: hash-compare non-symlink targets, notify, rate-limit, cache write
 
 REQ-007 / DEC-003 / DEC-004 / DEC-008 / DEC-013: for every non-symlink target

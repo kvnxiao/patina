@@ -30,9 +30,22 @@ use crate::journal::ExpectedTarget;
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
 
+/// One content (copy- or template-mode) target the watcher hashes for drift:
+/// the canonical target path plus the `blake3` hash the journal recorded for
+/// it (REQ-007 / REQ-029). An FS event on [`ContentTarget::target`] drives the
+/// drift handler (T-010), which re-hashes the live bytes and compares to
+/// [`ContentTarget::expected_hash`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContentTarget {
+    /// Canonical absolute path of the materialized content target.
+    pub target: Utf8PathBuf,
+    /// 32-byte `blake3` hash the journal recorded for the target's bytes.
+    pub expected_hash: [u8; 32],
+}
+
 /// The watcher's subscription set, partitioned by what an FS event on each
 /// path means so the foreground loop can route a debounced batch without
-/// re-deriving the record (T-009).
+/// re-deriving the record (T-009 / T-010).
 ///
 /// - `watched` is the flat path list handed to the debouncer (every source,
 ///   every content-target, and the journal directory) — identical to what
@@ -42,12 +55,20 @@ use camino::Utf8PathBuf;
 ///   (REQ-006). Content-target events do **not** re-apply — they feed drift
 ///   detection (T-010) — so routing on `sources` is what stops a re-apply's own
 ///   content-target rewrite from re-triggering itself in an unbounded loop.
+/// - `content_targets` is the subset of `watched` that are content-target paths
+///   paired with their journal-recorded hash: an FS event on one of these feeds
+///   the drift handler ([`crate::watch::drift::handle_target_events`]), which
+///   re-hashes the live bytes and notifies on divergence. A symlink target is
+///   never present (DEC-008): a symlink cannot drift because it resolves to the
+///   already-watched source.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WatchSet {
     /// Every path the debouncer subscribes to, apply order, de-duplicated.
     pub watched: Vec<Utf8PathBuf>,
     /// The source paths within `watched` whose FS events drive a re-apply.
     pub sources: Vec<Utf8PathBuf>,
+    /// The content targets within `watched` the drift handler hashes on change.
+    pub content_targets: Vec<ContentTarget>,
 }
 
 /// Compute the watcher's partitioned [`WatchSet`] from a committed record.
@@ -66,13 +87,29 @@ pub struct WatchSet {
 pub fn compute_watch_set(record: &ApplyRecord, state_dir: &Utf8Path) -> WatchSet {
     let watched = compute_subscriptions(record, state_dir);
     let mut sources: Vec<Utf8PathBuf> = Vec::with_capacity(record.targets.len());
+    let mut content_targets: Vec<ContentTarget> = Vec::new();
     for target in &record.targets {
         let source = Utf8PathBuf::from(target.source());
         if !sources.contains(&source) {
             sources.push(source);
         }
+        // Only content targets are hashed for drift; a symlink target is
+        // covered by its source and is never separately watched (DEC-008).
+        if let ExpectedTarget::Content { target, hash, .. } = target {
+            let target = Utf8PathBuf::from(target);
+            if !content_targets.iter().any(|c| c.target == target) {
+                content_targets.push(ContentTarget {
+                    target,
+                    expected_hash: *hash,
+                });
+            }
+        }
     }
-    WatchSet { watched, sources }
+    WatchSet {
+        watched,
+        sources,
+        content_targets,
+    }
 }
 
 /// Compute the ordered, de-duplicated set of paths the watcher subscribes to
@@ -315,6 +352,16 @@ mod tests {
         assert!(
             !set.sources
                 .contains(&Utf8PathBuf::from("/home/u/.gitconfig"))
+        );
+        // The content target is captured with its journal-recorded hash so the
+        // drift handler can compare without re-deriving the record. The symlink
+        // target contributes no content target (DEC-008).
+        assert_eq!(
+            set.content_targets,
+            vec![ContentTarget {
+                target: Utf8PathBuf::from("/home/u/.gitconfig"),
+                expected_hash: [0u8; 32],
+            }]
         );
     }
 

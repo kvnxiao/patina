@@ -14,14 +14,16 @@
 //!   DEC-011) — via the [`debounce`] submodule;
 //! - the `NonBlocking` re-apply handler driven on a source edit (REQ-006 /
 //!   REQ-008) — via the [`reapply`] submodule;
+//! - the drift-detection handler driven on a content-target edit (REQ-007 /
+//!   DEC-004 / DEC-008 / DEC-013) — via the [`drift`] submodule;
 //! - the foreground watcher loop itself ([`run_foreground`], REQ-004 /
 //!   REQ-006), which classifies each debounced batch and dispatches it.
 //!
-//! The drift handler (T-010) and the per-OS service install land in later
-//! tasks; until the drift handler arrives, a batch touching only content-target
-//! paths is a no-op.
+//! The per-OS service install lands in a later task; the foreground watcher is
+//! the end-to-end engine the service supervises.
 
 pub mod debounce;
+pub mod drift;
 pub mod drift_cache;
 pub mod logging;
 pub mod reapply;
@@ -218,9 +220,16 @@ where
             || subscriptions::WatchSet {
                 watched: vec![journal_dir.clone()],
                 sources: Vec::new(),
+                content_targets: Vec::new(),
             },
             |record| subscriptions::compute_watch_set(record, state),
         );
+        // The journal timestamp the drift cache binds its expectations to: the
+        // committed apply's `at` metadata, empty when no apply has committed
+        // yet (no content targets to drift against in that case either).
+        let mut journal_ts = record
+            .as_ref()
+            .map_or_else(String::new, |record| record.last_apply.at.clone());
 
         let mut debouncer = debounce::spawn(&watch_set.watched)?;
         tracing::info!(
@@ -261,19 +270,32 @@ where
                             // - Otherwise the batch touched only content-target
                             //   paths — a re-apply's own target rewrite or an
                             //   external edit. That is drift detection's concern
-                            //   (T-010), NOT a re-apply, so it must not re-apply
-                            //   here (re-applying would rewrite the target and
-                            //   re-trigger itself). The drift handler lands in
-                            //   T-010; until then a content-only batch is a no-op.
+                            //   (REQ-007), NOT a re-apply: a content-target event
+                            //   re-hashes the live bytes and notifies on
+                            //   divergence, and must not re-apply (re-applying
+                            //   would rewrite the target and re-trigger itself).
                             if journal_event(&batch) {
-                                if let Some((rebuilt, rebuilt_set)) =
+                                if let Some((rebuilt, rebuilt_set, rebuilt_ts)) =
                                     rescan(&journal_dir, state, &batch)
                                 {
                                     debouncer = rebuilt;
                                     watch_set = rebuilt_set;
+                                    journal_ts = rebuilt_ts;
                                 }
                             } else if source_event(&batch, &watch_set.sources) {
                                 let _outcome = reapply::run_reapply().await;
+                            } else {
+                                // A content-target-only batch: re-hash the
+                                // touched targets and notify on drift (REQ-007).
+                                let now_unix = jiff::Timestamp::now().as_second();
+                                let _outcomes = drift::handle_target_events(
+                                    &watch_set.content_targets,
+                                    &batch.paths,
+                                    state,
+                                    &journal_ts,
+                                    now_unix,
+                                    &drift::NotifySink,
+                                );
                             }
                         }
                         None => break,
@@ -345,15 +367,16 @@ fn source_event(batch: &debounce::EventBatch, sources: &[Utf8PathBuf]) -> bool {
 /// Logs a `journal_rescan` event naming the `.COMMIT` file(s) the triggering
 /// batch touched and the recomputed subscription count. On success it returns
 /// the rebuilt [`debounce::Debouncer`] paired with the recomputed
-/// [`subscriptions::WatchSet`] for the caller to install. On a journal read
-/// failure or a debouncer rebuild failure it logs a warning and returns `None`,
-/// leaving the existing debouncer and watch set in place — a transient rescan
-/// failure must not crash the watcher.
+/// [`subscriptions::WatchSet`] and the new journal timestamp (the committed
+/// apply's `at`, empty when none committed) for the caller to install. On a
+/// journal read failure or a debouncer rebuild failure it logs a warning and
+/// returns `None`, leaving the existing debouncer, watch set, and timestamp in
+/// place — a transient rescan failure must not crash the watcher.
 fn rescan(
     journal_dir: &Utf8Path,
     state: &Utf8Path,
     batch: &debounce::EventBatch,
-) -> Option<(debounce::Debouncer, subscriptions::WatchSet)> {
+) -> Option<(debounce::Debouncer, subscriptions::WatchSet, String)> {
     // Name the COMMIT file(s) the batch touched so a log reader can join the
     // rescan to the apply that triggered it (CHK-017). The `.COMMIT` suffix is
     // the journal's commit sentinel; a `.plan` arrives first but the COMMIT is
@@ -380,9 +403,13 @@ fn rescan(
         || subscriptions::WatchSet {
             watched: vec![journal_dir.to_path_buf()],
             sources: Vec::new(),
+            content_targets: Vec::new(),
         },
         |record| subscriptions::compute_watch_set(record, state),
     );
+    let journal_ts = record
+        .as_ref()
+        .map_or_else(String::new, |record| record.last_apply.at.clone());
 
     let rebuilt = match debounce::spawn(&watch_set.watched) {
         Ok(debouncer) => debouncer,
@@ -402,7 +429,7 @@ fn rescan(
         subscriptions = watch_set.watched.len(),
         "journal_rescan"
     );
-    Some((rebuilt, watch_set))
+    Some((rebuilt, watch_set, journal_ts))
 }
 
 #[cfg(test)]

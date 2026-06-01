@@ -324,8 +324,10 @@ pub fn render_drift_cache(cache: &DriftCache) -> String {
 /// deliberate without a bare `let _`.
 fn ignore_fmt(_result: std::fmt::Result) {}
 
-/// Lower-case hex-encode a 32-byte hash for the human-readable view.
-fn hex_encode(bytes: &[u8; 32]) -> String {
+/// Lower-case hex-encode a 32-byte hash for the human-readable view. Shared
+/// with the drift handler ([`crate::watch::drift`]), which logs the same hex
+/// form in its `drift` event so the log and `patina debug drift-cache` agree.
+pub(super) fn hex_encode(bytes: &[u8; 32]) -> String {
     use std::fmt::Write as _;
     let mut out = String::with_capacity(bytes.len() * 2);
     for byte in bytes {

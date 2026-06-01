@@ -24,6 +24,13 @@ jiff = "0.2"
 minijinja = "2.20"
 notify = "8.2"
 notify-debouncer-full = "0.7"
+# REQ-007 / DEC-013: desktop drift notifications. The emit path sits behind an
+# internal `NotificationSink` trait so headless CI drives a capture sink; only
+# the production sink touches `notify-rust`. `default-features` left on:
+# the crate's per-OS backend (zbus/DBus on Linux, mac-notification-sys on
+# macOS, WinRT on Windows) is the feature set we need, and its transitive
+# stack clears `cargo deny check` at this dep-add gate.
+notify-rust = "4.17"
 postcard = { version = "1.1", default-features = false, features = ["use-std"] }
 pulldown-cmark = { version = "0.13", default-features = false }
 serde = { version = "1.0", features = ["derive"] }

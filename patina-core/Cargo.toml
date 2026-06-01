@@ -21,6 +21,7 @@ jiff = { workspace = true }
 minijinja = { workspace = true }
 notify = { workspace = true }
 notify-debouncer-full = { workspace = true }
+notify-rust = { workspace = true }
 postcard = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }

@@ -414,6 +414,131 @@ mod foreground {
         let _exit = watcher.wait_exit(Duration::from_secs(2));
     }
 
+    /// Count drift-cache entries naming `needle`, or 0 when the cache is
+    /// absent / undecodable. Reads the on-disk cache through the engine's own
+    /// decoder so the assertion sees exactly what `patina debug drift-cache`
+    /// would.
+    fn drift_entries_for(f: &Fixture, needle: &str) -> usize {
+        let path = f.state_root().join("drift.cache");
+        match patina_core::load_drift_cache_file(&path) {
+            Ok(cache) => cache
+                .entries
+                .iter()
+                .filter(|e| e.target.as_str().contains(needle))
+                .count(),
+            Err(_) => 0,
+        }
+    }
+
+    #[test]
+    fn an_external_target_edit_logs_drift_and_populates_the_cache() {
+        // CHK-011 / CHK-012 (the platform-independent, deterministic slice):
+        // a running watcher over an applied copy-mode `~/.gitconfig`, when the
+        // target is overwritten with bytes that hash differently, logs a `drift`
+        // event, records the divergence in `<state>/drift.cache` with the
+        // recorded and observed hashes, and `patina status` then reports the
+        // target DRIFTED from its own live re-hash.
+        //
+        // The notification *count* (CHK-011's "exactly one") is asserted
+        // deterministically by the `patina-core` drift unit tests against the
+        // capture sink (DEC-013): the CLI binary always uses the real
+        // `notify-rust` sink, which a headless CI runner cannot capture, so the
+        // count is not assertable here. This test owns the observable on-disk
+        // and status side-effects instead.
+        let f = applied_copy_fixture();
+        let target = f.home.join(".gitconfig");
+        // The fixture applied the source bytes to the target; capture the
+        // recorded content so the overwrite is genuinely divergent.
+        let applied = fs_err::read_to_string(target.as_std_path()).expect("read applied target");
+
+        let watcher = Watcher::spawn(&f);
+        assert!(
+            watcher.wait_for_stderr("watch_started", Duration::from_secs(5)),
+            "watcher should start; stderr: {}",
+            watcher.stderr_snapshot()
+        );
+
+        // Overwrite the target out-of-band with content that hashes differently
+        // (H2 ≠ H1). This is the "modified outside Patina" edit drift detects.
+        let drifted = format!("{applied}; drifted = true\n");
+        assert_ne!(drifted, applied, "the overwrite must change the bytes");
+        fs_err::write(target.as_std_path(), &drifted).expect("overwrite target");
+
+        // The watcher logs a `drift` event for the divergent target.
+        assert!(
+            watcher.wait_for_stderr("drift", Duration::from_secs(5)),
+            "the external edit must log a drift event; stderr: {}",
+            watcher.stderr_snapshot()
+        );
+
+        // The drift cache records the divergence (CHK-011 on-disk surface).
+        let cache_populated = {
+            let deadline = Instant::now() + Duration::from_secs(3);
+            loop {
+                if drift_entries_for(&f, ".gitconfig") >= 1 {
+                    break true;
+                }
+                if Instant::now() >= deadline {
+                    break false;
+                }
+                std::thread::sleep(Duration::from_millis(25));
+            }
+        };
+        assert!(
+            cache_populated,
+            "the drift cache must hold an entry for .gitconfig; stderr: {}",
+            watcher.stderr_snapshot()
+        );
+
+        // The watcher must NOT re-apply the divergent target (a re-apply would
+        // rewrite it back to source and re-trigger): no re_apply event fired.
+        assert_eq!(
+            watcher.count_event_lines("patina_core: re_apply re_apply_id"),
+            0,
+            "a content-target edit must not drive a re-apply; stderr: {}",
+            watcher.stderr_snapshot()
+        );
+
+        // CHK-012: `patina status --json` reports the target DRIFTED — derived
+        // from SPEC-0001 REQ-018's live re-hash, independent of the cache.
+        let status = f.run(&["status", "--json"], &[]);
+        assert_eq!(
+            code(&status),
+            0,
+            "status --json must succeed; stderr: {}",
+            String::from_utf8_lossy(&status.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&status.stdout);
+        let doc: serde_json::Value =
+            serde_json::from_str(stdout.trim()).expect("status --json emits one JSON document");
+        // The `files` array contains an entry whose path names `.gitconfig`
+        // with `state = "drifted"` (CHK-012).
+        let drifted_gitconfig = doc
+            .get("files")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|files| {
+                files.iter().any(|entry| {
+                    let path = entry.get("path").and_then(serde_json::Value::as_str);
+                    let state = entry.get("state").and_then(serde_json::Value::as_str);
+                    path.is_some_and(|p| p.contains(".gitconfig")) && state == Some("drifted")
+                })
+            });
+        assert!(
+            drifted_gitconfig,
+            "status JSON must report .gitconfig as drifted from its own live re-hash; got: {stdout}"
+        );
+        // The aggregate `drifted` counter is at least 1 (CHK-012).
+        let drifted_count = doc.get("drifted").and_then(serde_json::Value::as_u64);
+        assert!(
+            drifted_count.is_some_and(|n| n >= 1),
+            "the aggregate drifted counter must be >= 1; got: {drifted_count:?}"
+        );
+
+        let mut watcher = watcher;
+        watcher.signal("TERM");
+        let _exit = watcher.wait_exit(Duration::from_secs(2));
+    }
+
     #[test]
     fn a_watcher_reapply_commits_exactly_one_new_journal_record() {
         // REQ-006 / CHK-013 surface: a single watched-source edit drives exactly
