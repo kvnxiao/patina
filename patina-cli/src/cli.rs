@@ -87,9 +87,9 @@ pub enum Command {
     Doctor(DoctorArgs),
 
     /// Watch the repository and re-apply on source changes. `--foreground`
-    /// runs the watcher inline in the current terminal (REQ-004); the
+    /// runs the watcher inline in the current terminal; the
     /// `install` / `uninstall` / `start` / `stop` / `restart` / `status`
-    /// subcommands manage the per-OS background service (REQ-001 / REQ-003).
+    /// subcommands manage the per-OS background service.
     Watch(WatchArgs),
 
     /// Debugging utilities. Hidden from the top-level help summary but
@@ -98,12 +98,12 @@ pub enum Command {
     Debug(DebugCommand),
 }
 
-/// Flags for `patina watch` (REQ-001 / REQ-003 / REQ-004 / REQ-006).
+/// Flags for `patina watch`.
 ///
 /// `--foreground` runs the watcher loop inline, attached to the invoking
-/// shell, and exits cleanly on Ctrl-C / SIGTERM (REQ-004). The lifecycle
+/// shell, and exits cleanly on Ctrl-C / SIGTERM. The lifecycle
 /// subcommands (`install` / `uninstall` / `start` / `stop` / `restart` /
-/// `status`) manage the per-OS background service (REQ-001 / REQ-003). With
+/// `status`) manage the per-OS background service. With
 /// neither, the command reports that a mode must be chosen.
 #[derive(Debug, Args, Default)]
 pub struct WatchArgs {
@@ -124,10 +124,10 @@ pub struct WatchArgs {
     pub json: bool,
 }
 
-/// Background-service lifecycle subcommands under `patina watch` (REQ-001 /
-/// REQ-003). Each operates on the per-OS service registration through the
+/// Background-service lifecycle subcommands under `patina watch`. Each
+/// operates on the per-OS service registration through the
 /// `patina_core::watch::service` backend; all but `status` acquire the
-/// exclusive advisory lock, `status` the shared lock (SPEC-0001 REQ-023).
+/// exclusive advisory lock, `status` the shared lock.
 #[derive(Debug, Subcommand, Clone)]
 pub enum WatchCommand {
     /// Register the watcher as a per-user background service that launches at
@@ -194,13 +194,13 @@ pub struct InitArgs {
     #[arg(long)]
     pub json: bool,
 
-    /// Proceed without prompting. `init` is a mutating command (REQ-009);
-    /// this is accepted for parity with the other mutating subcommands.
+    /// Proceed without prompting. `init` is a mutating command; this is
+    /// accepted for parity with the other mutating subcommands.
     #[arg(long)]
     pub yes: bool,
 }
 
-/// Flags for `patina add` (REQ-002).
+/// Flags for `patina add`.
 ///
 /// The three mode flags (`--symlink` / `--copy` / `--template`) form a
 /// mutually-exclusive clap group: declaring two produces a usage error
@@ -239,12 +239,12 @@ pub struct AddArgs {
     #[arg(long)]
     pub json: bool,
 
-    /// Proceed without prompting. `add` is a mutating command (REQ-009).
+    /// Proceed without prompting. `add` is a mutating command.
     #[arg(long)]
     pub yes: bool,
 }
 
-/// Flags for `patina remove` (REQ-003).
+/// Flags for `patina remove`.
 #[derive(Debug, Args, Default)]
 pub struct RemoveArgs {
     /// The managed target to unmanage. Absolute or HOME-relative (a leading
@@ -261,12 +261,12 @@ pub struct RemoveArgs {
     #[arg(long)]
     pub json: bool,
 
-    /// Proceed without prompting. `remove` is a mutating command (REQ-009).
+    /// Proceed without prompting. `remove` is a mutating command.
     #[arg(long)]
     pub yes: bool,
 }
 
-/// Flags for `patina promote` (REQ-004).
+/// Flags for `patina promote`.
 #[derive(Debug, Args, Default)]
 pub struct PromoteArgs {
     /// The drifted copy-mode target to promote. Absolute or HOME-relative (a
@@ -278,7 +278,7 @@ pub struct PromoteArgs {
     #[arg(long)]
     pub json: bool,
 
-    /// Proceed without prompting. `promote` is a mutating command (REQ-009).
+    /// Proceed without prompting. `promote` is a mutating command.
     #[arg(long)]
     pub yes: bool,
 }
@@ -295,16 +295,15 @@ pub struct RollbackArgs {
     pub json: bool,
 }
 
-/// Flags for `patina doctor` (REQ-005, REQ-006).
+/// Flags for `patina doctor`.
 ///
 /// The read-only path (no `--fix`) acquires only the shared lock and emits
-/// findings; `--fix` (wired in T-011) acquires the exclusive lock and
-/// interactively remediates fixable findings, with `--yes` auto-accepting
-/// every prompt.
+/// findings; `--fix` acquires the exclusive lock and interactively
+/// remediates fixable findings, with `--yes` auto-accepting every prompt.
 #[derive(Debug, Args, Default)]
 pub struct DoctorArgs {
     /// Interactively remediate fixable findings instead of only reporting
-    /// them. Mutating: acquires the exclusive lock (T-011).
+    /// them. Mutating: acquires the exclusive lock.
     #[arg(long)]
     pub fix: bool,
 
@@ -313,7 +312,7 @@ pub struct DoctorArgs {
     pub json: bool,
 
     /// With `--fix`, accept every remediation prompt automatically. Required
-    /// to run `--fix` in a non-TTY shell (T-011).
+    /// to run `--fix` in a non-TTY shell.
     #[arg(long)]
     pub yes: bool,
 }
