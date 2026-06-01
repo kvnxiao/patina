@@ -120,8 +120,7 @@ warnings. With `--fix`, it walks the findings it knows how to remediate,
 prompts for confirmation on each, and applies the fix on accept. In a
 non-interactive shell, `--fix` requires `--yes`.
 
-These commands reuse the exit codes established for `apply` in
-SPEC-0001:
+These commands reuse the exit codes established for `apply`:
 
 - `0` — success.
 - `1` — a generic error (config parse, IO, an undefined template

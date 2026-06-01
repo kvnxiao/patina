@@ -4,9 +4,8 @@ This page covers two operational footguns Patina deliberately does
 **not** detect at runtime in v1.0. They live here so you can avoid
 them rather than rediscover them through degraded apply behaviour.
 
-Both topics are tracked as v1.1 candidates in the relevant SPECs;
-detection may be added in a future release if real users surface
-the failure modes.
+Both topics are tracked as v1.1 candidates; detection may be added in a
+future release if real users surface the failure modes.
 
 ---
 
@@ -14,8 +13,7 @@ the failure modes.
 
 Patina writes its journal, backups, lock file, and drift cache to a
 **per-machine state directory**. Your dotfiles repository is never
-written to during `patina apply` — see SPEC-0001 REQ-014 for the
-guarantee.
+written to during `patina apply`.
 
 | OS      | State directory                              | Override                  |
 | ------- | -------------------------------------------- | ------------------------- |
@@ -41,8 +39,8 @@ patina/
 
 **Patina does not detect cloud-sync directories in v1.0.** No
 warning, no refusal, no doctor check. The detection was considered
-and explicitly removed (SPEC-0002 DEC-004) because every detection
-strategy was either incomplete (hardcoded provider name list rots)
+and explicitly removed because every detection strategy was either
+incomplete (hardcoded provider name list rots)
 or intrusive (process inspection, filesystem xattr probing).
 
 You are responsible for keeping the **per-machine state directory**
@@ -58,8 +56,8 @@ and your **dotfiles repository** off the following kinds of mounts:
 
 ### Why this matters
 
-Patina's crash-safety guarantee (SPEC-0001) depends on the journal
-being written atomically and surviving a kill-9. Cloud-sync
+Patina's crash-safety guarantee depends on the journal being written
+atomically and surviving a kill-9. Cloud-sync
 providers intermediate file writes through their own queueing
 layer — your local `fsync` returns before the provider has uploaded,
 and the provider may rename, version, or delay files for reasons
@@ -148,8 +146,7 @@ sudo loginctl disable-linger $USER
 ```
 
 `patina watch uninstall` does **not** call `disable-linger` for the
-same reason it does not call `enable-linger` — see SPEC-0003
-DEC-005.
+same reason it does not call `enable-linger`.
 
 ### Without systemd
 
@@ -157,5 +154,5 @@ If you're on a non-systemd Linux (Void, Devuan with sysvinit-style,
 Alpine without OpenRC-systemd parity), Patina has no preinstalled
 service template for your init system. The supported path is to run
 the watcher inline with `patina watch --foreground` inside your own
-supervisor (runit, s6, OpenRC). SPEC-0003 DEC-010 records this
-decision; templates for other init systems remain a v1.1 candidate.
+supervisor (runit, s6, OpenRC); templates for other init systems remain
+a v1.1 candidate.
