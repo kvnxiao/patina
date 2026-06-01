@@ -2,7 +2,7 @@
 id: SPEC-0004
 slug: patina-conditional-entries
 title: Conditional entries, the file/directory schema split, recurse symlinks, and complete variable layering
-status: in-progress
+status: implemented
 created: 2026-06-01
 supersedes: []
 ---
