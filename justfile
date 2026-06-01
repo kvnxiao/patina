@@ -7,7 +7,7 @@
 #   just recipe     CI job
 #   ------------    --------------------
 #   lint-fmt        Format (nightly)
-#   lint-clippy     Clippy (<target>)   (cross-lints all three OS targets)
+#   lint-clippy     Clippy (<os>)   (CI lints each OS natively; this cross-lints them locally)
 #   lint-docs       Docs
 #   lint-deny       Cargo deny
 #
@@ -15,18 +15,22 @@
 # because it exercises behaviour rather than lints. `just check` runs both
 # (`lint` then `test`) — the full local gate, and what the pre-push hook runs.
 #
-# `lint-clippy` cross-lints all three OS targets from this one host, so a
-# `#[cfg(windows)]` / `#[cfg(target_os = "macos")]` lint or compile error is
-# caught locally rather than only on its OS's CI runner. CI-only gates `just`
-# still cannot reproduce on one dev box: the per-OS test *behaviour* matrix
-# (clippy proves the cfg code compiles and lints, not that it runs correctly),
-# the MSRV (Rust 1.95) build, and coverage. A green `just check` is necessary,
-# not sufficient — watch the PR checks after pushing.
+# CI runs clippy natively on each OS (the `Clippy (<os>)` matrix). `just`
+# runs on one OS, so `lint-clippy` instead CROSS-compiles the non-host
+# targets — the only way to catch a `#[cfg(windows)]` lint/compile error
+# from this Mac/Linux box before pushing. Caveat: the macOS target compiles
+# Objective-C (`mac-notification-sys`), so it can only be cross-linted from a
+# macOS host; off a Mac, `lint-clippy` skips it and CI's macos-latest leg is
+# the backstop. CI-only gates `just` cannot reproduce on one dev box: the
+# per-OS test *behaviour* matrix (clippy proves the cfg code compiles and
+# lints, not that it runs correctly), the MSRV (Rust 1.95) build, and
+# coverage. A green `just check` is necessary, not sufficient — watch the PR
+# checks after pushing.
 #
 # One-time tooling the lints assume:
-#   rustup toolchain install nightly --component rustfmt                                 # lint-fmt
-#   rustup target add x86_64-unknown-linux-gnu x86_64-pc-windows-gnu aarch64-apple-darwin # lint-clippy
-#   cargo install cargo-deny                                                             # lint-deny
+#   rustup toolchain install nightly --component rustfmt                # lint-fmt
+#   rustup target add x86_64-unknown-linux-gnu x86_64-pc-windows-gnu    # lint-clippy (host OS target already installed)
+#   cargo install cargo-deny                                            # lint-deny
 
 # List the available recipes.
 default:
@@ -42,11 +46,11 @@ lint: lint-fmt lint-clippy lint-docs lint-deny
 lint-fmt:
     cargo +nightly fmt --all --check
 
-# Clippy (warnings denied) cross-linting all three OS targets (CI "Clippy (<target>)"; needs the rustup targets above).
+# Clippy (warnings denied) cross-linting the OS targets locally (CI lints each OS natively; needs the rustup targets above).
 lint-clippy:
-    cargo clippy --workspace --all-targets --all-features --target x86_64-unknown-linux-gnu -- -D warnings
-    cargo clippy --workspace --all-targets --all-features --target x86_64-pc-windows-gnu -- -D warnings
-    cargo clippy --workspace --all-targets --all-features --target aarch64-apple-darwin -- -D warnings
+    cargo clippy --workspace --all-targets --all-features --locked --target x86_64-unknown-linux-gnu -- -D warnings
+    cargo clippy --workspace --all-targets --all-features --locked --target x86_64-pc-windows-gnu -- -D warnings
+    {{ if os() == "macos" { "cargo clippy --workspace --all-targets --all-features --locked --target aarch64-apple-darwin -- -D warnings" } else { "echo 'lint-clippy: skipping aarch64-apple-darwin (compiles Objective-C; needs a macOS host - CI lints it on macos-latest)'" } }}
 
 # Rustdoc with warnings denied — broken/private doc links fail (CI "Docs").
 lint-docs:
