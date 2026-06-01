@@ -18,6 +18,7 @@
 
 pub mod file_entry;
 pub mod hook_entry;
+pub mod root;
 pub mod writer;
 
 use camino::Utf8Path;
@@ -30,6 +31,10 @@ pub use file_entry::ManagedEntry;
 pub use hook_entry::HookEntry;
 pub use hook_entry::HookEntryError;
 pub use hook_entry::HookEvent;
+pub use root::RootConfig;
+pub use root::RootConfigError;
+pub use root::parse_root_config;
+pub use root::parse_root_config_str;
 use serde::Deserialize;
 pub use writer::ConfigWriteError;
 pub use writer::append_file_entry;

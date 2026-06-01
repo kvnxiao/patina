@@ -143,7 +143,7 @@ Suggested files: `patina-core/src/apply/engine.rs`
 </task-scenarios>
 </task>
 
-<task id="T-003" state="pending" covers="REQ-005">
+<task id="T-003" state="completed" covers="REQ-005">
 ## Parse `[variables]` and `[profiles.<name>.variables]` from the root `patina.toml`
 
 Add net-new deserialization of the root manifest's repo-shared
