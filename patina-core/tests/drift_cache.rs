@@ -5,7 +5,6 @@
 
 use camino::Utf8Path;
 use patina_core::DRIFT_CACHE_MAJOR_VERSION;
-use patina_core::FILE_MAJOR_VERSION;
 use patina_core::content_hash;
 use patina_core::watch::drift_cache::DriftCache;
 use patina_core::watch::drift_cache::DriftCacheError;
@@ -72,11 +71,11 @@ fn newer_major_load_is_refused_naming_both_versions() {
 fn drift_cache_major_is_independent_of_the_journal_major() {
     // The two formats version separately (REQ-007): a regression that made
     // the drift cache validate against the journal's major would break the
-    // moment the two diverge. This pins that they are distinct constants
-    // and that a cache encoded at the drift-cache major decodes regardless
-    // of the journal's value.
-    assert_ne!(DRIFT_CACHE_MAJOR_VERSION, FILE_MAJOR_VERSION);
-
+    // moment the two diverge. This pins that a cache encoded at the
+    // drift-cache major carries that major and decodes against it,
+    // independent of the journal's `FILE_MAJOR_VERSION` (the two may
+    // currently coincide at 1 pre-release, so an inequality assertion would
+    // gate the constants' values rather than the coupling behaviour).
     let cache = sample();
     let bytes = cache.encode().expect("encode");
     assert_eq!(

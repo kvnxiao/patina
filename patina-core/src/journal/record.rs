@@ -33,8 +33,10 @@
 //! The content hash is `blake3` rather than a `std::hash` fingerprint so the
 //! same hash serves the journal here and the SPEC-0003 drift cache, which
 //! compares a freshly computed `blake3` of a target against this recorded
-//! value (REQ-029). Because the record layout widened relative to the first
-//! implementation, the shared version-envelope major is bumped to `2`.
+//! value (REQ-029). The record shares the journal's
+//! [`FILE_MAJOR_VERSION`](super::FILE_MAJOR_VERSION); per the pre-release
+//! no-bump policy (see `AGENTS.md`) the on-disk major is held at `1` and is
+//! not bumped per breaking change until v1.0.
 
 use super::JournalError;
 use super::plan::FILE_MAJOR_VERSION;
@@ -255,6 +257,33 @@ mod tests {
         assert!(matches!(
             ApplyRecord::decode(&bytes),
             Err(JournalError::VersionMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn envelope_major_byte_reads_as_one(/* CHK-017 */) {
+        let bytes = record().encode().expect("encode");
+        assert_eq!(
+            version_envelope::read_envelope_version(&bytes).expect("read envelope"),
+            1
+        );
+    }
+
+    #[test]
+    fn major_two_buffer_is_refused_not_misdecoded(/* CHK-018 */) {
+        // An ApplyRecord buffer prefixed with major 2 must fail to decode
+        // now that the supported major is 1.
+        let mut bytes = record().encode().expect("encode");
+        bytes
+            .get_mut(..2)
+            .expect("envelope")
+            .copy_from_slice(&2u16.to_le_bytes());
+        assert!(matches!(
+            ApplyRecord::decode(&bytes),
+            Err(JournalError::VersionMismatch {
+                found: 2,
+                supported: 1
+            })
         ));
     }
 

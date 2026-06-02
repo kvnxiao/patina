@@ -26,7 +26,7 @@ use serde::Serialize;
 /// Current on-disk plan format major version. Bump when the serialized
 /// [`Plan`] layout changes incompatibly; older binaries then refuse the
 /// newer file via the version envelope.
-pub const FILE_MAJOR_VERSION: u16 = 2;
+pub const FILE_MAJOR_VERSION: u16 = 1;
 
 /// One planned filesystem operation. This is the minimal record the
 /// journal needs in v1; the executor (T-014) and recovery (T-011) extend
@@ -220,6 +220,44 @@ mod tests {
         assert!(matches!(
             Plan::decode(&bytes),
             Err(JournalError::VersionMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn on_disk_major_is_held_at_one() {
+        // REQ-013 / DEC-005: the pre-release on-disk format major is 1 and
+        // does not bump per breaking change until v1.0. A regression that
+        // bumped it (e.g. back to 2) would make older binaries refuse files
+        // this binary writes, so the value is pinned by this assertion.
+        assert_eq!(FILE_MAJOR_VERSION, 1);
+    }
+
+    #[test]
+    fn envelope_major_byte_reads_as_one(/* CHK-017 */) {
+        let bytes = sample().encode().expect("encode");
+        assert_eq!(
+            Plan::read_envelope_version(&bytes).expect("read envelope"),
+            1
+        );
+    }
+
+    #[test]
+    fn major_two_buffer_is_refused_not_misdecoded(/* CHK-018 */) {
+        // A buffer prefixed with major 2 wrapping an otherwise valid plan
+        // body must fail with a version mismatch rather than decode, since
+        // `decode_envelope` refuses `found > supported` and the supported
+        // major is now 1.
+        let mut bytes = sample().encode().expect("encode");
+        bytes
+            .get_mut(..2)
+            .expect("encoded plan has a 2-byte envelope")
+            .copy_from_slice(&2u16.to_le_bytes());
+        assert!(matches!(
+            Plan::decode(&bytes),
+            Err(JournalError::VersionMismatch {
+                found: 2,
+                supported: 1
+            })
         ));
     }
 

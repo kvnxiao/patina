@@ -52,6 +52,7 @@
 //! # Ok::<(), patina_core::journal::JournalError>(())
 //! ```
 
+mod disposition;
 mod plan;
 mod probe;
 mod progress;
@@ -62,6 +63,7 @@ mod sync;
 
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
+pub use disposition::Disposition;
 pub use plan::FILE_MAJOR_VERSION;
 pub use plan::Plan;
 pub use plan::PlannedOperation;

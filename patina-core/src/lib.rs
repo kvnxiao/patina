@@ -83,6 +83,7 @@ pub use discovery::resolve_repository_root;
 pub use discovery::write_persisted_default;
 pub use error::EngineError;
 pub use journal::ApplyRecord;
+pub use journal::Disposition;
 pub use journal::ExpectedTarget;
 pub use journal::FILE_MAJOR_VERSION;
 pub use journal::Journal;

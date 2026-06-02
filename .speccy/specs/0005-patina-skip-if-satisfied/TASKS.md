@@ -5,7 +5,7 @@ generated_at: 2026-06-02T18:37:41Z
 ---
 # Tasks: SPEC-0005 Patina skip-if-satisfied — idempotent no-op re-apply via Create/Update/Unchanged classification
 
-<task id="T-001" state="pending" covers="REQ-013">
+<task id="T-001" state="completed" covers="REQ-013">
 ## Introduce the `Disposition` type and reset the on-disk format major to 1
 
 Add a `Disposition { Create, Update, Unchanged }` enum to `patina-core`,
