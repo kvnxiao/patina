@@ -44,7 +44,16 @@ pub(crate) fn entry_present(path: &Utf8Path) -> bool {
 pub(crate) fn remove_entry(path: &Utf8Path) -> std::io::Result<()> {
     match fs_err::symlink_metadata(path) {
         Ok(meta) => {
-            if meta.is_dir() {
+            let file_type = meta.file_type();
+            if file_type.is_symlink() {
+                // Remove the link itself, never following it. The branches
+                // below would mis-handle it: on Windows a *directory* symlink
+                // cannot be removed with `remove_file` (Access Denied / os
+                // error 5), and `remove_dir_all` on a symlink could recurse
+                // into the link's target. `remove_symlink` picks the right
+                // primitive per platform and link flavour.
+                remove_symlink(path, file_type)
+            } else if file_type.is_dir() {
                 fs_err::remove_dir_all(path)
             } else {
                 fs_err::remove_file(path)
@@ -52,6 +61,29 @@ pub(crate) fn remove_entry(path: &Utf8Path) -> std::io::Result<()> {
         }
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(err) => Err(err),
+    }
+}
+
+/// Remove a symbolic link itself, never following it.
+///
+/// On Unix a single `remove_file` deletes a link to either a file or a
+/// directory. On Windows the call must match the link flavour: a directory
+/// symlink requires `remove_dir` (`remove_file` fails with Access Denied), a
+/// file symlink requires `remove_file`. Either way only the link is removed —
+/// the destination is left untouched.
+#[cfg(unix)]
+fn remove_symlink(path: &Utf8Path, _file_type: std::fs::FileType) -> std::io::Result<()> {
+    fs_err::remove_file(path)
+}
+
+/// Remove a symbolic link itself, never following it. See the Unix variant.
+#[cfg(windows)]
+fn remove_symlink(path: &Utf8Path, file_type: std::fs::FileType) -> std::io::Result<()> {
+    use std::os::windows::fs::FileTypeExt as _;
+    if file_type.is_symlink_dir() {
+        fs_err::remove_dir(path)
+    } else {
+        fs_err::remove_file(path)
     }
 }
 
@@ -176,6 +208,47 @@ mod tests {
         let path =
             Utf8PathBuf::from_path_buf(td.path().to_path_buf()).expect("tempdir path is utf-8");
         (td, path)
+    }
+
+    #[cfg(unix)]
+    fn make_dir_symlink(source: &Utf8Path, link: &Utf8Path) {
+        std::os::unix::fs::symlink(source.as_std_path(), link.as_std_path())
+            .expect("create dir symlink");
+    }
+
+    #[cfg(windows)]
+    fn make_dir_symlink(source: &Utf8Path, link: &Utf8Path) {
+        std::os::windows::fs::symlink_dir(source.as_std_path(), link.as_std_path())
+            .expect("create dir symlink");
+    }
+
+    #[test]
+    fn remove_entry_removes_a_directory_symlink_without_touching_its_target() {
+        // A directory symlink must be removed as a link (on Windows that means
+        // `remove_dir`, not `remove_file`, which fails with Access Denied), and
+        // removal must never recurse into the link's target.
+        let (_td, dir) = utf8_tempdir();
+        let target_dir = dir.join("real_dir");
+        fs_err::create_dir_all(&target_dir).expect("mkdir real_dir");
+        fs_err::write(target_dir.join("keep.conf"), b"keep").expect("write keep");
+        let link = dir.join("link_dir");
+        make_dir_symlink(&target_dir, &link);
+
+        remove_entry(&link).expect("remove a directory symlink");
+
+        assert!(
+            !entry_present(&link),
+            "the directory symlink must be removed"
+        );
+        assert!(
+            target_dir.is_dir(),
+            "the symlink's target directory must survive"
+        );
+        assert_eq!(
+            fs_err::read(target_dir.join("keep.conf")).expect("read keep"),
+            b"keep",
+            "removing the link must not recurse into or empty its target"
+        );
     }
 
     #[test]
