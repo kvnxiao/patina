@@ -44,7 +44,7 @@ patina watch install        # auto-reapply on change via a per-OS background ser
 | Command | What it does |
 | --- | --- |
 | `init` | Scaffold a root `patina.toml` and persist the default-repo pointer. |
-| `add` | Bring an existing dotfile under management — copy it into a module and write a `[[file]]` entry. |
+| `add` | Bring an existing dotfile under management — copy it into a module and write a `[[file]]` or `[[directory]]` entry by source kind. |
 | `remove` | Unmanage a target (replace it with a plain file holding the last-applied content); `--purge` deletes it outright. |
 | `promote` | Copy a drifted copy-mode target's current bytes back into its repo source, then re-apply. |
 | `apply` | Materialize declarations as symlinks / rendered templates / byte copies. Diff-and-prompt by default; plan-only in a non-TTY. |

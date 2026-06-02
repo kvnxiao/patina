@@ -2,11 +2,13 @@
 //!
 //! Each [`FileMode`] has an executor that
 //! materializes a single source path at one or more target paths. The
-//! five modes split across three submodules:
+//! six modes split across three submodules:
 //!
 //! - `symlink` — per-file [`Symlink`](crate::config::FileMode::Symlink) (with
-//!   the directory-source per-file walk) and atomic
-//!   [`SymlinkDir`](crate::config::FileMode::SymlinkDir).
+//!   the directory-source per-file walk), atomic
+//!   [`SymlinkDir`](crate::config::FileMode::SymlinkDir), and per-leaf
+//!   [`SymlinkTree`](crate::config::FileMode::SymlinkTree) (walk the directory
+//!   source and link each leaf, leaving intermediate target directories real).
 //! - `copy` — [`Copy`](crate::config::FileMode::Copy) and recursive
 //!   [`CopyTree`](crate::config::FileMode::CopyTree).
 //! - `template` — implicit
@@ -217,6 +219,7 @@ pub fn materialize(
     match mode {
         FileMode::Symlink => symlink::per_file_symlink(source, targets),
         FileMode::SymlinkDir => symlink::dir_symlink(source, targets),
+        FileMode::SymlinkTree => symlink::tree_symlink(source, targets),
         FileMode::Copy => copy::copy_file(source, targets),
         FileMode::CopyTree => copy::copy_tree(source, targets),
         FileMode::TemplateRender => template::render(source, targets, engine, resolver),
@@ -245,10 +248,12 @@ fn ensure_parent(target: &Utf8Path) -> Result<(), ExecutorError> {
 /// `root`, in deterministic (sorted) order so the same source tree
 /// produces the same record sequence across runs and platforms.
 ///
-/// Shared by the directory-source symlink walk ([`symlink`]) and the
-/// recursive copy ([`copy`]): both mirror a source tree to each target
-/// one file at a time, so both need the same relative-file enumeration.
-fn walk_files(root: &Utf8Path) -> Result<Vec<Utf8PathBuf>, ExecutorError> {
+/// Shared by the directory-source symlink walk ([`symlink`]), the recursive
+/// copy ([`copy`]), and the status managed-set's `symlink-tree` leaf
+/// expansion ([`engine::current_managed_targets`]): all mirror a source tree
+/// to each target one file at a time, so all need the same relative-file
+/// enumeration in the same deterministic order.
+pub(crate) fn walk_files(root: &Utf8Path) -> Result<Vec<Utf8PathBuf>, ExecutorError> {
     let mut out = Vec::new();
     walk_into(root, root, &mut out)?;
     out.sort();

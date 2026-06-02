@@ -1,5 +1,5 @@
-//! Symbolic-link executors: per-file [`Symlink`] and atomic
-//! [`SymlinkDir`] (REQ-005).
+//! Symbolic-link executors: per-file [`Symlink`], atomic [`SymlinkDir`],
+//! and per-leaf [`SymlinkTree`] (REQ-005, REQ-006).
 //!
 //! [`Symlink`](crate::config::FileMode::Symlink) links a single source
 //! file to each target; when the source is a directory it walks the tree
@@ -7,7 +7,9 @@
 //! default mode's per-file walk — the SPEC reserves atomic directory
 //! symlinks for an explicit [`SymlinkDir`]). [`SymlinkDir`] creates one
 //! symbolic link per target pointing at the source directory, never
-//! walking into it.
+//! walking into it. [`SymlinkTree`](crate::config::FileMode::SymlinkTree)
+//! walks a directory source and links each leaf file at the mirrored
+//! target path, leaving the intermediate target directories real.
 //!
 //! Cross-platform link creation routes through [`create_symlink`], which
 //! picks the right OS primitive (file vs directory link on Windows, the
@@ -58,6 +60,60 @@ pub(super) fn per_file_symlink(
     } else {
         for target in targets {
             records.push(link_file(source, target)?);
+        }
+    }
+    Ok(records)
+}
+
+/// Per-leaf [`SymlinkTree`](crate::config::FileMode::SymlinkTree) executor:
+/// walk the directory source and create one symbolic link per leaf file at
+/// the mirrored target path, leaving intermediate target directories real
+/// (REQ-006 / DEC-005).
+///
+/// The source must be a directory; a non-directory source is rejected with
+/// [`ExecutorError::NotADirectory`], the same way [`dir_symlink`] rejects a
+/// file source. Leaf enumeration uses the shared [`walk_files`] walk, which
+/// collects only regular files in deterministic sorted order, so an empty
+/// source subdirectory yields no entry — and therefore neither a target
+/// directory nor a link. Each leaf is linked through [`link_file`], which
+/// creates intermediate target directories on demand as real directories
+/// and clears any pre-existing entry first (the engine has already backed
+/// up a foreign regular file via `backup_before_overwrite`). One
+/// [`CompletionRecord`] is returned per materialized leaf, in walk order
+/// within each target.
+///
+/// [`walk_files`]: super::walk_files
+pub(super) fn tree_symlink(
+    source: &Utf8Path,
+    targets: &[Utf8PathBuf],
+) -> Result<Vec<CompletionRecord>, ExecutorError> {
+    let metadata = fs_err::symlink_metadata(source).map_err(|err| {
+        if err.kind() == std::io::ErrorKind::NotFound {
+            ExecutorError::SourceMissing {
+                path: source.to_path_buf(),
+            }
+        } else {
+            ExecutorError::Io {
+                path: source.to_path_buf(),
+                source: err,
+            }
+        }
+    })?;
+    if !metadata.is_dir() {
+        return Err(ExecutorError::NotADirectory {
+            path: source.to_path_buf(),
+        });
+    }
+
+    // Collect the source leaves once (deterministic order), then mirror them
+    // under every target as per-leaf links.
+    let relative_files = super::walk_files(source)?;
+    let mut records = Vec::with_capacity(targets.len() * relative_files.len());
+    for target in targets {
+        for rel in &relative_files {
+            let file_source = source.join(rel);
+            let file_target = target.join(rel);
+            records.push(link_file(&file_source, &file_target)?);
         }
     }
     Ok(records)
@@ -308,5 +364,130 @@ mod tests {
         let err = per_file_symlink(&dir.join("absent"), &[dir.join("t")])
             .expect_err("missing source rejected");
         assert!(matches!(err, ExecutorError::SourceMissing { .. }));
+    }
+
+    #[test]
+    fn tree_symlink_links_each_leaf_and_keeps_intermediate_dirs_real() {
+        // CHK-012 executor leg: a directory source with `a.conf` and
+        // `sub/b.conf` yields one symlink per leaf at the mirrored target
+        // path, and the intermediate target directories are real, not links.
+        let (_td, dir) = utf8_tempdir();
+        let src_dir = dir.join("d");
+        fs_err::create_dir_all(src_dir.join("sub")).expect("mkdir sub");
+        fs_err::write(src_dir.join("a.conf"), b"a").expect("write a");
+        fs_err::write(src_dir.join("sub").join("b.conf"), b"b").expect("write b");
+        let target = dir.join("dest");
+
+        let records = tree_symlink(&src_dir, std::slice::from_ref(&target)).expect("tree links");
+
+        assert_eq!(records.len(), 2, "one record per leaf");
+        let a = target.join("a.conf");
+        let b = target.join("sub").join("b.conf");
+        assert_eq!(read_link_canonical(&a), canonical(&src_dir.join("a.conf")));
+        assert_eq!(
+            read_link_canonical(&b),
+            canonical(&src_dir.join("sub").join("b.conf"))
+        );
+        // The intermediate directories that host the leaves are real
+        // directories, never symbolic links.
+        for intermediate in [&target, &target.join("sub")] {
+            let meta = fs_err::symlink_metadata(intermediate).expect("stat intermediate dir");
+            assert!(
+                meta.file_type().is_dir() && !meta.file_type().is_symlink(),
+                "intermediate target dir {intermediate} must be a real directory"
+            );
+        }
+    }
+
+    #[test]
+    fn tree_symlink_skips_empty_source_subdirectories() {
+        // REQ-006: an empty source subdirectory produces neither a target
+        // directory nor a link.
+        let (_td, dir) = utf8_tempdir();
+        let src_dir = dir.join("d");
+        fs_err::create_dir_all(src_dir.join("empty")).expect("mkdir empty");
+        fs_err::write(src_dir.join("a.conf"), b"a").expect("write a");
+        let target = dir.join("dest");
+
+        let records = tree_symlink(&src_dir, std::slice::from_ref(&target)).expect("tree links");
+
+        assert_eq!(records.len(), 1, "only the one real leaf is linked");
+        assert!(
+            !target.join("empty").exists(),
+            "an empty source subdir must produce no target directory"
+        );
+    }
+
+    #[test]
+    fn tree_symlink_replaces_pre_existing_regular_file_leaf() {
+        // CHK-013 executor leg: a leaf-target path that already holds a
+        // regular file is cleared (the engine has already backed it up) and
+        // replaced by the link, so `create_symlink` does not fail with
+        // EEXIST / os-183.
+        let (_td, dir) = utf8_tempdir();
+        let src_dir = dir.join("d");
+        fs_err::create_dir_all(&src_dir).expect("mkdir source");
+        fs_err::write(src_dir.join("a.conf"), b"new").expect("write source leaf");
+        let target = dir.join("dest");
+        fs_err::create_dir_all(&target).expect("mkdir target");
+        fs_err::write(target.join("a.conf"), b"original").expect("write pre-existing leaf");
+
+        let records = tree_symlink(&src_dir, std::slice::from_ref(&target)).expect("tree links");
+
+        assert_eq!(records.len(), 1);
+        let leaf = target.join("a.conf");
+        assert!(
+            fs_err::symlink_metadata(&leaf)
+                .expect("stat leaf")
+                .file_type()
+                .is_symlink(),
+            "the pre-existing regular file leaf must be replaced by a symlink"
+        );
+        assert_eq!(
+            read_link_canonical(&leaf),
+            canonical(&src_dir.join("a.conf"))
+        );
+    }
+
+    #[test]
+    fn tree_symlink_rejects_file_source() {
+        let (_td, dir) = utf8_tempdir();
+        let source = dir.join("not-a-dir");
+        fs_err::write(&source, b"x").expect("write file");
+        let err = tree_symlink(&source, &[dir.join("t")]).expect_err("file source rejected");
+        assert!(matches!(err, ExecutorError::NotADirectory { .. }));
+    }
+
+    #[test]
+    fn tree_symlink_missing_source_is_typed() {
+        let (_td, dir) = utf8_tempdir();
+        let err =
+            tree_symlink(&dir.join("absent"), &[dir.join("t")]).expect_err("missing source typed");
+        assert!(matches!(err, ExecutorError::SourceMissing { .. }));
+    }
+
+    #[test]
+    fn tree_symlink_re_apply_over_unchanged_source_is_a_noop() {
+        // REQ-006 idempotency: a second materialize over the same source and
+        // target re-creates the identical links without error (the
+        // pre-existing link at each leaf is cleared and re-linked).
+        let (_td, dir) = utf8_tempdir();
+        let src_dir = dir.join("d");
+        fs_err::create_dir_all(src_dir.join("sub")).expect("mkdir sub");
+        fs_err::write(src_dir.join("a.conf"), b"a").expect("write a");
+        fs_err::write(src_dir.join("sub").join("b.conf"), b"b").expect("write b");
+        let target = dir.join("dest");
+
+        let first = tree_symlink(&src_dir, std::slice::from_ref(&target)).expect("first apply");
+        let second = tree_symlink(&src_dir, std::slice::from_ref(&target)).expect("second apply");
+
+        assert_eq!(first.len(), second.len());
+        let a = target.join("a.conf");
+        let b = target.join("sub").join("b.conf");
+        assert_eq!(read_link_canonical(&a), canonical(&src_dir.join("a.conf")));
+        assert_eq!(
+            read_link_canonical(&b),
+            canonical(&src_dir.join("sub").join("b.conf"))
+        );
     }
 }

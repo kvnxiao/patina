@@ -2,10 +2,15 @@
 //!
 //! The static built-ins (`patina.os`, `patina.arch`, `patina.hostname`,
 //! `patina.user`, `patina.home`) are snapshotted once when [`Builtins`]
-//! is constructed. The `patina.profile` field is left empty by
-//! [`Builtins::current`] and filled in lazily by
-//! [`crate::variables::Resolver::with_profile`] once T-007 has resolved
-//! the active profile.
+//! is constructed. The `patina.profile` field is left **unresolved**
+//! (`None`) by [`Builtins::current`] and filled in by
+//! [`crate::variables::Resolver::with_profile`] once the active profile
+//! is resolved — `Some(name)`, where the no-profile fallback is
+//! `Some("")`. While it is `None`, a `patina.profile` lookup is
+//! undefined: profile resolution itself evaluates `[[auto_match]]`
+//! predicates *before* the profile exists, so a rule referencing
+//! `patina.profile` accesses an undefined variable and errors rather
+//! than silently matching the empty string (REQ-004 / DEC-010).
 //!
 //! The dynamic `patina.env.*` map is **not** snapshotted: each
 //! `patina.env.FOO` lookup reads `std::env::var("FOO")` at lookup time
@@ -30,10 +35,12 @@ pub struct Builtins {
     /// Current user's home directory. Empty when neither `HOME` (unix)
     /// nor `USERPROFILE` (Windows) is set.
     pub home: String,
-    /// Active profile name. Filled in by
-    /// [`crate::variables::Resolver::with_profile`] once T-007's
-    /// resolution result is available; empty until then.
-    pub profile: String,
+    /// Active profile name once resolved: `Some(name)`, with the
+    /// no-profile fallback represented as `Some("")`. `None` means the
+    /// profile is not yet resolved, so a `patina.profile` lookup is
+    /// undefined (see the module docs). Filled in by
+    /// [`crate::variables::Resolver::with_profile`].
+    pub profile: Option<String>,
 }
 
 impl Builtins {
@@ -46,7 +53,7 @@ impl Builtins {
             hostname: current_hostname(),
             user: current_user(),
             home: current_home(),
-            profile: String::new(),
+            profile: None,
         }
     }
 
@@ -61,7 +68,7 @@ impl Builtins {
             hostname: String::from("test-host"),
             user: String::from("test-user"),
             home: String::from("/home/test-user"),
-            profile: String::new(),
+            profile: None,
         }
     }
 
@@ -76,7 +83,7 @@ impl Builtins {
             "patina.hostname" => Some(self.hostname.clone()),
             "patina.user" => Some(self.user.clone()),
             "patina.home" => Some(self.home.clone()),
-            "patina.profile" => Some(self.profile.clone()),
+            "patina.profile" => self.profile.clone(),
             _ => {
                 if let Some(env_key) = key.strip_prefix("patina.env.") {
                     std::env::var(env_key).ok()
@@ -171,8 +178,12 @@ mod tests {
     }
 
     #[test]
-    fn profile_starts_empty() {
+    fn profile_starts_unresolved() {
         let builtins = Builtins::current();
-        assert!(builtins.profile.is_empty());
+        // Unresolved until `Resolver::with_profile` sets it, so a
+        // `patina.profile` lookup is undefined (returns `None`) rather
+        // than a defined empty string (REQ-004 / DEC-010).
+        assert!(builtins.profile.is_none());
+        assert!(builtins.get("patina.profile").is_none());
     }
 }

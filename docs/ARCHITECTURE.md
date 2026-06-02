@@ -40,7 +40,8 @@ flowchart TD
 ```
 
 - **`patina-core`** is the library crate. It owns repository discovery,
-  the flat `patina.toml` module model, the five file modes, template
+  the flat `patina.toml` module model, the `[[file]]` / `[[directory]]`
+  entry kinds and their materialization modes, template
   rendering, path canonicalization, the journal and progress cursor,
   crash recovery, backups, and the per-machine state directory. It never
   prints user-facing output directly.
@@ -117,7 +118,8 @@ sequenceDiagram
 
 1. **Plan.** Resolve the repository, parse `patina.toml`, resolve the
    variable precedence chain and profile, render templates, canonicalize
-   paths, and produce an ordered list of operations across the five file
+   paths, and produce an ordered list of operations across the
+   `[[file]]` / `[[directory]]` entry kinds and their materialization
    modes.
 2. **Diff.** Compare the planned end-state against the live filesystem
    and present the diff. An interactive TTY prompts for confirmation; a
