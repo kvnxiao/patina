@@ -144,7 +144,7 @@ Suggested files: `patina-core/src/status/classify.rs`,
 </task-scenarios>
 </task>
 
-<task id="T-004" state="pending" covers="REQ-001 REQ-002">
+<task id="T-004" state="completed" covers="REQ-001 REQ-002">
 ## Classify at plan time and populate dispositions on the operation and durable plan
 
 Wire the T-003 classifier into `plan` / `assemble_plan_operations`

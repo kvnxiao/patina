@@ -50,6 +50,7 @@ use crate::template::TemplateError;
 use crate::variables::Resolver;
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
+pub use classify::ClassifyError;
 pub use hooks::ForceDeploy;
 pub use hooks::HookError;
 pub use hooks::HookOutcome;

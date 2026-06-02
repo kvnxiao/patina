@@ -31,6 +31,7 @@ pub mod version_envelope;
 pub mod watch;
 pub mod windows;
 
+pub use apply::ClassifyError;
 pub use apply::CompletionRecord;
 pub use apply::ExecutorError;
 pub use apply::ForceDeploy;

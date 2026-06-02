@@ -43,17 +43,6 @@ use camino::Utf8Path;
 /// caller-supplied `rendered` bytes, so neither hits this path. An absent
 /// or unreadable *target* is never an error — it classifies `Create` or
 /// `Update` respectively.
-// T-004 wires this into `plan` / `assemble_plan_operations` to populate the
-// real disposition on each resolved operation; this task (T-003) lands and
-// unit-tests the classifier itself, so the only caller until then is the
-// test module.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "consumed by the engine plan path in T-004 (SPEC-0005); landed here per the task split"
-    )
-)]
 pub(crate) fn classify_leaf(
     mode: FileMode,
     source: &Utf8Path,
@@ -101,10 +90,14 @@ pub(crate) fn classify_leaf(
     })
 }
 
-/// A failure classifying a leaf at plan time.
+/// A failure classifying a leaf at plan time (SPEC-0005 REQ-001).
+///
+/// Surfaced through
+/// [`EngineError::Classify`](crate::error::EngineError::Classify) from the plan
+/// path.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
-pub(crate) enum ClassifyError {
+pub enum ClassifyError {
     /// A copy/copy-tree leaf's source could not be read to hash it. The
     /// engine canonicalizes sources before classification, so this is a
     /// genuine read failure (permissions, a source removed mid-plan) rather

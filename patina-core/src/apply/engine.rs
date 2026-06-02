@@ -136,6 +136,41 @@ pub enum LockPolicy {
     Held(LockGuard),
 }
 
+/// The plan-time classification of one declared target the source fans out
+/// to (REQ-001 / DEC-007).
+///
+/// For a single-target mode (`symlink`, `copy`, `template`, `symlink-dir`)
+/// the `aggregate` is simply that target's own disposition and `leaves` is
+/// empty. For a tree mode (`copy-tree`, `symlink-tree`) the `aggregate` is
+/// the per-op aggregate DEC-007 defines — `Unchanged` iff every materialized
+/// leaf is `Unchanged`, `Create` iff the target directory is absent,
+/// otherwise `Update` — and `leaves` carries the per-leaf disposition the
+/// execute write-skip (T-005) and the per-leaf diff / `--json` reporting
+/// (T-009 / T-010) consume.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct TargetDisposition {
+    /// The whole-target disposition recorded on the durable
+    /// [`PlannedOperation`] (the per-op aggregate for tree modes).
+    pub aggregate: Disposition,
+    /// Per-leaf dispositions for a tree mode, keyed by the leaf's path
+    /// relative to the declared target directory; empty for single-target
+    /// modes.
+    pub leaves: Vec<LeafDisposition>,
+}
+
+/// One materialized leaf of a tree-mode target with its plan-time
+/// disposition (DEC-007).
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct LeafDisposition {
+    /// The leaf's path relative to the declared target directory, in the
+    /// same `walk_files` order the executor materializes leaves.
+    pub relative: Utf8PathBuf,
+    /// How this leaf relates to the live filesystem (REQ-001).
+    pub disposition: Disposition,
+}
+
 /// One resolved operation: the durable [`PlannedOperation`] paired with
 /// the canonical absolute paths and mode the executor needs, plus the
 /// rendered target content used for diff display (template/copy modes).
@@ -148,6 +183,12 @@ pub struct ResolvedOperation {
     pub source: Utf8PathBuf,
     /// Canonical absolute target paths the source fans out to.
     pub targets: Vec<Utf8PathBuf>,
+    /// Plan-time classification of each declared target, parallel to and
+    /// aligned with [`targets`](Self::targets) (REQ-001 / DEC-007). The
+    /// execute write-skip (T-005) and the per-entry diff / `--json`
+    /// reporting (T-009 / T-010) read these so the live filesystem read
+    /// happens once, at plan time.
+    pub dispositions: Vec<TargetDisposition>,
     /// Index of the managed entry that produced this operation, assigned
     /// at plan time over the full declared sequence (every `[[file]]`
     /// entry across all modules first, then every `[[directory]]` entry)
@@ -548,6 +589,11 @@ struct ResolvedEntry {
     source: Utf8PathBuf,
     /// Canonical absolute target paths the source fans out to.
     targets: Vec<Utf8PathBuf>,
+    /// Plan-time classification of each declared target, parallel to
+    /// [`targets`](Self::targets) (REQ-001 / DEC-007). Computed during
+    /// resolution while the template engine and resolver are in scope (a
+    /// template target is classified against its freshly rendered output).
+    dispositions: Vec<TargetDisposition>,
 }
 
 /// Impose REQ-009's single deterministic order on the resolved entries and
@@ -578,13 +624,24 @@ fn assemble_plan_operations(
     for slot in file_entries.into_iter().chain(directory_entries) {
         // A `when`-false entry still consumes its index but emits nothing.
         if let Some(resolved) = slot {
-            for target in &resolved.targets {
-                operations.push(planned_operation(resolved.mode, &resolved.source, target));
+            // The durable `PlannedOperation` is per declared target and
+            // carries the target's whole-op (aggregate, for tree modes)
+            // disposition; the in-memory `ResolvedOperation` carries the
+            // full per-target/per-leaf classification (DEC-007).
+            for (target, target_disposition) in resolved.targets.iter().zip(&resolved.dispositions)
+            {
+                operations.push(planned_operation(
+                    resolved.mode,
+                    &resolved.source,
+                    target,
+                    target_disposition.aggregate,
+                ));
             }
             resolved_ops.push(ResolvedOperation {
                 mode: resolved.mode,
                 source: resolved.source,
                 targets: resolved.targets,
+                dispositions: resolved.dispositions,
                 entry_index,
             });
         }
@@ -623,7 +680,117 @@ fn gate_and_resolve_entry(
     {
         return Ok(None);
     }
-    Ok(Some(resolve_entry(entry, module_path, home)?))
+    Ok(Some(resolve_entry(
+        entry,
+        module_path,
+        home,
+        engine,
+        resolver,
+    )?))
+}
+
+/// Classify each declared target of one resolved entry against live
+/// filesystem state at plan time (REQ-001 / DEC-007).
+///
+/// Single-target modes classify the target directly. Tree modes
+/// (`copy-tree`, `symlink-tree`) enumerate the source leaves with
+/// [`walk_files`](crate::apply::walk_files) and classify each leaf, then
+/// fold the per-leaf results into the per-op aggregate DEC-007 defines:
+/// `Create` if the target directory is absent, otherwise `Unchanged` iff
+/// every leaf is `Unchanged`, otherwise `Update`. The per-leaf dispositions
+/// ride along on each [`TargetDisposition`] for the T-005 execute write-skip
+/// and the T-009 / T-010 per-leaf reporting.
+///
+/// A template target is classified against its freshly rendered output,
+/// rendered once here through `engine` / `resolver`.
+///
+/// # Errors
+///
+/// Returns an [`EngineError`] when a copy/copy-tree leaf's source cannot be
+/// read to hash it, a tree source cannot be walked, or a template source
+/// cannot be read or rendered.
+fn classify_entry(
+    mode: FileMode,
+    source: &Utf8Path,
+    targets: &[Utf8PathBuf],
+    engine: &Engine,
+    resolver: &Resolver,
+) -> Result<Vec<TargetDisposition>, EngineError> {
+    // Render a template source once; reuse the bytes to classify every
+    // target (the executor likewise renders once per entry).
+    let rendered = if matches!(mode, FileMode::TemplateRender) {
+        let body = fs_err::read_to_string(source)
+            .map_err(|err| EngineError::Journal(crate::journal::JournalError::Filesystem(err)))?;
+        Some(engine.render(&body, resolver)?)
+    } else {
+        None
+    };
+
+    let mut dispositions = Vec::with_capacity(targets.len());
+    for target in targets {
+        dispositions.push(classify_target(mode, source, target, rendered.as_deref())?);
+    }
+    Ok(dispositions)
+}
+
+/// Classify one declared target — a single-target leaf, or a whole tree
+/// expanded per leaf (DEC-007).
+fn classify_target(
+    mode: FileMode,
+    source: &Utf8Path,
+    target: &Utf8Path,
+    rendered: Option<&str>,
+) -> Result<TargetDisposition, EngineError> {
+    use crate::apply::classify::classify_leaf;
+
+    if !matches!(mode, FileMode::CopyTree | FileMode::SymlinkTree) {
+        // Single-target mode: one classification, no leaves.
+        let disposition = classify_leaf(mode, source, target, rendered.map(str::as_bytes))?;
+        return Ok(TargetDisposition {
+            aggregate: disposition,
+            leaves: Vec::new(),
+        });
+    }
+
+    // Tree mode (DEC-007). A target directory that does not yet exist is a
+    // whole-op Create; its leaves would all be Create, so there is no need
+    // to walk-and-classify them for the aggregate. Recording no per-leaf
+    // entries here is fine: the execute path materializes the whole tree on
+    // a Create.
+    if fs_err::symlink_metadata(target).is_err() {
+        return Ok(TargetDisposition {
+            aggregate: Disposition::Create,
+            leaves: Vec::new(),
+        });
+    }
+
+    // The executor mirrors the live source tree to the target one leaf at a
+    // time; classify each leaf at its mirrored target path. A missing source
+    // yields no leaves (the entry would have failed source validation first).
+    let relative_files = crate::apply::walk_files(source)?;
+    let mut leaves = Vec::with_capacity(relative_files.len());
+    let mut all_unchanged = true;
+    for relative in relative_files {
+        let leaf_source = source.join(&relative);
+        let leaf_target = target.join(&relative);
+        let disposition = classify_leaf(mode, &leaf_source, &leaf_target, None)?;
+        if disposition != Disposition::Unchanged {
+            all_unchanged = false;
+        }
+        leaves.push(LeafDisposition {
+            relative,
+            disposition,
+        });
+    }
+
+    // The target exists, so the op is not a Create; it is Unchanged iff every
+    // materialized leaf is Unchanged, otherwise Update (DEC-007).
+    let aggregate = if all_unchanged {
+        Disposition::Unchanged
+    } else {
+        Disposition::Update
+    };
+    Ok(TargetDisposition { aggregate, leaves })
 }
 
 /// Canonicalize one managed entry's source and resolve its targets under
@@ -633,7 +800,9 @@ fn gate_and_resolve_entry(
 /// target is resolved by *declared location* via [`resolve_location`] so a
 /// symlink already occupying the target is never followed back to the source.
 /// The file/directory order and the entry-index space are imposed by the
-/// caller; this resolves paths and performs the plan-time source check.
+/// caller; this resolves paths, performs the plan-time source check, and
+/// classifies each resolved target against live state (REQ-001) using
+/// `engine` / `resolver` to render a template target's comparison bytes.
 ///
 /// # Errors
 ///
@@ -642,10 +811,15 @@ fn gate_and_resolve_entry(
 /// `[[file]]` entry's source is a directory or a `[[directory]]` entry's
 /// source is a file. Both are raised here, in the plan phase, before any
 /// mutation. Path canonicalization failures surface as [`EngineError::Path`].
+/// A classification read or template render failure surfaces as
+/// [`EngineError::Classify`], [`EngineError::Journal`], or
+/// [`EngineError::Template`].
 fn resolve_entry(
     entry: &ManagedEntry,
     module_path: &Utf8Path,
     home: &Utf8Path,
+    engine: &Engine,
+    resolver: &Resolver,
 ) -> Result<ResolvedEntry, EngineError> {
     let source = canonicalize(&module_path.join(&entry.source))?;
     validate_source_kind(&source, entry.kind)?;
@@ -659,10 +833,17 @@ fn resolve_entry(
         // `paths::resolve_location`.
         targets.push(resolve_location(&expanded)?);
     }
+    // Classify each resolved target against live filesystem state at plan
+    // time (REQ-001). A template target is compared against its freshly
+    // rendered output, rendered here while the engine and resolver are in
+    // scope (the double render at execute time is accepted per the
+    // assumptions).
+    let dispositions = classify_entry(entry.mode, &source, &targets, engine, resolver)?;
     Ok(ResolvedEntry {
         mode: entry.mode,
         source,
         targets,
+        dispositions,
     })
 }
 
@@ -718,17 +899,22 @@ fn validate_source_kind(source: &Utf8Path, kind: EntryKind) -> Result<(), Engine
     }
 }
 
-/// Placeholder disposition threaded onto every planned operation and
-/// recorded target by this task (T-002). T-002 is field-only and
-/// behavior-neutral: it carries the field through the wire types and call
-/// sites so the workspace compiles. T-004 replaces this with the real
-/// plan-time classification on the operation and durable plan, and T-005
-/// records the real per-leaf disposition in the commit.
+/// Placeholder disposition still threaded onto each recorded
+/// [`ExpectedTarget`] in [`build_apply_record`]. T-004 replaced the
+/// placeholder on the operation and durable plan with the real plan-time
+/// classification; T-005 will replace this remaining commit-record use with
+/// the real per-leaf disposition.
 const PLACEHOLDER_DISPOSITION: Disposition = Disposition::Create;
 
 /// Build the durable [`PlannedOperation`] for one resolved
-/// `(mode, source, target)`.
-fn planned_operation(mode: FileMode, source: &Utf8Path, target: &Utf8Path) -> PlannedOperation {
+/// `(mode, source, target)`, carrying the target's plan-time disposition
+/// (the per-op aggregate for tree modes, DEC-007).
+fn planned_operation(
+    mode: FileMode,
+    source: &Utf8Path,
+    target: &Utf8Path,
+    disposition: Disposition,
+) -> PlannedOperation {
     match mode {
         // A `[[directory]]` `symlink` (the atomic whole-directory
         // `SymlinkDir`) maps to the same durable symlink op shape as a
@@ -736,13 +922,13 @@ fn planned_operation(mode: FileMode, source: &Utf8Path, target: &Utf8Path) -> Pl
         // dispatch point T-007's per-leaf executor fills in; until then it
         // shares the symlink op shape so the plan is well-formed.
         FileMode::Symlink | FileMode::SymlinkDir | FileMode::SymlinkTree => {
-            PlannedOperation::symlink(source.as_str(), target.as_str(), PLACEHOLDER_DISPOSITION)
+            PlannedOperation::symlink(source.as_str(), target.as_str(), disposition)
         }
         FileMode::Copy | FileMode::CopyTree => {
-            PlannedOperation::copy(source.as_str(), target.as_str(), PLACEHOLDER_DISPOSITION)
+            PlannedOperation::copy(source.as_str(), target.as_str(), disposition)
         }
         FileMode::TemplateRender => {
-            PlannedOperation::render(source.as_str(), target.as_str(), PLACEHOLDER_DISPOSITION)
+            PlannedOperation::render(source.as_str(), target.as_str(), disposition)
         }
     }
 }
@@ -1186,13 +1372,26 @@ mod tests {
     /// index tests assert over identifiable paths without touching the
     /// filesystem or repo discovery.
     fn resolved_entry(mode: FileMode, source_tag: &str, target_tags: &[&str]) -> ResolvedEntry {
+        let targets: Vec<Utf8PathBuf> = target_tags
+            .iter()
+            .map(|t| Utf8PathBuf::from(format!("/home/{t}")))
+            .collect();
+        // The ordering/index tests assert over paths only, not dispositions;
+        // give each target a placeholder so `dispositions` stays aligned with
+        // `targets` (the real classification runs in `gate_and_resolve_entry`,
+        // exercised by the tempdir plan-level tests below).
+        let dispositions = targets
+            .iter()
+            .map(|_| TargetDisposition {
+                aggregate: Disposition::Create,
+                leaves: Vec::new(),
+            })
+            .collect();
         ResolvedEntry {
             mode,
             source: Utf8PathBuf::from(format!("/repo/{source_tag}")),
-            targets: target_tags
-                .iter()
-                .map(|t| Utf8PathBuf::from(format!("/home/{t}")))
-                .collect(),
+            targets,
+            dispositions,
         }
     }
 
@@ -1702,5 +1901,282 @@ mod tests {
         let expected: BTreeSet<Utf8PathBuf> =
             [manage_key(&t1), manage_key(&t2)].into_iter().collect();
         assert_eq!(got, expected);
+    }
+
+    // --- SPEC-0005 T-004: plan-time disposition classification ------------
+    //
+    // These drive `classify_entry` / `classify_target` — the unit `plan`
+    // calls during entry resolution to populate `ResolvedOperation` and the
+    // durable `PlannedOperation`. They build tempdir fixtures matching the
+    // REQ-001 scenarios (CHK-001/002/003) so no repository discovery or
+    // process-env mutation is needed (the workspace forbids `unsafe`).
+
+    fn utf8_tempdir() -> (TempDir, Utf8PathBuf) {
+        let td = TempDir::new().expect("create tempdir");
+        let path =
+            Utf8PathBuf::from_path_buf(td.path().to_path_buf()).expect("tempdir path is utf-8");
+        let canonical = path.canonicalize_utf8().expect("canonicalize tempdir");
+        (td, canonical)
+    }
+
+    fn make_symlink(target: &Utf8Path, link: &Utf8Path) {
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(target, link).expect("create unix symlink");
+        #[cfg(windows)]
+        {
+            if target.is_dir() {
+                std::os::windows::fs::symlink_dir(target, link)
+                    .expect("create windows dir symlink");
+            } else {
+                std::os::windows::fs::symlink_file(target, link)
+                    .expect("create windows file symlink");
+            }
+        }
+    }
+
+    fn classify_one(mode: FileMode, source: &Utf8Path, target: &Utf8Path) -> Disposition {
+        let engine = Engine::new();
+        let resolver = Resolver::new(Builtins::for_tests());
+        let dispositions = classify_entry(
+            mode,
+            source,
+            std::slice::from_ref(&target.to_path_buf()),
+            &engine,
+            &resolver,
+        )
+        .expect("classify entry");
+        dispositions
+            .first()
+            .expect("one disposition per target")
+            .aggregate
+    }
+
+    // CHK-001: a symlink already pointing at its source, a copy whose bytes
+    // match, and a template whose bytes match the rendered output all
+    // classify Unchanged.
+    #[test]
+    fn satisfied_symlink_copy_and_template_all_classify_unchanged() {
+        let (_td, dir) = utf8_tempdir();
+
+        // symlink already pointing at the source.
+        let sym_source = dir.join("zshrc");
+        fs_err::write(&sym_source, b"export X=1").expect("write symlink source");
+        let sym_target = dir.join("link-zshrc");
+        make_symlink(&sym_source, &sym_target);
+        assert_eq!(
+            classify_one(FileMode::Symlink, &sym_source, &sym_target),
+            Disposition::Unchanged,
+        );
+
+        // copy whose target bytes already match the source.
+        let copy_source = dir.join("config");
+        fs_err::write(&copy_source, b"same bytes").expect("write copy source");
+        let copy_target = dir.join("out-config");
+        fs_err::write(&copy_target, b"same bytes").expect("write matching copy target");
+        assert_eq!(
+            classify_one(FileMode::Copy, &copy_source, &copy_target),
+            Disposition::Unchanged,
+        );
+
+        // template whose target already holds the rendered output.
+        let tmpl_source = dir.join("gitconfig.tmpl");
+        fs_err::write(&tmpl_source, b"name = {{ who }}").expect("write template source");
+        let tmpl_target = dir.join("out-gitconfig");
+        let engine = Engine::new();
+        let resolver = Resolver::new(Builtins::for_tests())
+            .with_repo_shared([("who", "kevin")])
+            .expect("layer accepted");
+        let rendered = engine
+            .render("name = {{ who }}", &resolver)
+            .expect("render template");
+        fs_err::write(&tmpl_target, rendered.as_bytes()).expect("write matching template target");
+        let dispositions = classify_entry(
+            FileMode::TemplateRender,
+            &tmpl_source,
+            std::slice::from_ref(&tmpl_target),
+            &engine,
+            &resolver,
+        )
+        .expect("classify template");
+        assert_eq!(
+            dispositions.first().expect("one disposition").aggregate,
+            Disposition::Unchanged,
+        );
+    }
+
+    // CHK-002: with the copy target's bytes mutated and the symlink target
+    // deleted, the copy classifies Update, the symlink classifies Create,
+    // and an untouched template stays Unchanged.
+    #[test]
+    fn mutated_copy_is_update_and_deleted_symlink_is_create() {
+        let (_td, dir) = utf8_tempdir();
+
+        // copy target present but bytes differ → Update.
+        let copy_source = dir.join("config");
+        fs_err::write(&copy_source, b"new contents").expect("write copy source");
+        let copy_target = dir.join("out-config");
+        fs_err::write(&copy_target, b"stale contents").expect("write drifted copy target");
+        assert_eq!(
+            classify_one(FileMode::Copy, &copy_source, &copy_target),
+            Disposition::Update,
+        );
+
+        // symlink target absent → Create.
+        let sym_source = dir.join("zshrc");
+        fs_err::write(&sym_source, b"export X=1").expect("write symlink source");
+        let sym_target = dir.join("absent-link");
+        assert_eq!(
+            classify_one(FileMode::Symlink, &sym_source, &sym_target),
+            Disposition::Create,
+        );
+
+        // template target still matches the rendered output → Unchanged.
+        let tmpl_source = dir.join("gitconfig.tmpl");
+        fs_err::write(&tmpl_source, b"static body").expect("write template source");
+        let tmpl_target = dir.join("out-gitconfig");
+        fs_err::write(&tmpl_target, b"static body").expect("write matching template target");
+        assert_eq!(
+            classify_one(FileMode::TemplateRender, &tmpl_source, &tmpl_target),
+            Disposition::Unchanged,
+        );
+    }
+
+    // CHK-003: a copy-tree materialized to three leaves with one drifted out
+    // of band classifies that one leaf Update and the other two Unchanged,
+    // and the durable tree op's aggregate disposition is Update.
+    #[test]
+    fn copy_tree_with_one_drifted_leaf_aggregates_to_update() {
+        let (_td, dir) = utf8_tempdir();
+        let source = dir.join("themes");
+        fs_err::create_dir_all(&source).expect("mkdir source tree");
+        fs_err::write(source.join("a.conf"), b"alpha").expect("write a");
+        fs_err::write(source.join("b.conf"), b"beta").expect("write b");
+        fs_err::write(source.join("c.conf"), b"gamma").expect("write c");
+
+        // Target tree mirrors the source, then one leaf is altered out of band.
+        let target = dir.join("out-themes");
+        fs_err::create_dir_all(&target).expect("mkdir target tree");
+        fs_err::write(target.join("a.conf"), b"alpha").expect("write target a");
+        fs_err::write(target.join("b.conf"), b"DRIFTED").expect("write drifted target b");
+        fs_err::write(target.join("c.conf"), b"gamma").expect("write target c");
+
+        let engine = Engine::new();
+        let resolver = Resolver::new(Builtins::for_tests());
+        let dispositions = classify_entry(
+            FileMode::CopyTree,
+            &source,
+            std::slice::from_ref(&target),
+            &engine,
+            &resolver,
+        )
+        .expect("classify copy-tree");
+        let tree = dispositions.first().expect("one disposition per target");
+
+        // The durable per-op aggregate is Update: not every leaf is Unchanged.
+        assert_eq!(tree.aggregate, Disposition::Update);
+
+        // Exactly the drifted leaf (b.conf) is Update; the other two are
+        // Unchanged. Compare on leaf-name component so the assertion is
+        // independent of the platform path separator.
+        let mut by_leaf: Vec<(String, Disposition)> = tree
+            .leaves
+            .iter()
+            .map(|leaf| (leaf.relative.as_str().to_owned(), leaf.disposition))
+            .collect();
+        by_leaf.sort_by(|a, b| a.0.cmp(&b.0));
+        assert_eq!(
+            by_leaf,
+            vec![
+                ("a.conf".to_owned(), Disposition::Unchanged),
+                ("b.conf".to_owned(), Disposition::Update),
+                ("c.conf".to_owned(), Disposition::Unchanged),
+            ],
+        );
+    }
+
+    // A copy-tree whose target directory is absent classifies the whole op
+    // Create without enumerating leaves (DEC-007).
+    #[test]
+    fn copy_tree_absent_target_is_create_aggregate() {
+        let (_td, dir) = utf8_tempdir();
+        let source = dir.join("themes");
+        fs_err::create_dir_all(&source).expect("mkdir source tree");
+        fs_err::write(source.join("a.conf"), b"alpha").expect("write a");
+        let target = dir.join("absent-themes");
+
+        let engine = Engine::new();
+        let resolver = Resolver::new(Builtins::for_tests());
+        let dispositions = classify_entry(
+            FileMode::CopyTree,
+            &source,
+            std::slice::from_ref(&target),
+            &engine,
+            &resolver,
+        )
+        .expect("classify copy-tree");
+        let tree = dispositions.first().expect("one disposition per target");
+        assert_eq!(tree.aggregate, Disposition::Create);
+        assert!(
+            tree.leaves.is_empty(),
+            "an absent tree target needs no per-leaf classification"
+        );
+    }
+
+    // A fully-clean copy-tree (every leaf matches) aggregates to Unchanged.
+    #[test]
+    fn copy_tree_all_leaves_match_aggregates_to_unchanged() {
+        let (_td, dir) = utf8_tempdir();
+        let source = dir.join("themes");
+        fs_err::create_dir_all(&source).expect("mkdir source tree");
+        fs_err::write(source.join("a.conf"), b"alpha").expect("write a");
+        fs_err::write(source.join("b.conf"), b"beta").expect("write b");
+        let target = dir.join("out-themes");
+        fs_err::create_dir_all(&target).expect("mkdir target tree");
+        fs_err::write(target.join("a.conf"), b"alpha").expect("write target a");
+        fs_err::write(target.join("b.conf"), b"beta").expect("write target b");
+
+        let engine = Engine::new();
+        let resolver = Resolver::new(Builtins::for_tests());
+        let dispositions = classify_entry(
+            FileMode::CopyTree,
+            &source,
+            std::slice::from_ref(&target),
+            &engine,
+            &resolver,
+        )
+        .expect("classify copy-tree");
+        assert_eq!(
+            dispositions.first().expect("one disposition").aggregate,
+            Disposition::Unchanged,
+        );
+    }
+
+    // The durable plan carries the classified disposition: a satisfied copy
+    // entry assembles a `PlannedOperation::Copy` whose disposition is
+    // Unchanged, threaded from `ResolvedEntry` through `assemble_plan_operations`
+    // (REQ-002).
+    #[test]
+    fn assemble_plan_threads_disposition_onto_durable_operation() {
+        let resolved = ResolvedEntry {
+            mode: FileMode::Copy,
+            source: Utf8PathBuf::from("/repo/config"),
+            targets: vec![Utf8PathBuf::from("/home/out-config")],
+            dispositions: vec![TargetDisposition {
+                aggregate: Disposition::Unchanged,
+                leaves: Vec::new(),
+            }],
+        };
+
+        let (operations, resolved_ops) = assemble_plan_operations(vec![Some(resolved)], vec![]);
+
+        assert_eq!(operations.len(), 1);
+        let durable = operations.first().expect("one durable operation");
+        assert_eq!(durable.disposition(), Disposition::Unchanged);
+        let resolved_op = resolved_ops.first().expect("one resolved operation");
+        let target_disposition = resolved_op
+            .dispositions
+            .first()
+            .expect("one disposition per target");
+        assert_eq!(target_disposition.aggregate, Disposition::Unchanged);
     }
 }
