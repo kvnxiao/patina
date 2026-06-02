@@ -26,10 +26,12 @@
 use crate::apply::CompletionRecord;
 use crate::apply::ForceDeploy;
 use crate::apply::HookOutcome;
+use crate::apply::LeafWrite;
 use crate::apply::Materialization;
 use crate::apply::ResolvedHook;
 use crate::apply::hooks;
 use crate::apply::materialize;
+use crate::apply::materialize_tree;
 use crate::backups::backup_before_overwrite;
 use crate::backups::gc_retain;
 use crate::config::EntryKind;
@@ -899,13 +901,6 @@ fn validate_source_kind(source: &Utf8Path, kind: EntryKind) -> Result<(), Engine
     }
 }
 
-/// Placeholder disposition still threaded onto each recorded
-/// [`ExpectedTarget`] in [`build_apply_record`]. T-004 replaced the
-/// placeholder on the operation and durable plan with the real plan-time
-/// classification; T-005 will replace this remaining commit-record use with
-/// the real per-leaf disposition.
-const PLACEHOLDER_DISPOSITION: Disposition = Disposition::Create;
-
 /// Build the durable [`PlannedOperation`] for one resolved
 /// `(mode, source, target)`, carrying the target's plan-time disposition
 /// (the per-op aggregate for tree modes, DEC-007).
@@ -931,6 +926,88 @@ fn planned_operation(
             PlannedOperation::render(source.as_str(), target.as_str(), disposition)
         }
     }
+}
+
+/// Materialize one declared target according to its plan-time disposition,
+/// upholding REQ-003's write-and-backup skip.
+///
+/// - **Aggregate `Unchanged`** — the target (single-target or whole tree)
+///   matches desired state, so it is neither backed up nor written. No
+///   [`CompletionRecord`] is produced; the commit records it from the resolved
+///   plan instead (REQ-004).
+/// - **Single-target `Create` / `Update`** — back up the pre-existing target (a
+///   no-op for an absent `Create` target, since [`backup_before_overwrite`]
+///   only stashes something that exists), then materialize it as today.
+/// - **Tree `Create` / `Update`** — back up the target directory as a unit
+///   (DEC-007: today's whole-directory backup, which captures every leaf's
+///   prior bytes), then (re)write only the leaves whose per-leaf disposition is
+///   not `Unchanged`. A `Create` aggregate carries no per-leaf entries, so
+///   every leaf is written ([`LeafWrite::All`]); an `Update` aggregate writes
+///   only the drifted leaves ([`LeafWrite::Only`]), leaving clean leaves'
+///   inode/mtime untouched.
+///
+/// # Errors
+///
+/// Returns an [`EngineError`] when a backup or an executor write fails.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the per-target write-skip needs the op's mode/source, the \
+              target and its plan-time disposition, the backup tree + \
+              timestamp, and the template engine/resolver; threading a \
+              struct here would only move the same fields behind a name."
+)]
+fn materialize_target(
+    mode: FileMode,
+    source: &Utf8Path,
+    target: &Utf8Path,
+    disposition: &TargetDisposition,
+    backups_dir: &Utf8Path,
+    timestamp: &str,
+    engine: &Engine,
+    resolver: &Resolver,
+) -> Result<Vec<CompletionRecord>, EngineError> {
+    // An Unchanged target is left exactly as it is: no backup, no write
+    // (REQ-003). Its commit-record entry is sourced from the resolved plan.
+    if disposition.aggregate == Disposition::Unchanged {
+        return Ok(Vec::new());
+    }
+
+    let is_tree = matches!(mode, FileMode::CopyTree | FileMode::SymlinkTree);
+    if !is_tree {
+        // Single-target Create/Update: back up the pre-existing target (a
+        // no-op for an absent Create target) and materialize it as today.
+        backup_before_overwrite(backups_dir, timestamp, target)?;
+        return Ok(materialize(
+            mode,
+            source,
+            std::slice::from_ref(&target.to_path_buf()),
+            engine,
+            resolver,
+        )?);
+    }
+
+    // Tree Create/Update (DEC-007): back up the whole target directory as a
+    // unit so every leaf's prior bytes are captured, then write only the
+    // drifted leaves. A Create aggregate has no per-leaf entries (the target
+    // dir is absent), so write every leaf.
+    backup_before_overwrite(backups_dir, timestamp, target)?;
+    if disposition.aggregate == Disposition::Create {
+        return Ok(materialize_tree(mode, source, target, LeafWrite::All)?);
+    }
+    // Update aggregate: write only the leaves whose per-leaf disposition is
+    // not Unchanged, so clean leaves keep their inode/mtime.
+    let drifted: BTreeSet<Utf8PathBuf> = disposition
+        .leaves
+        .iter()
+        .filter(|leaf| leaf.disposition != Disposition::Unchanged)
+        .map(|leaf| leaf.relative.clone())
+        .collect();
+    Ok(materialize_tree(
+        mode,
+        source,
+        target,
+        LeafWrite::Only(&drifted),
+    )?)
 }
 
 /// Execute a [`ResolvedPlan`] against the filesystem.
@@ -1042,10 +1119,14 @@ pub async fn execute(
     )?;
 
     // Materialize every operation, backing up each pre-existing target
-    // first. Track completion records (paired with the index of the
+    // first — except a target classified `Unchanged` at plan time, which is
+    // neither backed up nor (re)written so its inode/mtime is preserved
+    // (REQ-003). Track completion records (paired with the index of the
     // `[[file]]` entry that produced them) so a post_apply hook failure can
     // reverse them and the commit record can group targets into atomic
-    // rollback units (REQ-019).
+    // rollback units (REQ-019). Only the targets actually written produce a
+    // record; `Unchanged` targets are recorded in the commit from the
+    // resolved plan instead (REQ-004, see `build_apply_record`).
     let mut completed: Vec<(u32, CompletionRecord)> = Vec::new();
     let mut op_index: u32 = 0;
     for op in &resolved.operations {
@@ -1055,14 +1136,24 @@ pub async fn execute(
         // never collide on an index and rollback groups targets by their
         // declared entry (DEC-009).
         let entry_index = op.entry_index;
-        for target in &op.targets {
-            backup_before_overwrite(&backups_dir, &resolved.timestamp, target)?;
-        }
-        let records = materialize(op.mode, &op.source, &op.targets, &template_engine, vars)?;
-        for record in records {
-            journal.record_progress(op_index)?;
-            op_index = op_index.saturating_add(1);
-            completed.push((entry_index, record));
+        // Each declared target carries its plan-time disposition, parallel to
+        // `targets` (T-004); drive the per-target / per-leaf write-skip off it.
+        for (target, disposition) in op.targets.iter().zip(&op.dispositions) {
+            let records = materialize_target(
+                op.mode,
+                &op.source,
+                target,
+                disposition,
+                &backups_dir,
+                &resolved.timestamp,
+                &template_engine,
+                vars,
+            )?;
+            for record in records {
+                journal.record_progress(op_index)?;
+                op_index = op_index.saturating_add(1);
+                completed.push((entry_index, record));
+            }
         }
     }
 
@@ -1103,7 +1194,7 @@ pub async fn execute(
         if reap {
             reap_orphans(resolved, &backups_dir)?;
         }
-        let record = build_apply_record(resolved, &completed)?;
+        let record = build_apply_record(resolved)?;
         journal.commit(&record, &OsSyncer)?;
         // Retention prunes the oldest backup cycles, then the journal
         // sentinels for exactly those cycles are dropped in lockstep: a
@@ -1119,19 +1210,25 @@ pub async fn execute(
 }
 
 /// Build the [`ApplyRecord`] persisted in this run's COMMIT sentinel from
-/// the resolved plan's `last_apply` metadata and the completed
-/// materializations. `patina status` (T-017) decodes this to classify the
-/// live filesystem against the last committed apply.
+/// the resolved plan's `last_apply` metadata and per-target/per-leaf
+/// dispositions. `patina status` (T-017) decodes this to classify the live
+/// filesystem against the last committed apply.
 ///
-/// Each completed object becomes one [`ExpectedTarget`]: a symlink records
-/// its canonical link target (which is also its source); a copy or render
-/// records its canonical source path and a `blake3` hash of the bytes that
-/// were just written, read back from the live target so the recorded hash
-/// matches exactly what `status` will compute (REQ-029).
-fn build_apply_record(
-    resolved: &ResolvedPlan,
-    completed: &[(u32, CompletionRecord)],
-) -> Result<ApplyRecord, EngineError> {
+/// Every managed target becomes one [`ExpectedTarget`] — **including
+/// `Unchanged` targets** that the execute write-skip left untouched and that
+/// therefore produced no [`CompletionRecord`] (REQ-004). Sourcing the record
+/// from the resolved plan rather than from the written objects keeps an
+/// `Unchanged` target in the commit, so `status` reports it managed (`Clean`)
+/// and [`reap_orphans`] never removes it. A symlink records its canonical link
+/// target (which is also its source); a copy or render records its canonical
+/// source path and a `blake3` hash of the live target bytes — read back so the
+/// recorded hash matches exactly what `status` computes (REQ-029); the live
+/// bytes hold the desired output whether the target was just written
+/// (`Create` / `Update`) or already matched (`Unchanged`). Each target carries
+/// its real plan-time [`Disposition`] (per-leaf for a tree, DEC-007), the
+/// marker recovery and rollback read to leave an `Unchanged` target in place
+/// (REQ-002).
+fn build_apply_record(resolved: &ResolvedPlan) -> Result<ApplyRecord, EngineError> {
     let vars = &resolved.resolver;
     let last_apply = LastApply {
         at: timestamp_to_rfc3339(&resolved.timestamp),
@@ -1139,34 +1236,115 @@ fn build_apply_record(
         host: vars.get("patina.hostname").unwrap_or_default(),
     };
 
-    let mut targets = Vec::with_capacity(completed.len());
-    for (entry, record) in completed {
-        let entry = *entry;
-        let target = record.target.as_str().to_owned();
-        match &record.materialization {
-            Materialization::Symlink { link_target } => {
-                targets.push(ExpectedTarget::Symlink {
+    let mut targets = Vec::new();
+    for op in &resolved.operations {
+        let entry = op.entry_index;
+        let is_tree = matches!(op.mode, FileMode::CopyTree | FileMode::SymlinkTree);
+        for (target, disposition) in op.targets.iter().zip(&op.dispositions) {
+            if is_tree {
+                record_tree_targets(
+                    &mut targets,
+                    op.mode,
+                    &op.source,
                     target,
-                    link_target: link_target.as_str().to_owned(),
+                    disposition,
                     entry,
-                    disposition: PLACEHOLDER_DISPOSITION,
-                });
-            }
-            Materialization::Copy | Materialization::Render => {
-                let bytes = fs_err::read(&record.target).map_err(|source| {
-                    EngineError::Journal(crate::journal::JournalError::Filesystem(source))
-                })?;
-                targets.push(ExpectedTarget::Content {
+                )?;
+            } else {
+                targets.push(expected_target(
+                    op.mode,
+                    &op.source,
                     target,
-                    source: record.source.as_str().to_owned(),
-                    hash: content_hash(&bytes),
+                    disposition.aggregate,
                     entry,
-                    disposition: PLACEHOLDER_DISPOSITION,
-                });
+                )?);
             }
         }
     }
     Ok(ApplyRecord::new(last_apply, targets))
+}
+
+/// Append one [`ExpectedTarget`] per materialized leaf of a tree-mode target
+/// (DEC-007): the commit records per-leaf so `status` and `rollback` resolve
+/// each leaf independently.
+///
+/// A `Create` aggregate carries no per-leaf dispositions (the target dir was
+/// absent at plan time), so the source leaves are enumerated here with the
+/// same [`walk_files`](crate::apply::walk_files) walk the executor used, each
+/// recorded as `Create`. Otherwise the per-leaf dispositions computed at plan
+/// time are recorded verbatim, so an `Update` tree records its drifted leaves
+/// as `Update` / `Create` and its clean leaves as `Unchanged` (REQ-004), and a
+/// fully-`Unchanged` tree records every leaf as `Unchanged`.
+fn record_tree_targets(
+    targets: &mut Vec<ExpectedTarget>,
+    mode: FileMode,
+    source: &Utf8Path,
+    target: &Utf8Path,
+    disposition: &TargetDisposition,
+    entry: u32,
+) -> Result<(), EngineError> {
+    if disposition.aggregate == Disposition::Create {
+        for relative in crate::apply::walk_files(source)? {
+            targets.push(expected_target(
+                mode,
+                &source.join(&relative),
+                &target.join(&relative),
+                Disposition::Create,
+                entry,
+            )?);
+        }
+        return Ok(());
+    }
+    for leaf in &disposition.leaves {
+        targets.push(expected_target(
+            mode,
+            &source.join(&leaf.relative),
+            &target.join(&leaf.relative),
+            leaf.disposition,
+            entry,
+        )?);
+    }
+    Ok(())
+}
+
+/// Build one [`ExpectedTarget`] for a single materialized object from its
+/// `(mode, source, target)` and plan-time `disposition`.
+///
+/// A symlink-family mode records the canonical link target (= the source); a
+/// content mode records the source path and a `blake3` hash of the live target
+/// bytes (REQ-029). The live read is correct for every disposition: a `Create`
+/// or `Update` target was just written to the desired output, and an
+/// `Unchanged` target already matched it.
+fn expected_target(
+    mode: FileMode,
+    source: &Utf8Path,
+    target: &Utf8Path,
+    disposition: Disposition,
+    entry: u32,
+) -> Result<ExpectedTarget, EngineError> {
+    let target_str = target.as_str().to_owned();
+    match mode {
+        FileMode::Symlink | FileMode::SymlinkDir | FileMode::SymlinkTree => {
+            Ok(ExpectedTarget::Symlink {
+                target: target_str,
+                link_target: source.as_str().to_owned(),
+                entry,
+                disposition,
+            })
+        }
+        FileMode::Copy | FileMode::CopyTree | FileMode::TemplateRender => {
+            let bytes = fs_err::read(target).map_err(|source| {
+                EngineError::Journal(crate::journal::JournalError::Filesystem(source))
+            })?;
+            Ok(ExpectedTarget::Content {
+                target: target_str,
+                source: source.as_str().to_owned(),
+                hash: content_hash(&bytes),
+                entry,
+                disposition,
+            })
+        }
+    }
 }
 
 /// Reap targets a prior committed apply materialized that the current plan

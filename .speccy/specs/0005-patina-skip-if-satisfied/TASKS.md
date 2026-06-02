@@ -192,7 +192,7 @@ Suggested files: `patina-core/src/apply/engine.rs`,
 </task-scenarios>
 </task>
 
-<task id="T-005" state="pending" covers="REQ-003 REQ-004">
+<task id="T-005" state="completed" covers="REQ-003 REQ-004">
 ## Execute skips write and backup for Unchanged targets, and records Unchanged in the commit
 
 In `execute`'s materialize loop (`patina-core/src/apply/engine.rs:854`):

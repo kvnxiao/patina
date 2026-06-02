@@ -1,0 +1,285 @@
+#![expect(
+    clippy::expect_used,
+    reason = "integration tests use .expect() on fixtures and asserted output; allow-expect-in-tests covers #[cfg(test)] modules but not the helper functions in tests/*.rs integration crates."
+)]
+
+//! Skip-if-satisfied execute behaviour (SPEC-0005 T-005, REQ-003 / REQ-004).
+//!
+//! A re-apply over a partially-drifted repo must leave the already-satisfied
+//! (`Unchanged`) entry completely untouched — same inode/mtime, no backup
+//! entry — while mutating the drifted entry and backing up its prior bytes
+//! (CHK-006). The skipped entry must still be recorded in the commit so
+//! `patina status` reports it `Clean` and a later reap never removes it
+//! (CHK-007).
+
+mod common;
+
+use camino::Utf8Path;
+use camino::Utf8PathBuf;
+use common::Fixture;
+use common::code;
+use std::time::SystemTime;
+
+/// The modification time of a regular file, as a `SystemTime`. Used to prove
+/// an `Unchanged` target was not rewritten across a re-apply.
+fn mtime(path: &Utf8Path) -> SystemTime {
+    fs_err::symlink_metadata(path.as_std_path())
+        .expect("stat target")
+        .modified()
+        .expect("mtime available")
+}
+
+/// Recursively collect the basenames of every regular file under `root`.
+/// Returns an empty vector when `root` does not exist (no backup cycle was
+/// written at all).
+fn file_names_under(root: &Utf8Path) -> Vec<String> {
+    let mut names = Vec::new();
+    collect_names(root, &mut names);
+    names
+}
+
+fn collect_names(dir: &Utf8Path, names: &mut Vec<String>) {
+    let Ok(entries) = fs_err::read_dir(dir.as_std_path()) else {
+        return;
+    };
+    for entry in entries {
+        let entry = entry.expect("read backup dir entry");
+        let path = Utf8PathBuf::from_path_buf(entry.path()).expect("utf8 backup path");
+        let file_type = entry.file_type().expect("backup entry file type");
+        if file_type.is_dir() {
+            collect_names(&path, names);
+        } else if let Some(name) = path.file_name() {
+            names.push(name.to_owned());
+        }
+    }
+}
+
+/// The newest timestamped backup-cycle directory under `<state>/backups`, or
+/// `None` when no backup cycle exists.
+fn latest_backup_cycle(backups_root: &Utf8Path) -> Option<Utf8PathBuf> {
+    let entries = fs_err::read_dir(backups_root.as_std_path()).ok()?;
+    let mut cycles: Vec<Utf8PathBuf> = entries
+        .filter_map(|e| {
+            let e = e.expect("read backups root entry");
+            let path = Utf8PathBuf::from_path_buf(e.path()).expect("utf8 cycle path");
+            e.file_type()
+                .expect("cycle file type")
+                .is_dir()
+                .then_some(path)
+        })
+        .collect();
+    cycles.sort();
+    cycles.pop()
+}
+
+#[test]
+fn unchanged_entry_is_not_rewritten_or_backed_up_while_drift_is(/* CHK-006 */) {
+    // Two `copy` entries. After the first apply both targets match their
+    // source. We then drift exactly one (`b`) and re-apply: `a` must be left
+    // byte-for-byte with its original mtime and contribute no backup entry,
+    // while `b` is rewritten and its prior (drifted) bytes are backed up.
+    let f = Fixture::new();
+    let m = f.module(
+        "m",
+        r#"
+[[file]]
+source = "a_src"
+target = "~/a_out"
+mode = "copy"
+
+[[file]]
+source = "b_src"
+target = "~/b_out"
+mode = "copy"
+"#,
+    );
+    fs_err::write(m.join("a_src"), b"a-bytes").expect("write a_src");
+    fs_err::write(m.join("b_src"), b"b-bytes").expect("write b_src");
+
+    let first = f.apply(&["--yes"]);
+    assert_eq!(
+        code(&first),
+        0,
+        "first apply must succeed; stderr: {}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+
+    let a_out = f.home.join("a_out");
+    let b_out = f.home.join("b_out");
+    let a_mtime_before = mtime(&a_out);
+
+    // Drift only `b_out` so the second apply classifies `a` Unchanged and `b`
+    // Update.
+    fs_err::write(&b_out, b"b-drifted").expect("drift b_out");
+
+    let second = f.apply(&["--yes"]);
+    assert_eq!(
+        code(&second),
+        0,
+        "second apply must succeed; stderr: {}",
+        String::from_utf8_lossy(&second.stderr)
+    );
+
+    // The Unchanged entry's mtime is preserved: it was neither removed nor
+    // rewritten (REQ-003).
+    assert_eq!(
+        mtime(&a_out),
+        a_mtime_before,
+        "the Unchanged target must not be rewritten across the re-apply"
+    );
+    assert_eq!(
+        fs_err::read(a_out.as_std_path()).expect("read a_out"),
+        b"a-bytes",
+        "the Unchanged target keeps its bytes"
+    );
+
+    // The drifted entry is updated back to the source bytes.
+    assert_eq!(
+        fs_err::read(b_out.as_std_path()).expect("read b_out"),
+        b"b-bytes",
+        "the drifted target is re-materialized to the source"
+    );
+
+    // The second run's backup cycle holds the drifted target's prior bytes but
+    // no entry for the Unchanged target (REQ-003).
+    let backups_root = f.state_root().join("backups");
+    let cycle = latest_backup_cycle(&backups_root).expect("a backup cycle for the Update");
+    let names = file_names_under(&cycle);
+    assert!(
+        names.iter().any(|n| n == "b_out"),
+        "the drifted target's prior bytes must be backed up; found {names:?}"
+    );
+    assert!(
+        !names.iter().any(|n| n == "a_out"),
+        "the Unchanged target must produce no backup entry; found {names:?}"
+    );
+
+    // The backed-up bytes are the pre-overwrite (drifted) bytes, located at
+    // the same mirrored path crash recovery reads. Reusing the production
+    // mapping keeps the assertion exact across platforms rather than guessing
+    // the on-disk layout.
+    let cycle_ts = cycle.file_name().expect("cycle has a timestamp name");
+    let backed_up = patina_core::journal::mirror_backup_path(&backups_root, cycle_ts, &b_out);
+    assert_eq!(
+        fs_err::read(backed_up.as_std_path()).expect("read backed-up bytes"),
+        b"b-drifted",
+        "the backup must hold the prior (drifted) bytes, not the new source"
+    );
+}
+
+#[test]
+fn copy_tree_re_apply_restores_drift_and_backs_up_the_tree_as_a_unit() {
+    // DEC-007 tree path through the real engine: a `copy-tree` with three
+    // leaves, one drifted out of band, re-applies to restore the drifted leaf.
+    // The whole target directory is backed up as a unit (today's
+    // `backup_before_overwrite(<dir>)` model), so every leaf's prior bytes —
+    // including the clean ones — land in the backup cycle. (The per-leaf
+    // write-skip itself — that a clean leaf's link/file is not re-created — is
+    // asserted exactly by the `copy_tree` / `tree_symlink` executor unit
+    // tests, which observe that an unselected leaf is never written.)
+    let f = Fixture::new();
+    let m = f.module(
+        "m",
+        r#"
+[[directory]]
+source = "tree_src"
+target = "~/tree_out"
+mode = "copy"
+"#,
+    );
+    let src = m.join("tree_src");
+    fs_err::create_dir_all(&src).expect("mkdir tree_src");
+    fs_err::write(src.join("one.txt"), b"one").expect("write one");
+    fs_err::write(src.join("two.txt"), b"two").expect("write two");
+    fs_err::write(src.join("three.txt"), b"three").expect("write three");
+
+    assert_eq!(code(&f.apply(&["--yes"])), 0, "first apply succeeds");
+
+    let out = f.home.join("tree_out");
+    let one = out.join("one.txt");
+
+    // Drift exactly one leaf out of band.
+    fs_err::write(&one, b"tampered").expect("drift one.txt");
+
+    assert_eq!(code(&f.apply(&["--yes"])), 0, "re-apply succeeds");
+
+    // The drifted leaf is restored to the source bytes.
+    assert_eq!(
+        fs_err::read(one.as_std_path()).expect("read one"),
+        b"one",
+        "the drifted leaf is re-materialized to the source"
+    );
+
+    // The re-apply backed up the target directory as a unit, so the backup
+    // cycle holds the drifted leaf's prior bytes. The pre-drift bytes are the
+    // ground truth recovery/rollback restores from.
+    let backups_root = f.state_root().join("backups");
+    let cycle = latest_backup_cycle(&backups_root).expect("a backup cycle for the drifted tree");
+    let cycle_ts = cycle.file_name().expect("cycle has a timestamp name");
+    let backed_up_one = patina_core::journal::mirror_backup_path(&backups_root, cycle_ts, &one);
+    assert_eq!(
+        fs_err::read(backed_up_one.as_std_path()).expect("read backed-up leaf"),
+        b"tampered",
+        "the whole-tree backup must capture the drifted leaf's prior bytes"
+    );
+}
+
+#[test]
+fn unchanged_entry_is_recorded_clean_and_survives_reap(/* CHK-007 */) {
+    // After a re-apply where one entry is Update and another stays Unchanged,
+    // `patina status` must report the Unchanged entry's target `Clean` and
+    // present in the output, and a subsequent apply must not reap it.
+    let f = Fixture::new();
+    let m = f.module(
+        "m",
+        r#"
+[[file]]
+source = "keep_src"
+target = "~/keep_out"
+mode = "copy"
+
+[[file]]
+source = "drift_src"
+target = "~/drift_out"
+mode = "copy"
+"#,
+    );
+    fs_err::write(m.join("keep_src"), b"keep").expect("write keep_src");
+    fs_err::write(m.join("drift_src"), b"drift").expect("write drift_src");
+
+    assert_eq!(code(&f.apply(&["--yes"])), 0, "first apply succeeds");
+
+    let keep_out = f.home.join("keep_out");
+    let drift_out = f.home.join("drift_out");
+
+    // Drift only `drift_out`, then re-apply (keep_out classifies Unchanged).
+    fs_err::write(&drift_out, b"tampered").expect("drift drift_out");
+    assert_eq!(code(&f.apply(&["--yes"])), 0, "re-apply succeeds");
+
+    // `patina status` reports the Unchanged target Clean and present.
+    let status = f.run(&["status"], &[]);
+    assert_eq!(
+        code(&status),
+        0,
+        "status must succeed; stderr: {}",
+        String::from_utf8_lossy(&status.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&status.stdout);
+    assert!(
+        stdout.contains("keep_out"),
+        "the Unchanged target must appear in status output: {stdout}"
+    );
+    assert!(
+        stdout.to_lowercase().contains("clean"),
+        "the Unchanged target must be reported Clean: {stdout}"
+    );
+
+    // A subsequent apply must not reap the Unchanged target: it is still on
+    // disk afterward with its bytes intact.
+    assert_eq!(code(&f.apply(&["--yes"])), 0, "third apply succeeds");
+    assert_eq!(
+        fs_err::read(keep_out.as_std_path()).expect("read keep_out"),
+        b"keep",
+        "the Unchanged target must survive a later apply's reap phase"
+    );
+}
