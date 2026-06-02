@@ -15,10 +15,16 @@
 //! 2. Probes the filesystem for each operation's target
 //!    ([`probe`](super::probe)) and consults the per-apply backup directory
 //!    ([`mirror_backup_path`](super::mirror_backup_path)).
-//! 3. **Reverses backward** — never forward (DEC-011). A target with a backup
-//!    is an *overwrite*: restore the original bytes from the backup. A target
-//!    with no backup is a *fresh creation*: delete it. Either way the
-//!    post-recovery state of that target matches pre-apply.
+//! 3. **Reverses backward** — never forward (DEC-011). The disposition the plan
+//!    recorded for the operation decides the outcome, evaluated in this order:
+//!    - disposition == `Unchanged` (REQ-005): the apply neither backed up nor
+//!      wrote this target, so the live entry is already the pre-apply entry —
+//!      leave it in place and do **not** consult the backup directory.
+//!    - a target with a backup is an *overwrite*: restore the original bytes
+//!      from the backup.
+//!    - a target with no backup is a *fresh creation*: delete it.
+//!
+//!    Either way the post-recovery state of that target matches pre-apply.
 //! 4. Deletes the orphan `<ts>.plan` and `<ts>.progress` files once every
 //!    operation has been reversed.
 //!
@@ -47,6 +53,7 @@
 //! ```
 
 use super::COMMIT_SUFFIX;
+use super::Disposition;
 use super::JournalError;
 use super::PLAN_SUFFIX;
 use super::PROGRESS_SUFFIX;
@@ -175,10 +182,20 @@ fn reverse_orphan(
 
 /// Reverse a single planned operation back to its pre-apply state.
 ///
-/// The decision is driven by the backup directory, not the progress
-/// cursor: a backup existing for the target means the apply was about to
-/// (or did) overwrite a pre-existing entry, so the original is restored; no
-/// backup means the target was created fresh, so it is deleted if present.
+/// An operation the plan recorded as [`Disposition::Unchanged`] is left in
+/// place ahead of the backup-presence decision (REQ-005): apply skips the
+/// write and the backup for such a target, so its live state already *is*
+/// the pre-apply state and there is nothing to reverse. This holds at any
+/// crash point because the plan is fsync'd before any mutation, so the
+/// disposition the orphan plan carries is authoritative. Per DEC-007 the
+/// disposition read here is the durable per-op aggregate, so a tree op
+/// whose aggregate is `Unchanged` is left whole.
+///
+/// Otherwise the decision is driven by the backup directory, not the
+/// progress cursor: a backup existing for the target means the apply was
+/// about to (or did) overwrite a pre-existing entry, so the original is
+/// restored; no backup means the target was created fresh, so it is deleted
+/// if present.
 ///
 /// Both restore and delete go through the kind-preserving
 /// [`crate::fsx`] helpers, so the original is recreated as the same kind it
@@ -191,6 +208,13 @@ fn reverse_operation(
     timestamp: &str,
     op: &PlannedOperation,
 ) -> Result<(), JournalError> {
+    if op.disposition() == Disposition::Unchanged {
+        // The apply neither backed up nor wrote this target, so the live
+        // entry is already the pre-apply entry. Leave it untouched
+        // regardless of backup presence.
+        return Ok(());
+    }
+
     let target = Utf8Path::new(operation_target(op));
     let backup = mirror_backup_path(backups_dir, timestamp, target);
 
@@ -273,6 +297,89 @@ mod tests {
 
         let report = recover_orphans(&d.journal, &d.backups).expect("recovery");
         assert!(!report.recovered_any());
+    }
+
+    #[test]
+    fn unchanged_marked_orphan_target_is_left_in_place() {
+        // CHK-008 / REQ-005: an orphan plan whose target is marked
+        // `Unchanged` must be preserved by recovery even though no backup
+        // exists for it — apply skipped the write and the backup, so the
+        // live entry already is the pre-apply entry.
+        let d = dirs();
+        let root = d.journal.parent().expect("journal has a parent");
+        let ts = "20260528T130000Z";
+
+        let target = root.join("home").join(".gitconfig");
+        fs_err::create_dir_all(target.parent().expect("target parent")).expect("mkdir home");
+        fs_err::write(&target, b"matches-the-source").expect("write unchanged target");
+
+        // No backup is stashed for an Unchanged target.
+        assert!(
+            !crate::fsx::entry_present(&mirror_backup_path(&d.backups, ts, &target)),
+            "the fixture must have no backup for the Unchanged target"
+        );
+
+        write_plan(
+            &d.journal,
+            ts,
+            &Plan::new(vec![PlannedOperation::copy(
+                "src",
+                target.as_str(),
+                Disposition::Unchanged,
+            )]),
+        );
+
+        let report = recover_orphans(&d.journal, &d.backups).expect("recover");
+        assert!(
+            report.recovered_any(),
+            "the orphan plan is still consumed and cleaned up"
+        );
+        assert!(
+            target.exists(),
+            "the Unchanged target must still exist after recovery"
+        );
+        assert_eq!(
+            fs_err::read(&target).expect("read preserved target"),
+            b"matches-the-source",
+            "the Unchanged target must be byte-for-byte unchanged"
+        );
+    }
+
+    #[test]
+    fn create_marked_orphan_target_with_no_backup_is_deleted() {
+        // CHK-009 / REQ-005: an orphan plan whose target is marked `Create`
+        // with no backup is a fresh creation the crashed apply made, so
+        // recovery removes it. This is the unchanged Create-with-no-backup
+        // behavior, asserted now that the Unchanged arm precedes it.
+        let d = dirs();
+        let root = d.journal.parent().expect("journal has a parent");
+        let ts = "20260528T140000Z";
+
+        let target = root.join("home").join(".vimrc");
+        fs_err::create_dir_all(target.parent().expect("target parent")).expect("mkdir home");
+        fs_err::write(&target, b"freshly-created").expect("write create target");
+
+        assert!(
+            !crate::fsx::entry_present(&mirror_backup_path(&d.backups, ts, &target)),
+            "the fixture must have no backup for the Create target"
+        );
+
+        write_plan(
+            &d.journal,
+            ts,
+            &Plan::new(vec![PlannedOperation::copy(
+                "src",
+                target.as_str(),
+                Disposition::Create,
+            )]),
+        );
+
+        let report = recover_orphans(&d.journal, &d.backups).expect("recover");
+        assert!(report.recovered_any(), "the orphan must be recovered");
+        assert!(
+            !target.exists(),
+            "the Create target with no backup must be deleted"
+        );
     }
 
     #[cfg(unix)]

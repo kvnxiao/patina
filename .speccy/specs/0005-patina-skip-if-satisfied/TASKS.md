@@ -280,7 +280,7 @@ Suggested files: `patina-core/src/apply/engine.rs`,
 </task-scenarios>
 </task>
 
-<task id="T-007" state="pending" covers="REQ-005">
+<task id="T-007" state="completed" covers="REQ-005">
 ## Crash recovery leaves plan-recorded Unchanged targets untouched
 
 `reverse_operation` (`patina-core/src/journal/recovery.rs:189`) gains a third
