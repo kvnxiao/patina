@@ -70,9 +70,10 @@ policy.
 - No new CLI flag to force re-materialization of already-satisfied targets.
   Skipping is unconditional when a target is satisfied; a force-rewrite affordance
   is a possible follow-up SPEC.
-- No persisted classification cache. Classification reads live target state on
-  every plan; the SPEC-0003 watch drift cache
-  (`DRIFT_CACHE_MAJOR_VERSION`) is a separate structure and is not changed here.
+- No persisted classification cache and no reuse of the watcher's drift cache.
+  Classification reads live target state on every plan; the SPEC-0003 watch drift
+  cache (`DRIFT_CACHE_MAJOR_VERSION`) is a separate structure that this slice
+  neither consults nor changes (see DEC-006).
 - No change to what "managed" means, nor to the reap policy, beyond ensuring
   Unchanged targets remain recorded in the commit so status and reap continue to
   see them.
@@ -631,6 +632,20 @@ do not bump per breaking change until v1.0 — is recorded in `AGENTS.md` so it
 outlives this slice.
 </decision>
 
+<decision id="DEC-006">
+Plan-time classification reads live filesystem state and does not consult or
+populate the SPEC-0003 watch drift cache. A skip decision must reflect ground
+truth at plan time; a cache hit would still need live re-validation to be safe (a
+stale hit would skip a needed write and diverge), so reuse buys little on the
+correctness-critical path. The dominant `patina apply` invocation runs with no
+watcher and therefore no warm cache, and keeping the core plan path independent of
+the watch subsystem avoids a cross-component dependency and its lock-coordination
+surface. The live read matches the cost `status` already pays and accepts (per the
+assumptions). If plan-time hashing later profiles as a real bottleneck, prefer a
+classifier-local mtime/size pre-filter over a cross-component cache dependency — a
+post-v1.0 follow-up, not this slice.
+</decision>
+
 ## Notes
 
 Rejected framings considered during brainstorm:
@@ -659,11 +674,7 @@ this SPEC.
 
 ## Open Questions
 
-- [ ] a. Should plan-time classification consult or populate the SPEC-0003 watch
-  drift cache to avoid re-hashing content that the watcher already hashed, or is
-  always reading live state at plan time (A2) acceptable for v1.0? Answering "reuse
-  the cache" would add a cross-component dependency and shape the classifier's
-  inputs.
+None — all framing questions were resolved before decomposition (see Decisions).
 
 ## Changelog
 
@@ -671,4 +682,5 @@ this SPEC.
 | Date | Author | Summary |
 | --- | --- | --- |
 | 2026-06-02 | kevin-xiao | Initial SPEC: Create/Update/Unchanged classification, skip-if-satisfied execute, durable disposition for rollback/recovery fidelity, no-op short-circuit, diff/`--json` state, `FILE_MAJOR_VERSION` reset to 1. |
+| 2026-06-02 | kevin-xiao | Resolved open question a → DEC-006: classification reads live state, no watch drift-cache reuse. |
 </changelog>
