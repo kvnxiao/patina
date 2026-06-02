@@ -120,7 +120,10 @@ pub(super) fn tree_symlink(
 }
 
 /// Atomic [`SymlinkDir`](crate::config::FileMode::SymlinkDir) executor:
-/// one directory symlink per target, no walk.
+/// one directory symlink per target, no walk. A pre-existing entry at the
+/// target is cleared first (the engine has already backed it up), so a
+/// re-apply — or an apply over an existing target — converges rather than
+/// failing with `EEXIST`.
 pub(super) fn dir_symlink(
     source: &Utf8Path,
     targets: &[Utf8PathBuf],
@@ -146,6 +149,18 @@ pub(super) fn dir_symlink(
     let mut records = Vec::with_capacity(targets.len());
     for target in targets {
         ensure_parent(target)?;
+        // Clear any pre-existing entry before linking. `create_symlink` fails
+        // with `EEXIST` (os error 183 on Windows) against an occupied path, so
+        // without this a re-apply (the target is already a directory symlink)
+        // or a first apply over a pre-existing target would error rather than
+        // converge. The engine runs `backup_before_overwrite` ahead of
+        // `materialize`, so whatever is here — a real directory, a foreign
+        // symlink — is already stashed and rollback can restore it; the removal
+        // only clears the path the new link will occupy. Mirrors `link_file`.
+        crate::fsx::remove_entry(target).map_err(|source| ExecutorError::Io {
+            path: target.to_path_buf(),
+            source,
+        })?;
         create_symlink(source, target, LinkKind::Directory)?;
         records.push(CompletionRecord::symlink(
             source.to_path_buf(),

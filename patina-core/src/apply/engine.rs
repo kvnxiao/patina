@@ -428,12 +428,13 @@ fn build_planning_context(
 ///   ORPHANED (CHK-019). The gate uses the same [`Engine::eval_when`] and
 ///   layered resolver as planning, so the two passes agree on which entries are
 ///   active.
-/// - **`symlink-tree` leaf expansion (REQ-007).** A `symlink-tree`
+/// - **Tree-mode leaf expansion (REQ-007).** A `symlink-tree` or `copy-tree`
 ///   `[[directory]]` entry is expanded into one managed key per *live* source
 ///   leaf, walked in the same `walk_files` order the executor used, so a
 ///   deleted source leaf is absent from the set and its recorded target leaf
-///   classifies ORPHANED (CHK-014). Every other mode contributes its declared
-///   target(s) directly, as before.
+///   classifies ORPHANED (CHK-014). Both modes materialize one object per leaf
+///   and journal each leaf as its own target, so both must expand here; every
+///   other mode contributes its declared target(s) directly.
 ///
 /// Unlike [`plan`], this never canonicalizes the source or kind-checks it:
 /// status must not fail because a `when`-true entry's source is missing or
@@ -479,10 +480,11 @@ pub fn current_managed_targets() -> Result<BTreeSet<Utf8PathBuf>, EngineError> {
 
 /// Insert the managed `manage_key`(s) for one surviving (`when`-true) entry.
 ///
-/// A `symlink-tree` entry expands to one key per live source leaf, mirrored
-/// under each declared target the same way the executor materializes them
-/// (`target.join(rel)`); a missing source contributes no leaves. Every other
-/// mode contributes its declared targets directly.
+/// A tree-mode entry (`symlink-tree` or `copy-tree`) expands to one key per
+/// live source leaf, mirrored under each declared target the same way the
+/// executor materializes them (`target.join(rel)`); a missing source
+/// contributes no leaves. Every other mode contributes its declared targets
+/// directly.
 fn insert_managed_targets(
     entry: &ManagedEntry,
     module_path: &Utf8Path,
@@ -491,7 +493,13 @@ fn insert_managed_targets(
 ) {
     use crate::status::manage_key;
 
-    if entry.mode == FileMode::SymlinkTree {
+    // Tree modes (`symlink-tree` and `copy-tree`) materialize one object per
+    // live source leaf and the journal records each leaf as its own target, so
+    // the managed set must expand to those same leaves. Recording only the
+    // declared directory would make every committed leaf look orphaned on the
+    // next apply — the reap pass would delete it (and `copy-tree`'s journal
+    // hashing would then fail on the just-reaped file).
+    if matches!(entry.mode, FileMode::SymlinkTree | FileMode::CopyTree) {
         let source = module_path.join(&entry.source);
         // The executor walks the live source for leaves; a source that no
         // longer exists yields none, so every recorded leaf is then orphaned.
