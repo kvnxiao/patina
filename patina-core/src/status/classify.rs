@@ -74,29 +74,48 @@ pub fn classify(expected: &ExpectedTarget, still_managed: bool) -> TargetState {
         return TargetState::Missing;
     }
 
-    match expected {
-        ExpectedTarget::Symlink { link_target, .. } => {
-            match read_symlink_target(target) {
-                // Compare on the verbatim-stripped form: the recorded link
-                // target and the on-disk link may differ only by a Windows
-                // `\\?\` prefix for the same destination.
-                Some(actual)
-                    if crate::paths::simplified_str(&actual)
-                        == crate::paths::simplified_str(link_target) =>
-                {
-                    TargetState::Clean
-                }
-                // Present but not a link to the recorded source (a link to
-                // somewhere else, or replaced by a regular file): drift.
-                _ => TargetState::Drifted,
-            }
-        }
-        ExpectedTarget::Content { hash, .. } => match fs_err::read(target) {
-            Ok(bytes) if content_hash(&bytes) == *hash => TargetState::Clean,
-            // Unreadable or hash mismatch: the content changed.
-            _ => TargetState::Drifted,
-        },
+    let matches = match expected {
+        ExpectedTarget::Symlink { link_target, .. } => symlink_matches(target, link_target),
+        ExpectedTarget::Content { hash, .. } => content_matches(target, hash),
+    };
+    if matches {
+        TargetState::Clean
+    } else {
+        // Present but not matching: a link to somewhere else, a file
+        // replaced by a link (or vice versa), or differing/unreadable bytes.
+        TargetState::Drifted
     }
+}
+
+/// Whether the live `target` is a symbolic link whose link target equals
+/// the `desired` link target.
+///
+/// This is the single definition of "a symlink matches": both `status`
+/// (CLEAN vs DRIFTED) and the plan-time skip-if-satisfied classifier
+/// (`Unchanged` vs `Update`) read through it, so the two never disagree on
+/// what counts as a match (REQ-001).
+///
+/// The comparison is on the verbatim-stripped (`simplified_str`) form
+/// because the recorded/desired link target and the on-disk link may differ
+/// only by a Windows `\\?\` prefix for the same destination.
+#[must_use = "the comparison result drives the Clean/Unchanged classification"]
+pub(crate) fn symlink_matches(target: &Utf8Path, desired: &str) -> bool {
+    read_symlink_target(target).is_some_and(|actual| {
+        crate::paths::simplified_str(&actual) == crate::paths::simplified_str(desired)
+    })
+}
+
+/// Whether the live `target` is a regular file whose `blake3` content hash
+/// equals `desired`.
+///
+/// This is the single definition of "content matches": `status` and the
+/// plan-time classifier both read through it (copy/copy-tree and template
+/// targets), so "Unchanged" coincides exactly with status's "Clean"
+/// (REQ-001). An unreadable target (absent, a directory, a dangling link)
+/// is not a match.
+#[must_use = "the comparison result drives the Clean/Unchanged classification"]
+pub(crate) fn content_matches(target: &Utf8Path, desired: &[u8; 32]) -> bool {
+    matches!(fs_err::read(target), Ok(bytes) if content_hash(&bytes) == *desired)
 }
 
 #[cfg(test)]

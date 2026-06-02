@@ -38,6 +38,7 @@
 pub mod engine;
 pub mod hooks;
 
+pub(crate) mod classify;
 mod copy;
 mod retry;
 mod symlink;

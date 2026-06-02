@@ -96,7 +96,7 @@ Suggested files: `patina-core/src/journal/plan.rs`,
 </task-scenarios>
 </task>
 
-<task id="T-003" state="pending" covers="REQ-001">
+<task id="T-003" state="completed" covers="REQ-001">
 ## Plan-time classifier reusing the `status` Clean primitives
 
 Implement a classifier that, given a resolved leaf
