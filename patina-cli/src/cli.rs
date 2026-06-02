@@ -44,7 +44,7 @@ pub fn resolve_exit_code(outcome: anyhow::Result<i32>, reporter: &mut impl Repor
 
 /// `patina` — a cross-platform dotfile manager.
 #[derive(Debug, Parser)]
-#[command(name = "patina", version, about)]
+#[command(name = "patina", version, about, disable_help_subcommand = true)]
 pub struct Cli {
     /// The subcommand to run.
     #[command(subcommand)]
@@ -94,7 +94,7 @@ pub enum Command {
 
     /// Debugging utilities. Hidden from the top-level help summary but
     /// documented; `journal` decodes a binary plan file post-mortem.
-    #[command(hide = true, subcommand)]
+    #[command(hide = true, subcommand, disable_help_subcommand = true)]
     Debug(DebugCommand),
 }
 
@@ -106,6 +106,7 @@ pub enum Command {
 /// `status`) manage the per-OS background service. With
 /// neither, the command reports that a mode must be chosen.
 #[derive(Debug, Args, Default)]
+#[command(disable_help_subcommand = true)]
 pub struct WatchArgs {
     /// The background-service lifecycle subcommand. Mutually exclusive with
     /// `--foreground`; omit both to see the usage hint.
