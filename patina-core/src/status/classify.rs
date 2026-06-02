@@ -102,6 +102,7 @@ pub fn classify(expected: &ExpectedTarget, still_managed: bool) -> TargetState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::journal::Disposition;
     use camino::Utf8PathBuf;
     use tempfile::TempDir;
 
@@ -122,6 +123,7 @@ mod tests {
             source: "/repo/file".to_owned(),
             hash: content_hash(b"payload"),
             entry: 0,
+            disposition: Disposition::Update,
         };
         assert_eq!(classify(&expected, true), TargetState::Clean);
 
@@ -137,6 +139,7 @@ mod tests {
             source: "/repo/gone".to_owned(),
             hash: [0u8; 32],
             entry: 0,
+            disposition: Disposition::Update,
         };
         assert_eq!(classify(&expected, true), TargetState::Missing);
     }
@@ -151,6 +154,7 @@ mod tests {
             source: "/repo/old".to_owned(),
             hash: [0u8; 32],
             entry: 0,
+            disposition: Disposition::Update,
         };
         // still_managed = false: the current plan dropped this entry.
         assert_eq!(classify(&expected, false), TargetState::Orphaned);
@@ -162,6 +166,7 @@ mod tests {
             target: "/t/link".to_owned(),
             link_target: "/repo/src".to_owned(),
             entry: 0,
+            disposition: Disposition::Create,
         };
         // A non-existent path is Missing regardless of link expectation.
         assert_eq!(classify(&expected, true), TargetState::Missing);

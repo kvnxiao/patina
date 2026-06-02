@@ -42,10 +42,11 @@
 //!
 //! ```no_run
 //! use camino::Utf8Path;
+//! use patina_core::Disposition;
 //! use patina_core::journal::{Journal, OsSyncer, Plan, PlannedOperation};
 //!
 //! let dir = Utf8Path::new("/var/state/patina/journal");
-//! let plan = Plan::new(vec![PlannedOperation::symlink("src/a", "~/.a")]);
+//! let plan = Plan::new(vec![PlannedOperation::symlink("src/a", "~/.a", Disposition::Create)]);
 //! // Records and fsyncs the plan before the first mutation.
 //! let handle = Journal::flush_plan_and_fsync(dir, "20260528T120000Z", &plan, &OsSyncer)?;
 //! # let _ = handle;

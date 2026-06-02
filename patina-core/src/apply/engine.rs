@@ -43,6 +43,7 @@ use crate::discovery::discover_modules;
 use crate::discovery::resolve_repository_root;
 use crate::error::EngineError;
 use crate::journal::ApplyRecord;
+use crate::journal::Disposition;
 use crate::journal::ExpectedTarget;
 use crate::journal::Journal;
 use crate::journal::LastApply;
@@ -717,6 +718,14 @@ fn validate_source_kind(source: &Utf8Path, kind: EntryKind) -> Result<(), Engine
     }
 }
 
+/// Placeholder disposition threaded onto every planned operation and
+/// recorded target by this task (T-002). T-002 is field-only and
+/// behavior-neutral: it carries the field through the wire types and call
+/// sites so the workspace compiles. T-004 replaces this with the real
+/// plan-time classification on the operation and durable plan, and T-005
+/// records the real per-leaf disposition in the commit.
+const PLACEHOLDER_DISPOSITION: Disposition = Disposition::Create;
+
 /// Build the durable [`PlannedOperation`] for one resolved
 /// `(mode, source, target)`.
 fn planned_operation(mode: FileMode, source: &Utf8Path, target: &Utf8Path) -> PlannedOperation {
@@ -727,12 +736,14 @@ fn planned_operation(mode: FileMode, source: &Utf8Path, target: &Utf8Path) -> Pl
         // dispatch point T-007's per-leaf executor fills in; until then it
         // shares the symlink op shape so the plan is well-formed.
         FileMode::Symlink | FileMode::SymlinkDir | FileMode::SymlinkTree => {
-            PlannedOperation::symlink(source.as_str(), target.as_str())
+            PlannedOperation::symlink(source.as_str(), target.as_str(), PLACEHOLDER_DISPOSITION)
         }
         FileMode::Copy | FileMode::CopyTree => {
-            PlannedOperation::copy(source.as_str(), target.as_str())
+            PlannedOperation::copy(source.as_str(), target.as_str(), PLACEHOLDER_DISPOSITION)
         }
-        FileMode::TemplateRender => PlannedOperation::render(source.as_str(), target.as_str()),
+        FileMode::TemplateRender => {
+            PlannedOperation::render(source.as_str(), target.as_str(), PLACEHOLDER_DISPOSITION)
+        }
     }
 }
 
@@ -952,6 +963,7 @@ fn build_apply_record(
                     target,
                     link_target: link_target.as_str().to_owned(),
                     entry,
+                    disposition: PLACEHOLDER_DISPOSITION,
                 });
             }
             Materialization::Copy | Materialization::Render => {
@@ -963,6 +975,7 @@ fn build_apply_record(
                     source: record.source.as_str().to_owned(),
                     hash: content_hash(&bytes),
                     entry,
+                    disposition: PLACEHOLDER_DISPOSITION,
                 });
             }
         }

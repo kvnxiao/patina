@@ -301,7 +301,11 @@ mod tests {
         write_plan(
             &d.journal,
             ts,
-            &Plan::new(vec![PlannedOperation::copy("src", target.as_str())]),
+            &Plan::new(vec![PlannedOperation::copy(
+                "src",
+                target.as_str(),
+                crate::journal::Disposition::Create,
+            )]),
         );
 
         let report = recover_orphans(&d.journal, &d.backups).expect("recover");

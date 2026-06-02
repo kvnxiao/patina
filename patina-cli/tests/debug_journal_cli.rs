@@ -15,6 +15,7 @@
 
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
+use patina_core::Disposition;
 use patina_core::FILE_MAJOR_VERSION;
 use patina_core::Plan;
 use patina_core::PlannedOperation;
@@ -45,8 +46,8 @@ fn decodes_a_plan_and_prints_its_modes_and_targets() {
     let temp = TempDir::new().expect("tempdir");
     let dir = Utf8Path::from_path(temp.path()).expect("utf8 tempdir");
     let plan = Plan::new(vec![
-        PlannedOperation::symlink("zsh/zshrc", "/home/u/.zshrc"),
-        PlannedOperation::copy("git/gitconfig", "/home/u/.gitconfig"),
+        PlannedOperation::symlink("zsh/zshrc", "/home/u/.zshrc", Disposition::Create),
+        PlannedOperation::copy("git/gitconfig", "/home/u/.gitconfig", Disposition::Create),
     ]);
     let path = write_plan(dir, "20260528T120000Z", &plan.encode().expect("encode"));
 
@@ -87,7 +88,11 @@ fn newer_version_envelope_exits_one_and_names_both_versions() {
     // versions plus the word "version" on stderr.
     let temp = TempDir::new().expect("tempdir");
     let dir = Utf8Path::from_path(temp.path()).expect("utf8 tempdir");
-    let plan = Plan::new(vec![PlannedOperation::copy("a", "/home/u/.a")]);
+    let plan = Plan::new(vec![PlannedOperation::copy(
+        "a",
+        "/home/u/.a",
+        Disposition::Create,
+    )]);
     let mut bytes = plan.encode().expect("encode");
     bytes
         .get_mut(..2)

@@ -91,6 +91,7 @@ mod tests {
     use camino::Utf8Path;
     use camino::Utf8PathBuf;
     use patina_core::DRIFT_CACHE_MAJOR_VERSION;
+    use patina_core::Disposition;
     use patina_core::DriftCache;
     use patina_core::DriftEntry;
     use patina_core::Plan;
@@ -108,6 +109,7 @@ mod tests {
         let plan = Plan::new(vec![PlannedOperation::symlink(
             "zsh/zshrc",
             "/home/u/.zshrc",
+            Disposition::Create,
         )]);
         fs_err::write(&path, plan.encode().expect("encode")).expect("write plan");
 
@@ -133,7 +135,11 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let dir = Utf8Path::from_path(dir.path()).expect("utf8 tempdir");
         let path = dir.join("20260528T120000Z.plan");
-        let plan = Plan::new(vec![PlannedOperation::copy("a", "/home/u/.a")]);
+        let plan = Plan::new(vec![PlannedOperation::copy(
+            "a",
+            "/home/u/.a",
+            Disposition::Create,
+        )]);
         let mut bytes = plan.encode().expect("encode");
         // Overwrite the envelope's major with u16::MAX so the running
         // binary (major 1) refuses it.

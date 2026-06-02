@@ -18,6 +18,7 @@
 //! [`JournalError::VersionMismatch`](super::JournalError::VersionMismatch)
 //! rather than risk mis-decoding a future format.
 
+use super::Disposition;
 use super::JournalError;
 use crate::version_envelope;
 use serde::Deserialize;
@@ -44,6 +45,9 @@ pub enum PlannedOperation {
         source: String,
         /// Absolute target path the link is created at.
         target: String,
+        /// How this operation relates to the live filesystem (REQ-002).
+        /// For a tree op this is the per-op aggregate (DEC-007).
+        disposition: Disposition,
     },
     /// Render a template from `source` and write the output to `target`.
     Render {
@@ -51,6 +55,8 @@ pub enum PlannedOperation {
         source: String,
         /// Absolute target path the rendered output is written to.
         target: String,
+        /// How this operation relates to the live filesystem (REQ-002).
+        disposition: Disposition,
     },
     /// Copy bytes from `source` to `target` (used where a link is not
     /// appropriate).
@@ -59,34 +65,66 @@ pub enum PlannedOperation {
         source: String,
         /// Absolute target path the bytes are copied to.
         target: String,
+        /// How this operation relates to the live filesystem (REQ-002).
+        /// For a tree op this is the per-op aggregate (DEC-007).
+        disposition: Disposition,
     },
 }
 
 impl PlannedOperation {
-    /// Construct a [`PlannedOperation::Symlink`] from string-ish inputs.
+    /// Construct a [`PlannedOperation::Symlink`] from string-ish inputs and
+    /// its classified [`Disposition`].
     #[must_use = "construct the operation to include it in a plan"]
-    pub fn symlink(source: impl Into<String>, target: impl Into<String>) -> Self {
+    pub fn symlink(
+        source: impl Into<String>,
+        target: impl Into<String>,
+        disposition: Disposition,
+    ) -> Self {
         Self::Symlink {
             source: source.into(),
             target: target.into(),
+            disposition,
         }
     }
 
-    /// Construct a [`PlannedOperation::Render`] from string-ish inputs.
+    /// Construct a [`PlannedOperation::Render`] from string-ish inputs and
+    /// its classified [`Disposition`].
     #[must_use = "construct the operation to include it in a plan"]
-    pub fn render(source: impl Into<String>, target: impl Into<String>) -> Self {
+    pub fn render(
+        source: impl Into<String>,
+        target: impl Into<String>,
+        disposition: Disposition,
+    ) -> Self {
         Self::Render {
             source: source.into(),
             target: target.into(),
+            disposition,
         }
     }
 
-    /// Construct a [`PlannedOperation::Copy`] from string-ish inputs.
+    /// Construct a [`PlannedOperation::Copy`] from string-ish inputs and its
+    /// classified [`Disposition`].
     #[must_use = "construct the operation to include it in a plan"]
-    pub fn copy(source: impl Into<String>, target: impl Into<String>) -> Self {
+    pub fn copy(
+        source: impl Into<String>,
+        target: impl Into<String>,
+        disposition: Disposition,
+    ) -> Self {
         Self::Copy {
             source: source.into(),
             target: target.into(),
+            disposition,
+        }
+    }
+
+    /// How this operation relates to the live filesystem (REQ-002). For a
+    /// tree op this is the per-op aggregate disposition (DEC-007).
+    #[must_use = "the disposition decides whether the operation writes, and how recovery reverses it"]
+    pub fn disposition(&self) -> Disposition {
+        match self {
+            Self::Symlink { disposition, .. }
+            | Self::Render { disposition, .. }
+            | Self::Copy { disposition, .. } => *disposition,
         }
     }
 }
@@ -174,9 +212,13 @@ mod tests {
     use super::*;
 
     fn sample() -> Plan {
+        // One Create, one Update, one Unchanged target (CHK-004) so the
+        // round-trip below proves every disposition variant survives the
+        // envelope, not just whichever one a single-op fixture happened to use.
         Plan::new(vec![
-            PlannedOperation::symlink("a", "/x/a"),
-            PlannedOperation::render("b.j2", "/x/b"),
+            PlannedOperation::symlink("a", "/x/a", Disposition::Create),
+            PlannedOperation::render("b.j2", "/x/b", Disposition::Update),
+            PlannedOperation::copy("c", "/x/c", Disposition::Unchanged),
         ])
     }
 
@@ -185,6 +227,30 @@ mod tests {
         let plan = sample();
         let bytes = plan.encode().expect("encode");
         assert_eq!(Plan::decode(&bytes).expect("decode"), plan);
+    }
+
+    #[test]
+    fn per_op_dispositions_round_trip(/* CHK-004 */) {
+        // A plan with one Create, one Update, and one Unchanged op must
+        // decode with each op's disposition unchanged. `PartialEq` on the
+        // whole plan above already gates this, but asserting the per-op
+        // dispositions directly pins the field rather than the aggregate
+        // equality, so a field dropped from the wire is caught here.
+        let plan = sample();
+        let decoded = Plan::decode(&plan.encode().expect("encode")).expect("decode");
+        let got: Vec<Disposition> = decoded
+            .operations()
+            .iter()
+            .map(PlannedOperation::disposition)
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                Disposition::Create,
+                Disposition::Update,
+                Disposition::Unchanged
+            ]
+        );
     }
 
     #[test]

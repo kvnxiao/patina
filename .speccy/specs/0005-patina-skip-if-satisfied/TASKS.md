@@ -54,7 +54,7 @@ Suggested files: `patina-core/src/journal/disposition.rs` (new),
 </task-scenarios>
 </task>
 
-<task id="T-002" state="pending" covers="REQ-002 REQ-013">
+<task id="T-002" state="completed" covers="REQ-002 REQ-013">
 ## Thread `disposition` onto `PlannedOperation` and `ExpectedTarget` with round-trip coverage
 
 Add a `disposition: Disposition` field to every `PlannedOperation` variant

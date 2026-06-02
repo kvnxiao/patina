@@ -196,6 +196,7 @@ fn mark_rolled_back(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::journal::Disposition;
     use crate::journal::ExpectedTarget;
     use crate::journal::LastApply;
     use tempfile::TempDir;
@@ -219,18 +220,21 @@ mod tests {
                 source: "/repo/a".to_owned(),
                 hash: [0u8; 32],
                 entry: 0,
+                disposition: Disposition::Update,
             },
             ExpectedTarget::Content {
                 target: "/b1".to_owned(),
                 source: "/repo/b1".to_owned(),
                 hash: [0u8; 32],
                 entry: 1,
+                disposition: Disposition::Update,
             },
             ExpectedTarget::Content {
                 target: "/b2".to_owned(),
                 source: "/repo/b2".to_owned(),
                 hash: [0u8; 32],
                 entry: 1,
+                disposition: Disposition::Update,
             },
         ]);
         let groups = group_by_entry(&rec);
