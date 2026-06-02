@@ -153,7 +153,8 @@ mod tests {
         // collapsed.
         assert_eq!(
             result_label(&ApplyResult::Applied {
-                warnings: Vec::new()
+                warnings: Vec::new(),
+                up_to_date: false,
             }),
             "applied"
         );

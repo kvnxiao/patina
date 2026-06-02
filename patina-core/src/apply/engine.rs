@@ -259,6 +259,12 @@ pub enum ApplyResult {
         /// Human-readable warnings from hooks that failed but were
         /// degraded (`must_succeed = false` or `--force-deploy`).
         warnings: Vec<String>,
+        /// Whether this invocation was a full no-op: every target classified
+        /// `Unchanged` and nothing to reap, so the apply wrote nothing to disk
+        /// and the prior commit remains authoritative (REQ-007). The CLI uses
+        /// this to print the deterministic "up to date" line instead of
+        /// "Applied." (REQ-008). A normal committed apply sets it `false`.
+        up_to_date: bool,
     },
     /// A `must_succeed` `post_apply` hook failed; the file operations
     /// were reversed to the pre-apply state. Exit code 3.
@@ -1026,6 +1032,15 @@ fn materialize_target(
 /// that *fails* under `must_succeed` is not an error: it is reported via
 /// the returned [`ApplyResult`] so the CLI can map it to the right exit
 /// code.
+#[expect(
+    clippy::too_many_lines,
+    reason = "execute is the single linear apply orchestrator — lock, recover, \
+              no-op short-circuit, hooks, flush, materialize, commit/rollback, \
+              GC — in the fixed order the crash-safety contract depends on. \
+              Splitting a phase into a helper would hide that ordering behind a \
+              call without removing any step; the REQ-007 no-op gate is one such \
+              step and pushed it four lines past the lint's ceiling."
+)]
 pub async fn execute(
     resolved: &ResolvedPlan,
     request: &ApplyRequest,
@@ -1086,6 +1101,15 @@ pub async fn execute(
             );
         }
         GateDecision::RequireElevation => return Err(EngineError::DevModeRequired),
+    }
+
+    // Full no-op short-circuit (REQ-007): return before the plan flush so
+    // nothing is written this run (see `is_full_noop` for the condition).
+    if is_full_noop(resolved, reap)? {
+        return Ok(ApplyResult::Applied {
+            warnings: Vec::new(),
+            up_to_date: true,
+        });
     }
 
     // Resolve every hook's shell up front so an unresolved explicit shell
@@ -1205,7 +1229,13 @@ pub async fn execute(
         // rolling back to it correctly deletes its fresh targets.
         let pruned = gc_retain(&backups_dir, crate::backups::RETENTION_COUNT)?;
         prune_cycles(&journal_dir, &pruned)?;
-        Ok(ApplyResult::Applied { warnings })
+        // A committed apply that actually flushed a plan and wrote a COMMIT is
+        // not a no-op, even when some targets were `Unchanged`: the full-no-op
+        // short-circuit above is the only path that sets `up_to_date`.
+        Ok(ApplyResult::Applied {
+            warnings,
+            up_to_date: false,
+        })
     }
 }
 
@@ -1371,16 +1401,117 @@ fn expected_target(
 /// Returns an [`EngineError`] when the commit read, the managed-set
 /// recomputation, a backup, or a removal fails.
 fn reap_orphans(resolved: &ResolvedPlan, backups_dir: &Utf8Path) -> Result<(), EngineError> {
+    for target in detect_orphans(resolved)? {
+        // Record the prior bytes in a backup before removal (CHK-019 /
+        // REQ-014). The stash uses this run's timestamped backup tree, the
+        // same one materialize stashes overwrites into.
+        backup_before_overwrite(backups_dir, &resolved.timestamp, &target)?;
+        remove_target(&target)?;
+    }
+    Ok(())
+}
+
+/// Whether `resolved` is a full no-op: every planned target classifies
+/// `Unchanged`, a prior committed apply exists to stay authoritative, and the
+/// reap set is empty (REQ-007). `reap` mirrors [`execute`]'s policy gate — a
+/// `Held` run never reaps, so its orphan set is not consulted.
+///
+/// This is the single source of truth for the REQ-007 condition, shared by
+/// [`execute`]'s pre-flush short-circuit and the public [`plan_is_full_noop`]
+/// probe the CLI calls to decide whether to skip the diff-and-prompt (REQ-009).
+/// The `Unchanged` check is pure (it reads the plan-time dispositions, no IO);
+/// the prior-commit and orphan checks read the journal and re-derive the
+/// managed set.
+///
+/// # Errors
+///
+/// Returns an [`EngineError`] when the commit read or the orphan-set
+/// recomputation fails.
+fn is_full_noop(resolved: &ResolvedPlan, reap: bool) -> Result<bool, EngineError> {
+    // A non-reaping policy is the `Held` surgical re-journal (`patina remove` /
+    // `promote`): it deliberately re-records one target — often one whose bytes
+    // now match its just-rewritten source and so classify `Unchanged` — and
+    // must always commit that fresh record. It is never a no-op, so the
+    // short-circuit is disabled for it; only the whole-plan reconcile policies
+    // (`Blocking` / `NonBlocking`) can no-op.
+    if !reap {
+        return Ok(false);
+    }
+    // Pure, IO-free check next: a single Create/Update target means there is
+    // work to do, so skip the journal read entirely.
+    let all_unchanged = resolved.operations.iter().all(|op| {
+        op.dispositions
+            .iter()
+            .all(|d| d.aggregate == Disposition::Unchanged)
+    });
+    if !all_unchanged {
+        return Ok(false);
+    }
+    // A full no-op keeps the prior commit authoritative (REQ-007), so one must
+    // exist. A first-ever apply with an empty plan is vacuously all-`Unchanged`
+    // but has no baseline; it must fall through and commit an (empty) record to
+    // establish one, preserving the pre-existing commit-always contract.
+    if crate::journal::read_latest_commit(resolved.journal_dir())?.is_none() {
+        return Ok(false);
+    }
+    // A reap is work to do (REQ-009): an all-`Unchanged` plan that still has an
+    // orphan to remove is not a no-op.
+    if !detect_orphans(resolved)?.is_empty() {
+        return Ok(false);
+    }
+    Ok(true)
+}
+
+/// Whether a `patina apply` over `resolved` would be a full no-op under the
+/// CLI's default reaping (`Blocking`) policy — every target `Unchanged`, a
+/// prior commit present, and nothing to reap (REQ-007).
+///
+/// The CLI calls this *before* prompting so a fully-satisfied repo skips the
+/// diff-and-prompt confirmation and never reads stdin (REQ-009). It is a
+/// read-only probe: [`execute`] re-checks the same condition under the held
+/// lock, so this decision only governs the prompt, never whether a write
+/// happens. Because the CLI's `apply` path always reaps, this fixes `reap`
+/// to `true`.
+///
+/// # Errors
+///
+/// Returns an [`EngineError`] when the commit read or the orphan-set
+/// recomputation fails.
+pub fn plan_is_full_noop(resolved: &ResolvedPlan) -> Result<bool, EngineError> {
+    is_full_noop(resolved, true)
+}
+
+/// The set of targets the reap phase would remove this run — the orphan
+/// targets a prior committed apply materialized that the current plan no
+/// longer manages and that are still present on disk as non-directories.
+///
+/// Reads the last committed [`ApplyRecord`] and the current managed-target
+/// set ([`current_managed_targets`]), returning each recorded target whose
+/// [`manage_key`](crate::status::manage_key) is absent from the current set,
+/// is still on disk, and is not a directory (DEC-005). Shared by
+/// [`reap_orphans`] — which backs up and removes each returned target — and
+/// by the REQ-007 full-no-op short-circuit in [`execute`], which only needs
+/// to know whether this set is empty (a non-empty reap set means there is
+/// work to do, so the run is not a no-op). Splitting the detection out keeps
+/// the "what counts as an orphan" rule in one place rather than copying the
+/// walk into the short-circuit.
+///
+/// # Errors
+///
+/// Returns an [`EngineError`] when the commit read or the managed-set
+/// recomputation fails.
+fn detect_orphans(resolved: &ResolvedPlan) -> Result<Vec<Utf8PathBuf>, EngineError> {
     use crate::status::manage_key;
 
     let journal_dir = resolved.journal_dir();
     let Some(record) = crate::journal::read_latest_commit(&journal_dir)? else {
         // No prior committed apply: nothing was ever materialized to orphan.
-        return Ok(());
+        return Ok(Vec::new());
     };
 
     let managed = current_managed_targets()?;
 
+    let mut orphans = Vec::new();
     for expected in &record.targets {
         let target = Utf8PathBuf::from(expected.target());
         if managed.contains(&manage_key(&target)) {
@@ -1400,13 +1531,9 @@ fn reap_orphans(resolved: &ResolvedPlan, backups_dir: &Utf8Path) -> Result<(), E
         if meta.is_dir() {
             continue;
         }
-        // Record the prior bytes in a backup before removal (CHK-019 /
-        // REQ-014). The stash uses this run's timestamped backup tree, the
-        // same one materialize stashes overwrites into.
-        backup_before_overwrite(backups_dir, &resolved.timestamp, &target)?;
-        remove_target(&target)?;
+        orphans.push(target);
     }
-    Ok(())
+    Ok(orphans)
 }
 
 /// Run every hook whose event matches `event`, returning the command of

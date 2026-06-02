@@ -3,7 +3,9 @@
     reason = "integration tests use .expect() on fixtures and asserted output; allow-expect-in-tests covers #[cfg(test)] modules but not the helper functions in tests/*.rs integration crates."
 )]
 
-//! Skip-if-satisfied execute behaviour (SPEC-0005 T-005, REQ-003 / REQ-004).
+//! Skip-if-satisfied execute behaviour (SPEC-0005, T-005 + T-006).
+//!
+//! ## Per-entry skip (T-005, REQ-003 / REQ-004; CHK-006 / CHK-007)
 //!
 //! A re-apply over a partially-drifted repo must leave the already-satisfied
 //! (`Unchanged`) entry completely untouched — same inode/mtime, no backup
@@ -11,6 +13,17 @@
 //! (CHK-006). The skipped entry must still be recorded in the commit so
 //! `patina status` reports it `Clean` and a later reap never removes it
 //! (CHK-007).
+//!
+//! ## Full-no-op short-circuit (T-006, REQ-007 / REQ-009; CHK-011 / CHK-013)
+//!
+//! When *every* entry is `Unchanged` and there is nothing to reap, the whole
+//! apply is a full no-op: it writes no new journal record and creates no new
+//! backup cycle, leaving the prior commit authoritative (CHK-011, REQ-007),
+//! and it skips the diff-and-prompt confirmation entirely — presenting no
+//! prompt and reading no stdin (CHK-013, REQ-009). The interactive prompt-skip
+//! itself is unit-tested in `patina-cli/src/cmd/apply.rs` (the subprocess
+//! fixture here pins stdin to a non-TTY); this suite covers the no-write
+//! property over the real engine.
 
 mod common;
 
@@ -54,6 +67,26 @@ fn collect_names(dir: &Utf8Path, names: &mut Vec<String>) {
     }
 }
 
+/// The sorted basenames of the immediate entries under `dir` (files and
+/// subdirectories), or an empty vector when `dir` does not exist. Used to
+/// snapshot the journal and backups directories across a re-apply so a no-op
+/// run can be shown to add nothing (REQ-007).
+fn entry_names(dir: &Utf8Path) -> Vec<String> {
+    let Ok(entries) = fs_err::read_dir(dir.as_std_path()) else {
+        return Vec::new();
+    };
+    let mut names: Vec<String> = entries
+        .map(|e| {
+            e.expect("read dir entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    names.sort();
+    names
+}
+
 /// The newest timestamped backup-cycle directory under `<state>/backups`, or
 /// `None` when no backup cycle exists.
 fn latest_backup_cycle(backups_root: &Utf8Path) -> Option<Utf8PathBuf> {
@@ -70,6 +103,174 @@ fn latest_backup_cycle(backups_root: &Utf8Path) -> Option<Utf8PathBuf> {
         .collect();
     cycles.sort();
     cycles.pop()
+}
+
+/// The single committed journal record `<ts>.COMMIT` under `journal_dir`,
+/// or a panic if there is not exactly one. A no-op re-apply must overwrite
+/// none of it.
+fn sole_commit_file(journal_dir: &Utf8Path) -> Utf8PathBuf {
+    let mut commits: Vec<Utf8PathBuf> = fs_err::read_dir(journal_dir.as_std_path())
+        .expect("read journal dir")
+        .map(|e| {
+            Utf8PathBuf::from_path_buf(e.expect("journal entry").path()).expect("utf8 journal path")
+        })
+        .filter(|p| p.extension() == Some("COMMIT"))
+        .collect();
+    assert_eq!(
+        commits.len(),
+        1,
+        "expected exactly one committed record, found {commits:?}"
+    );
+    commits.pop().expect("one commit file")
+}
+
+#[test]
+fn fully_satisfied_reapply_writes_no_new_journal_or_backup(/* CHK-011, REQ-007 */) {
+    // After a converging first apply, a second apply over the unchanged source
+    // is a full no-op: it must add no new `*.plan` / `*.COMMIT` to the journal
+    // directory, must not rewrite the existing `<ts>.COMMIT`, and must create
+    // no new backup-cycle directory. The prior commit stays the single
+    // authoritative record.
+    //
+    // A basename-set compare alone is NOT enough: `current_timestamp()` is
+    // second-resolution, so two back-to-back applies usually share a `<ts>`,
+    // and a full write cycle would overwrite `<ts>.COMMIT` in place — leaving
+    // the basename set identical. The collision-proof signal is the commit
+    // file's own identity (mtime + bytes): a write cycle changes at least one,
+    // so disabling the no-op short-circuit turns this test red regardless of
+    // whether the two applies land in the same wall-clock second.
+    let f = Fixture::new();
+    let m = f.module(
+        "m",
+        r#"
+[[file]]
+source = "a_src"
+target = "~/a_out"
+mode = "copy"
+
+[[file]]
+source = "rc.tmpl"
+target = "~/.rc"
+"#,
+    );
+    fs_err::write(m.join("a_src"), b"a-bytes").expect("write a_src");
+    fs_err::write(m.join("rc.tmpl"), b"export EDITOR=vim\n").expect("write rc.tmpl");
+
+    // First apply converges the repo and writes the authoritative commit.
+    assert_eq!(
+        code(&f.apply(&["--yes"])),
+        0,
+        "first apply must succeed and converge the repo"
+    );
+
+    let journal_dir = f.state_root().join("journal");
+    let backups_dir = f.state_root().join("backups");
+    let journal_before = entry_names(&journal_dir);
+    let backups_before = entry_names(&backups_dir);
+
+    // Capture the authoritative commit's collision-proof identity: its bytes
+    // and its mtime. A full plan→commit write cycle would rewrite this file
+    // (changing the bytes and/or the mtime) even when the new timestamp
+    // collides with the old basename.
+    let commit_path = sole_commit_file(&journal_dir);
+    let commit_bytes_before =
+        fs_err::read(commit_path.as_std_path()).expect("read commit bytes before");
+    let commit_mtime_before = mtime(&commit_path);
+
+    // Second apply over the unchanged source is the full no-op.
+    let second = f.apply(&["--yes"]);
+    assert_eq!(
+        code(&second),
+        0,
+        "the no-op re-apply must exit 0; stderr: {}",
+        String::from_utf8_lossy(&second.stderr)
+    );
+
+    // The journal directory gained no `*.plan` / `*.COMMIT` entry, and the
+    // backups directory gained no new cycle (REQ-007). Comparing the full
+    // entry set — not just counts — also catches a stray `.progress` file.
+    // (Necessary but, on its own, collision-blind; the identity asserts below
+    // are what make removing the feature turn this test red.)
+    assert_eq!(
+        entry_names(&journal_dir),
+        journal_before,
+        "a no-op re-apply must add no journal entry (no new .plan / .COMMIT)"
+    );
+    assert_eq!(
+        entry_names(&backups_dir),
+        backups_before,
+        "a no-op re-apply must add no new backup cycle"
+    );
+
+    // The collision-proof core: the sole `<ts>.COMMIT` was neither rewritten
+    // nor replaced. Its path, bytes, and mtime are all unchanged, so a full
+    // write cycle (which deletes/rewrites the commit) cannot pass even when
+    // the second apply lands in the same wall-clock second.
+    let commit_path_after = sole_commit_file(&journal_dir);
+    assert_eq!(
+        commit_path_after, commit_path,
+        "the no-op re-apply must not replace the committed record with a new one"
+    );
+    assert_eq!(
+        fs_err::read(commit_path_after.as_std_path()).expect("read commit bytes after"),
+        commit_bytes_before,
+        "the no-op re-apply must not rewrite the committed record's bytes"
+    );
+    assert_eq!(
+        mtime(&commit_path_after),
+        commit_mtime_before,
+        "the no-op re-apply must not touch the committed record's mtime"
+    );
+}
+
+#[test]
+fn fully_satisfied_apply_without_yes_skips_prompt_and_reports_up_to_date(/* CHK-013, REQ-009 */) {
+    // A fully-satisfied repo applied WITHOUT `--yes` must short-circuit before
+    // the diff-and-prompt branch: it prints the deterministic up-to-date line
+    // and completes exit 0 without reading stdin and without rendering a diff.
+    // The no-op branch precedes the `(yes, tty)` prompt decision in the human
+    // path, so neither the prompt nor a stdin read is ever reached — feeding a
+    // decline answer on stdin therefore changes nothing.
+    let f = Fixture::new();
+    let m = f.module(
+        "m",
+        r#"
+[[file]]
+source = "a_src"
+target = "~/a_out"
+mode = "copy"
+"#,
+    );
+    fs_err::write(m.join("a_src"), b"a-bytes").expect("write a_src");
+
+    assert_eq!(
+        code(&f.apply(&["--yes"])),
+        0,
+        "first apply must succeed and converge the repo"
+    );
+
+    // Re-apply without `--yes`. If the no-op short-circuit did NOT fire, the
+    // human path would either preview the diff (non-interactive) or prompt —
+    // both of which omit the up-to-date line and emit a diff body. Asserting
+    // the up-to-date line is present and no `Apply?` prompt text reached
+    // stderr proves the prompt/stdin branch was skipped entirely.
+    let out = f.apply(&[]);
+    assert_eq!(
+        code(&out),
+        0,
+        "the no-op apply must complete exit 0 without a prompt; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stdout.contains("Already up to date"),
+        "a no-op apply must print the up-to-date line, got stdout: {stdout}"
+    );
+    assert!(
+        !stderr.contains("Apply?"),
+        "a no-op apply must not emit the confirmation prompt, got stderr: {stderr}"
+    );
 }
 
 #[test]

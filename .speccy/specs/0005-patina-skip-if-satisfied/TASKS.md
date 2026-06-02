@@ -238,7 +238,7 @@ Suggested files: `patina-core/src/apply/engine.rs`,
 </task-scenarios>
 </task>
 
-<task id="T-006" state="pending" covers="REQ-007 REQ-008 REQ-009">
+<task id="T-006" state="completed" covers="REQ-007 REQ-008 REQ-009">
 ## Full no-op short-circuit, deterministic up-to-date reporting, and skipped prompt
 
 When every target classifies `Unchanged` and the reap set is empty, `apply`
