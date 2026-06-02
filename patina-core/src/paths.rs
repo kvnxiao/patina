@@ -122,6 +122,56 @@ pub fn canonicalize(p: &Utf8Path) -> Result<Utf8PathBuf, PathError> {
     canonicalize_lexical(p)
 }
 
+/// Resolve a *target* path to absolute form by canonicalizing its parent
+/// directory and re-joining the final component verbatim — so a symbolic
+/// link that already occupies the final component is **not** dereferenced.
+///
+/// Target paths must be resolved through this, not [`canonicalize`]: once an
+/// apply has materialized a target as a symbolic link into the repository,
+/// canonicalizing that target through the filesystem would follow the link
+/// back to its repository source. A re-apply (or a migration over a foreign
+/// tool's pre-existing symlink) would then resolve the target *to the source*
+/// and operate on the source itself — the per-file symlink executor removes
+/// the target before re-linking, so the repository file is deleted and
+/// replaced by a self-referential link (data loss). Resolving by declared
+/// location keeps the target pointing where the user asked, independent of
+/// what currently occupies it — the same principle [`mod@crate::status`]
+/// applies when it keys managed targets by location rather than full
+/// canonicalization.
+///
+/// Symbolic links in the *parent* chain are still resolved (the parent is a
+/// real location the leaf lives under); only the final component is left
+/// unfollowed. A path with no usable parent/leaf split (a filesystem root, or
+/// a bare relative leaf with an empty parent) falls back to [`canonicalize`].
+///
+/// # Examples
+///
+/// ```
+/// use camino::Utf8Path;
+/// use patina_core::paths::resolve_location;
+///
+/// // The current directory always exists; resolving a leaf under it keeps
+/// // the leaf name verbatim and yields an absolute path.
+/// let resolved = resolve_location(Utf8Path::new("./leaf.conf"))?;
+/// assert!(resolved.is_absolute());
+/// assert!(resolved.ends_with("leaf.conf"));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
+/// # Errors
+///
+/// Returns the same [`PathError`] variants as [`canonicalize`], which it
+/// delegates to for the parent directory.
+pub fn resolve_location(p: &Utf8Path) -> Result<Utf8PathBuf, PathError> {
+    match (p.parent(), p.file_name()) {
+        (Some(parent), Some(file_name)) if !parent.as_str().is_empty() => {
+            Ok(canonicalize(parent)?.join(file_name))
+        }
+        // No parent/leaf split to exploit: fall back to whole-path resolution.
+        _ => canonicalize(p),
+    }
+}
+
 /// Lexically canonicalize a non-existent path to absolute form.
 ///
 /// When the path has an existing parent directory, the parent is
@@ -297,6 +347,50 @@ mod tests {
         assert!(resolved.is_absolute());
         assert!(resolved.ends_with("definitely-absent-7f3a/nested/leaf.txt"));
         assert!(!resolved.as_str().contains("/./"));
+    }
+
+    #[cfg(unix)]
+    fn symlink_file(source: &Utf8Path, link: &Utf8Path) {
+        std::os::unix::fs::symlink(source.as_std_path(), link.as_std_path())
+            .expect("create symlink");
+    }
+
+    #[cfg(windows)]
+    fn symlink_file(source: &Utf8Path, link: &Utf8Path) {
+        std::os::windows::fs::symlink_file(source.as_std_path(), link.as_std_path())
+            .expect("create symlink");
+    }
+
+    #[test]
+    fn resolve_location_does_not_follow_a_leaf_symlink() {
+        // The defect this guards: once a target is a symbolic link into the
+        // repository, `canonicalize` follows it through to the source, so a
+        // re-apply (or a migration over a foreign tool's symlink) would resolve
+        // the target *to the source* and the executor would delete the source.
+        // `resolve_location` keeps the declared target location instead.
+        let (_td, dir) = utf8_tempdir();
+        let source = dir.join("real.conf");
+        fs_err::write(source.as_std_path(), b"x").expect("write source");
+        let link = dir.join("link.conf");
+        symlink_file(&source, &link);
+
+        // `canonicalize` follows the leaf symlink through to the source...
+        assert_eq!(canonicalize(&link).expect("canonicalize link"), source);
+        // ...but `resolve_location` keeps the declared location.
+        assert_eq!(resolve_location(&link).expect("resolve link"), link);
+    }
+
+    #[test]
+    fn resolve_location_matches_canonicalize_for_a_missing_leaf() {
+        // For a not-yet-created target (the fresh-machine first-apply case),
+        // resolving by location must produce exactly what `canonicalize`
+        // would, so first-apply behaviour and journal records are unchanged.
+        let (_td, dir) = utf8_tempdir();
+        let target = dir.join("not-created-yet.conf");
+        assert_eq!(
+            resolve_location(&target).expect("resolve missing leaf"),
+            canonicalize(&target).expect("canonicalize missing leaf"),
+        );
     }
 
     #[test]

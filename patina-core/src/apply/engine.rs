@@ -60,6 +60,7 @@ use crate::lock::exclusive_timeout;
 use crate::lock::try_acquire as try_acquire_lock;
 use crate::paths::canonicalize;
 use crate::paths::expand_tilde;
+use crate::paths::resolve_location;
 use crate::profile::load_auto_match_rules;
 use crate::profile::resolve as resolve_profile;
 use crate::state_dir::HostOs;
@@ -584,7 +585,8 @@ fn assemble_plan_operations(
 }
 
 /// Evaluate one managed entry's `when` predicate, then — only if it holds —
-/// canonicalize the entry's source and targets.
+/// canonicalize the entry's source and resolve its targets by declared
+/// location.
 ///
 /// This enforces the REQ-009 per-entry order: step (1) the `when` gate runs
 /// first, so a `when`-false entry returns `Ok(None)` and is **never**
@@ -615,11 +617,14 @@ fn gate_and_resolve_entry(
     Ok(Some(resolve_entry(entry, module_path, home)?))
 }
 
-/// Canonicalize one managed entry's source and targets under `module_path`
-/// and `home`, then validate the canonical source's existence and kind
-/// against the entry's declared table (REQ-002, step 3 of the REQ-009
-/// order). The file/directory order and the entry-index space are imposed by
-/// the caller; this resolves paths and performs the plan-time source check.
+/// Canonicalize one managed entry's source and resolve its targets under
+/// `module_path` and `home`, then validate the canonical source's existence
+/// and kind against the entry's declared table (REQ-002, step 3 of the
+/// REQ-009 order). The source is canonicalized through the filesystem; each
+/// target is resolved by *declared location* via [`resolve_location`] so a
+/// symlink already occupying the target is never followed back to the source.
+/// The file/directory order and the entry-index space are imposed by the
+/// caller; this resolves paths and performs the plan-time source check.
 ///
 /// # Errors
 ///
@@ -638,7 +643,12 @@ fn resolve_entry(
     let mut targets = Vec::with_capacity(entry.targets.len());
     for target in &entry.targets {
         let expanded = expand_tilde(target, home);
-        targets.push(canonicalize(&expanded)?);
+        // Resolve by declared location, never following a symlink that already
+        // occupies the leaf: a prior apply (or a foreign tool's symlink during
+        // migration) would otherwise canonicalize the target back to its
+        // repository source and the executor would delete the source. See
+        // `paths::resolve_location`.
+        targets.push(resolve_location(&expanded)?);
     }
     Ok(ResolvedEntry {
         mode: entry.mode,
