@@ -10,15 +10,16 @@
 //! surface and the `apply` plan computation don't land until T-016 /
 //! T-009 respectively. T-007's contract is the engine's resolution
 //! function and the auto-match parse path — these tests exercise that
-//! contract directly so the per-source priority order, the predicate
-//! evaluator, and the root-`patina.toml` parser cannot regress before
-//! the CLI is wired in.
+//! contract directly so the per-source priority order, the shared-engine
+//! `when` evaluation (REQ-004), and the root-`patina.toml` parser cannot
+//! regress before the CLI is wired in.
 
 use camino::Utf8PathBuf;
 use patina_core::profile::PERSISTED_PROFILE_FILE;
 use patina_core::profile::ProfileSource;
 use patina_core::profile::load_auto_match_rules;
 use patina_core::profile::resolve;
+use patina_core::template::Engine;
 use patina_core::variables::Builtins;
 use tempfile::TempDir;
 
@@ -43,8 +44,14 @@ fn env_var_resolves_to_work_when_no_other_sources_match() {
     assert!(rules.is_empty(), "no auto-match rules expected");
 
     let builtins = Builtins::for_tests();
-    let resolution = resolve(Some("work".to_owned()), &persisted, &rules, &builtins)
-        .expect("env-var resolution succeeds");
+    let resolution = resolve(
+        Some("work".to_owned()),
+        &persisted,
+        &rules,
+        &builtins,
+        &Engine::new(),
+    )
+    .expect("env-var resolution succeeds");
 
     assert_eq!(resolution.name, "work");
     assert_eq!(resolution.source, ProfileSource::Env);
@@ -79,8 +86,8 @@ fn auto_match_on_hostname_resolves_to_desktop() {
     let mut builtins = Builtins::for_tests();
     builtins.hostname = "CHK-host".to_owned();
 
-    let resolution =
-        resolve(None, &persisted, &rules, &builtins).expect("auto-match resolution succeeds");
+    let resolution = resolve(None, &persisted, &rules, &builtins, &Engine::new())
+        .expect("auto-match resolution succeeds");
     assert_eq!(resolution.name, "desktop");
     assert_eq!(resolution.source, ProfileSource::AutoMatch);
 }
@@ -94,8 +101,8 @@ fn persisted_choice_resolves_to_home_when_env_unset() {
     fs_err::write(persisted.as_std_path(), "home\n").expect("write persisted profile");
     let builtins = Builtins::for_tests();
 
-    let resolution =
-        resolve(None, &persisted, &[], &builtins).expect("persisted resolution succeeds");
+    let resolution = resolve(None, &persisted, &[], &builtins, &Engine::new())
+        .expect("persisted resolution succeeds");
     assert_eq!(resolution.name, "home");
     assert_eq!(resolution.source, ProfileSource::Persisted);
 }
@@ -119,7 +126,8 @@ fn fallback_resolves_to_empty_when_nothing_matches() {
     let rules = load_auto_match_rules(&root).expect("parse rules");
     let builtins = Builtins::for_tests();
 
-    let resolution = resolve(None, &persisted, &rules, &builtins).expect("fallback succeeds");
+    let resolution =
+        resolve(None, &persisted, &rules, &builtins, &Engine::new()).expect("fallback succeeds");
     assert_eq!(resolution.name, "");
     assert_eq!(resolution.source, ProfileSource::Fallback);
 }

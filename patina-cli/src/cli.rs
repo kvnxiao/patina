@@ -202,15 +202,19 @@ pub struct InitArgs {
 
 /// Flags for `patina add`.
 ///
-/// The three mode flags (`--symlink` / `--copy` / `--template`) form a
-/// mutually-exclusive clap group: declaring two produces a usage error
-/// (exit 2). In v1.0 `add` exposes only these three modes — not
-/// `symlink-dir` / `copy-tree` (a v1.0 non-goal).
+/// The four mode flags (`--symlink` / `--copy` / `--template` /
+/// `--symlink-tree`) form a mutually-exclusive clap group: declaring two
+/// produces a usage error (exit 2). Which flags are valid depends on the
+/// source kind (REQ-008): `--symlink` and `--copy` apply to either a file
+/// or a directory source; `--template` is file-only; `--symlink-tree` is
+/// directory-only. The kind/mode compatibility is enforced at use-site in
+/// `cmd::add` with a typed error, since clap cannot see the source's
+/// on-disk kind.
 #[derive(Debug, Args, Default)]
 #[command(group = clap::ArgGroup::new("mode").multiple(false))]
 #[expect(
     clippy::struct_excessive_bools,
-    reason = "this is a clap-derived flag struct: each bool is an independent CLI flag (the three mode flags plus --json / --yes), not a state machine that would be better modelled as an enum. The mode flags are unified at use-site into the AddMode enum."
+    reason = "this is a clap-derived flag struct: each bool is an independent CLI flag (the four mode flags plus --json / --yes), not a state machine that would be better modelled as an enum. The mode flags are unified at use-site into the AddMode enum."
 )]
 pub struct AddArgs {
     /// The dotfile to bring under management. Absolute or HOME-relative
@@ -227,13 +231,19 @@ pub struct AddArgs {
     #[arg(long, group = "mode")]
     pub symlink: bool,
 
-    /// File the entry as a byte copy.
+    /// File the entry as a byte copy (a recursive copy for a directory
+    /// source).
     #[arg(long, group = "mode")]
     pub copy: bool,
 
-    /// File the entry as a rendered template.
+    /// File the entry as a rendered template (file source only).
     #[arg(long, group = "mode")]
     pub template: bool,
+
+    /// File a directory source as a per-leaf symbolic-link tree (directory
+    /// source only).
+    #[arg(long = "symlink-tree", group = "mode")]
+    pub symlink_tree: bool,
 
     /// Emit a JSON envelope instead of human output.
     #[arg(long)]

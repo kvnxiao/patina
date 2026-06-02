@@ -368,6 +368,20 @@ then discovery fails with a typed error whose Display contains
 <requirement id="REQ-005">
 ### REQ-005: Five file modes — per-file symlink, atomic directory symlink, byte copy, copy-tree, template render; single or multi-target fan-out
 
+> **Superseded in part by SPEC-0004 REQ-001.** The single `[[file]]`
+> table-array and the `symlink-dir` / `copy-tree` mode names described
+> below are replaced by the `[[file]]` / `[[directory]]` kind-typed
+> split and the collapsed mode names (`symlink` / `symlink-tree` /
+> `copy`). The file-mode executors are reused unchanged; only the
+> parsing and mode dispatch change. The historical prose below is
+> retained as the original record.
+>
+> **Missing-source timing superseded by SPEC-0004 DEC-008 / REQ-002.**
+> Where this requirement surfaces a missing source only at materialize
+> time, SPEC-0004 promotes that to a plan-time error (raised before the
+> lock and journal), keeping the executor's existence check as a
+> materialize-time TOCTOU backstop.
+
 Each `[[file]]` entry in a module's `patina.toml` declares a mode that
 controls how the source path materializes at one or more target paths.
 Each entry must declare **exactly one** of `target` (a single absolute
@@ -703,6 +717,13 @@ then the hook's `when` clause evaluates true and the hook runs.
 <requirement id="REQ-008">
 ### REQ-008: Profile resolution chain — env, persisted, auto-match, fallback
 
+> **Auto-match evaluator superseded by SPEC-0004 REQ-004.** The narrow
+> `[[auto_match]]` predicate evaluator shipped here (and in REQ-009)
+> was a placeholder until the unified MiniJinja `when` engine landed.
+> SPEC-0004 routes `[[auto_match]]` `when` rules through that engine
+> and deletes the placeholder; the resolution chain (env, persisted,
+> auto-match, fallback) below is otherwise unchanged.
+
 The engine resolves the active profile by composing four sources in
 priority order: the `PATINA_PROFILE` environment variable, a
 persisted profile name in the per-machine state directory, an
@@ -753,6 +774,13 @@ then the JSON output's `profile` field equals `"desktop"`.
 
 <requirement id="REQ-009">
 ### REQ-009: MiniJinja with strict undefined behavior renders templates and evaluates `when` expressions
+
+> **Extended by SPEC-0004 REQ-004 / REQ-006.** This requirement
+> established the MiniJinja `when` engine for `[[file]]` and `[[hook]]`
+> entries. SPEC-0004 extends the same engine to `[[directory]]` entries
+> and `[[auto_match]]` rules, so every `when` site (including
+> profile-resolution auto-match) shares one strict-undefined evaluator;
+> the strict-undefined semantics below are unchanged.
 
 The engine uses a single MiniJinja environment configured with
 `UndefinedBehavior::SemiStrict` to render `*.tmpl` files and to

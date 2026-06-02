@@ -231,12 +231,15 @@ impl Resolver {
         Ok(self)
     }
 
-    /// Inject the resolved active profile name into the built-in layer.
+    /// Inject the resolved active profile name into the built-in layer,
+    /// marking `patina.profile` as resolved (the no-profile fallback is
+    /// the empty string, still resolved).
     ///
-    /// Wired this way so the resolver does not depend on T-007 / profile
-    /// resolution being complete before construction.
+    /// Wired this way so the resolver does not depend on profile
+    /// resolution being complete before construction; until this is
+    /// called, `patina.profile` is undefined (REQ-004 / DEC-010).
     pub fn with_profile(mut self, profile: impl Into<String>) -> Self {
-        self.builtins.profile = profile.into();
+        self.builtins.profile = Some(profile.into());
         self
     }
 

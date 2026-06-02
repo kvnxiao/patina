@@ -22,30 +22,34 @@
 //!
 //! # Predicate evaluation
 //!
-//! REQ-009 / T-008 promises a single `MiniJinja` environment with
-//! `UndefinedBehavior::Strict` that evaluates both `*.tmpl` bodies and
-//! `when` expressions (on `[[file]]`, `[[hook]]`, and `[[auto_match]]`).
-//! T-008 has not yet landed; this module ships with a narrowly-typed
-//! predicate evaluator that recognizes exactly the shape REQ-008's
-//! `<done-when>` and CHK-018 require:
+//! `[[auto_match]]` `when` predicates are evaluated by the shared
+//! `MiniJinja` [`Engine`] — the same evaluator
+//! `[[file]]` / `[[directory]]` / `[[hook]]` `when` predicates and
+//! `*.tmpl` bodies use (REQ-004 / DEC-006). One grammar, one
+//! strict-undefined behavior, one place to reason about predicates. The
+//! full `MiniJinja` expression grammar is available: equality, inequality
+//! (`!=`), `and` / `or`, and expressions over the `patina.*` built-in
+//! surface (`patina.os` / `patina.arch` / `patina.hostname` /
+//! `patina.user` / `patina.home` / `patina.env.*`).
 //!
-//! ```text
-//! patina.<built-in> == '<literal>'
-//! patina.<built-in> == "<literal>"
-//! ```
-//!
-//! The left-hand side resolves through `Builtins::get` (so the full
-//! `patina.os` / `patina.arch` / `patina.hostname` / `patina.user` /
-//! `patina.home` / `patina.env.*` surface is reachable). The right-hand
-//! side is a single-quoted or double-quoted string literal. Any other
-//! shape — substring match, `!=`, `and` / `or`, calls — produces a
-//! typed [`ProfileError::UnsupportedPredicate`] today and will be
-//! replaced by `MiniJinja` evaluation when T-008 lands without changing
-//! the public surface of [`resolve`].
+//! Profile resolution runs *before* the user variable layers (CLI,
+//! per-machine, per-profile, per-module, repo-shared) are assembled, so
+//! the predicate is evaluated against a built-ins-only
+//! [`Resolver`] (DEC-006). A predicate that
+//! accesses a variable absent from that context — including a
+//! user-defined variable, or `patina.profile` (which is precisely what
+//! this resolution computes and so cannot be read here) — is a typed
+//! [`ProfileError::Predicate`] naming the offending variable (DEC-010),
+//! not a silent non-match. The undefined-access error and the
+//! short-circuit carve-out (a variable on a not-taken `and` / `or`
+//! branch is never accessed and does not error) fall out of routing
+//! through the shared engine; this module adds no evaluator of its own.
 //!
 //! [`state_dir`]: crate::state_dir
 
+use crate::template::Engine;
 use crate::variables::Builtins;
+use crate::variables::Resolver;
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
 use serde::Deserialize;
@@ -131,15 +135,20 @@ pub enum ProfileError {
         source: Box<toml::de::Error>,
     },
 
-    /// An `[[auto_match]]` rule's `when` predicate uses a shape this
-    /// module's narrow evaluator does not yet recognize. Lifted by
-    /// T-008 once `MiniJinja` `when` evaluation is wired in.
-    #[error("unsupported [[auto_match]] when predicate `{predicate}`: {reason}")]
-    UnsupportedPredicate {
+    /// Evaluating an `[[auto_match]]` rule's `when` predicate through the
+    /// shared `MiniJinja` engine failed — a syntax error, a type error,
+    /// or (most commonly) a reference to a variable undefined in the
+    /// built-ins-only context profile resolution runs against (DEC-010).
+    /// The wrapped [`TemplateError`](crate::template::TemplateError)
+    /// names the offending variable.
+    #[error("[[auto_match]] when predicate `{predicate}` failed to evaluate")]
+    Predicate {
         /// The offending `when` text.
         predicate: String,
-        /// Human-readable reason describing what shape is expected.
-        reason: &'static str,
+        /// Underlying engine evaluation error (names the undefined
+        /// variable for an undefined-access failure).
+        #[source]
+        source: crate::template::TemplateError,
     },
 }
 
@@ -163,30 +172,40 @@ pub enum ProfileError {
 /// * `auto_match_rules` — rules parsed from the root `patina.toml`, in
 ///   declaration order. The first whose `when` matches wins.
 /// * `builtins` — built-in variable context (`patina.os`, `patina.hostname`, …)
-///   the predicate evaluates against.
+///   the predicate evaluates against. Profile resolution runs before the user
+///   variable layers are assembled, so the predicate sees a built-ins-only
+///   [`Resolver`] (DEC-006).
+/// * `engine` — the shared `MiniJinja` [`Engine`] that evaluates every `when`
+///   site (DEC-006).
 ///
 /// # Errors
 ///
 /// Returns [`ProfileError::PersistedRead`] when the persisted-profile
-/// file exists but cannot be read, and
-/// [`ProfileError::UnsupportedPredicate`] when an `[[auto_match]]`
-/// rule's `when` expression is shaped outside the narrow grammar
-/// (module docs). When predicates evaluate cleanly to `false`, the
-/// function continues to the next rule and ultimately to the fallback.
+/// file exists but cannot be read, and [`ProfileError::Predicate`] when
+/// an `[[auto_match]]` rule's `when` expression fails to evaluate —
+/// notably when it accesses a variable undefined in the built-ins-only
+/// context (a misspelled built-in, a user-defined variable, or
+/// `patina.profile`), which is a typed error naming the variable rather
+/// than a silent non-match (DEC-010). When predicates evaluate cleanly
+/// to `false`, the function continues to the next rule and ultimately to
+/// the fallback.
 ///
 /// # Examples
 ///
 /// ```
 /// use patina_core::profile::{resolve, ProfileSource};
 /// use patina_core::variables::Builtins;
+/// use patina_core::template::Engine;
 /// use camino::Utf8PathBuf;
 ///
 /// let builtins = Builtins::for_tests();
+/// let engine = Engine::new();
 /// let resolution = resolve(
 ///     Some("work".to_owned()),
 ///     &Utf8PathBuf::from("/nonexistent/profile"),
 ///     &[],
 ///     &builtins,
+///     &engine,
 /// )?;
 /// assert_eq!(resolution.name, "work");
 /// assert_eq!(resolution.source, ProfileSource::Env);
@@ -197,6 +216,7 @@ pub fn resolve(
     persisted_path: &Utf8Path,
     auto_match_rules: &[AutoMatchRule],
     builtins: &Builtins,
+    engine: &Engine,
 ) -> Result<Resolution, ProfileError> {
     // 1. Environment variable.
     if let Some(value) = env_value
@@ -229,9 +249,21 @@ pub fn resolve(
         }
     }
 
-    // 3. Auto-match rules.
+    // 3. Auto-match rules. Each `when` is evaluated through the shared
+    // engine against a built-ins-only resolver: profile resolution runs
+    // before the user variable layers are assembled, so no active-profile
+    // and no user layers are in scope (DEC-006). A `Resolver` with no
+    // layers pushed exposes exactly the built-ins.
+    let resolver = Resolver::new(builtins.clone());
     for rule in auto_match_rules {
-        if evaluate_predicate(&rule.when, builtins)? {
+        let matched =
+            engine
+                .eval_when(&rule.when, &resolver)
+                .map_err(|source| ProfileError::Predicate {
+                    predicate: rule.when.clone(),
+                    source,
+                })?;
+        if matched {
             return Ok(Resolution {
                 name: rule.profile.clone(),
                 source: ProfileSource::AutoMatch,
@@ -291,65 +323,6 @@ fn first_non_empty_line(text: &str) -> Option<&str> {
     text.lines().map(str::trim).find(|line| !line.is_empty())
 }
 
-/// Evaluate a single `when` predicate against the built-in context.
-///
-/// Supports exactly the shape REQ-008 needs today:
-///
-/// ```text
-/// <built-in-key> == '<literal>'
-/// <built-in-key> == "<literal>"
-/// ```
-///
-/// where `<built-in-key>` resolves through [`Builtins::get`] (so
-/// `patina.os`, `patina.hostname`, `patina.env.FOO`, … are all valid
-/// left-hand sides). Anything else returns
-/// [`ProfileError::UnsupportedPredicate`].
-fn evaluate_predicate(predicate: &str, builtins: &Builtins) -> Result<bool, ProfileError> {
-    let trimmed = predicate.trim();
-    let Some((lhs_raw, rhs_raw)) = trimmed.split_once("==") else {
-        return Err(ProfileError::UnsupportedPredicate {
-            predicate: predicate.to_owned(),
-            reason: "expected `<patina.key> == '<literal>'`",
-        });
-    };
-    let lhs = lhs_raw.trim();
-    let rhs = rhs_raw.trim();
-
-    if !lhs.starts_with("patina.") {
-        return Err(ProfileError::UnsupportedPredicate {
-            predicate: predicate.to_owned(),
-            reason: "left-hand side must be a `patina.*` built-in",
-        });
-    }
-
-    let literal = parse_string_literal(rhs).ok_or(ProfileError::UnsupportedPredicate {
-        predicate: predicate.to_owned(),
-        reason: "right-hand side must be a single- or double-quoted string literal",
-    })?;
-
-    let resolved = builtins.get(lhs).unwrap_or_default();
-    Ok(resolved == literal)
-}
-
-fn parse_string_literal(raw: &str) -> Option<String> {
-    let mut chars = raw.chars();
-    let first = chars.next()?;
-    let last = chars.next_back()?;
-    if first != last {
-        return None;
-    }
-    if first != '\'' && first != '"' {
-        return None;
-    }
-    let inner = chars.as_str();
-    // Reject embedded quotes of the same kind; this evaluator does not
-    // support escapes (`MiniJinja` in T-008 will).
-    if inner.contains(first) {
-        return None;
-    }
-    Some(inner.to_owned())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -360,6 +333,10 @@ mod tests {
             .expect("tempdir path is utf-8");
         fs_err::write(path.as_std_path(), contents).expect("write persisted profile");
         path
+    }
+
+    fn engine() -> Engine {
+        Engine::new()
     }
 
     #[test]
@@ -376,6 +353,7 @@ mod tests {
                 profile: "desktop".to_owned(),
             }],
             &builtins,
+            &engine(),
         )
         .expect("env wins");
 
@@ -389,8 +367,8 @@ mod tests {
         let persisted = write_persisted(&dir, "home\n");
         let builtins = Builtins::for_tests();
 
-        let resolution =
-            resolve(Some(String::new()), &persisted, &[], &builtins).expect("falls through");
+        let resolution = resolve(Some(String::new()), &persisted, &[], &builtins, &engine())
+            .expect("falls through");
 
         assert_eq!(resolution.name, "home");
         assert_eq!(resolution.source, ProfileSource::Persisted);
@@ -402,7 +380,8 @@ mod tests {
         let persisted = write_persisted(&dir, "  home  \n");
         let builtins = Builtins::for_tests();
 
-        let resolution = resolve(None, &persisted, &[], &builtins).expect("persisted wins");
+        let resolution =
+            resolve(None, &persisted, &[], &builtins, &engine()).expect("persisted wins");
 
         assert_eq!(resolution.name, "home");
         assert_eq!(resolution.source, ProfileSource::Persisted);
@@ -415,7 +394,8 @@ mod tests {
             Utf8PathBuf::from_path_buf(dir.path().join("profile")).expect("tempdir path is utf-8");
         let builtins = Builtins::for_tests();
 
-        let resolution = resolve(None, &persisted, &[], &builtins).expect("falls through");
+        let resolution =
+            resolve(None, &persisted, &[], &builtins, &engine()).expect("falls through");
 
         assert_eq!(resolution.name, "");
         assert_eq!(resolution.source, ProfileSource::Fallback);
@@ -427,7 +407,8 @@ mod tests {
         let persisted = write_persisted(&dir, "   \n\n");
         let builtins = Builtins::for_tests();
 
-        let resolution = resolve(None, &persisted, &[], &builtins).expect("falls through");
+        let resolution =
+            resolve(None, &persisted, &[], &builtins, &engine()).expect("falls through");
 
         assert_eq!(resolution.source, ProfileSource::Fallback);
         assert_eq!(resolution.name, "");
@@ -456,7 +437,8 @@ mod tests {
             },
         ];
 
-        let resolution = resolve(None, &persisted, &rules, &builtins).expect("auto-match");
+        let resolution =
+            resolve(None, &persisted, &rules, &builtins, &engine()).expect("auto-match");
         assert_eq!(resolution.name, "desktop");
         assert_eq!(resolution.source, ProfileSource::AutoMatch);
     }
@@ -473,64 +455,87 @@ mod tests {
             profile: "desktop".to_owned(),
         }];
 
-        let resolution = resolve(None, &persisted, &rules, &builtins).expect("fallback");
+        let resolution = resolve(None, &persisted, &rules, &builtins, &engine()).expect("fallback");
         assert_eq!(resolution.name, "");
         assert_eq!(resolution.source, ProfileSource::Fallback);
     }
 
+    /// The shared engine accepts the wider grammar the removed narrow
+    /// evaluator rejected: an `!=` predicate over a defined built-in
+    /// selects its profile rather than erroring (REQ-004 parity-plus-
+    /// wider-grammar; replaces `predicate_rejects_unsupported_shape`).
     #[test]
-    fn predicate_supports_double_quoted_literal() {
+    fn auto_match_inequality_predicate_now_selects() {
+        let dir = TempDir::new().expect("tempdir");
+        let persisted =
+            Utf8PathBuf::from_path_buf(dir.path().join("profile")).expect("tempdir path is utf-8");
         let mut builtins = Builtins::for_tests();
-        builtins.hostname = "ci-runner".to_owned();
-        assert!(evaluate_predicate("patina.hostname == \"ci-runner\"", &builtins).expect("ok"));
+        builtins.hostname = "tower".to_owned();
+
+        let rules = vec![AutoMatchRule {
+            when: "patina.hostname != 'laptop'".to_owned(),
+            profile: "desktop".to_owned(),
+        }];
+
+        let resolution =
+            resolve(None, &persisted, &rules, &builtins, &engine()).expect("!= now evaluates");
+        assert_eq!(resolution.name, "desktop");
+        assert_eq!(resolution.source, ProfileSource::AutoMatch);
     }
 
+    /// An `or` of two equalities — previously rejected by the narrow
+    /// evaluator — now evaluates and selects when either disjunct holds.
     #[test]
-    fn predicate_resolves_through_patina_env() {
-        let builtins = Builtins::for_tests();
-        // Read PATH through patina.env.PATH — always set on test hosts.
-        let path = std::env::var("PATH").unwrap_or_default();
-        let predicate = format!("patina.env.PATH == '{path}'");
-        // Skip the assert when PATH contains a `'` to keep the test
-        // hermetic against odd CI envs; the literal grammar doesn't
-        // support embedded same-kind quotes (deliberate; `MiniJinja` does).
-        if !path.contains('\'') {
-            assert!(evaluate_predicate(&predicate, &builtins).expect("ok"));
-        }
+    fn auto_match_or_predicate_now_selects() {
+        let dir = TempDir::new().expect("tempdir");
+        let persisted =
+            Utf8PathBuf::from_path_buf(dir.path().join("profile")).expect("tempdir path is utf-8");
+        let mut builtins = Builtins::for_tests();
+        builtins.hostname = "tower".to_owned();
+
+        let rules = vec![AutoMatchRule {
+            when: "patina.hostname == 'laptop' or patina.hostname == 'tower'".to_owned(),
+            profile: "desktop".to_owned(),
+        }];
+
+        let resolution =
+            resolve(None, &persisted, &rules, &builtins, &engine()).expect("or now evaluates");
+        assert_eq!(resolution.name, "desktop");
+        assert_eq!(resolution.source, ProfileSource::AutoMatch);
     }
 
+    /// A `when` that accesses `patina.profile` — unresolved during profile
+    /// resolution because it is precisely what this pass computes — is a
+    /// typed [`ProfileError::Predicate`] naming the variable, not a silent
+    /// non-match (DEC-010; replaces the narrow evaluator's reject tests
+    /// and `missing_builtin_compares_as_empty_string`).
     #[test]
-    fn predicate_rejects_unsupported_shape() {
+    fn auto_match_referencing_patina_profile_errors() {
+        let dir = TempDir::new().expect("tempdir");
+        let persisted =
+            Utf8PathBuf::from_path_buf(dir.path().join("profile")).expect("tempdir path is utf-8");
         let builtins = Builtins::for_tests();
-        let err = evaluate_predicate("patina.hostname != 'tower'", &builtins)
-            .expect_err("!= not supported");
-        assert!(matches!(err, ProfileError::UnsupportedPredicate { .. }));
-    }
 
-    #[test]
-    fn predicate_rejects_non_patina_lhs() {
-        let builtins = Builtins::for_tests();
-        let err =
-            evaluate_predicate("user_email == 'x'", &builtins).expect_err("lhs must be patina.*");
-        assert!(matches!(err, ProfileError::UnsupportedPredicate { .. }));
-    }
+        let rules = vec![AutoMatchRule {
+            when: "patina.profile == 'work'".to_owned(),
+            profile: "desktop".to_owned(),
+        }];
 
-    #[test]
-    fn predicate_rejects_unquoted_rhs() {
-        let builtins = Builtins::for_tests();
-        let err = evaluate_predicate("patina.hostname == tower", &builtins)
-            .expect_err("rhs must be quoted");
-        assert!(matches!(err, ProfileError::UnsupportedPredicate { .. }));
-    }
-
-    #[test]
-    fn missing_builtin_compares_as_empty_string() {
-        let builtins = Builtins::for_tests();
-        // patina.env.PATINA_DEFINITELY_UNSET_T007 is unset; compared
-        // against '' it should be true.
+        let err = resolve(None, &persisted, &rules, &builtins, &engine())
+            .expect_err("patina.profile is undefined during profile resolution");
+        // It is a typed predicate failure over the offending rule, and the
+        // wrapped engine error names the undefined variable so the user can
+        // fix the source (CHK-021 / DEC-010).
         assert!(
-            evaluate_predicate("patina.env.PATINA_DEFINITELY_UNSET_T007 == ''", &builtins)
-                .expect("ok")
+            matches!(&err, ProfileError::Predicate { predicate, .. } if predicate == "patina.profile == 'work'"),
+            "expected ProfileError::Predicate over the offending rule, got {err:?}"
+        );
+        let ProfileError::Predicate { source, .. } = &err else {
+            return;
+        };
+        assert!(
+            source.to_string().contains("patina.profile"),
+            "predicate error must name the undefined variable, got: {source}"
         );
     }
 

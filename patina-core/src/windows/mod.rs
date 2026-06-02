@@ -321,6 +321,7 @@ mod tests {
             mode,
             source: Utf8PathBuf::from("/repo/src"),
             targets: vec![Utf8PathBuf::from("/home/user/target")],
+            entry_index: 0,
         }
     }
 

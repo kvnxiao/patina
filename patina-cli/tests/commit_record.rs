@@ -324,6 +324,77 @@ fn status_uses_recorded_blake3_for_drift() {
     );
 }
 
+// SPEC-0004 T-002 / REQ-009 / DEC-009: a committed apply over both the
+// `[[file]]` and `[[directory]]` table-arrays records a single monotonic
+// entry-index space — every declared entry gets a distinct index, no
+// `[[file]]` and `[[directory]]` entry collide, and targets sharing a
+// declared entry share its index — while the COMMIT version envelope major
+// is unchanged (still `2`, the SPEC-0003 layout).
+#[test]
+fn directory_and_file_entries_get_distinct_indices_and_envelope_major_is_unchanged() {
+    let f = Fixture::new();
+    // Two `[[file]]` entries and one `[[directory]]` entry, all copy-mode so
+    // no symlink elevation is needed and every target records as `Content`.
+    // The directory has two leaf files, so its single declared entry fans
+    // out to two targets that must share one entry index.
+    let module = f.module(
+        "m",
+        concat!(
+            "[[file]]\nsource = \"a\"\ntarget = \"~/.a\"\nmode = \"copy\"\n",
+            "[[file]]\nsource = \"b\"\ntarget = \"~/.b\"\nmode = \"copy\"\n",
+            "[[directory]]\nsource = \"d\"\ntarget = \"~/.d\"\nmode = \"copy\"\n",
+        ),
+    );
+    fs_err::write(module.join("a"), b"alpha\n").expect("write file a");
+    fs_err::write(module.join("b"), b"bravo\n").expect("write file b");
+    let dir = module.join("d");
+    fs_err::create_dir_all(&dir).expect("mkdir dir d");
+    fs_err::write(dir.join("one"), b"one\n").expect("write leaf one");
+    fs_err::write(dir.join("two"), b"two\n").expect("write leaf two");
+
+    assert_applied(&f.apply(&["--yes"]));
+
+    let record = f.commit_record();
+
+    // The two `[[file]]` entries land first (indices 0, 1), then the single
+    // `[[directory]]` entry's two leaves share one later index.
+    let a = entry_for(&record, "/.a").entry();
+    let b = entry_for(&record, "/.b").entry();
+    let d_one = entry_for(&record, "/.d/one").entry();
+    let d_two = entry_for(&record, "/.d/two").entry();
+
+    assert_ne!(
+        a, b,
+        "the two `[[file]]` entries must have distinct indices"
+    );
+    assert_eq!(
+        d_one, d_two,
+        "the two leaves of one `[[directory]]` entry must share its single entry index"
+    );
+    assert_ne!(
+        a, d_one,
+        "a `[[file]]` and a `[[directory]]` entry must not collide on an index"
+    );
+    assert_ne!(
+        b, d_one,
+        "a `[[file]]` and a `[[directory]]` entry must not collide on an index"
+    );
+    // Files precede directories in the single monotonic space.
+    assert!(
+        a < d_one && b < d_one,
+        "every `[[file]]` entry index must precede the `[[directory]]` entry index (got files {a},{b}; dir {d_one})"
+    );
+
+    // The wire-format major is unchanged by this SPEC (DEC-009).
+    let bytes = f.commit_bytes();
+    let envelope = bytes.get(..2).expect("COMMIT file has a 2-byte envelope");
+    let major = u16::from_le_bytes([envelope[0], envelope[1]]);
+    assert_eq!(
+        major, 2,
+        "the COMMIT envelope major must stay `2` — T-002 introduces no version bump"
+    );
+}
+
 fn status_doc(out: &Output) -> serde_json::Value {
     assert_eq!(
         code(out),

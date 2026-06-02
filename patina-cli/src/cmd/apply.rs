@@ -263,10 +263,9 @@ fn json_envelope(resolved: &ResolvedPlan, result: &str) -> String {
 fn mode_label(mode: patina_core::FileMode) -> &'static str {
     use patina_core::FileMode;
     match mode {
-        FileMode::Symlink => "symlink",
-        FileMode::SymlinkDir => "symlink-dir",
-        FileMode::Copy => "copy",
-        FileMode::CopyTree => "copy-tree",
+        FileMode::Symlink | FileMode::SymlinkDir => "symlink",
+        FileMode::SymlinkTree => "symlink-tree",
+        FileMode::Copy | FileMode::CopyTree => "copy",
         FileMode::TemplateRender => "template",
     }
 }

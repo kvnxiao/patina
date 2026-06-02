@@ -54,7 +54,7 @@ fn render_operation(
     vars: &Resolver,
 ) -> Result<(), String> {
     match op.mode {
-        FileMode::Symlink | FileMode::SymlinkDir => {
+        FileMode::Symlink | FileMode::SymlinkDir | FileMode::SymlinkTree => {
             let current = current_link_target(target);
             emit(out, format_args!("symlink {target}\n"));
             emit(

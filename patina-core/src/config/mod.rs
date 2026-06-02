@@ -1,11 +1,12 @@
-//! TOML schema parsing for the `[[file]]` and `[[hook]]` table arrays
-//! declared inside a module's `patina.toml` (REQ-005 / REQ-006).
+//! TOML schema parsing for the `[[file]]`, `[[directory]]`, and
+//! `[[hook]]` table arrays declared inside a module's `patina.toml`
+//! (REQ-001 / SPEC-0001 REQ-006).
 //!
 //! This module owns parsing and validation only — the resulting
 //! [`ModuleConfig`] is consumed by later subsystems:
 //!
-//! - File mode executors (T-014) read [`FileEntry`] / [`FileMode`].
-//! - Hook execution (T-015) reads [`HookEntry`] / [`HookEvent`].
+//! - File mode executors read [`ManagedEntry`] / [`FileMode`].
+//! - Hook execution reads [`HookEntry`] / [`HookEvent`].
 //! - The variable resolver (T-006) consumes the raw `[variables]` table
 //!   preserved here so it does not need a second TOML pass.
 //!
@@ -17,18 +18,26 @@
 
 pub mod file_entry;
 pub mod hook_entry;
+pub mod root;
 pub mod writer;
 
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
+pub use file_entry::EntryKind;
 pub use file_entry::FileEntry;
 pub use file_entry::FileEntryError;
 pub use file_entry::FileMode;
+pub use file_entry::ManagedEntry;
 pub use hook_entry::HookEntry;
 pub use hook_entry::HookEntryError;
 pub use hook_entry::HookEvent;
+pub use root::RootConfig;
+pub use root::RootConfigError;
+pub use root::parse_root_config;
+pub use root::parse_root_config_str;
 use serde::Deserialize;
 pub use writer::ConfigWriteError;
+pub use writer::append_directory_entry;
 pub use writer::append_file_entry;
 pub use writer::remove_file_entry;
 pub use writer::scaffold_root_manifest;
@@ -39,8 +48,11 @@ pub use writer::scaffold_root_manifest;
 /// raw `[variables]` table preserved for T-006's resolver to ingest.
 #[derive(Debug, Clone, Default)]
 pub struct ModuleConfig {
-    /// Validated `[[file]]` entries in declaration order.
-    pub files: Vec<FileEntry>,
+    /// Validated `[[file]]`-kind entries in declaration order.
+    pub files: Vec<ManagedEntry>,
+    /// Validated `[[directory]]`-kind entries in declaration order.
+    /// Consumed by the plan loop in T-002; this task only parses them.
+    pub directories: Vec<ManagedEntry>,
     /// Validated `[[hook]]` entries in declaration order.
     pub hooks: Vec<HookEntry>,
     /// Raw `[variables]` table for T-006 to consume. `None` when
@@ -123,7 +135,12 @@ pub fn parse_module_config_str(text: &str) -> Result<ModuleConfig, ConfigParseEr
 
     let mut files = Vec::with_capacity(raw.file.len());
     for raw_file in raw.file {
-        files.push(FileEntry::from_raw(raw_file)?);
+        files.push(ManagedEntry::from_raw_file(raw_file)?);
+    }
+
+    let mut directories = Vec::with_capacity(raw.directory.len());
+    for raw_dir in raw.directory {
+        directories.push(ManagedEntry::from_raw_directory(raw_dir)?);
     }
 
     let mut hooks = Vec::with_capacity(raw.hook.len());
@@ -137,15 +154,16 @@ pub fn parse_module_config_str(text: &str) -> Result<ModuleConfig, ConfigParseEr
 
     Ok(ModuleConfig {
         files,
+        directories,
         hooks,
         variables: raw.variables,
     })
 }
 
-/// Raw TOML projection of a module manifest. The `[[file]]` and
-/// `[[hook]]` table arrays are captured as their raw forms; the
-/// `from_raw` constructors on [`FileEntry`] / [`HookEntry`] apply
-/// REQ-005 / REQ-006's validation rules.
+/// Raw TOML projection of a module manifest. The `[[file]]`,
+/// `[[directory]]`, and `[[hook]]` table arrays are captured as their raw
+/// forms; the `from_raw_*` constructors on [`ManagedEntry`] /
+/// [`HookEntry`] apply REQ-001 / SPEC-0001 REQ-006's validation rules.
 #[derive(Debug, Default, Deserialize)]
 struct RawModule {
     /// Repository-root marker; preserved so the de-serializer accepts
@@ -159,9 +177,14 @@ struct RawModule {
     variables: Option<toml::value::Table>,
 
     /// Raw `[[file]]` table-array entries; validated by
-    /// [`FileEntry::from_raw`].
+    /// [`ManagedEntry::from_raw_file`].
     #[serde(default)]
-    file: Vec<file_entry::RawFileEntry>,
+    file: Vec<file_entry::RawEntry>,
+
+    /// Raw `[[directory]]` table-array entries; validated by
+    /// [`ManagedEntry::from_raw_directory`].
+    #[serde(default)]
+    directory: Vec<file_entry::RawEntry>,
 
     /// Raw `[[hook]]` table-array entries; validated by
     /// [`HookEntry::from_raw`].

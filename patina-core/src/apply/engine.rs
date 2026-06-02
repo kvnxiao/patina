@@ -32,10 +32,13 @@ use crate::apply::hooks;
 use crate::apply::materialize;
 use crate::backups::backup_before_overwrite;
 use crate::backups::gc_retain;
+use crate::config::EntryKind;
 use crate::config::FileMode;
 use crate::config::HookEntry;
 use crate::config::HookEvent;
+use crate::config::ManagedEntry;
 use crate::config::parse_module_config;
+use crate::config::parse_root_config;
 use crate::discovery::discover_modules;
 use crate::discovery::resolve_repository_root;
 use crate::error::EngineError;
@@ -69,6 +72,7 @@ use crate::windows::HostDevModeProbe;
 use crate::windows::decide_symlink_gate;
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
+use std::collections::BTreeSet;
 use tracing::warn;
 
 /// Manifest filename for the repository root and each module.
@@ -142,6 +146,15 @@ pub struct ResolvedOperation {
     pub source: Utf8PathBuf,
     /// Canonical absolute target paths the source fans out to.
     pub targets: Vec<Utf8PathBuf>,
+    /// Index of the managed entry that produced this operation, assigned
+    /// at plan time over the full declared sequence (every `[[file]]`
+    /// entry across all modules first, then every `[[directory]]` entry)
+    /// as a single monotonic `u32` space. This index — not a re-derivation
+    /// from operation position — is what [`execute`] records on each
+    /// [`ExpectedTarget`], so a `[[file]]` and a `[[directory]]` entry can
+    /// never collide on an index and per-entry atomic rollback (REQ-019 /
+    /// DEC-009) groups targets by their declared entry.
+    pub entry_index: u32,
 }
 
 /// Everything an apply needs after planning, with no mutation performed
@@ -228,29 +241,34 @@ pub fn plan(
     request: &ApplyRequest,
     timestamp: impl Into<String>,
 ) -> Result<ResolvedPlan, EngineError> {
-    let repo_root = resolve_repository_root()?;
-    let state_dir = resolve_state_dir()?;
     let host_os = HostOs::current();
-    let builtins = Builtins::current();
+    let PlanningContext {
+        repo_root,
+        state_dir,
+        home,
+        profile,
+        mut resolver,
+        engine,
+        modules,
+    } = build_planning_context(&request.cli_overrides)?;
 
-    let root_manifest = repo_root.join(MANIFEST_FILENAME);
-    let auto_match_rules = load_auto_match_rules(&root_manifest)?;
-    let profile = resolve_profile(
-        std::env::var("PATINA_PROFILE").ok(),
-        &state_dir.join("profile"),
-        &auto_match_rules,
-        &builtins,
-    )?;
-
-    let home = Utf8PathBuf::from(builtins.home.clone());
-    let mut resolver = Resolver::new(builtins)
-        .with_profile(profile.name.clone())
-        .with_cli_overrides(request.cli_overrides.iter().cloned())?;
-
-    let modules = discover_modules(&repo_root)?;
-
-    let mut operations: Vec<PlannedOperation> = Vec::new();
-    let mut resolved_ops: Vec<ResolvedOperation> = Vec::new();
+    // Resolve every managed entry into its canonical source/targets, kept
+    // in two ordered buckets — `[[file]]` entries and `[[directory]]`
+    // entries — each in declaration order across all modules as the modules
+    // are iterated. Emitting from these buckets files-then-directories
+    // gives the single deterministic order REQ-009 mandates while a managed
+    // entry's canonicalization stays where it always was (per-module, under
+    // that module's tilde/home context).
+    //
+    // Each bucket slot is an `Option<ResolvedEntry>`: a `when`-false entry
+    // contributes `None`, so it still occupies its position in the declared
+    // sequence (and thus its `entry_index`, REQ-009) but emits no operation
+    // and no diff line (DEC-004). The `when` gate runs at the top of the
+    // per-entry body, before `resolve_entry` canonicalizes the source — so a
+    // gated-off entry whose source is absent or wrong-kind on this OS is
+    // never canonicalized or validated (REQ-009 ordering).
+    let mut file_entries: Vec<Option<ResolvedEntry>> = Vec::new();
+    let mut directory_entries: Vec<Option<ResolvedEntry>> = Vec::new();
     let mut hooks: Vec<HookEntry> = Vec::new();
 
     for module in &modules {
@@ -258,33 +276,32 @@ pub fn plan(
         let config = parse_module_config(&manifest)?;
 
         if let Some(table) = config.variables.as_ref() {
-            let layer: Vec<(String, String)> = table
-                .iter()
-                .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_owned())))
-                .collect();
-            resolver = resolver.with_per_module(layer)?;
+            resolver = resolver.with_per_module(table_to_layer(table))?;
         }
 
         for entry in &config.files {
-            let abs_source = canonicalize(&module.path.join(&entry.source))?;
-            let mut abs_targets = Vec::with_capacity(entry.targets.len());
-            for target in &entry.targets {
-                let expanded = expand_tilde(target, &home);
-                abs_targets.push(canonicalize(&expanded)?);
-            }
-
-            for target in &abs_targets {
-                operations.push(planned_operation(entry.mode, &abs_source, target));
-            }
-            resolved_ops.push(ResolvedOperation {
-                mode: entry.mode,
-                source: abs_source,
-                targets: abs_targets,
-            });
+            file_entries.push(gate_and_resolve_entry(
+                entry,
+                &module.path,
+                &home,
+                &engine,
+                &resolver,
+            )?);
+        }
+        for entry in &config.directories {
+            directory_entries.push(gate_and_resolve_entry(
+                entry,
+                &module.path,
+                &home,
+                &engine,
+                &resolver,
+            )?);
         }
 
         hooks.extend(config.hooks.iter().cloned());
     }
+
+    let (operations, resolved_ops) = assemble_plan_operations(file_entries, directory_entries);
 
     Ok(ResolvedPlan {
         repo_root,
@@ -299,11 +316,399 @@ pub fn plan(
     })
 }
 
+/// The repository, profile, variable resolver, and `when` engine shared by
+/// the two passes that must agree on which entries are active and how their
+/// `when` predicates resolve: [`plan`] (which builds the apply plan) and
+/// [`current_managed_targets`] (which recomputes the managed-target set for
+/// `patina status` and the apply-time orphan reap).
+///
+/// Everything up to — but not including — the per-module entry loop is
+/// identical between the two passes (REQ-005's repo-shared / per-profile
+/// layer pushes, the active-profile resolution, the shared `MiniJinja`
+/// engine). Factoring it here keeps the `when` gate seeing the same variable
+/// context in planning and in status, so an entry that plans on this host is
+/// the same entry status counts as managed (and the reap leaves alone).
+struct PlanningContext {
+    repo_root: Utf8PathBuf,
+    state_dir: Utf8PathBuf,
+    home: Utf8PathBuf,
+    profile: crate::profile::Resolution,
+    resolver: Resolver,
+    engine: Engine,
+    modules: Vec<crate::discovery::ModuleHandle>,
+}
+
+/// Build the [`PlanningContext`] both [`plan`] and [`current_managed_targets`]
+/// consume.
+///
+/// Resolves the repository and state directory, the active profile, and the
+/// resolver's repo-shared (`[variables]`) and active-profile
+/// (`[profiles.<name>.variables]`) layers (REQ-005). The per-module layer is
+/// *not* pushed here — each pass pushes it during its own module loop, in
+/// declaration order, so a module's `[variables]` is in scope for that
+/// module's entries' `when` predicates.
+///
+/// # Errors
+///
+/// Returns an [`EngineError`] when repository / state-directory resolution,
+/// profile resolution, root-manifest parsing, module enumeration, or a
+/// reserved-key violation in a variable layer fails.
+fn build_planning_context(
+    cli_overrides: &[(String, String)],
+) -> Result<PlanningContext, EngineError> {
+    let repo_root = resolve_repository_root()?;
+    let state_dir = resolve_state_dir()?;
+    let builtins = Builtins::current();
+
+    // The shared `MiniJinja` engine that evaluates every `when` predicate
+    // (REQ-004 / DEC-006): `[[file]]` / `[[directory]]` / `[[hook]]` and
+    // `[[auto_match]]` all route through this one instance. It is built
+    // before profile resolution because auto-match `when` predicates are
+    // evaluated through it (against a built-ins-only resolver, since the
+    // user variable layers are not yet assembled). It is cheap and
+    // clone-shares one `Arc` environment.
+    let engine = Engine::new();
+
+    let root_manifest = repo_root.join(MANIFEST_FILENAME);
+    let auto_match_rules = load_auto_match_rules(&root_manifest)?;
+    let profile = resolve_profile(
+        std::env::var("PATINA_PROFILE").ok(),
+        &state_dir.join("profile"),
+        &auto_match_rules,
+        &builtins,
+        &engine,
+    )?;
+
+    // The root manifest's repo-shared `[variables]` table and the active
+    // profile's `[profiles.<name>.variables]` table are the two layers this
+    // pass populates (REQ-005). Resolution precedence is fixed by the
+    // resolver's layer order (CLI > per-machine > per-profile > per-module >
+    // repo-shared > built-ins); pushing them here changes no precedence.
+    let root_config = parse_root_config(&root_manifest)?;
+
+    let home = Utf8PathBuf::from(builtins.home.clone());
+    let mut resolver = Resolver::new(builtins)
+        .with_profile(profile.name.clone())
+        .with_cli_overrides(cli_overrides.iter().cloned())?
+        .with_repo_shared(table_to_layer(&root_config.repo_shared))?;
+
+    // The no-profile fallback (empty profile name) selects no per-profile
+    // table; a named profile selects its table when the root declares one.
+    if let Some(table) = root_config.per_profile.get(&profile.name) {
+        resolver = resolver.with_per_profile(table_to_layer(table))?;
+    }
+
+    let modules = discover_modules(&repo_root)?;
+
+    Ok(PlanningContext {
+        repo_root,
+        state_dir,
+        home,
+        profile,
+        resolver,
+        engine,
+        modules,
+    })
+}
+
+/// Recompute the set of canonical target paths the *current* repository plan
+/// manages, keyed by [`crate::status::manage_key`] for cross-time comparison
+/// against the recorded commit (REQ-007 / REQ-003).
+///
+/// This is the `when`-aware, `symlink-tree`-aware managed set both
+/// `patina status` (to classify a dropped target ORPHANED) and the apply-time
+/// orphan reap consume. It mirrors [`plan`]'s entry walk with two
+/// differences that make it safe to run for status, where the plan would
+/// refuse:
+///
+/// - **`when` gating (REQ-003).** An entry whose `when` is false on this host
+///   contributes no managed target, so a `[[file]]` whose `when` has been
+///   edited to false has its prior target fall out of the set and classify
+///   ORPHANED (CHK-019). The gate uses the same [`Engine::eval_when`] and
+///   layered resolver as planning, so the two passes agree on which entries are
+///   active.
+/// - **`symlink-tree` leaf expansion (REQ-007).** A `symlink-tree`
+///   `[[directory]]` entry is expanded into one managed key per *live* source
+///   leaf, walked in the same `walk_files` order the executor used, so a
+///   deleted source leaf is absent from the set and its recorded target leaf
+///   classifies ORPHANED (CHK-014). Every other mode contributes its declared
+///   target(s) directly, as before.
+///
+/// Unlike [`plan`], this never canonicalizes the source or kind-checks it:
+/// status must not fail because a `when`-true entry's source is missing or
+/// wrong-shaped (that is the apply plan's job to report). A `symlink-tree`
+/// source that is missing simply yields no leaves.
+///
+/// # Errors
+///
+/// Returns an [`EngineError`] when repository discovery, profile resolution,
+/// module enumeration, manifest parsing, a reserved-key violation, or a
+/// `when` predicate evaluation fails.
+pub fn current_managed_targets() -> Result<BTreeSet<Utf8PathBuf>, EngineError> {
+    let PlanningContext {
+        home,
+        mut resolver,
+        engine,
+        modules,
+        ..
+    } = build_planning_context(&[])?;
+
+    let mut targets = BTreeSet::new();
+    for module in &modules {
+        let manifest = module.path.join(MANIFEST_FILENAME);
+        let config = parse_module_config(&manifest)?;
+
+        if let Some(table) = config.variables.as_ref() {
+            resolver = resolver.with_per_module(table_to_layer(table))?;
+        }
+
+        for entry in config.files.iter().chain(&config.directories) {
+            // `when`-false entries manage nothing this run (REQ-003): their
+            // prior targets fall out of the set and classify ORPHANED.
+            if let Some(expr) = entry.when.as_deref()
+                && !engine.eval_when(expr, &resolver)?
+            {
+                continue;
+            }
+            insert_managed_targets(entry, &module.path, &home, &mut targets);
+        }
+    }
+    Ok(targets)
+}
+
+/// Insert the managed `manage_key`(s) for one surviving (`when`-true) entry.
+///
+/// A `symlink-tree` entry expands to one key per live source leaf, mirrored
+/// under each declared target the same way the executor materializes them
+/// (`target.join(rel)`); a missing source contributes no leaves. Every other
+/// mode contributes its declared targets directly.
+fn insert_managed_targets(
+    entry: &ManagedEntry,
+    module_path: &Utf8Path,
+    home: &Utf8Path,
+    targets: &mut BTreeSet<Utf8PathBuf>,
+) {
+    use crate::status::manage_key;
+
+    if entry.mode == FileMode::SymlinkTree {
+        let source = module_path.join(&entry.source);
+        // The executor walks the live source for leaves; a source that no
+        // longer exists yields none, so every recorded leaf is then orphaned.
+        let Ok(leaves) = crate::apply::walk_files(&source) else {
+            return;
+        };
+        for target in &entry.targets {
+            let expanded = expand_tilde(target, home);
+            for rel in &leaves {
+                targets.insert(manage_key(&expanded.join(rel)));
+            }
+        }
+        return;
+    }
+
+    for target in &entry.targets {
+        let expanded = expand_tilde(target, home);
+        targets.insert(manage_key(&expanded));
+    }
+}
+
+/// Project a raw TOML variable table into the resolver's string-keyed
+/// layer form, keeping only string-valued entries.
+///
+/// The variable layers are string→string; a non-string TOML value (an
+/// array or sub-table) is not a variable binding and is dropped here, the
+/// same way the per-module ingestion has always treated its `[variables]`
+/// table. Shared by the repo-shared, per-profile, and per-module pushes in
+/// [`plan`] so the three sites agree on the projection.
+fn table_to_layer(table: &toml::value::Table) -> Vec<(String, String)> {
+    table
+        .iter()
+        .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_owned())))
+        .collect()
+}
+
+/// A managed entry with its source and targets canonicalized, held in the
+/// declared-order buckets before the single monotonic entry-index space is
+/// assigned. Kept private to [`plan`]: the public per-operation surface is
+/// [`ResolvedOperation`], which additionally carries the assigned index.
+struct ResolvedEntry {
+    /// The executor mode the entry resolves to.
+    mode: FileMode,
+    /// Canonical absolute source path.
+    source: Utf8PathBuf,
+    /// Canonical absolute target paths the source fans out to.
+    targets: Vec<Utf8PathBuf>,
+}
+
+/// Impose REQ-009's single deterministic order on the resolved entries and
+/// assign each managed entry its index over the full declared sequence.
+///
+/// Every `[[file]]` entry (in declaration order across all modules) is
+/// emitted before every `[[directory]]` entry, and each managed entry is
+/// assigned a single monotonic `u32` `entry_index` (files first, then
+/// directories). The index advances for **every** declared entry,
+/// including a `when`-false one (passed as `None`): a gated-off entry
+/// occupies its index but emits no [`PlannedOperation`] and no
+/// [`ResolvedOperation`] (REQ-009 / DEC-004). That index is carried on each
+/// [`ResolvedOperation`] so [`execute`] records the planned index rather
+/// than re-deriving one from operation position — guaranteeing no
+/// `[[file]]` and `[[directory]]` entry collide on an index and that
+/// targets sharing an entry form one atomic rollback unit (DEC-009 /
+/// REQ-019). The returned [`PlannedOperation`] vec is the per-target
+/// durable plan, parallel to the engine's existing wire format; the index
+/// lives on the resolved-op side only, so the `entry: u32` journal layout
+/// is unchanged (no version bump).
+fn assemble_plan_operations(
+    file_entries: Vec<Option<ResolvedEntry>>,
+    directory_entries: Vec<Option<ResolvedEntry>>,
+) -> (Vec<PlannedOperation>, Vec<ResolvedOperation>) {
+    let mut operations: Vec<PlannedOperation> = Vec::new();
+    let mut resolved_ops: Vec<ResolvedOperation> = Vec::new();
+    let mut entry_index: u32 = 0;
+    for slot in file_entries.into_iter().chain(directory_entries) {
+        // A `when`-false entry still consumes its index but emits nothing.
+        if let Some(resolved) = slot {
+            for target in &resolved.targets {
+                operations.push(planned_operation(resolved.mode, &resolved.source, target));
+            }
+            resolved_ops.push(ResolvedOperation {
+                mode: resolved.mode,
+                source: resolved.source,
+                targets: resolved.targets,
+                entry_index,
+            });
+        }
+        entry_index = entry_index.saturating_add(1);
+    }
+    (operations, resolved_ops)
+}
+
+/// Evaluate one managed entry's `when` predicate, then — only if it holds —
+/// canonicalize the entry's source and targets.
+///
+/// This enforces the REQ-009 per-entry order: step (1) the `when` gate runs
+/// first, so a `when`-false entry returns `Ok(None)` and is **never**
+/// canonicalized; step (2) canonicalization happens only for a surviving
+/// (`when`-true or no-`when`) entry. Returning `None` lets the caller keep
+/// the entry's slot in the declared sequence (and thus its `entry_index`)
+/// while emitting no operation or diff line (DEC-004). For a multi-target
+/// entry the gate is above the target loop, so `when` gates all targets
+/// together (REQ-003).
+///
+/// Step (3) of the REQ-009 order — the plan-time source existence-and-kind
+/// validation — runs inside [`resolve_entry`], right after the source is
+/// canonicalized, so a `when`-false entry (which returns `Ok(None)` here
+/// before `resolve_entry` is ever called) is never canonicalized or
+/// validated (REQ-002 / CHK-022).
+fn gate_and_resolve_entry(
+    entry: &ManagedEntry,
+    module_path: &Utf8Path,
+    home: &Utf8Path,
+    engine: &Engine,
+    resolver: &Resolver,
+) -> Result<Option<ResolvedEntry>, EngineError> {
+    if let Some(expr) = entry.when.as_deref()
+        && !engine.eval_when(expr, resolver)?
+    {
+        return Ok(None);
+    }
+    Ok(Some(resolve_entry(entry, module_path, home)?))
+}
+
+/// Canonicalize one managed entry's source and targets under `module_path`
+/// and `home`, then validate the canonical source's existence and kind
+/// against the entry's declared table (REQ-002, step 3 of the REQ-009
+/// order). The file/directory order and the entry-index space are imposed by
+/// the caller; this resolves paths and performs the plan-time source check.
+///
+/// # Errors
+///
+/// Returns [`EngineError::SourceNotFound`] when the canonical source does
+/// not exist on disk, and [`EngineError::SourceKindMismatch`] when a
+/// `[[file]]` entry's source is a directory or a `[[directory]]` entry's
+/// source is a file. Both are raised here, in the plan phase, before any
+/// mutation. Path canonicalization failures surface as [`EngineError::Path`].
+fn resolve_entry(
+    entry: &ManagedEntry,
+    module_path: &Utf8Path,
+    home: &Utf8Path,
+) -> Result<ResolvedEntry, EngineError> {
+    let source = canonicalize(&module_path.join(&entry.source))?;
+    validate_source_kind(&source, entry.kind)?;
+    let mut targets = Vec::with_capacity(entry.targets.len());
+    for target in &entry.targets {
+        let expanded = expand_tilde(target, home);
+        targets.push(canonicalize(&expanded)?);
+    }
+    Ok(ResolvedEntry {
+        mode: entry.mode,
+        source,
+        targets,
+    })
+}
+
+/// Validate a canonical source path against the kind declared by its
+/// table-array (REQ-002 / DEC-008).
+///
+/// `paths::canonicalize` falls back to a *lexical* resolution for a
+/// non-existent path, so a missing source does not fail at canonicalization;
+/// the existence check is therefore an explicit `symlink_metadata` probe on
+/// the canonical source rather than a reliance on canonicalization failing.
+/// The kind check (`is_dir` / `is_file`) reads the same already-fetched
+/// metadata, so this adds a single `stat`, not a second IO pass. A symlinked
+/// source resolves through the metadata follow so the *kind it points at* is
+/// what is validated — the same kind the executor will materialize.
+///
+/// # Errors
+///
+/// Returns [`EngineError::SourceNotFound`] when the source does not exist,
+/// and [`EngineError::SourceKindMismatch`] when a `[[file]]` source is a
+/// directory or a `[[directory]]` source is a file.
+fn validate_source_kind(source: &Utf8Path, kind: EntryKind) -> Result<(), EngineError> {
+    // `metadata` follows symlinks, so the kind validated is the kind the
+    // source ultimately resolves to — matching what the executor materializes.
+    let metadata = match fs_err::metadata(source) {
+        Ok(metadata) => metadata,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return Err(EngineError::SourceNotFound {
+                path: source.to_path_buf(),
+            });
+        }
+        Err(err) => {
+            return Err(EngineError::Path(crate::paths::PathError::Filesystem {
+                path: source.to_path_buf(),
+                source: err,
+            }));
+        }
+    };
+
+    match kind {
+        EntryKind::File if metadata.is_dir() => Err(EngineError::SourceKindMismatch {
+            path: source.to_path_buf(),
+            found: "directory",
+            declared_table: "[[file]]",
+            expected_table: "[[directory]]",
+        }),
+        EntryKind::Directory if !metadata.is_dir() => Err(EngineError::SourceKindMismatch {
+            path: source.to_path_buf(),
+            found: "file",
+            declared_table: "[[directory]]",
+            expected_table: "[[file]]",
+        }),
+        EntryKind::File | EntryKind::Directory => Ok(()),
+    }
+}
+
 /// Build the durable [`PlannedOperation`] for one resolved
 /// `(mode, source, target)`.
 fn planned_operation(mode: FileMode, source: &Utf8Path, target: &Utf8Path) -> PlannedOperation {
     match mode {
-        FileMode::Symlink | FileMode::SymlinkDir => {
+        // A `[[directory]]` `symlink` (the atomic whole-directory
+        // `SymlinkDir`) maps to the same durable symlink op shape as a
+        // `[[file]]` `symlink`. `SymlinkTree` is the clearly-marked
+        // dispatch point T-007's per-leaf executor fills in; until then it
+        // shares the symlink op shape so the plan is well-formed.
+        FileMode::Symlink | FileMode::SymlinkDir | FileMode::SymlinkTree => {
             PlannedOperation::symlink(source.as_str(), target.as_str())
         }
         FileMode::Copy | FileMode::CopyTree => {
@@ -337,6 +742,16 @@ pub async fn execute(
     let journal_dir = resolved.journal_dir();
     let backups_dir = resolved.backups_dir();
     let template_engine = Engine::new();
+
+    // Whether this run reaps targets a prior apply committed that the current
+    // plan no longer manages (REQ-007 / REQ-003). A full `apply` (`Blocking`)
+    // and a watcher re-apply (`NonBlocking`) reconcile the whole plan, so they
+    // reap. The `Held` path is a surgical single-target re-journal driven by
+    // `patina remove` / `patina promote` under a caller-held lock: those
+    // commands intentionally convert one managed target into an owned regular
+    // file and drop its entry, so reaping would delete the very file they just
+    // promoted — they must not reap.
+    let reap = !matches!(policy, LockPolicy::Held(_));
 
     // Resolve the exclusive lock per policy BEFORE any filesystem
     // mutation, including orphan recovery. On the `NonBlocking`
@@ -418,8 +833,13 @@ pub async fn execute(
     // rollback units (REQ-019).
     let mut completed: Vec<(u32, CompletionRecord)> = Vec::new();
     let mut op_index: u32 = 0;
-    for (entry_index, op) in resolved.operations.iter().enumerate() {
-        let entry_index = u32::try_from(entry_index).unwrap_or(u32::MAX);
+    for op in &resolved.operations {
+        // Use the entry index assigned at plan time over the full declared
+        // sequence (files then directories) rather than re-deriving one from
+        // operation position, so a `[[file]]` and a `[[directory]]` entry can
+        // never collide on an index and rollback groups targets by their
+        // declared entry (DEC-009).
+        let entry_index = op.entry_index;
         for target in &op.targets {
             backup_before_overwrite(&backups_dir, &resolved.timestamp, target)?;
         }
@@ -456,6 +876,18 @@ pub async fn execute(
             failed_hook: failed,
         })
     } else {
+        // Reap targets a prior apply committed that the current plan no
+        // longer manages — a removed entry, a `when` flipped to false
+        // (REQ-003), or a deleted `symlink-tree` source leaf (REQ-007). Each
+        // orphan's prior bytes are backed up into this run's backup tree
+        // before it is removed (REQ-014); a directory is never removed
+        // (DEC-005). Runs after the post_apply hooks succeed, so a hook
+        // failure rolls back the materializations without having reaped.
+        // Skipped on the `Held` path (`patina remove` / `promote`), which
+        // re-journals one surgically-modified target and must not reap.
+        if reap {
+            reap_orphans(resolved, &backups_dir)?;
+        }
         let record = build_apply_record(resolved, &completed)?;
         journal.commit(&record, &OsSyncer)?;
         // Retention prunes the oldest backup cycles, then the journal
@@ -518,6 +950,68 @@ fn build_apply_record(
         }
     }
     Ok(ApplyRecord::new(last_apply, targets))
+}
+
+/// Reap targets a prior committed apply materialized that the current plan
+/// no longer manages (REQ-007 / REQ-003).
+///
+/// Reads the last committed [`ApplyRecord`] and the current managed-target
+/// set ([`current_managed_targets`], the same `when`-aware /
+/// `symlink-tree`-aware set `patina status` classifies against). A recorded
+/// target whose [`manage_key`](crate::status::manage_key) is absent from the
+/// current set is an orphan: the entry was removed, its `when` flipped false
+/// (CHK-019), or — for a `symlink-tree` leaf — its source leaf was deleted
+/// (CHK-014, CHK-015). Each orphan still present on disk is backed up into
+/// this run's backup tree — the same never-overwrite-without-backup
+/// guarantee every mutating path upholds (REQ-014) — and then removed.
+///
+/// A directory is never removed, even one left empty after its last leaf
+/// link is reaped: Patina cannot prove it owns a directory that may also
+/// hold files written outside Patina (DEC-005). The check is on the live
+/// entry's kind, so an intermediate `symlink-tree` directory survives while
+/// its orphaned leaf links are removed.
+///
+/// # Errors
+///
+/// Returns an [`EngineError`] when the commit read, the managed-set
+/// recomputation, a backup, or a removal fails.
+fn reap_orphans(resolved: &ResolvedPlan, backups_dir: &Utf8Path) -> Result<(), EngineError> {
+    use crate::status::manage_key;
+
+    let journal_dir = resolved.journal_dir();
+    let Some(record) = crate::journal::read_latest_commit(&journal_dir)? else {
+        // No prior committed apply: nothing was ever materialized to orphan.
+        return Ok(());
+    };
+
+    let managed = current_managed_targets()?;
+
+    for expected in &record.targets {
+        let target = Utf8PathBuf::from(expected.target());
+        if managed.contains(&manage_key(&target)) {
+            // Still managed by the current plan: leave it for materialize /
+            // status to handle. Never reaped.
+            continue;
+        }
+        // The current plan dropped this target. Only act on one that is still
+        // on disk; an already-gone orphan needs no work.
+        let Ok(meta) = fs_err::symlink_metadata(&target) else {
+            continue;
+        };
+        // Never remove a directory (DEC-005): Patina cannot prove it owns a
+        // directory that may also hold files written by another tool. This
+        // is the guard that keeps a `symlink-tree` intermediate directory in
+        // place while its orphaned leaf links are reaped.
+        if meta.is_dir() {
+            continue;
+        }
+        // Record the prior bytes in a backup before removal (CHK-019 /
+        // REQ-014). The stash uses this run's timestamped backup tree, the
+        // same one materialize stashes overwrites into.
+        backup_before_overwrite(backups_dir, &resolved.timestamp, &target)?;
+        remove_target(&target)?;
+    }
+    Ok(())
 }
 
 /// Run every hook whose event matches `event`, returning the command of
@@ -655,6 +1149,241 @@ mod tests {
     use tempfile::TempDir;
 
     const TS: &str = "20260530T120000Z";
+
+    /// Build a synthetic resolved entry with the given mode, a distinct
+    /// source tag, and one target per `target_tag`. Lets the ordering /
+    /// index tests assert over identifiable paths without touching the
+    /// filesystem or repo discovery.
+    fn resolved_entry(mode: FileMode, source_tag: &str, target_tags: &[&str]) -> ResolvedEntry {
+        ResolvedEntry {
+            mode,
+            source: Utf8PathBuf::from(format!("/repo/{source_tag}")),
+            targets: target_tags
+                .iter()
+                .map(|t| Utf8PathBuf::from(format!("/home/{t}")))
+                .collect(),
+        }
+    }
+
+    // REQ-009 / DEC-009 ordering: with two `[[file]]` entries and one
+    // `[[directory]]` entry, both file operations are emitted before the
+    // directory operation, each block in declaration order. The directory
+    // entry is the `[[directory]]` `symlink` default (atomic `SymlinkDir`).
+    #[test]
+    fn files_are_planned_before_directories_in_declaration_order() {
+        let files = vec![
+            Some(resolved_entry(FileMode::Symlink, "f0", &["f0.target"])),
+            Some(resolved_entry(FileMode::Copy, "f1", &["f1.target"])),
+        ];
+        let directories = vec![Some(resolved_entry(
+            FileMode::SymlinkDir,
+            "d0",
+            &["d0.target"],
+        ))];
+
+        let (operations, _resolved) = assemble_plan_operations(files, directories);
+
+        // Three single-target entries → three operations, in files-then-
+        // directories declared order.
+        let sources: Vec<&str> = operations
+            .iter()
+            .map(|op| match op {
+                PlannedOperation::Symlink { source, .. }
+                | PlannedOperation::Copy { source, .. }
+                | PlannedOperation::Render { source, .. } => source.as_str(),
+            })
+            .collect();
+        assert_eq!(
+            sources,
+            vec!["/repo/f0", "/repo/f1", "/repo/d0"],
+            "both `[[file]]` operations must precede the `[[directory]]` operation, each in declaration order"
+        );
+    }
+
+    // REQ-009 / DEC-009 index space: entry indices form a single monotonic
+    // sequence across both tables (all `[[file]]` entries, then all
+    // `[[directory]]` entries), and no `[[file]]` and `[[directory]]` entry
+    // share an index.
+    #[test]
+    fn entry_indices_are_a_single_monotonic_space_across_both_tables() {
+        let files = vec![
+            Some(resolved_entry(FileMode::Symlink, "f0", &["f0a", "f0b"])),
+            Some(resolved_entry(FileMode::Copy, "f1", &["f1.target"])),
+        ];
+        let directories = vec![
+            Some(resolved_entry(FileMode::SymlinkDir, "d0", &["d0.target"])),
+            Some(resolved_entry(FileMode::CopyTree, "d1", &["d1.target"])),
+        ];
+
+        let (_operations, resolved) = assemble_plan_operations(files, directories);
+
+        // One resolved op per managed entry (target fan-out lives inside the
+        // op), indexed 0..N over the declared file-then-directory sequence.
+        let indices: Vec<u32> = resolved.iter().map(|op| op.entry_index).collect();
+        assert_eq!(
+            indices,
+            vec![0, 1, 2, 3],
+            "indices must be a gapless monotonic 0..N over files-then-directories"
+        );
+
+        // The two file entries own indices 0,1; the two directory entries own
+        // 2,3 — disjoint, so no file/directory entry collides on an index.
+        let file_indices: Vec<u32> = resolved
+            .iter()
+            .filter(|op| matches!(op.mode, FileMode::Symlink | FileMode::Copy))
+            .map(|op| op.entry_index)
+            .collect();
+        let dir_indices: Vec<u32> = resolved
+            .iter()
+            .filter(|op| matches!(op.mode, FileMode::SymlinkDir | FileMode::CopyTree))
+            .map(|op| op.entry_index)
+            .collect();
+        assert_eq!(file_indices, vec![0, 1]);
+        assert_eq!(dir_indices, vec![2, 3]);
+        assert!(
+            file_indices.iter().all(|fi| !dir_indices.contains(fi)),
+            "no `[[file]]` and `[[directory]]` entry may share an entry index"
+        );
+    }
+
+    // REQ-009 / DEC-004: a `when`-false entry (a `None` slot) occupies its
+    // index in the declared sequence but emits no operation and no resolved
+    // op, so the surviving entries keep the indices they would have had if
+    // the gated-off entry were present-but-empty rather than compacted away.
+    #[test]
+    fn when_false_entry_occupies_its_index_but_emits_no_operation() {
+        // Declared file sequence: f0 (survives), f1 (when-false → None),
+        // f2 (survives). One surviving directory entry d0.
+        let files = vec![
+            Some(resolved_entry(FileMode::Symlink, "f0", &["f0.target"])),
+            None,
+            Some(resolved_entry(FileMode::Copy, "f2", &["f2.target"])),
+        ];
+        let directories = vec![Some(resolved_entry(
+            FileMode::SymlinkDir,
+            "d0",
+            &["d0.target"],
+        ))];
+
+        let (operations, resolved) = assemble_plan_operations(files, directories);
+
+        // The gated-off f1 contributes no operation: only f0, f2, d0 plan.
+        let sources: Vec<&str> = operations
+            .iter()
+            .map(|op| match op {
+                PlannedOperation::Symlink { source, .. }
+                | PlannedOperation::Copy { source, .. }
+                | PlannedOperation::Render { source, .. } => source.as_str(),
+            })
+            .collect();
+        assert_eq!(
+            sources,
+            vec!["/repo/f0", "/repo/f2", "/repo/d0"],
+            "a `when`-false entry must emit no planned operation"
+        );
+
+        // f1 still consumed index 1, so f2 keeps index 2 and d0 keeps index 3
+        // — the indices are not compacted to fill the gap.
+        let indices: Vec<u32> = resolved.iter().map(|op| op.entry_index).collect();
+        assert_eq!(
+            indices,
+            vec![0, 2, 3],
+            "the gated-off entry occupies index 1, leaving a gap rather than \
+             renumbering the survivors"
+        );
+    }
+
+    /// REQ-002: a `[[file]]` entry whose canonical source is a directory is
+    /// a plan-time kind mismatch directing the author to `[[directory]]`. The
+    /// error names the source path and both tables so the message is
+    /// actionable.
+    #[test]
+    fn file_entry_with_directory_source_is_a_kind_mismatch() {
+        let temp = TempDir::new().expect("tempdir");
+        let root = Utf8Path::from_path(temp.path()).expect("utf8 temp path");
+        let dir_source = root.join("confdir");
+        fs_err::create_dir(&dir_source).expect("mkdir source");
+
+        let err = validate_source_kind(&dir_source, EntryKind::File)
+            .expect_err("a directory source under `[[file]]` must be rejected");
+
+        assert!(
+            matches!(
+                &err,
+                EngineError::SourceKindMismatch {
+                    path,
+                    found: "directory",
+                    declared_table: "[[file]]",
+                    expected_table: "[[directory]]",
+                } if *path == dir_source
+            ),
+            "a `[[file]]` directory source must yield a mismatch naming the source, \
+             `directory`, `[[file]]`, and `[[directory]]`, got: {err:?}"
+        );
+    }
+
+    /// REQ-002 (symmetric): a `[[directory]]` entry whose canonical source is
+    /// a regular file is a kind mismatch directing the author to `[[file]]`.
+    #[test]
+    fn directory_entry_with_file_source_is_a_kind_mismatch() {
+        let temp = TempDir::new().expect("tempdir");
+        let root = Utf8Path::from_path(temp.path()).expect("utf8 temp path");
+        let file_source = root.join("gitconfig");
+        fs_err::write(&file_source, "[user]\n").expect("write source");
+
+        let err = validate_source_kind(&file_source, EntryKind::Directory)
+            .expect_err("a file source under `[[directory]]` must be rejected");
+
+        assert!(
+            matches!(
+                &err,
+                EngineError::SourceKindMismatch {
+                    path,
+                    found: "file",
+                    declared_table: "[[directory]]",
+                    expected_table: "[[file]]",
+                } if *path == file_source
+            ),
+            "a `[[directory]]` file source must yield a mismatch naming the source, \
+             `file`, `[[directory]]`, and `[[file]]`, got: {err:?}"
+        );
+    }
+
+    /// REQ-002: a source that does not exist on disk is a "source not found"
+    /// error, not a kind mismatch. `paths::canonicalize` resolves a missing
+    /// path lexically, so the existence check is this explicit probe.
+    #[test]
+    fn absent_source_is_source_not_found() {
+        let temp = TempDir::new().expect("tempdir");
+        let root = Utf8Path::from_path(temp.path()).expect("utf8 temp path");
+        let ghost = root.join("ghost");
+
+        let err = validate_source_kind(&ghost, EntryKind::File)
+            .expect_err("an absent source must be rejected");
+
+        assert!(
+            matches!(&err, EngineError::SourceNotFound { path } if *path == ghost),
+            "an absent source must yield SourceNotFound naming the source, got: {err:?}"
+        );
+    }
+
+    /// REQ-002: a `[[file]]` source that is a file and a `[[directory]]`
+    /// source that is a directory both validate cleanly — the matched-kind
+    /// path raises no error.
+    #[test]
+    fn matching_kinds_validate_cleanly() {
+        let temp = TempDir::new().expect("tempdir");
+        let root = Utf8Path::from_path(temp.path()).expect("utf8 temp path");
+        let file_source = root.join("zshrc");
+        fs_err::write(&file_source, "export EDITOR=vim\n").expect("write file source");
+        let dir_source = root.join("mpv");
+        fs_err::create_dir(&dir_source).expect("mkdir dir source");
+
+        validate_source_kind(&file_source, EntryKind::File)
+            .expect("a file source under `[[file]]` validates");
+        validate_source_kind(&dir_source, EntryKind::Directory)
+            .expect("a directory source under `[[directory]]` validates");
+    }
 
     /// A tempdir state directory plus a minimal empty-operation plan that
     /// resolves its journal / backups / lock under that directory.
@@ -858,5 +1587,89 @@ mod tests {
         );
 
         drop(held);
+    }
+
+    /// A `symlink-tree` entry expands to one managed key per *live* source
+    /// leaf, mirrored under the declared target the same way the executor
+    /// materializes them — so a source leaf that no longer exists contributes
+    /// no key and its recorded target leaf will classify ORPHANED (CHK-014).
+    #[test]
+    fn insert_managed_targets_expands_symlink_tree_per_live_leaf() {
+        use crate::status::manage_key;
+
+        let td = TempDir::new().expect("tempdir");
+        let root = Utf8PathBuf::from_path_buf(td.path().to_path_buf()).expect("utf8 temp path");
+        // The module's source directory `d/` holds `a.conf` and `sub/b.conf`.
+        let module = root.join("mod");
+        let source = module.join("d");
+        fs_err::create_dir_all(source.join("sub")).expect("mkdir sub");
+        fs_err::write(source.join("a.conf"), b"a").expect("write a");
+        fs_err::write(source.join("sub").join("b.conf"), b"b").expect("write b");
+        // The target lives under the tempdir (real, canonicalizable parent).
+        let target = root.join("dest");
+        fs_err::create_dir_all(&target).expect("mkdir target");
+
+        let entry = ManagedEntry {
+            kind: EntryKind::Directory,
+            mode: FileMode::SymlinkTree,
+            source: Utf8PathBuf::from("d"),
+            targets: vec![target.clone()],
+            when: None,
+        };
+
+        let mut got = BTreeSet::new();
+        insert_managed_targets(&entry, &module, &root, &mut got);
+
+        let expected: BTreeSet<Utf8PathBuf> = [
+            manage_key(&target.join("a.conf")),
+            manage_key(&target.join("sub").join("b.conf")),
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(
+            got, expected,
+            "a symlink-tree entry must contribute exactly one key per live leaf"
+        );
+
+        // Delete a source leaf: it drops out of the managed set, so its
+        // recorded target leaf would now classify ORPHANED.
+        fs_err::remove_file(source.join("sub").join("b.conf")).expect("delete leaf");
+        let mut after = BTreeSet::new();
+        insert_managed_targets(&entry, &module, &root, &mut after);
+        assert_eq!(
+            after,
+            [manage_key(&target.join("a.conf"))].into_iter().collect(),
+            "a deleted source leaf must no longer be a managed target"
+        );
+    }
+
+    /// A non-`symlink-tree` entry contributes its declared target(s)
+    /// directly, with no source walk — the prior behaviour for `[[file]]`
+    /// symlink/copy/template and atomic `[[directory]]` symlink entries.
+    #[test]
+    fn insert_managed_targets_inserts_declared_targets_for_non_tree_modes() {
+        use crate::status::manage_key;
+
+        let td = TempDir::new().expect("tempdir");
+        let root = Utf8PathBuf::from_path_buf(td.path().to_path_buf()).expect("utf8 temp path");
+        let module = root.join("mod");
+        fs_err::create_dir_all(&module).expect("mkdir module");
+        let t1 = root.join("a");
+        let t2 = root.join("b");
+
+        let entry = ManagedEntry {
+            kind: EntryKind::File,
+            mode: FileMode::Symlink,
+            source: Utf8PathBuf::from("zshrc"),
+            targets: vec![t1.clone(), t2.clone()],
+            when: None,
+        };
+
+        let mut got = BTreeSet::new();
+        insert_managed_targets(&entry, &module, &root, &mut got);
+
+        let expected: BTreeSet<Utf8PathBuf> =
+            [manage_key(&t1), manage_key(&t2)].into_iter().collect();
+        assert_eq!(got, expected);
     }
 }
