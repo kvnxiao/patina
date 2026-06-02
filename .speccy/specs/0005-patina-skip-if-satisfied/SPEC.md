@@ -646,6 +646,42 @@ classifier-local mtime/size pre-filter over a cross-component cache dependency �
 post-v1.0 follow-up, not this slice.
 </decision>
 
+<decision id="DEC-007">
+Tree modes (`copy-tree`, `symlink-tree`) carry disposition at two granularities,
+not one. The durable `PlannedOperation` keeps **one op per declared tree target**
+(the existing whole-directory shape, `engine.rs` `assemble_plan_operations` /
+`planned_operation`) carrying an **aggregate** disposition: Unchanged iff every
+materialized leaf is Unchanged, otherwise Update (a present tree with any drifted
+or new leaf) or Create (an absent target). Per-leaf disposition is computed at plan
+time, carried in-memory on `ResolvedOperation` for the execute write-skip and the
+per-leaf diff/`--json` reporting, and recorded **per leaf** on the commit
+`ExpectedTarget` (already per-leaf) for status and rollback fidelity.
+
+Execute consequences: a tree op whose aggregate is Unchanged is skipped entirely
+(no backup, no write). A tree op with any drifted leaf is **backed up as a whole
+directory** — today's `backup_before_overwrite(<dir>)` model, which `clone_entry`
+captures recursively and which populates each leaf's mirror path — and then only
+its drifted leaves are (re)written; clean leaves are not rewritten, so their
+inode/mtime is preserved (the churn-removal goal of DEC-002, "one drifted leaf
+yields one write"). Recovery (REQ-005) reads the per-op aggregate from the fsync'd
+plan and reverses whole-directory for trees (whole-tree backup → restore;
+aggregate Unchanged → leave; aggregate Create with no backup → delete), so recovery
+needs no per-leaf plan entries and stays crash-safe by construction. Rollback
+(REQ-006) reads the per-leaf commit dispositions: Unchanged leaves are left, Update
+leaves are restored from the whole-tree backup at their mirror path, Create leaves
+are deleted.
+
+Trade-off accepted: a partially-drifted tree still writes a whole-tree backup, so
+clean leaves' prior bytes are captured in that backup. REQ-003's leaf-granular
+"no backup for an Unchanged target" therefore holds exactly for single-target
+entries and per-tree for tree modes (a fully-clean tree takes no backup at all).
+Rejected: a fully per-leaf durable plan (one `PlannedOperation` per leaf with
+per-leaf backup and per-leaf recovery) — it is the wire-format and recovery
+restructure DEC-002 explicitly rules out, buys no scenario-tested behavior (no
+`<scenario>` exercises tree-leaf-level backup, recovery, or rollback), and trades
+the proven whole-directory reversal model for a larger correctness surface.
+</decision>
+
 ## Notes
 
 Rejected framings considered during brainstorm:
@@ -683,4 +719,5 @@ None — all framing questions were resolved before decomposition (see Decisions
 | --- | --- | --- |
 | 2026-06-02 | kevin-xiao | Initial SPEC: Create/Update/Unchanged classification, skip-if-satisfied execute, durable disposition for rollback/recovery fidelity, no-op short-circuit, diff/`--json` state, `FILE_MAJOR_VERSION` reset to 1. |
 | 2026-06-02 | kevin-xiao | Resolved open question a → DEC-006: classification reads live state, no watch drift-cache reuse. |
+| 2026-06-02 | kevin-xiao | Added DEC-007 (decompose): tree-mode disposition is per-op aggregate on the durable plan + per-leaf on the commit record; per-leaf write-skip with whole-tree backup/recovery. |
 </changelog>
