@@ -12,8 +12,8 @@
 //! declared). T-021 builds its byte-identical-stdout property on this.
 
 use camino::Utf8Path;
+use patina_core::Disposition;
 use patina_core::FileMode;
-use patina_core::ResolvedOperation;
 use patina_core::ResolvedPlan;
 use patina_core::Resolver;
 use patina_core::TemplateEngine;
@@ -37,23 +37,60 @@ pub fn render(resolved: &ResolvedPlan) -> Result<String, String> {
     let engine = TemplateEngine::new();
     let vars = &resolved.resolver;
 
+    // REQ-010 / DEC-003: only `Create` and `Update` targets render a
+    // per-entry block; `Unchanged` targets are summarized by a single count
+    // line below. For tree modes the count is over materialized leaves
+    // (DEC-007): a drifted tree renders blocks for its drifted leaves and
+    // contributes its clean leaves to `unchanged`.
+    let mut unchanged = 0usize;
     for op in &resolved.operations {
-        for target in &op.targets {
-            render_operation(&mut out, op, target, &engine, vars)?;
+        for (target, disposition) in op.targets.iter().zip(&op.dispositions) {
+            if disposition.leaves.is_empty() {
+                // Single-target mode: one disposition for the whole target.
+                if disposition.aggregate == Disposition::Unchanged {
+                    unchanged += 1;
+                } else {
+                    render_leaf(&mut out, op.mode, &op.source, target, &engine, vars)?;
+                }
+            } else {
+                // Tree mode: route per materialized leaf so a single drifted
+                // leaf does not pull its clean siblings into the diff body.
+                for leaf in &disposition.leaves {
+                    if leaf.disposition == Disposition::Unchanged {
+                        unchanged += 1;
+                    } else {
+                        let leaf_source = op.source.join(&leaf.relative);
+                        let leaf_target = target.join(&leaf.relative);
+                        render_leaf(&mut out, op.mode, &leaf_source, &leaf_target, &engine, vars)?;
+                    }
+                }
+            }
         }
+    }
+
+    // Exactly one deterministic summary line for the Unchanged count
+    // (REQ-010). Omitted when nothing is unchanged so a fully-changing plan's
+    // body is unchanged from prior behaviour.
+    if unchanged > 0 {
+        let noun = if unchanged == 1 { "entry" } else { "entries" };
+        emit(&mut out, format_args!("{unchanged} unchanged {noun}.\n"));
     }
     Ok(out)
 }
 
-/// Render one `(operation, target)` pair into `out`.
-fn render_operation(
+/// Render one block for a `(mode, source, target)` triple into `out`. Shared
+/// by the single-target path and the tree-mode per-leaf path so a drifted
+/// leaf renders the same block shape as a single-target entry of the same
+/// mode.
+fn render_leaf(
     out: &mut String,
-    op: &ResolvedOperation,
+    mode: FileMode,
+    source: &Utf8Path,
     target: &Utf8Path,
     engine: &TemplateEngine,
     vars: &Resolver,
 ) -> Result<(), String> {
-    match op.mode {
+    match mode {
         FileMode::Symlink | FileMode::SymlinkDir | FileMode::SymlinkTree => {
             let current = current_link_target(target);
             emit(out, format_args!("symlink {target}\n"));
@@ -61,18 +98,18 @@ fn render_operation(
                 out,
                 format_args!("  - {}\n", current.as_deref().unwrap_or("(absent)")),
             );
-            emit(out, format_args!("  + {}\n", op.source));
+            emit(out, format_args!("  + {source}\n"));
         }
         FileMode::Copy | FileMode::CopyTree => {
-            let new_content = fs_err::read_to_string(&op.source).unwrap_or_default();
+            let new_content = fs_err::read_to_string(source).unwrap_or_default();
             content_diff(out, "copy", target, &new_content);
         }
         FileMode::TemplateRender => {
-            let body = fs_err::read_to_string(&op.source)
-                .map_err(|e| format!("failed to read template {}: {e}", op.source))?;
+            let body = fs_err::read_to_string(source)
+                .map_err(|e| format!("failed to read template {source}: {e}"))?;
             let rendered = engine
                 .render(&body, vars)
-                .map_err(|e| format!("failed to render template {}: {e}", op.source))?;
+                .map_err(|e| format!("failed to render template {source}: {e}"))?;
             content_diff(out, "render", target, &rendered);
         }
     }

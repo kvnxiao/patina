@@ -37,6 +37,7 @@ use patina_core::current_timestamp;
 use patina_core::decide_symlink_gate;
 use patina_core::execute_plan;
 use patina_core::plan_apply;
+use patina_core::plan_is_full_noop;
 
 /// Whether the invoking process is attached to an interactive terminal.
 /// Injected so the TTY decision is unit-testable without a real tty.
@@ -91,26 +92,25 @@ pub async fn run(
         return run_json(&resolved, &request, args.yes, reporter).await;
     }
 
-    // Human path: render the diff first, then decide whether to mutate.
-    let rendered = render_diff(&resolved, args.pager, reporter)?;
-    reporter.diff(&rendered);
+    // Full no-op probe (REQ-009): a fully-satisfied repo with nothing to reap
+    // shows no diff and no confirmation prompt, and reads no stdin. The engine
+    // re-checks this under the held lock; this probe only governs the
+    // prompt-skip. `execute_plan` then writes nothing (REQ-007) and reports
+    // the deterministic up-to-date line (REQ-008).
+    let is_full_noop =
+        plan_is_full_noop(&resolved).context("failed to determine apply plan state")?;
 
-    let should_apply = match (args.yes, tty) {
-        (true, _) => true,
-        (false, Tty::NonInteractive) => {
-            // Non-TTY without --yes: preview only, exit 0 (CHK-028).
-            return Ok(ExitCode::Success.code());
-        }
-        (false, Tty::Interactive) => {
-            reporter.prompt("Apply? [y/N] ");
-            let answer = reader.read_line().unwrap_or_default();
-            matches!(answer.trim(), "y" | "Y")
-        }
-    };
+    // The diff render and prompt belong to the human review path only; a full
+    // no-op skips both and proceeds straight to the (no-op) execute below.
+    if !is_full_noop {
+        let rendered = render_diff(&resolved, args.pager, reporter)?;
+        reporter.diff(&rendered);
+    }
 
-    if !should_apply {
-        // User declined the prompt.
-        return Ok(ExitCode::UserDeclined.code());
+    match confirm_apply(is_full_noop, args.yes, tty, reader, reporter) {
+        Confirmation::Proceed => {}
+        Confirmation::PreviewOnly => return Ok(ExitCode::Success.code()),
+        Confirmation::Declined => return Ok(ExitCode::UserDeclined.code()),
     }
 
     // Windows-only Developer Mode gate (REQ-007): if the plan creates
@@ -126,6 +126,55 @@ pub async fn run(
         .context("apply execution failed")?;
     report_result(&result, reporter);
     Ok(exit_code_for(&result))
+}
+
+/// The confirmation decision for the human apply path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Confirmation {
+    /// Mutate: `--yes`, an interactive `y`, or a full no-op (which writes
+    /// nothing regardless).
+    Proceed,
+    /// Non-TTY without `--yes`: the diff was previewed; exit 0 with no writes.
+    PreviewOnly,
+    /// Interactive prompt answered with anything other than `y`/`Y`.
+    Declined,
+}
+
+/// Decide whether to proceed with the apply, prompting the user only on the
+/// interactive review path (REQ-009).
+///
+/// A full no-op (`is_full_noop`) proceeds **without** touching the reporter's
+/// prompt or reading a line from `reader`: the short-circuit precedes the
+/// diff-and-prompt branch, so a fully-satisfied repo is never asked to
+/// confirm and `execute_plan` then writes nothing. This is the core REQ-009
+/// observable — the interactive-TTY prompt-skip — and is exercised directly
+/// by the unit tests below with a recording reader that counts stdin reads.
+fn confirm_apply(
+    is_full_noop: bool,
+    yes: bool,
+    tty: Tty,
+    reader: &mut impl PromptReader,
+    reporter: &mut impl Reporter,
+) -> Confirmation {
+    if is_full_noop {
+        // No diff, no prompt, no stdin read: the no-op writes nothing whether
+        // or not the user would have confirmed (REQ-009).
+        return Confirmation::Proceed;
+    }
+    match (yes, tty) {
+        (true, _) => Confirmation::Proceed,
+        // Non-TTY without --yes: preview only, exit 0 (CHK-028).
+        (false, Tty::NonInteractive) => Confirmation::PreviewOnly,
+        (false, Tty::Interactive) => {
+            reporter.prompt("Apply? [y/N] ");
+            let answer = reader.read_line().unwrap_or_default();
+            if matches!(answer.trim(), "y" | "Y") {
+                Confirmation::Proceed
+            } else {
+                Confirmation::Declined
+            }
+        }
+    }
 }
 
 /// Drive the Windows Developer Mode symlink-elevation gate (REQ-007).
@@ -236,18 +285,26 @@ async fn run_json(
 }
 
 /// Build the `--json` envelope: `repo_root`, `profile`, `plan`, `result`.
+///
+/// Each plan row carries a `state` field whose value is the target's
+/// [`Disposition`](patina_core::Disposition) label (`create` / `update` /
+/// `unchanged`), derived purely from the plan-time classification and reusing
+/// the canonical [`Disposition::label`](patina_core::Disposition::label)
+/// mapping (REQ-011). For tree modes the array lists
+/// per-leaf rows with per-leaf `state` (DEC-003 / DEC-007), mirroring the
+/// per-leaf routing the human diff uses, so a drifted tree reports each leaf's
+/// own state rather than the per-op aggregate. The `state` field is a pure
+/// function of the disposition, so it inherits the deterministic-stdout
+/// contract (REQ-012).
 fn json_envelope(resolved: &ResolvedPlan, result: &str) -> String {
     let plan: Vec<serde_json::Value> = resolved
         .operations
         .iter()
         .flat_map(|op| {
-            op.targets.iter().map(move |target| {
-                serde_json::json!({
-                    "mode": mode_label(op.mode),
-                    "source": op.source.as_str(),
-                    "target": target.as_str(),
-                })
-            })
+            op.targets
+                .iter()
+                .zip(&op.dispositions)
+                .flat_map(move |(target, disposition)| plan_rows(op, target, disposition))
         })
         .collect();
     let envelope = serde_json::json!({
@@ -257,6 +314,45 @@ fn json_envelope(resolved: &ResolvedPlan, result: &str) -> String {
         "result": result,
     });
     serde_json::to_string_pretty(&envelope).unwrap_or_else(|_| "{}".to_owned())
+}
+
+/// The plan rows one `(operation, target)` pair contributes to the `--json`
+/// plan array.
+///
+/// A single-target mode (empty `leaves`) yields one row carrying the target's
+/// own disposition label. A tree mode yields one row per materialized leaf,
+/// each carrying that leaf's path (under the declared target) and its per-leaf
+/// disposition label (DEC-003 / DEC-007) — the same per-leaf routing the human
+/// diff renderer uses, so the two surfaces agree on what an entry expands to.
+fn plan_rows(
+    op: &patina_core::ResolvedOperation,
+    target: &camino::Utf8Path,
+    disposition: &patina_core::TargetDisposition,
+) -> Vec<serde_json::Value> {
+    if disposition.leaves.is_empty() {
+        // Single-target mode: one row for the whole target.
+        vec![serde_json::json!({
+            "mode": mode_label(op.mode),
+            "source": op.source.as_str(),
+            "target": target.as_str(),
+            "state": disposition.aggregate.label(),
+        })]
+    } else {
+        // Tree mode: one row per materialized leaf, keyed by the leaf path
+        // under the declared source/target, carrying the per-leaf state.
+        disposition
+            .leaves
+            .iter()
+            .map(|leaf| {
+                serde_json::json!({
+                    "mode": mode_label(op.mode),
+                    "source": op.source.join(&leaf.relative).as_str(),
+                    "target": target.join(&leaf.relative).as_str(),
+                    "state": leaf.disposition.label(),
+                })
+            })
+            .collect()
+    }
 }
 
 /// Stable lowercase label for a file mode in the JSON envelope.
@@ -294,11 +390,20 @@ fn render_diff(
 /// Report a non-JSON apply result through the reporter.
 fn report_result(result: &ApplyResult, reporter: &mut impl Reporter) {
     match result {
-        ApplyResult::Applied { warnings } => {
+        ApplyResult::Applied {
+            warnings,
+            up_to_date,
+        } => {
             for warning in warnings {
                 reporter.warn(warning);
             }
-            reporter.line("Applied.");
+            // REQ-008: a full no-op prints a deterministic up-to-date line
+            // (no timestamp, PID, or state path) instead of "Applied.".
+            if *up_to_date {
+                reporter.line("Already up to date. No changes to apply.");
+            } else {
+                reporter.line("Applied.");
+            }
         }
         ApplyResult::RolledBack { failed_hook } => {
             reporter.warn(&format!(
@@ -356,6 +461,135 @@ fn parse_override(raw: &str) -> Result<(String, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::output::reporter::BufferReporter;
+
+    /// A prompt reader that records how many times `read_line` was called
+    /// (and always answers EOF). Used to prove a path reads no stdin: the
+    /// test asserts `reads == 0`. Recording rather than panicking keeps the
+    /// reader free of the production-forbidden `panic!` while still failing
+    /// the assertion on a single stray read.
+    #[derive(Default)]
+    struct RecordingReader {
+        reads: usize,
+    }
+
+    impl PromptReader for RecordingReader {
+        fn read_line(&mut self) -> Option<String> {
+            self.reads += 1;
+            None
+        }
+    }
+
+    /// A scripted reader yielding a fixed sequence of answer lines; used for
+    /// the non-no-op interactive path that genuinely prompts.
+    struct ScriptedReader {
+        lines: std::collections::VecDeque<String>,
+    }
+
+    impl PromptReader for ScriptedReader {
+        fn read_line(&mut self) -> Option<String> {
+            self.lines.pop_front()
+        }
+    }
+
+    #[test]
+    fn full_noop_interactive_skips_prompt_and_reads_no_stdin(/* CHK-013, REQ-009 */) {
+        // The core REQ-009 observable: a fully-satisfied plan on an
+        // interactive TTY must NOT present the confirmation prompt and must
+        // read no stdin. `RecordingReader` counts every `read_line`, so the
+        // `reads == 0` assertion fails on a single stray read; `BufferReporter.err`
+        // captures any prompt text, so a single `prompt` invocation fails too.
+        let mut reader = RecordingReader::default();
+        let mut reporter = BufferReporter::new();
+        let decision = confirm_apply(
+            // is_full_noop
+            true,
+            // yes
+            false,
+            Tty::Interactive,
+            &mut reader,
+            &mut reporter,
+        );
+        assert_eq!(
+            decision,
+            Confirmation::Proceed,
+            "a full no-op must proceed (it writes nothing) without prompting"
+        );
+        assert_eq!(
+            reader.reads, 0,
+            "a full no-op must read no stdin, but read_line was called {} time(s)",
+            reader.reads
+        );
+        assert!(
+            reporter.err.is_empty(),
+            "a full no-op must emit no prompt text, got stderr: {}",
+            reporter.err
+        );
+    }
+
+    #[test]
+    fn non_noop_interactive_does_prompt_and_reads_the_answer(/* guards the skip */) {
+        // Counterpart to the no-op test: when the plan is NOT a no-op, the
+        // interactive path MUST prompt and read the answer. This is the red
+        // guard — if `confirm_apply` skipped the prompt unconditionally, the
+        // `Apply?` text would be absent and the decline answer ignored.
+        let mut reader = ScriptedReader {
+            lines: std::collections::VecDeque::from(["n\n".to_owned()]),
+        };
+        let mut reporter = BufferReporter::new();
+        let decision = confirm_apply(
+            // is_full_noop
+            false,
+            // yes
+            false,
+            Tty::Interactive,
+            &mut reader,
+            &mut reporter,
+        );
+        assert_eq!(
+            decision,
+            Confirmation::Declined,
+            "an interactive `n` answer must decline"
+        );
+        assert!(
+            reporter.err.contains("Apply?"),
+            "the interactive non-no-op path must emit the confirmation prompt, got: {}",
+            reporter.err
+        );
+    }
+
+    #[test]
+    fn yes_proceeds_without_prompting_on_any_tty(/* CHK-028 sibling */) {
+        // `--yes` proceeds without consulting the reader on either TTY kind.
+        for tty in [Tty::Interactive, Tty::NonInteractive] {
+            let mut reader = RecordingReader::default();
+            let mut reporter = BufferReporter::new();
+            let decision = confirm_apply(false, true, tty, &mut reader, &mut reporter);
+            assert_eq!(decision, Confirmation::Proceed, "--yes proceeds on {tty:?}");
+            assert_eq!(reader.reads, 0, "--yes must not read stdin on {tty:?}");
+            assert!(reporter.err.is_empty(), "--yes must not prompt on {tty:?}");
+        }
+    }
+
+    #[test]
+    fn non_tty_without_yes_previews_only(/* CHK-028 */) {
+        let mut reader = RecordingReader::default();
+        let mut reporter = BufferReporter::new();
+        let decision = confirm_apply(
+            false,
+            false,
+            Tty::NonInteractive,
+            &mut reader,
+            &mut reporter,
+        );
+        assert_eq!(
+            decision,
+            Confirmation::PreviewOnly,
+            "a non-TTY shell without --yes previews and exits 0"
+        );
+        assert_eq!(reader.reads, 0, "the preview path must not read stdin");
+        assert!(reporter.err.is_empty(), "the preview path must not prompt");
+    }
 
     #[test]
     fn override_parses_key_value() {
@@ -377,7 +611,13 @@ mod tests {
 
     #[test]
     fn exit_codes_match_outcomes() {
-        assert_eq!(exit_code_for(&ApplyResult::Applied { warnings: vec![] }), 0);
+        assert_eq!(
+            exit_code_for(&ApplyResult::Applied {
+                warnings: vec![],
+                up_to_date: false,
+            }),
+            0
+        );
         assert_eq!(
             exit_code_for(&ApplyResult::Aborted {
                 failed_hook: "h".to_owned()

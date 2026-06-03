@@ -26,6 +26,7 @@
 
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
+use patina_core::Disposition;
 use patina_core::journal::PLAN_SUFFIX;
 use patina_core::journal::PROGRESS_SUFFIX;
 use patina_core::journal::Plan;
@@ -81,7 +82,7 @@ impl Scene {
         fs_err::write(&backup, original).expect("write backup");
         // The crashed apply left the new (overwriting) content in place.
         fs_err::write(&target, new_content).expect("write overwriting target");
-        PlannedOperation::copy(format!("repo/{name}"), target.as_str())
+        PlannedOperation::copy(format!("repo/{name}"), target.as_str(), Disposition::Create)
     }
 
     /// Stage a *fresh creation* that completed: no backup (nothing
@@ -92,12 +93,16 @@ impl Scene {
             fs_err::create_dir_all(parent).expect("target parent");
         }
         fs_err::write(&target, content).expect("write fresh target");
-        PlannedOperation::copy(format!("repo/{name}"), target.as_str())
+        PlannedOperation::copy(format!("repo/{name}"), target.as_str(), Disposition::Create)
     }
 
     /// Stage a *fresh creation* that never started: no backup, no target.
     fn stage_fresh_unstarted(&self, name: &str) -> PlannedOperation {
-        PlannedOperation::copy(format!("repo/{name}"), self.target(name).as_str())
+        PlannedOperation::copy(
+            format!("repo/{name}"),
+            self.target(name).as_str(),
+            Disposition::Create,
+        )
     }
 
     /// Write the orphan plan (no COMMIT sentinel) for the crash scene.

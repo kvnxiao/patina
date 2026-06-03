@@ -122,6 +122,37 @@ fn human_apply_is_byte_identical_across_two_runs() {
 }
 
 #[test]
+fn fully_satisfied_applies_are_byte_identical_and_report_up_to_date(/* CHK-012, REQ-008 */) {
+    // Against a fully-satisfied repo, two consecutive human-mode `--yes`
+    // applies are both full no-ops (SPEC-0005 REQ-007). Their stdout must be
+    // byte-identical and both must carry the deterministic up-to-date message
+    // — no timestamp, PID, or state path leaks in. A priming apply converges
+    // the repo so both measured runs observe the satisfied state.
+    let f = rich_fixture();
+
+    assert_eq!(
+        code(&f.apply(&["--yes"])),
+        0,
+        "priming apply must converge the repo"
+    );
+
+    let first = f.apply(&["--yes"]);
+    assert_eq!(code(&first), 0, "first no-op apply must succeed");
+    let second = f.apply(&["--yes"]);
+    assert_eq!(code(&second), 0, "second no-op apply must succeed");
+
+    assert_eq!(
+        first.stdout, second.stdout,
+        "two consecutive fully-satisfied applies must produce byte-identical stdout"
+    );
+    let stdout = String::from_utf8_lossy(&first.stdout);
+    assert!(
+        stdout.contains("Already up to date"),
+        "a fully-satisfied apply must print the up-to-date message, got: {stdout}"
+    );
+}
+
+#[test]
 fn multi_target_rows_preserve_input_declaration_order() {
     // A multi-target [[file]] whose `targets` are declared in deliberately
     // non-alphabetical order. "Deterministic" means "stable function of

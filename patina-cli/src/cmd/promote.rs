@@ -253,6 +253,7 @@ fn error_envelope(error: &str, target: &str, message: &str) -> String {
 mod tests {
     use super::*;
     use crate::output::reporter::BufferReporter;
+    use patina_core::Disposition;
 
     /// A scripted prompt reader yielding a fixed sequence of lines.
     struct ScriptedReader {
@@ -286,6 +287,7 @@ mod tests {
             target: "/home/u/.zshrc".to_owned(),
             link_target: "/repo/zsh/zshrc".to_owned(),
             entry: 0,
+            disposition: Disposition::Create,
         }
     }
 
@@ -295,6 +297,7 @@ mod tests {
             source: "/repo/git/gitconfig.tmpl".to_owned(),
             hash: [0u8; 32],
             entry: 0,
+            disposition: Disposition::Create,
         }
     }
 
@@ -304,6 +307,7 @@ mod tests {
             source: "/repo/git/gitconfig".to_owned(),
             hash: [0u8; 32],
             entry: 0,
+            disposition: Disposition::Create,
         }
     }
 

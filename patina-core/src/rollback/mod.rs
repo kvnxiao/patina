@@ -10,9 +10,13 @@
 //! ## Inverse-operation rule
 //!
 //! The reversal decision mirrors crash recovery ([`crate::journal`]'s
-//! `recover_orphans`): it is driven by backup *presence*, not the journaled
-//! materialization kind.
+//! `recover_orphans`): the commit-recorded per-target disposition is consulted
+//! first, then backup *presence* decides between restore and delete. The three
+//! outcomes, in evaluation order:
 //!
+//! - A target the apply recorded as `Unchanged` (REQ-006) is *left in place*:
+//!   the apply skipped both its write and its backup, so its live state already
+//!   is the pre-apply state. The backup is never consulted.
 //! - A target with a backup under `<state>/patina/backups/<ts>/` is an
 //!   *overwrite*: the apply replaced a pre-existing file, so the original bytes
 //!   are restored from the backup.
@@ -50,6 +54,7 @@ use crate::lock::acquire as acquire_lock;
 use crate::lock::exclusive_timeout;
 use crate::state_dir::resolve as resolve_state_dir;
 use camino::Utf8Path;
+pub use replay::RevertTarget;
 pub use replay::replay_entry;
 use thiserror::Error;
 
@@ -154,24 +159,32 @@ fn reverse_record(
 }
 
 /// One `[[file]]` entry's recorded targets, grouped for atomic rollback.
+/// Each target carries its commit-recorded disposition so [`replay_entry`]
+/// can leave `Unchanged` targets in place (REQ-006).
 struct EntryGroup<'a> {
     entry: u32,
-    targets: Vec<&'a str>,
+    targets: Vec<RevertTarget<'a>>,
 }
 
 /// Group a record's targets by their `entry` index, preserving the order in
 /// which entries (and targets within an entry) were applied. Consecutive
 /// targets sharing an entry index belong to the same `[[file]]` entry and
-/// revert as one atomic unit (REQ-019).
+/// revert as one atomic unit (REQ-019). Each target carries its recorded
+/// disposition so an `Unchanged` target is left untouched on rollback
+/// (REQ-006).
 fn group_by_entry(record: &ApplyRecord) -> Vec<EntryGroup<'_>> {
     let mut groups: Vec<EntryGroup<'_>> = Vec::new();
     for expected in &record.targets {
         let entry = expected.entry();
+        let target = RevertTarget {
+            target: expected.target(),
+            disposition: expected.disposition(),
+        };
         match groups.last_mut() {
-            Some(last) if last.entry == entry => last.targets.push(expected.target()),
+            Some(last) if last.entry == entry => last.targets.push(target),
             _ => groups.push(EntryGroup {
                 entry,
-                targets: vec![expected.target()],
+                targets: vec![target],
             }),
         }
     }
@@ -196,6 +209,7 @@ fn mark_rolled_back(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::journal::Disposition;
     use crate::journal::ExpectedTarget;
     use crate::journal::LastApply;
     use tempfile::TempDir;
@@ -219,24 +233,32 @@ mod tests {
                 source: "/repo/a".to_owned(),
                 hash: [0u8; 32],
                 entry: 0,
+                disposition: Disposition::Update,
             },
             ExpectedTarget::Content {
                 target: "/b1".to_owned(),
                 source: "/repo/b1".to_owned(),
                 hash: [0u8; 32],
                 entry: 1,
+                disposition: Disposition::Update,
             },
             ExpectedTarget::Content {
                 target: "/b2".to_owned(),
                 source: "/repo/b2".to_owned(),
                 hash: [0u8; 32],
                 entry: 1,
+                disposition: Disposition::Update,
             },
         ]);
         let groups = group_by_entry(&rec);
         let shape: Vec<(u32, Vec<&str>)> = groups
             .into_iter()
-            .map(|group| (group.entry, group.targets))
+            .map(|group| {
+                (
+                    group.entry,
+                    group.targets.iter().map(|t| t.target).collect::<Vec<_>>(),
+                )
+            })
             .collect();
         assert_eq!(
             shape,

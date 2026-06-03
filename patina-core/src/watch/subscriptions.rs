@@ -139,6 +139,7 @@ pub fn compute_watch_set(record: &ApplyRecord, state_dir: &Utf8Path) -> WatchSet
 ///
 /// ```
 /// use camino::Utf8Path;
+/// use patina_core::Disposition;
 /// use patina_core::journal::{ApplyRecord, ExpectedTarget, LastApply};
 /// use patina_core::watch::subscriptions::compute_subscriptions;
 ///
@@ -148,6 +149,7 @@ pub fn compute_watch_set(record: &ApplyRecord, state_dir: &Utf8Path) -> WatchSet
 ///         target: "/home/u/.vimrc".into(),
 ///         link_target: "/repo/vim/vimrc".into(),
 ///         entry: 0,
+///         disposition: Disposition::Create,
 ///     }],
 /// );
 /// let subs = compute_subscriptions(&record, Utf8Path::new("/state/patina"));
@@ -191,6 +193,7 @@ pub fn compute_subscriptions(record: &ApplyRecord, state_dir: &Utf8Path) -> Vec<
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::journal::Disposition;
     use crate::journal::LastApply;
 
     fn last_apply() -> LastApply {
@@ -206,6 +209,7 @@ mod tests {
             target: target.into(),
             link_target: link_target.into(),
             entry,
+            disposition: Disposition::Create,
         }
     }
 
@@ -215,6 +219,7 @@ mod tests {
             source: source.into(),
             hash: [0u8; 32],
             entry,
+            disposition: Disposition::Create,
         }
     }
 

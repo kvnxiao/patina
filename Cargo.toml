@@ -23,6 +23,13 @@ clap = { version = "4.5", features = ["derive"] }
 dunce = "1.0"
 fs-err = "3.0"
 fs2 = "0.4"
+# Snapshot testing (dev-only). The diff renderer's golden-output test
+# (REQ-010: Unchanged targets omit their per-entry block and a single
+# summary count line is printed) asserts against a committed snapshot so a
+# regression in the human diff body shows as a reviewable snapshot diff.
+# `default-features = false` drops the optional colour/glob/redaction extras
+# we do not use, keeping the dev dep graph minimal at this add gate.
+insta = { version = "1.43", default-features = false }
 jiff = "0.2"
 minijinja = "2.20"
 notify = "8.2"

@@ -38,6 +38,7 @@
 pub mod engine;
 pub mod hooks;
 
+pub(crate) mod classify;
 mod copy;
 mod retry;
 mod symlink;
@@ -49,6 +50,7 @@ use crate::template::TemplateError;
 use crate::variables::Resolver;
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
+pub use classify::ClassifyError;
 pub use hooks::ForceDeploy;
 pub use hooks::HookError;
 pub use hooks::HookOutcome;
@@ -58,6 +60,39 @@ pub use hooks::resolve_shells;
 pub use hooks::run_hook;
 pub use hooks::should_run;
 pub(crate) use retry::with_sharing_violation_retry;
+
+/// Which leaves of a tree-mode target a tree executor (re)writes
+/// (REQ-003 / DEC-007).
+///
+/// A single-target executor ignores this; it is only consulted by the
+/// recursive [`copy_tree`](copy::copy_tree) and per-leaf
+/// [`tree_symlink`](symlink::tree_symlink) executors:
+///
+/// - [`LeafWrite::All`] — write every walked leaf, the pre-skip behaviour. Used
+///   for a fresh (`Create`) tree, by [`materialize`], and by the executor unit
+///   tests.
+/// - [`LeafWrite::Only`] — write only the leaves whose plan-time disposition is
+///   not `Unchanged`, leaving the clean leaves' inode/mtime untouched (the
+///   churn-removal goal of DEC-002). The set holds paths relative to the
+///   declared target directory, in the same form [`walk_files`] yields.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum LeafWrite<'a> {
+    /// Write every walked leaf.
+    All,
+    /// Write only the leaves present in this relative-path set.
+    Only(&'a std::collections::BTreeSet<Utf8PathBuf>),
+}
+
+impl LeafWrite<'_> {
+    /// Whether the leaf at `relative` (relative to the declared target
+    /// directory) should be written this apply.
+    fn includes(self, relative: &Utf8Path) -> bool {
+        match self {
+            Self::All => true,
+            Self::Only(set) => set.contains(relative),
+        }
+    }
+}
 
 /// What an executor materialized at a target, for the
 /// [`CompletionRecord`] one-per-object handoff to T-010.
@@ -219,10 +254,43 @@ pub fn materialize(
     match mode {
         FileMode::Symlink => symlink::per_file_symlink(source, targets),
         FileMode::SymlinkDir => symlink::dir_symlink(source, targets),
-        FileMode::SymlinkTree => symlink::tree_symlink(source, targets),
+        FileMode::SymlinkTree => symlink::tree_symlink(source, targets, LeafWrite::All),
         FileMode::Copy => copy::copy_file(source, targets),
-        FileMode::CopyTree => copy::copy_tree(source, targets),
+        FileMode::CopyTree => copy::copy_tree(source, targets, LeafWrite::All),
         FileMode::TemplateRender => template::render(source, targets, engine, resolver),
+    }
+}
+
+/// Materialize a tree-mode target, writing only the leaves `write` selects
+/// (REQ-003 / DEC-007).
+///
+/// The engine calls this for a `copy-tree` / `symlink-tree` target whose
+/// per-op aggregate is not `Unchanged`: a fresh tree passes
+/// [`LeafWrite::All`], a partially-drifted tree passes [`LeafWrite::Only`] with
+/// its non-`Unchanged` leaves so the clean leaves keep their inode/mtime. The
+/// returned records cover only the leaves actually written. Single-target
+/// modes never reach here; they go through [`materialize`].
+///
+/// # Errors
+///
+/// Returns an [`ExecutorError`] for the first leaf that fails, or
+/// [`ExecutorError::NotADirectory`] when handed a non-tree `mode` (a caller
+/// bug — the engine only routes tree targets here).
+pub(crate) fn materialize_tree(
+    mode: FileMode,
+    source: &Utf8Path,
+    target: &Utf8Path,
+    write: LeafWrite<'_>,
+) -> Result<Vec<CompletionRecord>, ExecutorError> {
+    let targets = [target.to_path_buf()];
+    match mode {
+        FileMode::CopyTree => copy::copy_tree(source, &targets, write),
+        FileMode::SymlinkTree => symlink::tree_symlink(source, &targets, write),
+        FileMode::Symlink | FileMode::SymlinkDir | FileMode::Copy | FileMode::TemplateRender => {
+            Err(ExecutorError::NotADirectory {
+                path: source.to_path_buf(),
+            })
+        }
     }
 }
 

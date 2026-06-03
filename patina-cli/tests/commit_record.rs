@@ -2,7 +2,8 @@
 //! T-026): the `<state>/patina/journal/<ts>.COMMIT` sentinel records, per
 //! target, the canonical source path and — for content targets — a 32-byte
 //! `blake3` hash of the materialized bytes, behind a version envelope whose
-//! major is now `2`.
+//! major is the journal's `FILE_MAJOR_VERSION` (held at `1` pre-release; see
+//! the on-disk format policy in `AGENTS.md`).
 //!
 //! Each test builds a self-contained tempdir dotfiles repository, points
 //! `PATINA_REPO` at it, isolates the per-machine state directory under the
@@ -26,6 +27,7 @@ use camino::Utf8Path;
 use camino::Utf8PathBuf;
 use patina_core::ApplyRecord;
 use patina_core::ExpectedTarget;
+use patina_core::FILE_MAJOR_VERSION;
 use patina_core::HostOs;
 use patina_core::content_hash;
 use patina_core::read_latest_commit;
@@ -273,9 +275,9 @@ fn two_applies_record_byte_identical_hash() {
 }
 
 // CHK-064: the COMMIT file's first two bytes are the little-endian u16
-// major version, now `2`.
+// major version, matching the journal's supported FILE_MAJOR_VERSION.
 #[test]
-fn commit_envelope_major_is_two() {
+fn commit_envelope_major_matches_supported() {
     let f = Fixture::new();
     let module = f.module(
         "git",
@@ -288,7 +290,10 @@ fn commit_envelope_major_is_two() {
     let bytes = f.commit_bytes();
     let envelope = bytes.get(..2).expect("COMMIT file has a 2-byte envelope");
     let major = u16::from_le_bytes([envelope[0], envelope[1]]);
-    assert_eq!(major, 2, "the COMMIT envelope major version must be 2");
+    assert_eq!(
+        major, FILE_MAJOR_VERSION,
+        "the COMMIT envelope major must be the journal's supported major"
+    );
 }
 
 // REQ-029 done-when: the read side compares the recorded blake3 — an
@@ -329,7 +334,7 @@ fn status_uses_recorded_blake3_for_drift() {
 // entry-index space — every declared entry gets a distinct index, no
 // `[[file]]` and `[[directory]]` entry collide, and targets sharing a
 // declared entry share its index — while the COMMIT version envelope major
-// is unchanged (still `2`, the SPEC-0003 layout).
+// stays the journal's supported major (no per-SPEC bump).
 #[test]
 fn directory_and_file_entries_get_distinct_indices_and_envelope_major_is_unchanged() {
     let f = Fixture::new();
@@ -385,13 +390,14 @@ fn directory_and_file_entries_get_distinct_indices_and_envelope_major_is_unchang
         "every `[[file]]` entry index must precede the `[[directory]]` entry index (got files {a},{b}; dir {d_one})"
     );
 
-    // The wire-format major is unchanged by this SPEC (DEC-009).
+    // The wire-format major is unchanged by this SPEC (DEC-009): it stays
+    // the journal's supported FILE_MAJOR_VERSION, with no per-SPEC bump.
     let bytes = f.commit_bytes();
     let envelope = bytes.get(..2).expect("COMMIT file has a 2-byte envelope");
     let major = u16::from_le_bytes([envelope[0], envelope[1]]);
     assert_eq!(
-        major, 2,
-        "the COMMIT envelope major must stay `2` — T-002 introduces no version bump"
+        major, FILE_MAJOR_VERSION,
+        "the COMMIT envelope major must stay the supported major — this SPEC introduces no version bump"
     );
 }
 

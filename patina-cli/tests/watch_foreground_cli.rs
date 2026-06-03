@@ -409,8 +409,26 @@ mod foreground {
             watcher.stderr_snapshot()
         );
 
-        // A parallel CLI apply writes a fresh journal record (no source edit
-        // needed — re-applying unchanged source still commits a new COMMIT).
+        // CHK-017 models an external `patina apply` that COMMITS new state
+        // while the watcher runs: the watcher must detect the new journal
+        // record under the watched journal dir (REQ-005) and rescan. Since
+        // SPEC-0005 an unchanged re-apply is a full no-op that writes no
+        // journal (REQ-007), so the parallel apply must change committed state
+        // to produce the `.COMMIT` this scenario is about — an idempotent
+        // re-apply correctly produces neither a journal nor a rescan.
+        //
+        // Introduce a brand-new entry AFTER the watcher has subscribed, so it
+        // is outside the current subscription set: the parallel apply performs
+        // a real Create and commits a fresh journal record, and the watcher
+        // reacts to that journal write (not to the new source/target, which it
+        // is not yet watching). This isolates the "external apply commits ->
+        // journal_rescan" behaviour the loop guard is about.
+        let extra = f.module(
+            "extra",
+            "[[file]]\nsource = \"extra_src\"\ntarget = \"~/extra_out\"\nmode = \"copy\"\n",
+        );
+        fs_err::write(extra.join("extra_src"), b"extra\n").expect("write extra source");
+
         let out = f.apply(&["--yes"]);
         assert_eq!(code(&out), 0, "parallel CLI apply must succeed");
 

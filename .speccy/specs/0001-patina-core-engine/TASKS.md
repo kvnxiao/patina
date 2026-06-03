@@ -1,7 +1,7 @@
 ---
 spec: SPEC-0001
-spec_hash_at_generation: eb841df16243f4132bf45932b4f939f35f5247ba507858fce46cfbb9ddfb8f57
-generated_at: 2026-05-30T05:55:19Z
+spec_hash_at_generation: 1de0928eaf46ec201800ccb02d043a41dc0fabb10539efab2be7ad57f313346b
+generated_at: 2026-06-02T18:41:55Z
 ---
 # Tasks: SPEC-0001 Patina core engine — transactional apply with apply/status/rollback CLI
 

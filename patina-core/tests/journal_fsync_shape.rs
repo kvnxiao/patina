@@ -22,6 +22,7 @@
 
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
+use patina_core::Disposition;
 use patina_core::journal::ApplyRecord;
 use patina_core::journal::COMMIT_SUFFIX;
 use patina_core::journal::FILE_MAJOR_VERSION;
@@ -106,9 +107,9 @@ fn sample_record() -> ApplyRecord {
 
 fn three_op_plan() -> Plan {
     Plan::new(vec![
-        PlannedOperation::symlink("git/.gitconfig", "/home/u/.gitconfig"),
-        PlannedOperation::render("ssh/config.j2", "/home/u/.ssh/config"),
-        PlannedOperation::copy("bin/hello", "/home/u/.local/bin/hello"),
+        PlannedOperation::symlink("git/.gitconfig", "/home/u/.gitconfig", Disposition::Create),
+        PlannedOperation::render("ssh/config.j2", "/home/u/.ssh/config", Disposition::Create),
+        PlannedOperation::copy("bin/hello", "/home/u/.local/bin/hello", Disposition::Create),
     ])
 }
 
@@ -181,6 +182,7 @@ fn after_flush_plan_exists_with_no_commit_sentinel() {
     let plan = Plan::new(vec![PlannedOperation::symlink(
         "git/.gitconfig",
         "/home/u/.gitconfig",
+        Disposition::Create,
     )]);
     // Simulate the crash window: flush, then drop the handle without
     // recording any progress or committing — as if SIGKILL'd here.
@@ -223,7 +225,11 @@ fn after_flush_plan_exists_with_no_commit_sentinel() {
 fn newer_major_version_is_refused_with_both_versions_named() {
     // Build a byte buffer with a poisoned envelope: u16::MAX followed by
     // an otherwise-valid postcard body.
-    let plan = Plan::new(vec![PlannedOperation::symlink("a", "/b")]);
+    let plan = Plan::new(vec![PlannedOperation::symlink(
+        "a",
+        "/b",
+        Disposition::Create,
+    )]);
     let mut bytes = plan.encode().expect("encode plan");
     // Overwrite the 2-byte little-endian version envelope at offset 0.
     let envelope = bytes

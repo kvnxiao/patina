@@ -1,0 +1,8 @@
+---
+source: patina-cli/tests/diff_render_snapshot.rs
+expression: redacted
+---
+copy [HOME]/b_out
+  - b-drifted
+  + b-source
+3 unchanged entries.

@@ -321,6 +321,12 @@ mod tests {
             mode,
             source: Utf8PathBuf::from("/repo/src"),
             targets: vec![Utf8PathBuf::from("/home/user/target")],
+            // The symlink-gate predicate reads only `mode`; the disposition
+            // is an inert placeholder for this fixture.
+            dispositions: vec![crate::apply::engine::TargetDisposition {
+                aggregate: crate::journal::Disposition::Create,
+                leaves: Vec::new(),
+            }],
             entry_index: 0,
         }
     }

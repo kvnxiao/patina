@@ -2,9 +2,12 @@
 //!
 //! [`replay_entry`] reverts every target of one `[[file]]` entry to its
 //! pre-apply state as an atomic unit. The inverse-operation rule mirrors
-//! crash recovery: a target with a backup is restored from it (the apply
-//! overwrote a pre-existing file); a target with no backup is deleted (the
-//! apply created it fresh).
+//! crash recovery and has three outcomes, in evaluation order: a target the
+//! apply recorded as `Unchanged` (REQ-006) is left in place — filtered out of
+//! the snapshot/roll-forward set before either branch below is reached, since
+//! the apply touched neither its bytes nor its backup; a target with a backup
+//! is restored from it (the apply overwrote a pre-existing file); a target
+//! with no backup is deleted (the apply created it fresh).
 //!
 //! ## Atomicity mechanism
 //!
@@ -17,9 +20,23 @@
 //! staging directory is removed on both the success and failure paths.
 
 use super::RollbackError;
+use crate::journal::Disposition;
 use crate::journal::mirror_backup_path;
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
+
+/// One commit-recorded target to revert: its canonical absolute path paired
+/// with the disposition the apply classified it as (REQ-006). The
+/// disposition decides whether the target is reverted at all — an
+/// [`Disposition::Unchanged`] target is left in place.
+#[derive(Debug, Clone, Copy)]
+pub struct RevertTarget<'a> {
+    /// Canonical absolute target path the entry materialized.
+    pub target: &'a str,
+    /// How the apply classified this target (REQ-002). `Unchanged` targets
+    /// were neither written nor backed up, so rollback leaves them alone.
+    pub disposition: Disposition,
+}
 
 /// Revert every target in one `[[file]]` entry to its pre-apply state,
 /// atomically: either all targets reach pre-apply state, or the entry is
@@ -27,7 +44,16 @@ use camino::Utf8PathBuf;
 /// [`RollbackError::RollbackPartial`] is returned.
 ///
 /// `entry` is the entry's index (for the error message); `targets` are the
-/// canonical absolute target paths the entry materialized, in apply order.
+/// canonical absolute target paths the entry materialized, in apply order,
+/// each paired with the disposition the apply classified it as.
+///
+/// A target the apply recorded as [`Disposition::Unchanged`] is left in place
+/// (REQ-006): the apply skipped both its write and its backup, so its live
+/// state already *is* the pre-apply state and there is nothing to reverse.
+/// Such a target is excluded from the snapshot/roll-forward set entirely, so
+/// the atomic region covers only the `Create`/`Update` targets that rollback
+/// actually mutates. For a tree leaf the `Update` restore reads the
+/// whole-tree backup at the leaf's mirror path (DEC-007).
 ///
 /// # Errors
 ///
@@ -37,17 +63,29 @@ use camino::Utf8PathBuf;
 ///   target has been mutated (nothing to undo).
 pub fn replay_entry(
     entry: u32,
-    targets: &[&str],
+    targets: &[RevertTarget<'_>],
     backups_dir: &Utf8Path,
     timestamp: &str,
 ) -> Result<(), RollbackError> {
+    // Unchanged targets were neither written nor backed up, so leave them
+    // wholly out of the reversal: no snapshot, no revert. Only Create/Update
+    // targets enter the atomic snapshot/roll-forward region.
+    let to_revert: Vec<&str> = targets
+        .iter()
+        .filter(|t| t.disposition != Disposition::Unchanged)
+        .map(|t| t.target)
+        .collect();
+    if to_revert.is_empty() {
+        return Ok(());
+    }
+
     // Stage each target's post-apply state so a mid-entry failure can be
     // rolled forward. The stage lives beside the backup root and is removed
     // on every exit path.
     let stage = stage_dir(backups_dir, timestamp, entry);
     fs_err::create_dir_all(&stage).map_err(RollbackError::Filesystem)?;
 
-    let snapshots = match snapshot_targets(&stage, targets) {
+    let snapshots = match snapshot_targets(&stage, &to_revert) {
         Ok(snapshots) => snapshots,
         Err(err) => {
             remove_stage(&stage);
@@ -254,6 +292,22 @@ mod tests {
         fs_err::write(&path, bytes).expect("write backup");
     }
 
+    /// A `Create` revert target for `path` (no backup → delete on revert).
+    fn create(path: &Utf8Path) -> RevertTarget<'_> {
+        RevertTarget {
+            target: path.as_str(),
+            disposition: Disposition::Create,
+        }
+    }
+
+    /// An `Update` revert target for `path` (backup → restore on revert).
+    fn update(path: &Utf8Path) -> RevertTarget<'_> {
+        RevertTarget {
+            target: path.as_str(),
+            disposition: Disposition::Update,
+        }
+    }
+
     #[test]
     fn fresh_creation_is_deleted() {
         let e = env();
@@ -261,7 +315,7 @@ mod tests {
         let target = e.root.join("created");
         fs_err::write(&target, b"new").expect("write target");
 
-        replay_entry(0, &[target.as_str()], &e.backups, ts).expect("revert");
+        replay_entry(0, &[create(&target)], &e.backups, ts).expect("revert");
         assert!(!target.exists(), "a fresh creation must be deleted");
     }
 
@@ -273,7 +327,7 @@ mod tests {
         fs_err::write(&target, b"new").expect("write post-apply target");
         write_backup(&e.backups, ts, &target, b"original");
 
-        replay_entry(0, &[target.as_str()], &e.backups, ts).expect("revert");
+        replay_entry(0, &[update(&target)], &e.backups, ts).expect("revert");
         assert_eq!(
             fs_err::read(&target).expect("read restored"),
             b"original",
@@ -291,7 +345,7 @@ mod tests {
         fs_err::write(&fresh, b"new").expect("write t2");
         write_backup(&e.backups, ts, &pre_existing, b"original");
 
-        replay_entry(7, &[pre_existing.as_str(), fresh.as_str()], &e.backups, ts)
+        replay_entry(7, &[update(&pre_existing), create(&fresh)], &e.backups, ts)
             .expect("revert entry");
 
         assert_eq!(
@@ -299,6 +353,71 @@ mod tests {
             b"original"
         );
         assert!(!fresh.exists(), "the fresh target must be deleted");
+    }
+
+    #[test]
+    fn unchanged_target_is_left_in_place() {
+        // REQ-006: a commit-recorded Unchanged target took no backup, so its
+        // live bytes already are the pre-apply bytes. Rollback must leave it
+        // byte-for-byte untouched rather than (with no backup) deleting it as
+        // a fresh creation.
+        let e = env();
+        let ts = "TS";
+        let target = e.root.join("unchanged");
+        fs_err::write(&target, b"satisfied").expect("write target");
+
+        let revert = RevertTarget {
+            target: target.as_str(),
+            disposition: Disposition::Unchanged,
+        };
+        replay_entry(0, &[revert], &e.backups, ts).expect("revert");
+
+        assert_eq!(
+            fs_err::read(&target).expect("read untouched"),
+            b"satisfied",
+            "an Unchanged target must be left in place, not deleted"
+        );
+    }
+
+    #[test]
+    fn mixed_entry_reverts_create_and_update_but_leaves_unchanged() {
+        // An entry mixing all three dispositions: the Create target is
+        // deleted, the Update target is restored from its backup, and the
+        // Unchanged target is untouched — even though it, like the Create
+        // target, has no backup.
+        let e = env();
+        let ts = "TS";
+        let created = e.root.join("created");
+        let updated = e.root.join("updated");
+        let unchanged = e.root.join("unchanged");
+        fs_err::write(&created, b"new").expect("write created");
+        fs_err::write(&updated, b"new").expect("write updated");
+        fs_err::write(&unchanged, b"satisfied").expect("write unchanged");
+        write_backup(&e.backups, ts, &updated, b"original");
+
+        let unchanged_revert = RevertTarget {
+            target: unchanged.as_str(),
+            disposition: Disposition::Unchanged,
+        };
+        replay_entry(
+            3,
+            &[create(&created), update(&updated), unchanged_revert],
+            &e.backups,
+            ts,
+        )
+        .expect("revert entry");
+
+        assert!(!created.exists(), "the Create target must be deleted");
+        assert_eq!(
+            fs_err::read(&updated).expect("read restored"),
+            b"original",
+            "the Update target must be restored from its backup"
+        );
+        assert_eq!(
+            fs_err::read(&unchanged).expect("read untouched"),
+            b"satisfied",
+            "the Unchanged target must be left in place"
+        );
     }
 
     #[cfg(unix)]
@@ -318,7 +437,7 @@ mod tests {
         fs_err::create_dir_all(backup.parent().expect("backup parent")).expect("mkdir backup tree");
         fs_err::os::unix::fs::symlink("/original/dest", &backup).expect("stash original symlink");
 
-        replay_entry(0, &[target.as_str()], &e.backups, ts).expect("revert");
+        replay_entry(0, &[update(&target)], &e.backups, ts).expect("revert");
 
         let meta = fs_err::symlink_metadata(&target).expect("stat reverted target");
         assert!(
