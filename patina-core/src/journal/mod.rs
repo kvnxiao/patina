@@ -112,9 +112,12 @@ pub enum JournalError {
     #[error("failed to decode plan from postcard: {0}")]
     Decode(postcard::Error),
 
-    /// The plan file was shorter than the fixed-size version envelope, so
-    /// no major version could be read.
-    #[error("plan file is truncated: {got} bytes, need at least {need} for the version envelope")]
+    /// A journal record (the plan file or a commit sentinel) was shorter
+    /// than the fixed-size version envelope, so no major version could be
+    /// read.
+    #[error(
+        "journal record is truncated: {got} bytes, need at least {need} for the version envelope"
+    )]
     Truncated {
         /// Bytes actually present in the file.
         got: usize,
@@ -263,29 +266,27 @@ impl Journal {
     }
 }
 
-/// The `<ts>` of the most recent committed apply in `dir` that has not also
-/// been rolled back, or `None` when none exists.
+/// Every committed-and-not-rolled-back `<ts>` in `dir`, sorted newest-first.
 ///
-/// "Most recent" is the lexically greatest `<ts>` prefix, which is
-/// chronological for the compact UTC timestamp the engine writes. A `<ts>`
-/// carrying a `ROLLED_BACK` sentinel beside its `COMMIT` (T-018) is skipped:
-/// it has been reversed and no longer describes the live filesystem.
+/// "Newest" is the lexically greatest `<ts>` prefix, which is chronological
+/// for the compact UTC timestamp the engine writes. A `<ts>` carrying a
+/// `ROLLED_BACK` sentinel beside its `COMMIT` (T-018) is excluded: it has been
+/// reversed and no longer describes the live filesystem.
 ///
-/// This single scan backs both readers of "the last apply": `patina status`
-/// via [`read_latest_commit`] (which then decodes the winner's record) and
-/// `patina rollback` (which reverts it), so the two cannot disagree on which
-/// commit is current.
+/// Returning the full descending list (not just the maximum) is what lets
+/// [`read_latest_commit_with_ts`] fall back to the previous commit when the
+/// newest sentinel's body is unreadable.
 ///
 /// # Errors
 ///
 /// Returns [`JournalError::Filesystem`] if the journal directory cannot be
 /// read.
-pub(crate) fn latest_unrolled_commit(dir: &Utf8Path) -> Result<Option<String>, JournalError> {
+fn unrolled_commit_timestamps(dir: &Utf8Path) -> Result<Vec<String>, JournalError> {
     if !dir.exists() {
-        return Ok(None);
+        return Ok(Vec::new());
     }
 
-    let mut latest: Option<String> = None;
+    let mut timestamps = Vec::new();
     for entry in fs_err::read_dir(dir)? {
         let entry = entry?;
         let name = entry.file_name();
@@ -301,36 +302,87 @@ pub(crate) fn latest_unrolled_commit(dir: &Utf8Path) -> Result<Option<String>, J
         {
             continue;
         }
-        if latest.as_deref().is_none_or(|current| timestamp > current) {
-            latest = Some(timestamp.to_owned());
-        }
+        timestamps.push(timestamp.to_owned());
     }
-    Ok(latest)
+    // Lexical-descending is chronological newest-first for the compact `<ts>`.
+    timestamps.sort_unstable_by(|a, b| b.cmp(a));
+    Ok(timestamps)
 }
 
-/// Read the [`ApplyRecord`] from the most recent committed apply in `dir`,
-/// or `None` when the directory holds no live `<ts>.COMMIT` sentinel (no
-/// apply has ever committed, or every commit has since been rolled back).
+/// Read the most recent committed apply in `dir` whose record actually
+/// decodes, paired with its `<ts>`, or `None` when no decodable un-rolled-back
+/// commit remains.
+///
+/// The newest un-rolled-back `<ts>.COMMIT` is tried first. A sentinel that is
+/// present but **unreadable** — a torn or empty body
+/// ([`JournalError::Truncated`]) or a corrupt same-version body
+/// ([`JournalError::Decode`]) — is skipped with a `warn!` and the scan falls
+/// back to the next-older commit. This keeps `patina status` and `patina
+/// rollback` working after a `kill -9` between creating a `<ts>.COMMIT` file
+/// and flushing its bytes leaves a torn sentinel, rather than failing the
+/// whole command on one bad record.
+///
+/// A sentinel from a **newer** format major ([`JournalError::VersionMismatch`])
+/// is deliberately **not** skipped: it propagates. The version envelope exists
+/// precisely so an older binary refuses a newer apply instead of acting on
+/// stale state, so skipping it (and silently reporting or reverting an older
+/// commit) would defeat that guard.
+///
+/// This single scan backs both readers of "the last apply": `patina status`
+/// via [`read_latest_commit`] and `patina rollback`, so the two cannot
+/// disagree on which commit is current.
+///
+/// # Errors
+///
+/// - [`JournalError::Filesystem`] if the directory or a sentinel cannot be
+///   read.
+/// - [`JournalError::VersionMismatch`] if the newest readable sentinel is from
+///   a newer format than this binary supports.
+pub(crate) fn read_latest_commit_with_ts(
+    dir: &Utf8Path,
+) -> Result<Option<(String, ApplyRecord)>, JournalError> {
+    for timestamp in unrolled_commit_timestamps(dir)? {
+        let commit_path = dir.join(format!("{timestamp}{COMMIT_SUFFIX}"));
+        let bytes = fs_err::read(&commit_path)?;
+        match ApplyRecord::decode(&bytes) {
+            Ok(record) => return Ok(Some((timestamp, record))),
+            // A torn/empty (`Truncated`) or corrupt same-version (`Decode`)
+            // sentinel is unreadable: warn and fall back to the previous
+            // commit. `VersionMismatch` is intentionally NOT matched here so
+            // it flows to the propagating arm below — refusing a newer apply
+            // is the whole point of the version envelope.
+            Err(err @ (JournalError::Truncated { .. } | JournalError::Decode(_))) => {
+                tracing::warn!(
+                    timestamp = %timestamp,
+                    error = %err,
+                    "skipping an unreadable journal commit sentinel; \
+                     falling back to the previous committed apply"
+                );
+            }
+            Err(err) => return Err(err),
+        }
+    }
+    Ok(None)
+}
+
+/// Read the [`ApplyRecord`] from the most recent decodable committed apply in
+/// `dir`, or `None` when the directory holds no readable, un-rolled-back
+/// `<ts>.COMMIT` sentinel (no apply has ever committed, every commit has since
+/// been rolled back, or every remaining sentinel is torn or corrupt).
 ///
 /// `patina status` (T-017) is the reader: it decodes the latest apply's
-/// recorded targets and classifies each against the live filesystem. The
-/// "most recent un-rolled-back `<ts>`" selection is shared with rollback via
-/// the crate-internal `latest_unrolled_commit`.
+/// recorded targets and classifies each against the live filesystem. This is
+/// the `<ts>`-less convenience wrapper over the crate-internal
+/// `read_latest_commit_with_ts`, which owns the torn-sentinel fallback and the
+/// version-mismatch carve-out.
 ///
 /// # Errors
 ///
 /// - [`JournalError::Filesystem`] if the directory or sentinel cannot be read.
-/// - [`JournalError::Truncated`] / [`JournalError::VersionMismatch`] /
-///   [`JournalError::Decode`] if the latest sentinel cannot be decoded (a
-///   sentinel from a newer binary, or a corrupt one).
+/// - [`JournalError::VersionMismatch`] if the newest readable sentinel is from
+///   a newer binary.
 pub fn read_latest_commit(dir: impl AsRef<Utf8Path>) -> Result<Option<ApplyRecord>, JournalError> {
-    let dir = dir.as_ref();
-    let Some(timestamp) = latest_unrolled_commit(dir)? else {
-        return Ok(None);
-    };
-    let commit_path = dir.join(format!("{timestamp}{COMMIT_SUFFIX}"));
-    let bytes = fs_err::read(&commit_path)?;
-    Ok(Some(ApplyRecord::decode(&bytes)?))
+    Ok(read_latest_commit_with_ts(dir.as_ref())?.map(|(_ts, record)| record))
 }
 
 /// Drop every journal sentinel for the `timestamps` whose backup cycles
@@ -419,5 +471,139 @@ mod tests {
         // A timestamp with no sentinels at all (the all-fresh-apply shape, or
         // a partially pruned cycle) is a clean no-op.
         prune_cycles(dir, &["GHOST".to_owned()]).expect("absent sentinels are tolerated");
+    }
+
+    /// A minimal decodable record; the body is irrelevant to commit selection.
+    fn sample_record() -> ApplyRecord {
+        ApplyRecord::new(
+            LastApply {
+                at: "2026-05-28T12:00:00Z".to_owned(),
+                user: "u".to_owned(),
+                host: "h".to_owned(),
+            },
+            Vec::new(),
+        )
+    }
+
+    /// Write a valid `<ts>.COMMIT` sentinel carrying an encoded record.
+    fn write_commit(dir: &Utf8Path, ts: &str) {
+        fs_err::write(
+            dir.join(format!("{ts}{COMMIT_SUFFIX}")),
+            sample_record().encode().expect("encode record"),
+        )
+        .expect("write commit sentinel");
+    }
+
+    #[test]
+    fn read_latest_commit_is_none_on_missing_or_empty_dir() {
+        let temp = TempDir::new().expect("tempdir");
+        let dir = Utf8Path::from_path(temp.path()).expect("utf8 temp path");
+        assert!(
+            read_latest_commit(dir.join("nope"))
+                .expect("a missing journal dir is a clean none")
+                .is_none()
+        );
+        assert!(
+            read_latest_commit(dir)
+                .expect("an empty journal dir is a clean none")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn read_latest_commit_picks_the_newest_committed_apply() {
+        let temp = TempDir::new().expect("tempdir");
+        let dir = Utf8Path::from_path(temp.path()).expect("utf8 temp path");
+        write_commit(dir, "20260101T000000Z");
+        write_commit(dir, "20260102T000000Z");
+        let (ts, _record) = read_latest_commit_with_ts(dir)
+            .expect("scan")
+            .expect("a committed apply");
+        assert_eq!(ts, "20260102T000000Z");
+    }
+
+    #[test]
+    fn read_latest_commit_skips_a_rolled_back_apply_and_picks_the_prior() {
+        let temp = TempDir::new().expect("tempdir");
+        let dir = Utf8Path::from_path(temp.path()).expect("utf8 temp path");
+        write_commit(dir, "20260101T000000Z");
+        write_commit(dir, "20260102T000000Z");
+        fs_err::write(
+            dir.join(format!("20260102T000000Z{ROLLED_BACK_SUFFIX}")),
+            [],
+        )
+        .expect("rolled-back sentinel");
+        let (ts, _record) = read_latest_commit_with_ts(dir)
+            .expect("scan")
+            .expect("the prior committed apply");
+        assert_eq!(ts, "20260101T000000Z");
+    }
+
+    #[test]
+    fn read_latest_commit_is_none_when_every_apply_is_rolled_back() {
+        let temp = TempDir::new().expect("tempdir");
+        let dir = Utf8Path::from_path(temp.path()).expect("utf8 temp path");
+        write_commit(dir, "20260101T000000Z");
+        fs_err::write(
+            dir.join(format!("20260101T000000Z{ROLLED_BACK_SUFFIX}")),
+            [],
+        )
+        .expect("rolled-back sentinel");
+        assert!(read_latest_commit(dir).expect("scan").is_none());
+    }
+
+    #[test]
+    fn read_latest_commit_skips_a_torn_newest_sentinel_and_falls_back() {
+        // Regression: a `kill -9` between creating the `<ts>.COMMIT` file and
+        // flushing its bytes leaves a 0-byte sentinel. Reading the latest
+        // commit must skip it and report the previous, decodable apply rather
+        // than failing the whole `status` / `rollback` with a Truncated error.
+        let temp = TempDir::new().expect("tempdir");
+        let dir = Utf8Path::from_path(temp.path()).expect("utf8 temp path");
+        write_commit(dir, "20260101T000000Z");
+        // A newer sentinel exists but is torn (empty body).
+        fs_err::write(dir.join(format!("20260102T000000Z{COMMIT_SUFFIX}")), [])
+            .expect("torn sentinel");
+        let (ts, _record) = read_latest_commit_with_ts(dir)
+            .expect("a torn newest sentinel must not error the scan")
+            .expect("the prior valid commit is returned");
+        assert_eq!(ts, "20260101T000000Z");
+    }
+
+    #[test]
+    fn read_latest_commit_is_none_when_the_only_sentinel_is_torn() {
+        // The exact shape that bricked `patina status`: a lone 0-byte
+        // `.COMMIT`. It must read as "no committed apply", not a hard error.
+        let temp = TempDir::new().expect("tempdir");
+        let dir = Utf8Path::from_path(temp.path()).expect("utf8 temp path");
+        fs_err::write(dir.join(format!("20260102T000000Z{COMMIT_SUFFIX}")), [])
+            .expect("torn sentinel");
+        assert!(
+            read_latest_commit(dir)
+                .expect("a torn sole sentinel reads as none, not an error")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn read_latest_commit_propagates_a_newer_major_sentinel() {
+        // A sentinel from a newer format major must NOT be skipped: the
+        // version envelope's purpose is to make this binary refuse a newer
+        // apply rather than silently fall back to an older commit and act on
+        // stale state.
+        let temp = TempDir::new().expect("tempdir");
+        let dir = Utf8Path::from_path(temp.path()).expect("utf8 temp path");
+        write_commit(dir, "20260101T000000Z");
+        let mut bytes = sample_record().encode().expect("encode");
+        bytes
+            .get_mut(..2)
+            .expect("the encoded record has a 2-byte envelope")
+            .copy_from_slice(&(FILE_MAJOR_VERSION + 1).to_le_bytes());
+        fs_err::write(dir.join(format!("20260102T000000Z{COMMIT_SUFFIX}")), bytes)
+            .expect("newer-major sentinel");
+        assert!(matches!(
+            read_latest_commit(dir),
+            Err(JournalError::VersionMismatch { .. })
+        ));
     }
 }
