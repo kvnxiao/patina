@@ -2,7 +2,7 @@
 id: SPEC-0005
 slug: patina-skip-if-satisfied
 title: Patina skip-if-satisfied — idempotent no-op re-apply via Create/Update/Unchanged classification
-status: in-progress
+status: implemented
 created: 2026-06-02
 supersedes: []
 ---
