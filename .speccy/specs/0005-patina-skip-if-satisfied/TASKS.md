@@ -341,7 +341,7 @@ Suggested files: `patina-core/src/rollback/replay.rs`,
 </task-scenarios>
 </task>
 
-<task id="T-009" state="pending" covers="REQ-010">
+<task id="T-009" state="completed" covers="REQ-010">
 ## Human diff omits Unchanged bodies and prints one summary count line
 
 In the diff renderer (`patina-cli/src/output/diff.rs:30`), per-entry blocks
