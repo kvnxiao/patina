@@ -44,6 +44,7 @@ pub use apply::engine::ApplyResult;
 pub use apply::engine::LockPolicy;
 pub use apply::engine::ResolvedOperation;
 pub use apply::engine::ResolvedPlan;
+pub use apply::engine::TargetDisposition;
 pub use apply::engine::execute as execute_plan;
 pub use apply::engine::is_content_materialization;
 pub use apply::engine::plan as plan_apply;

@@ -363,7 +363,7 @@ Suggested files: `patina-cli/src/output/diff.rs`,
 </task-scenarios>
 </task>
 
-<task id="T-010" state="pending" covers="REQ-011 REQ-012">
+<task id="T-010" state="completed" covers="REQ-011 REQ-012">
 ## `--json` plan entries carry a per-entry `state`; the no-op emits the standard envelope
 
 Each entry in the `--json` plan array (`json_envelope`,

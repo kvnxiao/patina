@@ -31,6 +31,14 @@
 //! must honour those dispositions: an `Unchanged` target (which took no
 //! backup) is left byte-for-byte in place, a `Create` target is deleted, and
 //! an `Update` target is restored to its pre-apply bytes from the backup.
+//!
+//! ## `--json` per-entry `state` (T-010, REQ-011 / REQ-012; CHK-015 / CHK-016)
+//!
+//! Each `--json` plan entry carries a `state` field equal to the target's
+//! classified disposition label (`create` / `update` / `unchanged`), and a
+//! fully-satisfied repo still emits the standard envelope shape — every entry
+//! `unchanged` (zero create/update change counts), not a reduced or
+//! special-cased document.
 
 mod common;
 
@@ -583,4 +591,176 @@ mode = "copy"
         b"keep",
         "the Unchanged target must survive a later apply's reap phase"
     );
+}
+
+/// Parse an `apply --json` stdout into its plan array, asserting the standard
+/// top-level envelope shape (`repo_root`, `profile`, `plan`, `result`) is
+/// present. Returns the `plan` rows so a caller can inspect per-entry `state`.
+fn plan_rows(stdout: &[u8]) -> Vec<serde_json::Value> {
+    let doc: serde_json::Value =
+        serde_json::from_slice(stdout).expect("apply --json stdout must be one JSON document");
+    for key in ["repo_root", "profile", "plan", "result"] {
+        assert!(
+            doc.get(key).is_some(),
+            "the --json envelope must carry the standard `{key}` field; got: {doc}"
+        );
+    }
+    doc.get("plan")
+        .and_then(serde_json::Value::as_array)
+        .expect("the envelope must carry a `plan` array")
+        .clone()
+}
+
+/// The `state` of the plan row whose `target` basename equals `basename`.
+/// Panics via `.expect()` (covered by the file-level `expect_used` allow) when
+/// no row matches, so a missing or mis-keyed entry fails the test loudly.
+fn state_for(rows: &[serde_json::Value], basename: &str) -> String {
+    rows.iter()
+        .find(|row| {
+            row.get("target")
+                .and_then(serde_json::Value::as_str)
+                .and_then(|t| Utf8Path::new(t).file_name())
+                == Some(basename)
+        })
+        .and_then(|row| row.get("state"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_owned)
+        .expect("a plan row whose target basename matches, carrying a string `state`")
+}
+
+#[test]
+fn json_plan_entries_carry_their_disposition_state(/* CHK-015, REQ-011 */) {
+    // A mixed plan producing one Create, one Update, and one Unchanged target.
+    // Each `--json` plan entry must carry a `state` equal to its classified
+    // disposition (`create` / `update` / `unchanged`), and a second run over
+    // the same live state must be byte-identical (the deterministic-stdout
+    // contract, REQ-012).
+    let f = Fixture::new();
+    let m = f.module(
+        "m",
+        r#"
+[[file]]
+source = "unchanged_src"
+target = "~/unchanged_out"
+mode = "copy"
+
+[[file]]
+source = "create_src"
+target = "~/create_out"
+mode = "copy"
+
+[[file]]
+source = "update_src"
+target = "~/update_out"
+mode = "copy"
+"#,
+    );
+    fs_err::write(m.join("unchanged_src"), b"unchanged-bytes").expect("write unchanged_src");
+    fs_err::write(m.join("create_src"), b"create-bytes").expect("write create_src");
+    fs_err::write(m.join("update_src"), b"update-bytes").expect("write update_src");
+
+    let unchanged_out = f.home.join("unchanged_out");
+    let update_out = f.home.join("update_out");
+
+    // Pre-stage the live filesystem so a single apply classifies one of each:
+    //   - unchanged_out already holds the source bytes → Unchanged.
+    //   - update_out exists with different bytes → Update.
+    //   - create_out is absent → Create.
+    fs_err::write(&unchanged_out, b"unchanged-bytes").expect("pre-stage unchanged_out");
+    fs_err::write(&update_out, b"update-pre-apply").expect("pre-stage update_out");
+
+    let first = f.apply(&["--json", "--yes"]);
+    assert_eq!(
+        code(&first),
+        0,
+        "the mixed --json apply must succeed; stderr: {}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+
+    let rows = plan_rows(&first.stdout);
+    assert_eq!(
+        state_for(&rows, "unchanged_out"),
+        "unchanged",
+        "the already-satisfied target must report state `unchanged`; rows: {rows:?}"
+    );
+    assert_eq!(
+        state_for(&rows, "create_out"),
+        "create",
+        "the absent target must report state `create`; rows: {rows:?}"
+    );
+    assert_eq!(
+        state_for(&rows, "update_out"),
+        "update",
+        "the drifted target must report state `update`; rows: {rows:?}"
+    );
+
+    // The plan is now fully satisfied; a second --json apply over the unchanged
+    // state must be byte-identical (REQ-011/REQ-012 determinism). We compare a
+    // re-run against the satisfied state to itself rather than against the
+    // mixed first run, since the first run mutated the filesystem.
+    let satisfied = f.apply(&["--json", "--yes"]);
+    assert_eq!(code(&satisfied), 0, "the satisfying apply must succeed");
+    let again = f.apply(&["--json", "--yes"]);
+    assert_eq!(code(&again), 0, "the repeat apply must succeed");
+    assert_eq!(
+        satisfied.stdout,
+        again.stdout,
+        "two --json applies over the same live state must be byte-identical;\nfirst:  {}\nsecond: {}",
+        String::from_utf8_lossy(&satisfied.stdout),
+        String::from_utf8_lossy(&again.stdout),
+    );
+}
+
+#[test]
+fn fully_satisfied_json_emits_standard_envelope_all_unchanged(/* CHK-016, REQ-012 */) {
+    // A fully-satisfied repo applied with `--json` must emit the STANDARD
+    // envelope shape (same top-level keys as a changing apply), not a reduced
+    // or special-cased document. Its plan array lists every managed entry with
+    // `state: "unchanged"` — the realization of "zero change counts" against an
+    // envelope that reports state per entry rather than via a separate counter.
+    let f = Fixture::new();
+    let m = f.module(
+        "m",
+        r#"
+[[file]]
+source = "a_src"
+target = "~/a_out"
+mode = "copy"
+
+[[file]]
+source = "rc.tmpl"
+target = "~/.rc"
+"#,
+    );
+    fs_err::write(m.join("a_src"), b"a-bytes").expect("write a_src");
+    fs_err::write(m.join("rc.tmpl"), b"export EDITOR=vim\n").expect("write rc.tmpl");
+
+    // Converge the repo so the measured apply is a full no-op.
+    assert_eq!(
+        code(&f.apply(&["--json", "--yes"])),
+        0,
+        "priming apply must converge the repo"
+    );
+
+    let out = f.apply(&["--json", "--yes"]);
+    assert_eq!(
+        code(&out),
+        0,
+        "the fully-satisfied --json apply must exit 0; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    // `plan_rows` asserts the standard top-level shape is present.
+    let rows = plan_rows(&out.stdout);
+    assert!(
+        !rows.is_empty(),
+        "the standard envelope still lists every managed entry, even on a no-op"
+    );
+    for row in &rows {
+        assert_eq!(
+            row.get("state").and_then(serde_json::Value::as_str),
+            Some("unchanged"),
+            "every entry of a fully-satisfied plan must be `unchanged` (zero change counts); row: {row}"
+        );
+    }
 }

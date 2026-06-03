@@ -285,18 +285,26 @@ async fn run_json(
 }
 
 /// Build the `--json` envelope: `repo_root`, `profile`, `plan`, `result`.
+///
+/// Each plan row carries a `state` field whose value is the target's
+/// [`Disposition`](patina_core::Disposition) label (`create` / `update` /
+/// `unchanged`), derived purely from the plan-time classification and reusing
+/// the canonical [`Disposition::label`](patina_core::Disposition::label)
+/// mapping (REQ-011). For tree modes the array lists
+/// per-leaf rows with per-leaf `state` (DEC-003 / DEC-007), mirroring the
+/// per-leaf routing the human diff uses, so a drifted tree reports each leaf's
+/// own state rather than the per-op aggregate. The `state` field is a pure
+/// function of the disposition, so it inherits the deterministic-stdout
+/// contract (REQ-012).
 fn json_envelope(resolved: &ResolvedPlan, result: &str) -> String {
     let plan: Vec<serde_json::Value> = resolved
         .operations
         .iter()
         .flat_map(|op| {
-            op.targets.iter().map(move |target| {
-                serde_json::json!({
-                    "mode": mode_label(op.mode),
-                    "source": op.source.as_str(),
-                    "target": target.as_str(),
-                })
-            })
+            op.targets
+                .iter()
+                .zip(&op.dispositions)
+                .flat_map(move |(target, disposition)| plan_rows(op, target, disposition))
         })
         .collect();
     let envelope = serde_json::json!({
@@ -306,6 +314,45 @@ fn json_envelope(resolved: &ResolvedPlan, result: &str) -> String {
         "result": result,
     });
     serde_json::to_string_pretty(&envelope).unwrap_or_else(|_| "{}".to_owned())
+}
+
+/// The plan rows one `(operation, target)` pair contributes to the `--json`
+/// plan array.
+///
+/// A single-target mode (empty `leaves`) yields one row carrying the target's
+/// own disposition label. A tree mode yields one row per materialized leaf,
+/// each carrying that leaf's path (under the declared target) and its per-leaf
+/// disposition label (DEC-003 / DEC-007) — the same per-leaf routing the human
+/// diff renderer uses, so the two surfaces agree on what an entry expands to.
+fn plan_rows(
+    op: &patina_core::ResolvedOperation,
+    target: &camino::Utf8Path,
+    disposition: &patina_core::TargetDisposition,
+) -> Vec<serde_json::Value> {
+    if disposition.leaves.is_empty() {
+        // Single-target mode: one row for the whole target.
+        vec![serde_json::json!({
+            "mode": mode_label(op.mode),
+            "source": op.source.as_str(),
+            "target": target.as_str(),
+            "state": disposition.aggregate.label(),
+        })]
+    } else {
+        // Tree mode: one row per materialized leaf, keyed by the leaf path
+        // under the declared source/target, carrying the per-leaf state.
+        disposition
+            .leaves
+            .iter()
+            .map(|leaf| {
+                serde_json::json!({
+                    "mode": mode_label(op.mode),
+                    "source": op.source.join(&leaf.relative).as_str(),
+                    "target": target.join(&leaf.relative).as_str(),
+                    "state": leaf.disposition.label(),
+                })
+            })
+            .collect()
+    }
 }
 
 /// Stable lowercase label for a file mode in the JSON envelope.
