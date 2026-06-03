@@ -139,6 +139,22 @@ fn sole_commit_file(journal_dir: &Utf8Path) -> Utf8PathBuf {
     commits.pop().expect("one commit file")
 }
 
+/// Resolve a materialized target to the absolute, symlink-and-prefix-folded
+/// form the engine records — and therefore the form `mirror_backup_path`
+/// mirrors under the backup cycle. The engine resolves every target through
+/// `resolve_location`, which canonicalizes the parent and strips the Windows
+/// `\\?\` verbatim prefix; on macOS the fixture tempdir's `/var/...` resolves
+/// to `/private/var/...`. A raw `f.home`-derived target would not match the
+/// mirrored backup path on those platforms (Linux `/tmp` canonicalizes to a
+/// no-op). `dunce::canonicalize` mirrors the engine's `canonicalize`; the leaf
+/// must exist (these targets are materialized regular files by call time).
+fn engine_canonical(target: &Utf8Path) -> Utf8PathBuf {
+    Utf8PathBuf::from_path_buf(
+        dunce::canonicalize(target.as_std_path()).expect("canonicalize target"),
+    )
+    .expect("canonical target is utf8")
+}
+
 #[test]
 fn fully_satisfied_reapply_writes_no_new_journal_or_backup(/* CHK-011, REQ-007 */) {
     // After a converging first apply, a second apply over the unchanged source
@@ -375,7 +391,11 @@ mode = "copy"
     // mapping keeps the assertion exact across platforms rather than guessing
     // the on-disk layout.
     let cycle_ts = cycle.file_name().expect("cycle has a timestamp name");
-    let backed_up = patina_core::journal::mirror_backup_path(&backups_root, cycle_ts, &b_out);
+    let backed_up = patina_core::journal::mirror_backup_path(
+        &backups_root,
+        cycle_ts,
+        &engine_canonical(&b_out),
+    );
     assert_eq!(
         fs_err::read(backed_up.as_std_path()).expect("read backed-up bytes"),
         b"b-drifted",
@@ -432,7 +452,8 @@ mode = "copy"
     let backups_root = f.state_root().join("backups");
     let cycle = latest_backup_cycle(&backups_root).expect("a backup cycle for the drifted tree");
     let cycle_ts = cycle.file_name().expect("cycle has a timestamp name");
-    let backed_up_one = patina_core::journal::mirror_backup_path(&backups_root, cycle_ts, &one);
+    let backed_up_one =
+        patina_core::journal::mirror_backup_path(&backups_root, cycle_ts, &engine_canonical(&one));
     assert_eq!(
         fs_err::read(backed_up_one.as_std_path()).expect("read backed-up leaf"),
         b"tampered",
