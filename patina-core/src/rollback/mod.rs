@@ -45,7 +45,6 @@ mod replay;
 
 use crate::error::EngineError;
 use crate::journal::ApplyRecord;
-use crate::journal::COMMIT_SUFFIX;
 use crate::journal::OsSyncer;
 use crate::journal::ROLLED_BACK_SUFFIX;
 use crate::journal::Syncer;
@@ -122,27 +121,20 @@ pub fn run() -> Result<(), EngineError> {
     // Mutating subcommands take the exclusive lock for the whole rollback.
     let _guard = acquire_lock(&lock_path, LockKind::Exclusive, exclusive_timeout())?;
 
-    let Some(timestamp) = latest_rollbackable(&journal_dir)? else {
+    // The shared "last apply" selection (also used by `patina status`) skips a
+    // torn/unreadable newest `<ts>.COMMIT` and falls back to the previous
+    // decodable commit, so a `kill -9`-torn sentinel does not strand rollback.
+    // A newer-format sentinel still propagates (surfaced as
+    // [`RollbackError::Journal`]) rather than being silently skipped.
+    let Some((timestamp, record)) =
+        crate::journal::read_latest_commit_with_ts(&journal_dir).map_err(RollbackError::Journal)?
+    else {
         return Err(RollbackError::NoPriorApply.into());
     };
-
-    let commit_path = journal_dir.join(format!("{timestamp}{COMMIT_SUFFIX}"));
-    let bytes = fs_err::read(&commit_path).map_err(RollbackError::Filesystem)?;
-    let record = ApplyRecord::decode(&bytes).map_err(RollbackError::Journal)?;
 
     reverse_record(&record, &backups_dir, &timestamp)?;
     mark_rolled_back(&journal_dir, &timestamp, &OsSyncer)?;
     Ok(())
-}
-
-/// Find the `<ts>` of the most recent committed apply that has not already
-/// been rolled back, or `None` when no such apply exists.
-///
-/// Delegates to [`crate::journal::latest_unrolled_commit`] — the same scan
-/// `patina status` uses to choose its "last apply" — so status and rollback
-/// agree on which commit is current rather than each re-deriving the rule.
-fn latest_rollbackable(journal_dir: &Utf8Path) -> Result<Option<String>, RollbackError> {
-    crate::journal::latest_unrolled_commit(journal_dir).map_err(RollbackError::Journal)
 }
 
 /// Reverse every `[[file]]` entry recorded in `record`, one atomic entry at
@@ -265,47 +257,6 @@ mod tests {
             vec![(0, vec!["/a"]), (1, vec!["/b1", "/b2"])],
             "single-target entry 0 and two-target entry 1 group correctly"
         );
-    }
-
-    #[test]
-    fn latest_rollbackable_is_none_on_missing_dir() {
-        let temp = TempDir::new().expect("tempdir");
-        let root = Utf8Path::from_path(temp.path()).expect("utf8 temp path");
-        assert!(
-            latest_rollbackable(&root.join("nope"))
-                .expect("missing dir is a clean none")
-                .is_none()
-        );
-    }
-
-    #[test]
-    fn latest_rollbackable_skips_already_rolled_back_and_picks_prior() {
-        let temp = TempDir::new().expect("tempdir");
-        let dir = Utf8Path::from_path(temp.path()).expect("utf8 temp path");
-        // Two committed applies; the newer is already rolled back.
-        for ts in ["20260101T000000Z", "20260102T000000Z"] {
-            fs_err::write(dir.join(format!("{ts}{COMMIT_SUFFIX}")), []).expect("commit");
-        }
-        fs_err::write(
-            dir.join(format!("20260102T000000Z{ROLLED_BACK_SUFFIX}")),
-            [],
-        )
-        .expect("rolled-back sentinel");
-
-        assert_eq!(
-            latest_rollbackable(dir).expect("scan"),
-            Some("20260101T000000Z".to_owned())
-        );
-    }
-
-    #[test]
-    fn latest_rollbackable_is_none_when_all_rolled_back() {
-        let temp = TempDir::new().expect("tempdir");
-        let dir = Utf8Path::from_path(temp.path()).expect("utf8 temp path");
-        let ts = "20260101T000000Z";
-        fs_err::write(dir.join(format!("{ts}{COMMIT_SUFFIX}")), []).expect("commit");
-        fs_err::write(dir.join(format!("{ts}{ROLLED_BACK_SUFFIX}")), []).expect("rolled-back");
-        assert!(latest_rollbackable(dir).expect("scan").is_none());
     }
 
     #[test]
