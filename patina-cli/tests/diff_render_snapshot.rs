@@ -85,11 +85,22 @@ mode = "copy"
     // Redact the per-run tempdir home prefix to a stable token so the snapshot
     // is reproducible across runs and machines while still proving the single
     // Update block names its target path (`copy [HOME]/b_out`). The renderer
-    // prints OS-native target paths, so the on-disk diff uses `\` on Windows
-    // while the fixture's `home` is the forward-slash camino form; redact both
-    // separator spellings. A literal string replace (not a regex) avoids
-    // re-enabling insta's `filters` feature for this substitution.
-    let home_fwd = f.home.as_str().replace('\\', "/");
+    // prints the target resolved through `resolve_location`, which canonicalizes
+    // the parent (this home dir) and strips the Windows verbatim prefix — so the
+    // printed prefix is the *canonical* home, not the raw env value: on macOS the
+    // tempdir's `/var/...` resolves to `/private/var/...`, and on Windows a
+    // junction / short-name / `\\?\` form can differ from the env string (Linux
+    // `/tmp` canonicalizes to a no-op, which is why only it matched the raw form).
+    // Canonicalize the home the same way (`dunce::canonicalize` mirrors the
+    // engine's `canonicalize`) before redacting, and cover both separator
+    // spellings. A literal string replace (not a regex) avoids re-enabling
+    // insta's `filters` feature for this substitution.
+    let canon_home = camino::Utf8PathBuf::from_path_buf(
+        dunce::canonicalize(f.home.as_std_path()).expect("canonicalize fixture home"),
+    )
+    .expect("canonical home is utf8")
+    .into_string();
+    let home_fwd = canon_home.replace('\\', "/");
     let home_back = home_fwd.replace('/', "\\");
     let redacted = stdout
         .replace(&format!("{home_fwd}/"), "[HOME]/")
