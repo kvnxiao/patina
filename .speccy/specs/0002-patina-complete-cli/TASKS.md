@@ -1,7 +1,7 @@
 ---
 spec: SPEC-0002
-spec_hash_at_generation: e628dfb9ea0c079f20bc0db6edadd66e8b6dc1b81b04602681bc77debcc90a9d
-generated_at: 2026-05-31T07:07:45Z
+spec_hash_at_generation: 7f3c2bae4d7112802f69897931d1a738167de0166f58c4358098cb4b8db24877
+generated_at: 2026-06-02T18:41:55Z
 ---
 # Tasks: SPEC-0002 Patina complete CLI surface and Windows symlink elevation — init/add/remove/promote/doctor plus the Windows Developer Mode UAC elevation flow
 

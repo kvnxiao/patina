@@ -30,7 +30,7 @@
 //! lock (REQ-023's read-only escape hatch). The warning text is returned
 //! in [`StatusReport::warnings`] so the CLI can route it to stderr.
 
-mod classify;
+pub(crate) mod classify;
 
 use crate::error::EngineError;
 use crate::journal::LastApply;

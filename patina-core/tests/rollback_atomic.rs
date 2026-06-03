@@ -19,10 +19,28 @@
 
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
+use patina_core::Disposition;
 use patina_core::RollbackError;
 use patina_core::journal::mirror_backup_path;
+use patina_core::rollback::RevertTarget;
 use patina_core::rollback::replay_entry;
 use tempfile::TempDir;
+
+/// A `Create` revert target for `path` (no backup → delete on revert).
+fn create(path: &Utf8Path) -> RevertTarget<'_> {
+    RevertTarget {
+        target: path.as_str(),
+        disposition: Disposition::Create,
+    }
+}
+
+/// An `Update` revert target for `path` (backup → restore on revert).
+fn update(path: &Utf8Path) -> RevertTarget<'_> {
+    RevertTarget {
+        target: path.as_str(),
+        disposition: Disposition::Update,
+    }
+}
 
 struct Env {
     _temp: TempDir,
@@ -70,7 +88,7 @@ fn failed_second_target_rolls_the_first_forward_and_reports_partial() {
     let t2 = blocked_parent.join("second");
     write_backup(&e.backups, ts, &t2, b"original-2");
 
-    let result = replay_entry(3, &[t1.as_str(), t2.as_str()], &e.backups, ts);
+    let result = replay_entry(3, &[update(&t1), update(&t2)], &e.backups, ts);
 
     // The entry fails atomically with a typed RollbackPartial naming entry 3.
     match result {
@@ -100,7 +118,7 @@ fn fully_revertible_multi_target_entry_succeeds() {
     fs_err::write(&fresh, "post-apply").expect("write fresh");
     write_backup(&e.backups, ts, &pre_existing, b"original");
 
-    replay_entry(0, &[pre_existing.as_str(), fresh.as_str()], &e.backups, ts)
+    replay_entry(0, &[update(&pre_existing), create(&fresh)], &e.backups, ts)
         .expect("entry reverts cleanly");
 
     assert_eq!(

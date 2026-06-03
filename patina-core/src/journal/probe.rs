@@ -175,16 +175,25 @@ mod tests {
 
     #[test]
     fn operation_target_extracts_the_target_of_each_variant() {
+        use crate::journal::Disposition;
         assert_eq!(
-            operation_target(&PlannedOperation::symlink("s", "/t/sym")),
+            operation_target(&PlannedOperation::symlink(
+                "s",
+                "/t/sym",
+                Disposition::Create
+            )),
             "/t/sym"
         );
         assert_eq!(
-            operation_target(&PlannedOperation::render("s", "/t/ren")),
+            operation_target(&PlannedOperation::render(
+                "s",
+                "/t/ren",
+                Disposition::Create
+            )),
             "/t/ren"
         );
         assert_eq!(
-            operation_target(&PlannedOperation::copy("s", "/t/cp")),
+            operation_target(&PlannedOperation::copy("s", "/t/cp", Disposition::Create)),
             "/t/cp"
         );
     }

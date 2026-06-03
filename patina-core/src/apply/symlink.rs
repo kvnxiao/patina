@@ -18,6 +18,7 @@
 
 use super::CompletionRecord;
 use super::ExecutorError;
+use super::LeafWrite;
 use super::ensure_parent;
 use super::with_sharing_violation_retry;
 use camino::Utf8Path;
@@ -82,10 +83,18 @@ pub(super) fn per_file_symlink(
 /// [`CompletionRecord`] is returned per materialized leaf, in walk order
 /// within each target.
 ///
+/// `write` selects which leaves are (re)linked (REQ-003 / DEC-007): on a
+/// fresh or fully-drifted tree the engine passes [`LeafWrite::All`] and every
+/// leaf is linked as before; on a partially-drifted tree it passes
+/// [`LeafWrite::Only`] with the plan-time `Update`/`Create` leaves so a clean
+/// leaf's existing link is left in place rather than removed-and-recreated. A
+/// skipped leaf produces no [`CompletionRecord`].
+///
 /// [`walk_files`]: super::walk_files
 pub(super) fn tree_symlink(
     source: &Utf8Path,
     targets: &[Utf8PathBuf],
+    write: LeafWrite<'_>,
 ) -> Result<Vec<CompletionRecord>, ExecutorError> {
     let metadata = fs_err::symlink_metadata(source).map_err(|err| {
         if err.kind() == std::io::ErrorKind::NotFound {
@@ -111,6 +120,9 @@ pub(super) fn tree_symlink(
     let mut records = Vec::with_capacity(targets.len() * relative_files.len());
     for target in targets {
         for rel in &relative_files {
+            if !write.includes(rel) {
+                continue;
+            }
             let file_source = source.join(rel);
             let file_target = target.join(rel);
             records.push(link_file(&file_source, &file_target)?);
@@ -393,7 +405,8 @@ mod tests {
         fs_err::write(src_dir.join("sub").join("b.conf"), b"b").expect("write b");
         let target = dir.join("dest");
 
-        let records = tree_symlink(&src_dir, std::slice::from_ref(&target)).expect("tree links");
+        let records = tree_symlink(&src_dir, std::slice::from_ref(&target), LeafWrite::All)
+            .expect("tree links");
 
         assert_eq!(records.len(), 2, "one record per leaf");
         let a = target.join("a.conf");
@@ -415,6 +428,39 @@ mod tests {
     }
 
     #[test]
+    fn tree_symlink_only_links_selected_leaves() {
+        // REQ-003 / DEC-007 partial tree write: with a `LeafWrite::Only` set
+        // naming one of two leaves, only that leaf is linked and only that
+        // leaf yields a completion record. The unselected leaf is not touched.
+        let (_td, dir) = utf8_tempdir();
+        let src_dir = dir.join("d");
+        fs_err::create_dir_all(src_dir.join("sub")).expect("mkdir sub");
+        fs_err::write(src_dir.join("a.conf"), b"a").expect("write a");
+        fs_err::write(src_dir.join("sub").join("b.conf"), b"b").expect("write b");
+        let target = dir.join("dest");
+
+        let only: std::collections::BTreeSet<Utf8PathBuf> =
+            std::iter::once(Utf8PathBuf::from("a.conf")).collect();
+        let records = tree_symlink(
+            &src_dir,
+            std::slice::from_ref(&target),
+            LeafWrite::Only(&only),
+        )
+        .expect("partial tree links");
+
+        assert_eq!(records.len(), 1, "only the selected leaf is recorded");
+        assert_eq!(
+            read_link_canonical(&target.join("a.conf")),
+            canonical(&src_dir.join("a.conf")),
+            "the selected leaf is linked"
+        );
+        assert!(
+            !target.join("sub").join("b.conf").exists(),
+            "the unselected leaf must not be linked"
+        );
+    }
+
+    #[test]
     fn tree_symlink_skips_empty_source_subdirectories() {
         // REQ-006: an empty source subdirectory produces neither a target
         // directory nor a link.
@@ -424,7 +470,8 @@ mod tests {
         fs_err::write(src_dir.join("a.conf"), b"a").expect("write a");
         let target = dir.join("dest");
 
-        let records = tree_symlink(&src_dir, std::slice::from_ref(&target)).expect("tree links");
+        let records = tree_symlink(&src_dir, std::slice::from_ref(&target), LeafWrite::All)
+            .expect("tree links");
 
         assert_eq!(records.len(), 1, "only the one real leaf is linked");
         assert!(
@@ -447,7 +494,8 @@ mod tests {
         fs_err::create_dir_all(&target).expect("mkdir target");
         fs_err::write(target.join("a.conf"), b"original").expect("write pre-existing leaf");
 
-        let records = tree_symlink(&src_dir, std::slice::from_ref(&target)).expect("tree links");
+        let records = tree_symlink(&src_dir, std::slice::from_ref(&target), LeafWrite::All)
+            .expect("tree links");
 
         assert_eq!(records.len(), 1);
         let leaf = target.join("a.conf");
@@ -469,15 +517,16 @@ mod tests {
         let (_td, dir) = utf8_tempdir();
         let source = dir.join("not-a-dir");
         fs_err::write(&source, b"x").expect("write file");
-        let err = tree_symlink(&source, &[dir.join("t")]).expect_err("file source rejected");
+        let err = tree_symlink(&source, &[dir.join("t")], LeafWrite::All)
+            .expect_err("file source rejected");
         assert!(matches!(err, ExecutorError::NotADirectory { .. }));
     }
 
     #[test]
     fn tree_symlink_missing_source_is_typed() {
         let (_td, dir) = utf8_tempdir();
-        let err =
-            tree_symlink(&dir.join("absent"), &[dir.join("t")]).expect_err("missing source typed");
+        let err = tree_symlink(&dir.join("absent"), &[dir.join("t")], LeafWrite::All)
+            .expect_err("missing source typed");
         assert!(matches!(err, ExecutorError::SourceMissing { .. }));
     }
 
@@ -493,8 +542,10 @@ mod tests {
         fs_err::write(src_dir.join("sub").join("b.conf"), b"b").expect("write b");
         let target = dir.join("dest");
 
-        let first = tree_symlink(&src_dir, std::slice::from_ref(&target)).expect("first apply");
-        let second = tree_symlink(&src_dir, std::slice::from_ref(&target)).expect("second apply");
+        let first = tree_symlink(&src_dir, std::slice::from_ref(&target), LeafWrite::All)
+            .expect("first apply");
+        let second = tree_symlink(&src_dir, std::slice::from_ref(&target), LeafWrite::All)
+            .expect("second apply");
 
         assert_eq!(first.len(), second.len());
         let a = target.join("a.conf");

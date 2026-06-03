@@ -33,9 +33,12 @@
 //! The content hash is `blake3` rather than a `std::hash` fingerprint so the
 //! same hash serves the journal here and the SPEC-0003 drift cache, which
 //! compares a freshly computed `blake3` of a target against this recorded
-//! value (REQ-029). Because the record layout widened relative to the first
-//! implementation, the shared version-envelope major is bumped to `2`.
+//! value (REQ-029). The record shares the journal's
+//! [`FILE_MAJOR_VERSION`](super::FILE_MAJOR_VERSION); per the pre-release
+//! no-bump policy (see `AGENTS.md`) the on-disk major is held at `1` and is
+//! not bumped per breaking change until v1.0.
 
+use super::Disposition;
 use super::JournalError;
 use super::plan::FILE_MAJOR_VERSION;
 use crate::version_envelope;
@@ -63,6 +66,10 @@ pub enum ExpectedTarget {
         /// (REQ-019): a multi-target entry reverts every target as a unit
         /// or fails the whole entry.
         entry: u32,
+        /// How this target was classified at plan time (REQ-002). Per-leaf
+        /// for a tree target (DEC-007); recovery and rollback leave an
+        /// `Unchanged` target in place.
+        disposition: Disposition,
     },
     /// The target should be a regular file whose bytes hash to `hash`
     /// (copy or rendered-template output).
@@ -77,6 +84,10 @@ pub enum ExpectedTarget {
         /// Index of the `[[file]]` entry that materialized this target
         /// (see [`ExpectedTarget::Symlink::entry`]).
         entry: u32,
+        /// How this target was classified at plan time (REQ-002). Per-leaf
+        /// for a tree target (DEC-007); recovery and rollback leave an
+        /// `Unchanged` target in place.
+        disposition: Disposition,
     },
 }
 
@@ -107,6 +118,16 @@ impl ExpectedTarget {
     pub fn entry(&self) -> u32 {
         match self {
             Self::Symlink { entry, .. } | Self::Content { entry, .. } => *entry,
+        }
+    }
+
+    /// How this target was classified at plan time (REQ-002). Per-leaf for a
+    /// tree target (DEC-007); recovery and rollback leave an `Unchanged`
+    /// target in place.
+    #[must_use = "the disposition decides whether rollback and recovery touch this target"]
+    pub fn disposition(&self) -> Disposition {
+        match self {
+            Self::Symlink { disposition, .. } | Self::Content { disposition, .. } => *disposition,
         }
     }
 }
@@ -227,12 +248,24 @@ mod tests {
                     target: "/home/u/.zshrc".to_owned(),
                     link_target: "/repo/zsh/zshrc".to_owned(),
                     entry: 0,
+                    disposition: Disposition::Create,
                 },
                 ExpectedTarget::Content {
                     target: "/home/u/.gitconfig".to_owned(),
                     source: "/repo/git/gitconfig".to_owned(),
                     hash: content_hash(b"payload"),
                     entry: 1,
+                    disposition: Disposition::Update,
+                },
+                // Third target so the round-trip below exercises all three
+                // disposition variants (CHK-005), including an `Unchanged`
+                // target that recovery and rollback must leave in place.
+                ExpectedTarget::Content {
+                    target: "/home/u/.vimrc".to_owned(),
+                    source: "/repo/vim/vimrc".to_owned(),
+                    hash: content_hash(b"clean"),
+                    entry: 2,
+                    disposition: Disposition::Unchanged,
                 },
             ],
         )
@@ -246,6 +279,35 @@ mod tests {
     }
 
     #[test]
+    fn per_leaf_dispositions_round_trip_at_major_one(/* CHK-005, CHK-017 */) {
+        // A record with one Create, one Update, and one Unchanged target
+        // must decode with each target's disposition unchanged, and the
+        // envelope major byte must be 1. Whole-record `PartialEq` above
+        // gates equality; this pins the per-target dispositions and the
+        // major byte directly so a dropped field or a bumped major is caught.
+        let r = record();
+        let bytes = r.encode().expect("encode");
+        assert_eq!(
+            version_envelope::read_envelope_version(&bytes).expect("read envelope"),
+            1
+        );
+        let decoded = ApplyRecord::decode(&bytes).expect("decode");
+        let got: Vec<Disposition> = decoded
+            .targets
+            .iter()
+            .map(ExpectedTarget::disposition)
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                Disposition::Create,
+                Disposition::Update,
+                Disposition::Unchanged
+            ]
+        );
+    }
+
+    #[test]
     fn newer_major_is_refused() {
         let mut bytes = record().encode().expect("encode");
         bytes
@@ -255,6 +317,33 @@ mod tests {
         assert!(matches!(
             ApplyRecord::decode(&bytes),
             Err(JournalError::VersionMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn envelope_major_byte_reads_as_one(/* CHK-017 */) {
+        let bytes = record().encode().expect("encode");
+        assert_eq!(
+            version_envelope::read_envelope_version(&bytes).expect("read envelope"),
+            1
+        );
+    }
+
+    #[test]
+    fn major_two_buffer_is_refused_not_misdecoded(/* CHK-018 */) {
+        // An ApplyRecord buffer prefixed with major 2 must fail to decode
+        // now that the supported major is 1.
+        let mut bytes = record().encode().expect("encode");
+        bytes
+            .get_mut(..2)
+            .expect("envelope")
+            .copy_from_slice(&2u16.to_le_bytes());
+        assert!(matches!(
+            ApplyRecord::decode(&bytes),
+            Err(JournalError::VersionMismatch {
+                found: 2,
+                supported: 1
+            })
         ));
     }
 
@@ -289,12 +378,14 @@ mod tests {
             target: "/t/s".to_owned(),
             link_target: "/r/s".to_owned(),
             entry: 0,
+            disposition: Disposition::Create,
         };
         let content = ExpectedTarget::Content {
             target: "/t/c".to_owned(),
             source: "/r/c".to_owned(),
             hash: [0u8; 32],
             entry: 3,
+            disposition: Disposition::Update,
         };
         assert_eq!(sym.source(), "/r/s");
         assert_eq!(content.source(), "/r/c");
@@ -321,16 +412,22 @@ mod tests {
             target: "/t/s".to_owned(),
             link_target: "/r/s".to_owned(),
             entry: 0,
+            disposition: Disposition::Unchanged,
         };
         let content = ExpectedTarget::Content {
             target: "/t/c".to_owned(),
             source: "/r/c".to_owned(),
             hash: [0u8; 32],
             entry: 3,
+            disposition: Disposition::Update,
         };
         assert_eq!(sym.target(), "/t/s");
         assert_eq!(content.target(), "/t/c");
         assert_eq!(sym.entry(), 0);
         assert_eq!(content.entry(), 3);
+        // The disposition accessor reads the per-variant field, so a swap
+        // of the two arms would surface here.
+        assert_eq!(sym.disposition(), Disposition::Unchanged);
+        assert_eq!(content.disposition(), Disposition::Update);
     }
 }

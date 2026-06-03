@@ -82,6 +82,12 @@ pub enum EngineError {
     #[error(transparent)]
     Executor(#[from] crate::apply::ExecutorError),
 
+    /// Plan-time classification of a target into Create / Update / Unchanged
+    /// failed because a copy/copy-tree source could not be read to hash it
+    /// (SPEC-0005 REQ-001). Raised during planning, before any mutation.
+    #[error(transparent)]
+    Classify(#[from] crate::apply::ClassifyError),
+
     /// Hook shell resolution, `when` evaluation, or execution failed
     /// (REQ-006).
     #[error(transparent)]

@@ -16,9 +16,14 @@
 //! # Examples
 //!
 //! ```
+//! use patina_core::Disposition;
 //! use patina_core::journal::{Plan, PlannedOperation, render_plan};
 //!
-//! let plan = Plan::new(vec![PlannedOperation::symlink("zsh/zshrc", "/home/u/.zshrc")]);
+//! let plan = Plan::new(vec![PlannedOperation::symlink(
+//!     "zsh/zshrc",
+//!     "/home/u/.zshrc",
+//!     Disposition::Create,
+//! )]);
 //! let text = render_plan(&plan, "20260528T120000Z");
 //! assert!(text.contains("symlink"));
 //! assert!(text.contains("/home/u/.zshrc"));
@@ -133,9 +138,9 @@ fn ignore_fmt(_result: std::fmt::Result) {}
 /// `--json` apply envelope uses, so a reader sees consistent words.
 fn describe(op: &PlannedOperation) -> (&'static str, &str, &str) {
     match op {
-        PlannedOperation::Symlink { source, target } => ("symlink", source, target),
-        PlannedOperation::Render { source, target } => ("template-render", source, target),
-        PlannedOperation::Copy { source, target } => ("copy", source, target),
+        PlannedOperation::Symlink { source, target, .. } => ("symlink", source, target),
+        PlannedOperation::Render { source, target, .. } => ("template-render", source, target),
+        PlannedOperation::Copy { source, target, .. } => ("copy", source, target),
     }
 }
 
@@ -145,10 +150,11 @@ mod tests {
     use super::*;
 
     fn sample() -> Plan {
+        use crate::journal::Disposition;
         Plan::new(vec![
-            PlannedOperation::symlink("zsh/zshrc", "/home/u/.zshrc"),
-            PlannedOperation::copy("git/gitconfig", "/home/u/.gitconfig"),
-            PlannedOperation::render("git/c.tmpl", "/home/u/.c"),
+            PlannedOperation::symlink("zsh/zshrc", "/home/u/.zshrc", Disposition::Create),
+            PlannedOperation::copy("git/gitconfig", "/home/u/.gitconfig", Disposition::Create),
+            PlannedOperation::render("git/c.tmpl", "/home/u/.c", Disposition::Create),
         ])
     }
 

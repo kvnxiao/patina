@@ -31,6 +31,7 @@ tracing = { workspace = true }
 
 [dev-dependencies]
 dunce = { workspace = true }
+insta = { workspace = true }
 pulldown-cmark = { workspace = true }
 tempfile = { workspace = true }
 toml = { workspace = true }
