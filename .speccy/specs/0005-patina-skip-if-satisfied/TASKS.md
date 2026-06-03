@@ -312,7 +312,7 @@ Suggested files: `patina-core/src/journal/recovery.rs`
 </task-scenarios>
 </task>
 
-<task id="T-008" state="pending" covers="REQ-006">
+<task id="T-008" state="completed" covers="REQ-006">
 ## Rollback leaves commit-recorded Unchanged targets untouched
 
 `revert_target` (`patina-core/src/rollback/replay.rs:154`) gains the same

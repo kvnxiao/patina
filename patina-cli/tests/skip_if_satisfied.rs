@@ -24,6 +24,13 @@
 //! itself is unit-tested in `patina-cli/src/cmd/apply.rs` (the subprocess
 //! fixture here pins stdin to a non-TTY); this suite covers the no-write
 //! property over the real engine.
+//!
+//! ## Rollback fidelity for a mixed commit (T-008, REQ-006; CHK-010)
+//!
+//! A committed apply records one disposition per target. `patina rollback`
+//! must honour those dispositions: an `Unchanged` target (which took no
+//! backup) is left byte-for-byte in place, a `Create` target is deleted, and
+//! an `Update` target is restored to its pre-apply bytes from the backup.
 
 mod common;
 
@@ -422,6 +429,99 @@ mode = "copy"
         fs_err::read(backed_up_one.as_std_path()).expect("read backed-up leaf"),
         b"tampered",
         "the whole-tree backup must capture the drifted leaf's prior bytes"
+    );
+}
+
+#[test]
+fn rollback_leaves_unchanged_deletes_create_and_restores_update(/* CHK-010, REQ-006 */) {
+    // One committed apply produces all three dispositions in a single commit,
+    // then `patina rollback` must honour each:
+    //   - `unchanged`: the target already matched its source before the apply, so
+    //     the apply took no backup; rollback must leave it byte-for-byte in place
+    //     (NOT delete it as a no-backup fresh creation would be).
+    //   - `create`: the target was absent before the apply; rollback deletes it.
+    //   - `update`: the target existed with different bytes before the apply, so
+    //     the apply backed it up; rollback restores the pre-apply bytes.
+    let f = Fixture::new();
+    let m = f.module(
+        "m",
+        r#"
+[[file]]
+source = "unchanged_src"
+target = "~/unchanged_out"
+mode = "copy"
+
+[[file]]
+source = "create_src"
+target = "~/create_out"
+mode = "copy"
+
+[[file]]
+source = "update_src"
+target = "~/update_out"
+mode = "copy"
+"#,
+    );
+    fs_err::write(m.join("unchanged_src"), b"unchanged-bytes").expect("write unchanged_src");
+    fs_err::write(m.join("create_src"), b"create-bytes").expect("write create_src");
+    fs_err::write(m.join("update_src"), b"update-bytes").expect("write update_src");
+
+    let unchanged_out = f.home.join("unchanged_out");
+    let create_out = f.home.join("create_out");
+    let update_out = f.home.join("update_out");
+
+    // Pre-stage the live filesystem so the single apply classifies one of each:
+    //   - unchanged_out already holds the source bytes → Unchanged (no backup).
+    //   - update_out exists with different bytes → Update (backed up).
+    //   - create_out is absent → Create.
+    fs_err::write(&unchanged_out, b"unchanged-bytes").expect("pre-stage unchanged_out");
+    fs_err::write(&update_out, b"update-pre-apply").expect("pre-stage update_out");
+
+    let apply = f.apply(&["--yes"]);
+    assert_eq!(
+        code(&apply),
+        0,
+        "apply must succeed and converge; stderr: {}",
+        String::from_utf8_lossy(&apply.stderr)
+    );
+
+    // Sanity: after the apply, all three targets hold the source bytes.
+    assert_eq!(
+        fs_err::read(create_out.as_std_path()).expect("read create_out post-apply"),
+        b"create-bytes",
+        "the Create target must be materialized by the apply"
+    );
+
+    // `--yes` is required: a non-interactive `rollback` without it only
+    // previews and performs no mutation (it would exit 0 having changed
+    // nothing, masking the behaviour under test).
+    let rollback = f.run(&["rollback", "--yes"], &[]);
+    assert_eq!(
+        code(&rollback),
+        0,
+        "rollback must succeed; stderr: {}",
+        String::from_utf8_lossy(&rollback.stderr)
+    );
+
+    // The Unchanged target is left byte-for-byte in place. Had rollback used
+    // the naive no-backup → delete rule, this target would be gone.
+    assert_eq!(
+        fs_err::read(unchanged_out.as_std_path()).expect("read unchanged_out post-rollback"),
+        b"unchanged-bytes",
+        "the Unchanged target must be left byte-for-byte in place"
+    );
+
+    // The Create target is deleted.
+    assert!(
+        !create_out.as_std_path().exists(),
+        "the Create target must be deleted by rollback"
+    );
+
+    // The Update target is restored to its pre-apply bytes.
+    assert_eq!(
+        fs_err::read(update_out.as_std_path()).expect("read update_out post-rollback"),
+        b"update-pre-apply",
+        "the Update target must be restored to its pre-apply bytes"
     );
 }
 
