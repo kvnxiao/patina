@@ -99,17 +99,27 @@ holistic loop:
 
 ### Single-writer rule
 
-This skill's session is the **only writer** to VET.md.
-Reviewer and implementer sub-agents never write to it — they return
-verdict blocks via their final message; this skill transcribes
-them. Sub-agents writing in parallel would race; single-writer
-prevents that.
+The **CLI's per-file append lock owns write serialization** for
+VET.md. Every block reaches the file through `speccy journal append`:
+the vet sub-agents (reviewer / implementer / simplifier) append their
+own `<drift-review>` / `<holistic-fix>` / `<simplifier-scan>` /
+`<simplifier-apply>` blocks, and this skill's session appends the
+terminal `<gate>` block. No actor edits VET.md with file-editing
+tools, and no actor hand-bootstraps the file — the lock serializes
+the parallel appends so there is no race, and the CLI stamps `date`,
+derives `round`, computes the gate's `tasks_hash`, and manages
+invocation sectioning. This skill's session is the sole author of the
+`<gate>` block and (when invoked under the orchestrator) of git
+commits, but it does not transcribe sub-agent blocks.
 
 ### File format
 
-YAML frontmatter created at first-ever invocation, then one
-`## Invocation N — <date>` section per skill invocation, with
-round blocks appended within the current section:
+The CLI creates VET.md with YAML frontmatter (`spec`,
+`generated_at`) on the first ever append and opens each
+`## Invocation N — <date>` section automatically when the file is
+absent or its last section is gate-terminated — the skill never
+writes the frontmatter or the invocation heading by hand. The
+resulting shape is:
 
 ```markdown
 ---
@@ -131,6 +141,10 @@ generated_at: 2026-05-21T22:00:00Z
 ...
 </drift-review>
 
+<gate verdict="passed" tasks_hash="..." date="...">
+...
+</gate>
+
 ## Invocation 2 — 2026-05-22T...
 
 <drift-review verdict="..." round="1" ...>
@@ -138,19 +152,15 @@ generated_at: 2026-05-21T22:00:00Z
 </drift-review>
 ```
 
-The `round` attribute is **per-invocation**. Round numbers reset to
-1 at the start of each invocation. `generated_at` in the frontmatter
-is the file-creation timestamp and is never rewritten.
+The `round` attribute is **per-invocation**; the CLI resets it to 1
+at the start of each invocation section. `generated_at` in the
+frontmatter is the file-creation timestamp and is never rewritten.
 
 If a prior invocation crashed mid-loop, its section is left as-is —
-the audit trail records what happened. The new invocation starts
-clean with its own section.
+the audit trail records what happened. The next append opens a fresh
+section.
 
 ## Loop
-
-Shared with the `/speccy-orchestrate` ship dispatch
-— both this skill body and that dispatch step include the same
-partial below so Phase 0 / 1 / 2 / 3 have a single source of truth.
 
 
 Round budget: **3 rounds per invocation** for drift fixing. Each
@@ -160,8 +170,13 @@ than the per-task implementer retry budget.
 
 ### Phase 0 — bootstrap
 
-Resolve the three values that sub-agent prompts need, then open a
-new invocation section in VET.md.
+Resolve the two values that sub-agent prompts need. The CLI owns
+VET.md's frontmatter and invocation sectioning, so this phase no
+longer hand-bootstraps the file or hand-writes an `## Invocation N`
+heading — the first `speccy journal append` for this invocation does
+both for you (it creates the file with frontmatter on first ever
+append, and opens `## Invocation N+1` automatically when the file is
+absent or its last section is gate-terminated).
 
 1. **Spec directory.** Run:
 
@@ -196,37 +211,71 @@ new invocation section in VET.md.
    essential because the drift-implementer leaves changes
    uncommitted between rounds.
 
-3. **Journal bootstrap and new invocation section.** The journal
-   is at `<spec-dir>/journal/VET.md`.
-
-   - If the file does not exist, create it with the YAML
-     frontmatter (`spec`, `generated_at`).
-   - Scan the file for `^## Invocation (\d+)` headers, take the
-     max, and add 1 to get the new invocation number `N`. If no
-     prior headers exist, `N = 1`.
-   - Append a new section header:
-
-     ```markdown
-
-     ## Invocation N — <ISO8601 timestamp>
-     ```
-
-     (Blank line above the heading for markdown readability.) Do
-     not modify prior sections, even if a prior invocation
-     crashed mid-loop.
+The invocation number `N` for this run is whatever the CLI assigns
+on the first append — you do not pick it or write the heading. After
+the first block of this invocation lands (the round-1
+`<drift-review>` the vet-reviewer appends, or the Phase 3 `<gate>` on
+a Phase 0 early-exit), read it back with `speccy journal show
+SPEC-NNNN --json` to learn the invocation number for the return
+contract's `invocation` field.
 
 ### Phase 1 — drift review and fix
 
 Repeat for up to 3 rounds per invocation. The running session owns
-the round counter, the working-tree snapshots, and the VET.md
-writes; sub-agents own the substantive review and fix work.
+the round counter and the working-tree snapshots; sub-agents own the
+substantive review and fix work **and append their own blocks** to
+VET.md via `speccy journal append` (the vet-reviewer appends
+`<drift-review>`, the vet-implementer appends `<holistic-fix>`). The
+CLI's per-file lock serializes those appends and stamps `date`,
+`round`, and the invocation section — the running session never
+transcribes a sub-agent's block and never edits VET.md with
+file-editing tools.
 
-**Defer-write pattern.** Hold returned verdict blocks in memory
-across each round and write to VET.md only **after** the
-snapshot-keep-vs-revert decision. Writing earlier would put VET.md
-changes inside the snapshot, and a stuck-revert would erase the
-audit trail. The journal is the durable record of *what the loop
-did*; it must survive any rollback the loop performs.
+**Protect the journal from rollback.** The sub-agents append to
+VET.md *during their own runs*, so a block is already on disk before
+the running session reaches its keep-vs-revert decision. Because
+VET.md lives in the working tree, a naive `git restore .` /
+`git stash pop` would revert those appends and erase the audit trail.
+The journal is the durable record of *what the loop did* and must
+survive any rollback. Two git facts drive the mechanism below:
+
+- `git restore -- ':!…/journal/'` and `git clean -fd -e '…/journal/'`
+  **do** honour the journal exclusion — a path-excluded restore and an
+  `-e`-excluded clean both leave VET.md on disk. Use them directly.
+- `git stash push --include-untracked` does **not** honour a pathspec
+  exclusion for the *untracked* journal file: it sweeps VET.md into the
+  stash regardless of any `':!…/journal/'` argument. A later
+  `git stash pop` then tries to restore that stale copy over the live
+  journal — at best it aborts with `already exists, no checkout`
+  (leaving stash litter and a non-zero exit), at worst it clobbers the
+  blocks appended since the snapshot. **Never `git stash pop` in this
+  loop.**
+
+So the loop snapshots with a plain `--include-untracked` stash (no
+pathspec — the journal is swept in, then immediately restored by
+`git stash apply`; because the journal is always dirty at vet time the
+push always creates a stash, so `stash@{0}` reliably names *our*
+snapshot and never a pre-existing unrelated one). On rollback it
+restores prior-round **code** from the stash with a tracked-only
+`git checkout 'stash@{0}' -- ':!…/journal/'`, which never touches the
+stash's untracked journal copy, then drops the stash. The live on-disk
+journal — with every block appended since the snapshot — is left
+untouched throughout.
+
+This is the **journal-safe revert sequence**. Every rollback in
+Phases 1 and 2 runs these four commands verbatim — the restore and
+clean undo sub-agent edits to tracked files and remove files it
+added, the tracked-only checkout restores pre-sub-agent code from
+the snapshot, and the drop discards it; all four exclude the journal
+directory:
+
+```bash
+# Revert code to the pre-sub-agent snapshot; never touch the journal.
+git restore -- ':!.speccy/specs/*/journal/'
+git clean -fd -e '.speccy/specs/*/journal/'
+git checkout 'stash@{0}' -- ':!.speccy/specs/*/journal/'
+git stash drop
+```
 
 1. **Spawn the drift reviewer sub-agent.** Prompt:
 
@@ -242,41 +291,49 @@ did*; it must survive any rollback the loop performs.
    >   changes, which the implementer leaves between rounds).
    >
    > Follow the focus, round-2+ scrutiny, and verdict-return
-   > contract in your agent file. Return a single `<drift-review>`
-   > block as your final message.
+   > contract in your agent file. Append your `<drift-review>` block
+   > to VET.md via `speccy journal append` and return a single thin
+   > `<verdict>` element as your final message.
 
    Substitute `SPEC-NNNN`, `N`, `R`, `<spec-dir>`, and `<base-ref>`
-   with the resolved values. Hold the returned `<drift-review>`
-   block in memory; do not write to VET.md yet.
+   with the resolved values. The sub-agent appends its own
+   `<drift-review>` block; do not transcribe it. Read the thin
+   `<verdict>` it returns to decide the next step.
 
    Invoke the `Task` tool with `subagent_type: "vet-reviewer"`.
    The sub-agent definition at `.claude/agents/vet-reviewer.md`
    carries the host-native dispatch metadata (model pin, effort
    level).
 
-2. **If `verdict="pass"`** → append the held `<drift-review>`
-   block to `<spec-dir>/journal/VET.md` under the current
-   invocation section. Exit the loop and go to Phase 2.
+2. **If `verdict="pass"`** → the vet-reviewer already appended its
+   `<drift-review>` block. Exit the loop and go to Phase 2.
 
-3. **If `verdict="blocking"` and no rounds remain** → append the
-   held `<drift-review>` block to VET.md (so the trail is
-   complete) and return a `fail` verdict.
+3. **If `verdict="blocking"` and no rounds remain** → the
+   `<drift-review>` block is already in VET.md (the reviewer
+   appended it), so the trail is complete. Return a `fail` verdict.
 
 4. **Otherwise** (`verdict="blocking"` with budget remaining):
 
    a. **Snapshot the working tree** before the implementer call,
-      so the running session can revert on `stuck` without losing
-      the VET.md writes:
+      so the running session can revert on `stuck`. The snapshot
+      captures code state; the reviewer's just-appended
+      `<drift-review>` block in VET.md survives because the revert
+      scopes out the journal directory (see "Protect the journal
+      from rollback" above):
 
       ```bash
       git stash push --include-untracked -m "speccy-holistic-pre-implementer-<spec>-inv<N>-r<R>"
       git stash apply
       ```
 
-      The `push` saves all uncommitted state and clears the working
-      tree to HEAD; the `apply` restores the working tree so the
-      implementer has the current implementation to work on. The
-      stash stays available as the rollback target.
+      The `push` snapshots all uncommitted state and clears it to
+      HEAD; the `apply` restores the working tree so the implementer
+      has the current implementation to work on. The stash stays
+      available as the rollback target. The journal is swept into the
+      stash by `--include-untracked` and immediately restored by
+      `apply` (see "Protect the journal from rollback" above); the
+      rollback path below restores code from the stash without ever
+      touching that copy.
 
    b. **Spawn the drift-implementer sub-agent.** Prompt:
 
@@ -290,25 +347,32 @@ did*; it must survive any rollback the loop performs.
       >   uncommitted — the next reviewer reads the same command
       >   and will pick them up).
       >
-      > The running session will revert your changes if you
+      > The running session will revert your code changes if you
       > return `verdict="stuck"`. Do not manage rollback yourself.
       >
       > Follow the scope, hygiene-gate, and verdict-return
-      > contract in your agent file. Return a single
-      > `<holistic-fix>` block as your final message.
+      > contract in your agent file. Append your `<holistic-fix>`
+      > block to VET.md via `speccy journal append` and return a
+      > single thin `<verdict>` element as your final message.
       >
-      > Drift findings (the held `<drift-review>` block):
-      >
-      > [paste the held `<drift-review>` block verbatim]
+      > The drift findings to address are in the most recent
+      > `<drift-review>` block in VET.md; read them with
+      > `speccy journal show SPEC-NNNN --block drift-review
+      > --round latest`.
 
-      Hold the returned `<holistic-fix>` block in memory.
+      The sub-agent appends its own `<holistic-fix>` block; do not
+      transcribe it. Read the thin `<verdict>` it returns.
 
       Invoke the `Task` tool with `subagent_type: "vet-implementer"`.
       The sub-agent definition at
       `.claude/agents/vet-implementer.md` carries the host-native
       dispatch metadata.
 
-   c. **Resolve the snapshot based on the implementer's verdict**:
+   c. **Resolve the snapshot based on the implementer's verdict.**
+      The `<drift-review>` and `<holistic-fix>` blocks are already
+      in VET.md (each sub-agent appended its own), so this step only
+      keeps or reverts the **code** changes — it never writes
+      blocks:
 
       - **`addressed` or `blocking`**: keep the implementer's
         edits.
@@ -317,36 +381,24 @@ did*; it must survive any rollback the loop performs.
         git stash drop
         ```
 
-        Then append **both** the held `<drift-review>` block and
-        the held `<holistic-fix>` block to VET.md under the
-        current invocation section (drift-review first, then
-        fix). Decrement the round counter and go back to step 1.
-        The next reviewer reads the journal you just appended and
+        Decrement the round counter and go back to step 1. The next
+        reviewer reads the journal the sub-agents appended and
         verifies the implementer's claims against the now-updated
         diff.
 
-      - **`stuck`**: revert the implementer's edits, then preserve
-        the audit trail:
+      - **`stuck`**: run the journal-safe revert sequence (see
+        "Protect the journal from rollback" above). The
+        `<drift-review>` and `<holistic-fix>` blocks in VET.md stay
+        intact. Return a `fail` verdict.
 
-        ```bash
-        git restore .
-        git clean -fd
-        git stash pop
-        ```
-
-        `git restore .` undoes implementer edits to tracked
-        files; `git clean -fd` removes any new files the
-        implementer added; `git stash pop` restores the
-        pre-implementer snapshot. Now append both held blocks to
-        VET.md under the current invocation section — the write
-        happens **after** the revert, so it survives. Return a
-        `fail` verdict.
-
-      - **Sub-agent error or missing/malformed `<holistic-fix>`**:
-        treat as `stuck`. Revert as above. Append the held
-        `<drift-review>` block and a synthesized
-        `<holistic-fix verdict="stuck">` block describing the
-        sub-agent failure. Return `fail`.
+      - **Sub-agent error or missing/malformed `<verdict>`**: treat
+        as `stuck`. Revert the code as above. The vet-implementer
+        appends its `<holistic-fix>` block (including the `stuck`
+        case) as part of its own run; if it errored before
+        appending, append a synthesized `<holistic-fix>` recording
+        the sub-agent failure via `speccy journal append SPEC-NNNN
+        --block holistic-fix --verdict stuck --model <orchestrator-model>`
+        so the trail is complete. Return `fail`.
 
 ### Phase 2 — simplifier polish pass
 
@@ -364,23 +416,17 @@ the return block.
    > invariants, or trip project conventions in `AGENTS.md` and
    > project-local rule files.
    >
-   > Return your verdict as your final message:
-   >
-   > ```
-   > <simplifier-scan verdict="clean|candidates">
-   > <one-line summary>
-   > [optional bullets, each with file:line + proposed change]
-   > </simplifier-scan>
-   > ```
+   > Append your `<simplifier-scan>` block to VET.md via `speccy
+   > journal append` and return a single thin `<verdict>` element as
+   > your final message.
 
    Invoke the `Task` tool with
    `subagent_type: "vet-simplifier"`.
 
-   The scan makes no modifications, so no defer-write is needed
-   — **append the returned `<simplifier-scan>` block to VET.md
-   immediately** (under the current invocation section). The
-   block is part of the audit trail whether or not an apply step
-   follows.
+   The scan sub-agent appends its own `<simplifier-scan>` block; do
+   not transcribe it. The scan makes no code modifications, so it is
+   part of the audit trail whether or not an apply step follows. Read
+   the thin `<verdict>` it returns.
 
 2. If `verdict="clean"` → record `simplifier="clean"` for the
    return block and go to Phase 3.
@@ -399,11 +445,13 @@ the return block.
       git stash apply
       ```
 
-      The first command saves a snapshot of all uncommitted state
-      (tracked + untracked) and clears the working tree to HEAD;
-      the second restores the working tree so the simplifier sees
-      the drift-fix changes. The stash remains as the rollback
-      target.
+      The first command snapshots uncommitted state and clears it to
+      HEAD; the second restores the working tree so the simplifier
+      sees the drift-fix changes. The stash remains as the rollback
+      target. As in Phase 1, `--include-untracked` sweeps the journal
+      into the stash and `apply` restores it; the rollback path below
+      restores code from the stash without touching that copy (see
+      "Protect the journal from rollback" above).
 
    b. **Spawn the simplifier apply sub-agent.** Prompt:
 
@@ -416,108 +464,87 @@ the return block.
       > yourself.** Return `verdict="blocking"` with a one-line
       > description of what failed; the caller owns the rollback.
       >
-      > Candidates to apply:
+      > The candidates to apply are in the most recent
+      > `<simplifier-scan>` block in VET.md; read them with
+      > `speccy journal show SPEC-NNNN --block simplifier-scan`.
       >
-      > [paste the `<simplifier-scan>` block from step 1 verbatim]
-      >
-      > Return your final message:
-      >
-      > ```
-      > <simplifier-apply verdict="applied|blocking">
-      > <one-line summary>
-      > </simplifier-apply>
-      > ```
+      > Append your `<simplifier-apply>` block to VET.md via `speccy
+      > journal append` and return a single thin `<verdict>` element
+      > as your final message.
 
       Invoke the `Task` tool with
       `subagent_type: "vet-simplifier"`.
 
-      Hold the returned `<simplifier-apply>` block in memory; do
-      not write to VET.md yet (same defer-write pattern as Phase 1
-      — write after the revert decision so the audit trail
-      survives any rollback).
+      The apply sub-agent appends its own `<simplifier-apply>` block;
+      do not transcribe it. Read the thin `<verdict>` it returns.
 
-   c. Resolve the snapshot based on the verdict, then transcribe:
+   c. Resolve the snapshot based on the verdict. The
+      `<simplifier-apply>` block is already in VET.md (the sub-agent
+      appended it), so this step only keeps or reverts **code**:
 
       - **`applied`** (hygiene green): `git stash drop` — discard
-        the snapshot, keep the simplifications. Append the held
-        `<simplifier-apply>` block to VET.md under the current
-        invocation section. Record `simplifier="applied"` for the
-        return block.
+        the snapshot, keep the simplifications. Record
+        `simplifier="applied"` for the return block.
 
       - **`blocking`** (hygiene failed), sub-agent error, or
-        missing/malformed verdict: roll back.
-
-        ```bash
-        git restore .
-        git clean -fd
-        git stash pop
-        ```
-
-        `git restore .` wipes simplifier changes from tracked
-        files. `git clean -fd` removes untracked files (including
-        any new files the simplifier created). `git stash pop`
-        restores the pre-simplifier snapshot. Then append the
-        held `<simplifier-apply>` block to VET.md under the
-        current invocation section (synthesize a placeholder if
-        the sub-agent returned nothing parseable). Record
+        missing/malformed verdict: run the journal-safe revert
+        sequence (see "Protect the journal from rollback" above). The
+        `<simplifier-apply>` block in VET.md stays intact. If the
+        sub-agent errored before appending, append a synthesized
+        `<simplifier-apply>` recording the failure via `speccy
+        journal append SPEC-NNNN --block simplifier-apply
+        --verdict blocking` so the trail is complete. Record
         `simplifier="reverted"`.
 
-### Phase 3 — write `<gate>` block
+### Phase 3 — append the `<gate>` block via the CLI
 
 **Every** exit path — Phase 0 integrity failures, Phase 1
 round-budget exhaustion, Phase 1 `stuck` reverts, Phase 2
 completion (pass or revert), and the success path — appends
-exactly one `<gate>` block to `<spec-dir>/journal/VET.md` under
-the current `## Invocation N` section, **before** surfacing the
-verdict to the caller.
+exactly one `<gate>` block to `<spec-dir>/journal/VET.md` via
+`speccy journal append --block gate`, **before** surfacing the
+verdict to the caller. This is the running session's own write (the
+gate is not authored by a sub-agent), and it goes through the CLI
+verb — never by editing VET.md with file-editing tools.
 
-If Phase 0 failed before opening the invocation section (for
-example, the spec is unknown so `<spec-dir>` was never resolved
-or the journal file does not exist yet), bootstrap the file and
-section per Phase 0 step 3, then append the `<gate>` block. The
-on-disk gate record exists regardless of where the early exit
-fired.
-
-The `<gate>` block is appended **after** any `<drift-review>`,
-`<holistic-fix>`, `<simplifier-scan>`, and `<simplifier-apply>`
-blocks already written for the current invocation. It is the
-**last** element in the section.
-
-Block shape:
-
-```
-<gate verdict="passed|failed" tasks_hash="<lowercase-hex-sha256>" date="<ISO8601>">
+```bash
+speccy journal append SPEC-NNNN --block gate --verdict <passed|failed> <<'EOF'
 <one-line human-readable summary of the invocation outcome>
-</gate>
+EOF
 ```
 
-Attribute rules:
+The CLI owns everything environment-derivable and the gate's
+placement:
 
-- `verdict` — `passed` when the surfaced verdict will be
+- It computes `tasks_hash` as the lowercase hex SHA-256 of the
+  sibling TASKS.md read at append time — **do not compute or supply
+  a hash**, and there is no `sha256sum` / `Get-FileHash` step.
+- It stamps `date` (UTC now).
+- It manages invocation sectioning: the gate lands as the **last**
+  element of the current open invocation section, after any
+  `<drift-review>`, `<holistic-fix>`, `<simplifier-scan>`, and
+  `<simplifier-apply>` blocks the sub-agents appended. If no section
+  is open yet (a Phase 0 early exit fired before any block landed,
+  so VET.md is absent or its last section is gate-terminated), the
+  same append creates the file with frontmatter and opens a fresh
+  `## Invocation N` section before writing the gate. **Do not
+  hand-bootstrap frontmatter or write an `## Invocation N`
+  heading** — the append does both. The on-disk gate record exists
+  regardless of where the early exit fired.
+
+You supply only `--verdict` and the one-line body:
+
+- `--verdict` — `passed` when the surfaced verdict will be
   `verdict="pass"`; `failed` when it will be `verdict="fail"`
   (including every Phase 0 early-exit path).
-- `tasks_hash` — lowercase hex SHA-256 of the byte contents of
-  `<spec-dir>/TASKS.md` read **immediately before** appending this
-  block. Compute via:
+- body — a single line summarising what happened (examples: `"Drift
+  cleared on round 2; simplifier applied; clean."`, `"Phase 0
+  integrity check failed: task T-003 not completed."`, `"Drift round
+  budget exhausted at round 3 without a pass."`).
 
-  ```bash
-  sha256sum <spec-dir>/TASKS.md | awk '{print $1}'
-  ```
-
-  PowerShell equivalent on Windows:
-
-  ```powershell
-  (Get-FileHash -Algorithm SHA256 <spec-dir>/TASKS.md).Hash.ToLower()
-  ```
-
-- `date` — ISO8601 datetime with seconds and timezone designator,
-  e.g. `2026-05-22T14:30:00Z`.
-
-The block body is a single line summarising what happened
-(examples: `"Drift cleared on round 2; simplifier applied;
-clean."`, `"Phase 0 integrity check failed: task T-003 not
-completed."`, `"Drift round budget exhausted at round 3 without a
-pass."`).
+Validation runs before any write; a malformed body or an attempt to
+add a second gate to a gate-terminated section leaves VET.md
+byte-identical.
 
 `speccy next` reads the most recent `<gate>` block's `verdict`
 and `tasks_hash` to decide whether the SPEC is freshly vetted; a

@@ -57,7 +57,7 @@ Readiness semantics:
    element per surviving SPEC requirement, retry counts, and any
    out-of-scope items implementers absorbed.
 
-   Canonical REPORT.md shape: `references/report.md`.
+   Canonical REPORT.md shape: `.claude/skills/speccy-ship/references/report.md`.
 
 3. Flip the SPEC's frontmatter status. Edit
    `.speccy/specs/NNNN-slug/SPEC.md` and change `status: in-progress`
@@ -83,7 +83,8 @@ Readiness semantics:
    loop. Then push:
 
    - If this branch has no open PR yet, open one. Render the PR body
-     from the canonical template at `references/pr-body.md`: fill its
+     from the canonical template at
+     `.claude/skills/speccy-ship/references/pr-body.md`: fill its
      three placeholders (named `spec-dir`, `summary`, `coverage-rows`
      inside angle-bracket markers in the template) from
      `.speccy/specs/NNNN-slug/SPEC.md`'s `## Summary` prose, the
