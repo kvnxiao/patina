@@ -6,10 +6,13 @@ blocker set that would flip a task back to `state="pending"` after
 review.
 
 A real journal file lives at
-`.speccy/specs/NNNN-slug/journal/T-NNN.md`. The `<blockers>` block is
-written either by `/speccy-review` (when one or more persona verdicts
-return `blocking`) or by `/speccy-amend` (when a SPEC amendment
-invalidates an already-completed task).
+`.speccy/specs/NNNN-slug/journal/T-NNN.md`. The orchestrator authors
+the `<blockers>` body (it stays orchestrator-authored semantic
+judgment) and lands it via `speccy journal append SPEC-NNNN/T-NNN
+--block blockers` with the body on stdin — written either by
+`/speccy-review` (when one or more persona verdicts return
+`blocking`) or by `/speccy-amend` (when a SPEC amendment invalidates
+an already-completed task). The CLI stamps `date` and `round`.
 
 ---
 
@@ -74,19 +77,20 @@ satisfy REQ-001 and REQ-002.
 
 ---
 
-## Required attributes on `<blockers>`
+## Attributes on `<blockers>`
 
-Both are required; there are no optional attributes.
+Both are present on every block, and both are CLI-stamped — the
+orchestrator authors only the body, not these attributes.
 
-- `date` — full ISO8601 date-time with seconds and timezone
-  designator marking when the orchestrator synthesised the blocker
-  set.
-- `round` — the round of the implementer attempt the blockers
-  describe (the round just blocked by review, or the round of the
-  prior completed attempt invalidated by amendment). A round-1
-  blocker carries `round="1"`; a round-2 blocker carries
-  `round="2"`. The next `<implementer>` block written after the
-  blockers increments the round by exactly 1.
+- `date` — **CLI-stamped.** Full ISO8601 date-time with seconds and
+  timezone designator, set to UTC now at append time. Do not supply
+  or compute it.
+- `round` — **CLI-derived.** The round of the implementer attempt the
+  blockers describe (the round just blocked by review, or the round
+  of the prior completed attempt invalidated by amendment); the CLI
+  attaches the `<blockers>` to the current round. A round-1 blocker
+  carries `round="1"`; a round-2 blocker carries `round="2"`. The
+  next `<implementer>` append increments the round by exactly 1.
 
 ## Body content conventions
 

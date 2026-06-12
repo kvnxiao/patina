@@ -7,14 +7,14 @@ and `TASKS.md`) and captures the red-then-green pairs that prove
 the task's behaviour changed in the expected direction.
 
 The example continues the SPEC-NNNN widget-render-timeout scenario
-from `spec.md`, `tasks.md`, and `journal-implementer.md` in this
-directory.
+that runs through the other canonical reference files (`spec.md`,
+`tasks.md`, and the sibling `journal-implementer.md`).
 
 ## Coverage rule
 
 The per-task journal `<implementer>` block's `Evidence:` field
-carries a CHK-by-CHK roll call (see
-`references/journal-implementer.md`); this file backs the entries
+carries a CHK-by-CHK roll call (see the sibling
+`journal-implementer.md`); this file backs the entries
 labelled `demonstrated` there. Every `demonstrated` label must be
 backed by exactly one `### Scenario N` block in this file; cite the
 scenario heading verbatim in the journal roll call so the reviewer

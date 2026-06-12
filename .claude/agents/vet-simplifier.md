@@ -93,73 +93,83 @@ bounded to that diff and does not refactor unrelated code.
 
 ## Verdict return contract
 
-The caller dispatches you in one of two modes; the skill orchestrator
-owns all rollback and journal writes.
+The caller dispatches you in one of two modes. In each, you append
+your own block to VET.md via `speccy journal append` (the caller's
+prompt gives you the `SPEC-NNNN` selector), then return a thin
+verdict. The CLI stamps the block's `date` and manages VET.md's
+invocation sectioning; the simplifier blocks carry no `round` —
+**do not compute, supply, or mention `date`, `round`, or invocation
+numbers**. The skill orchestrator owns all code-state rollback. Do
+not edit code-state files for rollback purposes (`git stash` /
+`reset` / `restore` / `clean`).
 
 ## Sourcing your recorded identity
 
-When you record your own identity in a `model="..."` attribute, build
-the value from two independently sourced parts: the model segment and
-the optional effort suffix. Do not infer either from the skill-pack
-name, the persona name, or an inherited environment variable.
+Build the `model="..."` value from two independently sourced parts;
+never infer either from the skill-pack name, the persona name, or an
+inherited environment variable.
 
-- **Model segment — from the host's in-context identifier, verbatim.**
-  Use the resolved long-form model identifier your host states
-  in-context (for example, a host line such as
-  `The exact model ID is claude-opus-4-8[1m]`). Transcribe it exactly,
-  preserving version punctuation as the host writes it — keep the
-  hyphen form (`claude-opus-4-8`), never normalise it to a dotted form
-  (`claude-opus-4.8`), and never substitute a configured alias. Where a
-  host states no resolved identifier in-context, fall back to the
-  `model:` value in your own agent definition file.
-
-- **Effort suffix — from your own definition file.** When your host
-  exposes a reasoning-effort knob, read the effort from your own
-  sub-agent definition file (`effort:` on Claude Code,
+- **Model segment** — the resolved long-form identifier your host
+  states in-context (e.g. `claude-opus-4-8[1m]`), transcribed
+  verbatim: keep the host's version punctuation (`claude-opus-4-8`,
+  never `claude-opus-4.8`), never substitute a configured alias.
+  When the host states no resolved identifier in-context, fall back
+  to the `model:` value in your own agent definition file.
+- **Effort suffix** — when the host exposes a reasoning-effort knob,
+  read it from your own definition file (`effort:` on Claude Code,
   `model_reasoning_effort` on Codex) and append it as a slash-suffix
-  (e.g. `claude-opus-4-8[1m]/low`). Never derive the effort from
-  `CLAUDE_EFFORT` or any other inherited environment variable: a
-  sub-agent pinned to a low effort that is dispatched from a
-  higher-effort parent session still records its own definition-file
-  effort. A host with no effort knob omits the suffix entirely.
-
-- **Override limitation.** The `CLAUDE_CODE_EFFORT_LEVEL` runtime
-  override is deliberately not read. A run that sets it still records
-  the effort declared in the agent definition file, not the override
-  value.
+  (e.g. `claude-opus-4-8[1m]/low`). Never read `CLAUDE_EFFORT` or
+  the `CLAUDE_CODE_EFFORT_LEVEL` runtime override — a sub-agent
+  records its definition-file effort even when dispatched from a
+  higher-effort parent session. A host with no effort knob omits
+  the suffix entirely.
 
 
 ### Scan mode
 
-Report only. Do not modify files.
+Report only. Do not modify code files. Append the scan block (body
+on stdin), then return the thin verdict:
 
-```
-<simplifier-scan verdict="clean|candidates">
+```bash
+speccy journal append SPEC-NNNN --block simplifier-scan \
+  --verdict <clean|candidates> <<'EOF'
 <one-line summary>
 [optional bullets, each with file:line + proposed change]
-</simplifier-scan>
+EOF
+```
+
+```
+<verdict role="simplifier-scan" verdict="clean|candidates" rationale="<one line>" />
 ```
 
 - `verdict="clean"` — no candidates worth applying.
-- `verdict="candidates"` — at least one candidate; list each as a
-  bullet with `file:line` and a one-line description of the change.
+- `verdict="candidates"` — at least one candidate; list each in the
+  appended body as a bullet with `file:line` and a one-line
+  description of the change.
 
 ### Apply mode
 
 Apply the candidates the caller passes you. After applying, run the
-project's standard hygiene suite per `AGENTS.md`.
+project's standard hygiene suite per `AGENTS.md`. Append the apply
+block (body on stdin), then return the thin verdict:
+
+```bash
+speccy journal append SPEC-NNNN --block simplifier-apply \
+  --verdict <applied|blocking> <<'EOF'
+<one-line summary>
+EOF
+```
 
 ```
-<simplifier-apply verdict="applied|blocking">
-<one-line summary>
-</simplifier-apply>
+<verdict role="simplifier-apply" verdict="applied|blocking" rationale="<one line>" />
 ```
 
 - `verdict="applied"` — all candidates applied and hygiene is green.
 - `verdict="blocking"` — at least one candidate failed to apply or
   hygiene failed. Do **not** attempt to revert yourself. The skill
-  orchestrator owns the rollback. State in the one-line summary
-  what failed.
+  orchestrator owns the rollback. State what failed in the
+  rationale.
 
-Do not write to `VET.md`, `TASKS.md`, or per-task journal files
-yourself. Return one block; the orchestrator transcribes it.
+Your only VET.md write is the `journal append` above — the CLI's
+per-file lock owns serialization. Do not write to `TASKS.md` or
+per-task journal files.

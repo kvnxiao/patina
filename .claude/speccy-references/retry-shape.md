@@ -9,12 +9,30 @@
 
 ## Read-only scope
 
-The rule reads only `<spec-dir>/journal/T-NNN.md`. It does not read
-TASKS.md, does not invoke `git`, does not call `speccy next`, and
-does not invoke any other CLI subcommand. Detection is mechanical:
-parse the journal's XML elements (using the same closed-set journal
-grammar `<implementer>` / `<review>` / `<blockers>` enforced by the
-`JNL-*` lint family), read the `round` attributes, compare.
+The rule reads only the resolved journal for `T-NNN`, through
+`speccy journal show` — not by hand-parsing the journal file with
+file-editing tools. It does not read TASKS.md, does not invoke `git`,
+and does not call `speccy next`. Detection is mechanical: read the
+journal's blocks via the CLI and compare `round` attributes across
+block types.
+
+Read the latest implementer round and the blockers attached to it:
+
+```bash
+# Highest implementer round present (and its blocks).
+speccy journal show SPEC-NNNN/T-NNN --json --block implementer --round latest
+# Blockers attached to that same latest round, if any.
+speccy journal show SPEC-NNNN/T-NNN --json --block blockers --round latest
+```
+
+`journal show` exits non-zero when the journal file is absent; that
+absence is itself **first-attempt shape** (the rule's existence
+conjunct fails — see Worked example 2). When the file exists, the
+task is in retry shape iff the latest implementer round has a
+`<blockers>` block at that same round, and first-attempt shape
+otherwise. The CLI is the read-back authority for the `round`
+comparison; do not re-implement the grammar by parsing the file
+directly.
 
 ## Worked example 1 — retry shape
 

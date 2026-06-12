@@ -32,13 +32,14 @@ terminal, the `/loop` skill, or a future orchestrator).
 spec hash must have been committed before this skill runs.
 
 The agent automatically detects retry shape from the per-task
-journal at `<spec-dir>/journal/T-NNN.md` and switches modes
-accordingly — the caller does not pass a flag. A first-attempt
+journal carried in the `speccy context` bundle's journal section and
+switches modes accordingly — the caller does not pass a flag. A first-attempt
 task (no journal, or no `<blockers>` matching the highest
 `<implementer>` round) runs today's recipe unchanged. A retry-shape
 task (the latest `<blockers>` round equals the highest
 `<implementer>` round) amends the existing WIP in the working tree
-in place and appends `<implementer round="N+1">`.
+in place and appends a new `<implementer>` block (the CLI stamps the
+incremented round).
 
 ## What to consider
 
@@ -53,16 +54,23 @@ in place and appends `<implementer round="N+1">`.
 
 ## Steps
 
-**Entry precondition (SPEC-0045 REQ-002, extended by SPEC-0047 REQ-002 / REQ-003):** before any Task dispatch, (i) resolve the target task per step 1, (ii) read `<spec-dir>/journal/T-NNN.md` (if it exists) and apply the retry-shape rule summarized at step 2 (canonical statement at `.claude/speccy-references/retry-shape.md`), (iii) run `git status --porcelain`. **First-attempt shape** with non-empty stdout exits the skill (surface dirty paths on stderr); empty stdout proceeds with the first-attempt branch (today's SPEC-0045/REQ-002 behaviour). **Retry shape** proceeds with the retry branch regardless of stdout — the dirty paths are the prior pass's WIP that the retry implementer amends in place; no dirty-paths surface is written. If `speccy next --json` then returns `next_action.kind == "reconcile"`, dispatch the reconcile pass per the **Reconcile policy** summary below (canonical policy at `.claude/speccy-references/reconcile-policy.md`) rather than the normal implementer flow.
+**Entry precondition (SPEC-0045 REQ-002, extended by SPEC-0047 REQ-002 / REQ-003):** before any Task dispatch, (i) resolve the target task per step 1, then open the per-task context read with a single `speccy context SPEC-NNNN/T-NNN --json` call (the bundle carries the task entry, its covering requirements and scenarios, the full per-task journal, the sibling index, the file paths, and a suggested merge-base diff command); (ii) apply the retry-shape rule summarized at step 2 (canonical statement at `.claude/speccy-references/retry-shape.md`) against the bundle's journal section rather than a separate file read, (iii) run `git status --porcelain`. **First-attempt shape** with non-empty stdout exits the skill (surface dirty paths on stderr); empty stdout proceeds with the first-attempt branch (today's SPEC-0045/REQ-002 behaviour). **Retry shape** proceeds with the retry branch regardless of stdout — the dirty paths are the prior pass's WIP that the retry implementer amends in place; no dirty-paths surface is written. If `speccy next --json` then returns `next_action.kind == "reconcile"`, dispatch the reconcile pass per the **Reconcile policy** below rather than the normal implementer flow.
 
-**Reconcile policy.** When `speccy next --json` returns `next_action.kind == "reconcile"`, iterate `consistency.drifts[]` and apply the table action per entry, then re-query before proceeding. See `.claude/speccy-references/reconcile-policy.md` for the full policy table.
+**Reconcile policy.** When `speccy next --json` (in either per-spec
+or workspace form) returns `next_action.kind == "reconcile"`, iterate
+`consistency.drifts[]` and apply the table action per entry, then
+re-query before proceeding. See
+`.claude/speccy-references/reconcile-policy.md` for the full
+policy table and the three properties the dispatch holds by
+construction (autonomous / rollback-biased / idempotent).
+
 
 1. Resolve the target task.
 
    - If a `SPEC-NNNN/T-NNN` selector was passed, that is the target.
    - Otherwise, query the CLI in workspace form (no SPEC selector
      is known on this no-selector invocation path — we must walk
-     the active tree to find an implementable task):
+     the active tree to find the next implementable task):
 
      ```bash
      # workspace form: no SPEC-NNNN known yet; scan the active tree.
@@ -77,9 +85,9 @@ in place and appends `<implementer round="N+1">`.
      error.
 
      On exit code 0, if the resulting `specs` array has no entry
-     with `next_action.kind == "work"`, exit and report that no
-     implementable tasks remain. Otherwise, construct the
-     disambiguated `<spec>/<task>` form from the JSON's `spec_id`
+     with `next_action.kind == "work"`, exit and report
+     that no implementable tasks remain. Otherwise, construct
+     the disambiguated `<spec>/<task>` form from the JSON's `spec_id`
      and `next_action.task_id` fields (the bare task ID is
      ambiguous across specs — every spec has its own `T-001`).
 
@@ -89,12 +97,14 @@ in place and appends `<implementer round="N+1">`.
      halt and surface the stderr line. Only parse JSON when exit
      code is 0.
 
-2. Read `<spec-dir>/journal/T-NNN.md` (if it exists) and apply the
-   REQ-001 retry-shape rule summarized immediately below. The rule
-   reads only the journal file — no git, no `speccy next`, no
-   other CLI subcommand. Compute the result (first-attempt shape
-   or retry shape); the rest of the recipe branches on this
-   result.
+
+2. Apply the REQ-001 retry-shape rule summarized immediately below
+   against the journal section of the bundle returned by the
+   `speccy context` call in step 1 (no separate journal-file read).
+   The rule inspects only that journal content — it makes no further
+   git, `speccy next`, or other CLI call. Compute the result
+   (first-attempt shape or retry shape); the rest of the recipe
+   branches on this result.
 
    **Retry shape.** A task is in retry shape iff its journal
    contains both an `<implementer>` element and a `<blockers>`
@@ -110,39 +120,52 @@ in place and appends `<implementer round="N+1">`.
    **First-attempt branch.** Proceed with the recipe below
    (steps 4–10) unchanged: flip state to `in-progress`, read
    scenarios, run the bounded reuse survey, implement from scratch,
-   self-review, run the hygiene gate, flip to `in-review`, append
-   `<implementer round="1">`.
+   self-review, run the hygiene gate, flip to `in-review`, append the
+   round-1 `<implementer>` block via `speccy journal append`.
 
    **Retry branch.** Enter retry mode:
 
-   - Read the most recent `<implementer>` block in the journal to
-     understand the prior pass's stated `Completed` work.
+   - Read the most recent `<implementer>` block from the bundle's
+     journal section to understand the prior pass's stated `Completed`
+     work.
    - Read the latest `<blockers>` block (the one whose `round`
-     matches the highest `<implementer>` round) for the specific
-     feedback to address.
+     matches the highest `<implementer>` round) from that same
+     journal section for the specific feedback to address.
    - Amend the existing WIP in the working tree to address the
      blockers. Do not run `git restore`, `git clean`, or
      `git checkout` against the dirty paths; do not rewrite the
      touched files from scratch; do not reset state. The dirty
      tree is the prior pass's WIP — iterate on it in place.
-   - Flip state to `in-progress` and continue through the same
-     hygiene gate and `in-review` flip the first-attempt branch
-     uses (the SPEC-0045/REQ-001 hygiene gate runs unchanged).
-   - Append the next `<implementer round="N+1">` block where `N`
-     is the highest prior `<implementer>` round in the journal,
-     monotonically incremented by exactly 1. The retry-mode
-     `Completed` field describes the amend (what changed this
-     round in response to the blockers), not a restatement of
-     the cumulative task work.
+   - Flip state to `in-progress` via `speccy task transition
+     SPEC-NNNN/T-NNN --to in-progress` and continue through the same
+     hygiene gate and `speccy task transition … --to in-review` flip
+     the first-attempt branch uses (the SPEC-0045/REQ-001 hygiene gate
+     runs unchanged). Never edit the `state` attribute in TASKS.md
+     directly.
+   - Append the next `<implementer>` block via `speccy journal
+     append` (step 9); the CLI derives and stamps the incremented
+     round. The retry-mode `Completed` field describes the amend
+     (what changed this round in response to the blockers), not a
+     restatement of the cumulative task work.
 
 4. Flip the target task's `state` from `pending` to `in-progress`
-   by editing TASKS.md.
-
-5. Read the task scenarios to understand what must be implemented:
+   through the transition command — never by editing the `state`
+   attribute in TASKS.md directly:
 
    ```bash
-   speccy check SPEC-NNNN/T-003
+   speccy task transition SPEC-NNNN/T-NNN --to in-progress
    ```
+
+   The CLI enforces the legal state graph and rewrites the `state`
+   attribute byte-surgically; an illegal edge or unresolved selector
+   exits non-zero with the file untouched.
+
+5. Read the task scenarios to understand what must be implemented
+   from the bundle's covering-requirements section returned by the
+   `speccy context` call in step 1 — its `requirements` carry each
+   covered REQ's `<done-when>`, `<behavior>`, and `<scenario>`
+   blocks. No separate entry read of SPEC.md, TASKS.md, or `speccy
+   check` is needed here.
 
 6. Bounded reuse survey. Before writing any code, survey the
    task-relevant area and classify the code you are about to add into
@@ -267,82 +290,81 @@ diff you already have open — is far cheaper than a bounce-and-respawn.
 
 
 9. Exit transition. **Hygiene gate (REQ-001):** before flipping `state` from `in-progress` to `in-review`, run the four standard hygiene gates in sequence — `cargo test --workspace`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, `cargo +nightly fmt --all --check`, `cargo deny check`. Any non-zero exit refuses the flip and keeps the task at `in-progress`; on all zeros, proceed with the flip and record one line per gate naming its exit code in the appended `<implementer>` block's `Hygiene checks` field. When the implementation is done, flip the task's
-   `state="..."` attribute from `in-progress` to `in-review` in
-   TASKS.md, then append one `<implementer>` block to the per-task
-   journal file at `.speccy/specs/NNNN-slug/journal/T-NNN.md` (a
-   sibling of `SPEC.md` and `TASKS.md`). Do NOT inline an
+   `state` from `in-progress` to `in-review` through the transition
+   command — never by editing the `state` attribute in TASKS.md
+   directly:
+
+   ```bash
+   speccy task transition SPEC-NNNN/T-NNN --to in-review
+   ```
+
+   Then append one `<implementer>` block to the per-task
+   journal via `speccy journal append`. Do NOT inline an
    `<implementer-note>` inside the `<task>` body in TASKS.md — the
    parser rejects that element. The journal file is the canonical
    home for implementer handoff prose.
 
-   File creation. If `journal/T-NNN.md` does not yet exist (round 1,
-   first implementer attempt on the task), create it with YAML
-   frontmatter declaring exactly three fields, then the
-   `<implementer>` block beneath.
+   Append via the CLI. Pipe the seven-field body on stdin:
 
-   Canonical journal `<implementer>` shape: `references/journal-implementer.md`.
+   ```bash
+   speccy journal append SPEC-NNNN/T-NNN --block implementer \
+     --model <your-model> <<'EOF'
+   - Reuse survey: ...
+   - Completed: ...
+   - Undone: ...
+   - Hygiene checks: ...
+   - Evidence: ...
+   - Discovered issues: ...
+   - Procedural compliance: ...
+   EOF
+   ```
 
-   Canonical evidence file shape: `.claude/speccy-references/evidence.md`.
+   The CLI is the sole authority for the appended block's `date` and
+`round` attributes and for the journal's structural scaffolding
+(creating the file with frontmatter, sectioning where the journal
+has it). **Do not compute, supply, or hand-author `date`, `round`,
+or the block's open/close tags** — there is no flag to override
+them; the body you pipe on stdin is the inner text only, and the
+CLI emits the paired element. Validation runs before any write; a
+malformed body leaves the journal byte-identical.
 
-   `generated_at` is the ISO8601 timestamp at file creation; do not
-   rewrite it on later appends. On subsequent rounds, append the new
-   `<implementer>` block after the existing journal contents — do
-   not modify earlier blocks.
 
-   Required attributes on `<implementer>`. All three are required;
-   there are no optional attributes:
+   Here `round` derives as `max existing round + 1` (or `1` on a
+   fresh file, where the same append also creates the journal with
+   its three-field frontmatter). On a retry round the same command
+   appends after the existing journal contents and increments
+   `round` for you.
 
-   - `date` — full ISO8601 date-time with seconds and timezone
-     designator (e.g. `2026-05-21T18:00:00Z` or
-     `2026-05-21T18:00:00+00:00`).
-   - `model` — the model identity that ran the implementer turn. A
-     slash-suffix encodes effort / reasoning-intensity when the host
-     harness exposes that knob (e.g.
-     `model="claude-opus-4-8[1m]/low"`,
-     `model="claude-opus-4-8[1m]/medium"`). Hosts without an effort
-     knob omit the suffix entirely (e.g. `model="claude-opus-4-8"`).
-     The slash-suffix is a documented convention; the parser
-     validates `model` is non-empty but does not enforce suffix
-     membership.
-   - `round` — a monotonic positive integer starting at 1.
-     Increment by exactly 1 on each post-blocker retry attempt. The
-     first implementer turn on a task is `round="1"`; if a review
-     round blocks and the task flips back to `pending`, the next
-     implementer attempt writes `round="2"`, and so on. Do not skip
-     values; do not reset.
+   `--model` is required. Encode reasoning effort (when your host
+   harness exposes an effort knob) as a slash-suffix on the model
+   string (e.g. `claude-opus-4-8[1m]/low`); hosts without an effort
+   knob omit the suffix. The CLI validates `--model` is non-empty.
 
    ## Sourcing your recorded identity
 
-When you record your own identity in a `model="..."` attribute, build
-the value from two independently sourced parts: the model segment and
-the optional effort suffix. Do not infer either from the skill-pack
-name, the persona name, or an inherited environment variable.
+Build the `model="..."` value from two independently sourced parts;
+never infer either from the skill-pack name, the persona name, or an
+inherited environment variable.
 
-- **Model segment — from the host's in-context identifier, verbatim.**
-  Use the resolved long-form model identifier your host states
-  in-context (for example, a host line such as
-  `The exact model ID is claude-opus-4-8[1m]`). Transcribe it exactly,
-  preserving version punctuation as the host writes it — keep the
-  hyphen form (`claude-opus-4-8`), never normalise it to a dotted form
-  (`claude-opus-4.8`), and never substitute a configured alias. Where a
-  host states no resolved identifier in-context, fall back to the
-  `model:` value in your own agent definition file.
-
-- **Effort suffix — from your own definition file.** When your host
-  exposes a reasoning-effort knob, read the effort from your own
-  sub-agent definition file (`effort:` on Claude Code,
+- **Model segment** — the resolved long-form identifier your host
+  states in-context (e.g. `claude-opus-4-8[1m]`), transcribed
+  verbatim: keep the host's version punctuation (`claude-opus-4-8`,
+  never `claude-opus-4.8`), never substitute a configured alias.
+  When the host states no resolved identifier in-context, fall back
+  to the `model:` value in your own agent definition file.
+- **Effort suffix** — when the host exposes a reasoning-effort knob,
+  read it from your own definition file (`effort:` on Claude Code,
   `model_reasoning_effort` on Codex) and append it as a slash-suffix
-  (e.g. `claude-opus-4-8[1m]/low`). Never derive the effort from
-  `CLAUDE_EFFORT` or any other inherited environment variable: a
-  sub-agent pinned to a low effort that is dispatched from a
-  higher-effort parent session still records its own definition-file
-  effort. A host with no effort knob omits the suffix entirely.
+  (e.g. `claude-opus-4-8[1m]/low`). Never read `CLAUDE_EFFORT` or
+  the `CLAUDE_CODE_EFFORT_LEVEL` runtime override — a sub-agent
+  records its definition-file effort even when dispatched from a
+  higher-effort parent session. A host with no effort knob omits
+  the suffix entirely.
 
-- **Override limitation.** The `CLAUDE_CODE_EFFORT_LEVEL` runtime
-  override is deliberately not read. A run that sets it still records
-  the effort declared in the agent definition file, not the override
-  value.
 
+   Canonical journal `<implementer>` shape: `.claude/speccy-references/journal-implementer.md`.
+
+   Canonical evidence file shape: `.claude/speccy-references/evidence.md`.
 
    Body content. Use the seven-field handoff template the implementer
    prompt supplies (`Reuse survey`, `Completed`, `Undone`,
@@ -370,16 +392,9 @@ name, the persona name, or an inherited environment variable.
        judges on the diff.
    ```
 
-   Close the block. After the final body field
-   (`Procedural compliance`), terminate the `<implementer>` block with
-   a `</implementer>` close tag on its own line. `<implementer>` is a
-   paired XML element: the parser rejects an unclosed block, and speccy
-   XML close tags must sit on their own line (not inline after the
-   field content). An omitted or inline close tag leaves the journal
-   malformed — `speccy next --json` then reports a
-   `journal_xml_malformed` consistency drift and the block is
-   unparseable. Re-read the appended block before exiting and confirm
-   the closing tag is present.
+   After the append, re-read the journal and confirm the new
+   `<implementer>` block landed and `speccy next --json` reports no
+   `journal_xml_malformed` consistency drift.
 
 10. Exit. Do not continue to the next task. If the caller wants
    another task, the caller invokes this skill again.
