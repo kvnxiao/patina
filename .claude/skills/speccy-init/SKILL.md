@@ -41,9 +41,9 @@ user-authored skill files in `.claude/skills/` are left alone.
 
 3. **Inspect `AGENTS.md` at the repo root and decide per-section.**
    `/speccy-init` seeds two independent sections — `## Product north
-   star` and `## Speccy conventions`. Make the two seeding decisions
-   independently per the AGENTS.md state matrix: north-star
-   (present / absent) × conventions (present / absent), four cells.
+   star` and `## Speccy conventions` — per the AGENTS.md state matrix:
+   north-star (present / absent) × conventions (present / absent),
+   four cells.
 
    - **North star — absent.** Run the Q&A flow (step 4) and write
      the `## Product north star` section. Equivalent headings like
@@ -56,13 +56,6 @@ user-authored skill files in `.claude/skills/` are left alone.
      re-run).
    - **Conventions — absent.** Append the canonical body (step 5).
    - **Conventions — present.** Replace the body verbatim (step 5).
-
-   The four cells of the matrix are the four combinations: (north
-   star absent + conventions absent) runs both Q&A and the append
-   path; (north star absent + conventions present) runs Q&A then the
-   replace path; (north star present + conventions absent) skips Q&A
-   and runs the append path; (north star present + conventions
-   present) skips Q&A and runs the replace path.
 
    **Missing-file path.** When `AGENTS.md` is missing entirely
    (first init, or the user deleted it between invocations),
@@ -131,15 +124,6 @@ user-authored skill files in `.claude/skills/` are left alone.
    optional `### Non-goals` subsection if they surfaced during
    iteration. Constraints should reference the project's existing
    `## Core principles` / `## Standard hygiene` if present.
-
-   **Asymmetry vs. the conventions upsert (step 5).** The north
-   star is freeze-on-first-write because its content is
-   user-authored — once the user has approved a draft and it lands,
-   re-runs of `/speccy-init` must not stomp it (step 3, State C
-   path). The `## Speccy conventions` section is the opposite:
-   canonical boilerplate sourced from upstream, safe to refresh
-   verbatim on every invocation. The asymmetry is principled —
-   each section's update policy follows from who owns its content.
 
 5. **Upsert the `## Speccy conventions` section.** After the
    north-star step completes (whether the Q&A ran or was skipped),

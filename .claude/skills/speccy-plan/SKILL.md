@@ -65,6 +65,8 @@ is already agreed.
 3. **Self-review pass.** Run this pass exactly once after writing
    SPEC.md. Do not re-check after applying fixes.
 
+   <!-- Shared self-review core for plan + amend; supersedes SPEC-0034 DEC-001 (lists stabilized → extracted). Brainstorm's pre-check is intentionally separate. -->
+
    **Mechanical/semantic split.** Mechanical issues are
    string-matchable from the SPEC.md text: `TBD`/`TODO` strings,
    "and"/"also" inside `<requirement>` blocks, untouched `<...>`
@@ -82,7 +84,7 @@ is already agreed.
    any existing sequence, and `{issue}` is a one-line description of
    the problem. Do not substitute freeform prose.
 
-   **The six check properties:**
+   **The check properties:**
 
    - **Routing fidelity.** Brainstorm artifacts landed in the
      correct SPEC.md sections: restated ask → Summary +
@@ -108,17 +110,10 @@ is already agreed.
      goal that a non-goal denies, or a requirement that violates an
      assumption, is an internal contradiction.
 
-   - **Placeholder leakage.** No `TBD`, `TODO`, or untouched
-     `<...>` template-placeholder strings remain in SPEC.md.
-     These are mechanical and should be fixed inline, not surfaced.
-
    - **Ambiguity.** No `<requirement>` wording is interpretable in
      two materially different ways that would lead to different
      implementations. If the requirement is ambiguous, surface it
      as a semantic issue.
-
-   <!-- Note: the plan self-review above is an independent copy.
-        The parallel copy for amend lives in speccy-amend.md. -->
 
 4. Surface any material questions inline in `## Open Questions` using
    the alpha-prefix format: `- [ ] a.`, `- [ ] b.`, ..., `- [ ] z.`.
@@ -134,11 +129,7 @@ is already agreed.
    committed. The commit covers only the spec's `SPEC.md` —
    `TASKS.md` is committed by `/speccy-decompose`, not
    here, so the new-spec path lands two separate commits (one per
-   skill). The step uses narrow file-list staging (never `git add -A`
-   or `git add .`), so any unrelated dirty paths outside `<spec-dir>/`
-   remain in the working tree untouched. The step is idempotent:
-   re-running plan on an already-committed `SPEC.md` produces no new
-   commit.
+   skill).
 
    First run the branch-guard prelude so the commit lands on a feature
    branch rather than the repository's default branch. Supply the
@@ -146,12 +137,6 @@ is already agreed.
    i.e. the path that holds `SPEC.md`) — and run it:
 
 ## Branch-guard prelude
-
-This module is the single source of truth for the branch-guard prelude
-that the authoring skills run before their commit step. Each callsite
-pulls it in with a MiniJinja `include` directive naming
-`modules/references/branch-guard.md`; there is no verbatim copy of this
-prelude in any individual skill body.
 
 The prelude guarantees that HEAD is on a feature branch before any
 artifact is committed, so an authored `SPEC.md` / `TASKS.md` never lands
@@ -259,9 +244,7 @@ never on the reuse path.
 
    - **Staging breadth: narrow `git add <spec-dir>/SPEC.md`.** Stage
      exactly the spec's `SPEC.md` and nothing else. Do not use
-     `git add -A` or `git add .`. Staging unchanged content is a no-op,
-     so passing the path unconditionally is safe regardless of whether
-     `SPEC.md` was already committed.
+     `git add -A` or `git add .`.
    - **Title and body.**
      - **Title:** `[SPEC-NNNN]: create spec` with `SPEC-NNNN`
        substituted for the resolved spec id.
@@ -276,12 +259,6 @@ never on the reuse path.
    mechanics:
 
 ## Shared commit recipe
-
-This module is the single source of truth for how a skill turns a
-just-written artifact into a git commit. Each callsite pulls it in with
-a MiniJinja `include` directive naming
-`modules/references/commit-recipe.md`; there is no verbatim copy of this
-recipe in any individual skill body.
 
 The caller supplies two — and only two — behaviour-varying parameters:
 
@@ -371,11 +348,9 @@ inherited environment variable.
 - **Effort suffix** — when the host exposes a reasoning-effort knob,
   read it from your own definition file (`effort:` on Claude Code,
   `model_reasoning_effort` on Codex) and append it as a slash-suffix
-  (e.g. `claude-opus-4-8[1m]/low`). Never read `CLAUDE_EFFORT` or
-  the `CLAUDE_CODE_EFFORT_LEVEL` runtime override — a sub-agent
-  records its definition-file effort even when dispatched from a
-  higher-effort parent session. A host with no effort knob omits
-  the suffix entirely.
+  (e.g. `claude-opus-4-8[1m]/low`); never read it from a runtime
+  env override. A host with no effort knob omits the suffix
+  entirely.
 
 
 Apply that rule to fill the `<model>` segment of the trailer line. When

@@ -76,20 +76,13 @@ for a more elegant whole.
 
 ## 5. Phase 2 scope boundary
 
-You run **after Phase 1 cleared drift on the cumulative SPEC-NNNN
-working-tree diff against the merge base**. Your candidate scan is
-bounded to that diff and does not refactor unrelated code.
-
-- The diff under consideration is `git diff <base-ref>` — the
-  cumulative SPEC diff against the merge base, working-tree included
-  (Phase 1's drift fixes may still be uncommitted).
-- Do not touch code outside the diff. If a simplification would
-  require editing a file the diff does not already modify, skip it.
-- Do not propose architectural changes, cross-cutting refactors, or
-  anything that would expand the diff's surface area.
-- "Focus scope" means **the cumulative SPEC-NNNN diff against the
-  merge base**, not "recently modified code in the current session"
-  and not "every file you happened to open".
+Your candidate scan is bounded to `git diff <base-ref>` — the
+cumulative SPEC-NNNN diff against the merge base, working-tree
+included (Phase 1's drift fixes may still be uncommitted). Do not
+touch code outside that diff: if a simplification would require
+editing a file the diff does not already modify, skip it. Do not
+propose architectural changes, cross-cutting refactors, or anything
+that would expand the diff's surface area.
 
 ## Verdict return contract
 
@@ -99,9 +92,10 @@ prompt gives you the `SPEC-NNNN` selector), then return a thin
 verdict. The CLI stamps the block's `date` and manages VET.md's
 invocation sectioning; the simplifier blocks carry no `round` —
 **do not compute, supply, or mention `date`, `round`, or invocation
-numbers**. The skill orchestrator owns all code-state rollback. Do
-not edit code-state files for rollback purposes (`git stash` /
-`reset` / `restore` / `clean`).
+numbers**. The skill orchestrator owns all code-state rollback.
+
+Do not call `git stash`, `git reset`, `git restore`, or `git clean`
+— the caller owns all of those.
 
 ## Sourcing your recorded identity
 
@@ -118,11 +112,9 @@ inherited environment variable.
 - **Effort suffix** — when the host exposes a reasoning-effort knob,
   read it from your own definition file (`effort:` on Claude Code,
   `model_reasoning_effort` on Codex) and append it as a slash-suffix
-  (e.g. `claude-opus-4-8[1m]/low`). Never read `CLAUDE_EFFORT` or
-  the `CLAUDE_CODE_EFFORT_LEVEL` runtime override — a sub-agent
-  records its definition-file effort even when dispatched from a
-  higher-effort parent session. A host with no effort knob omits
-  the suffix entirely.
+  (e.g. `claude-opus-4-8[1m]/low`); never read it from a runtime
+  env override. A host with no effort knob omits the suffix
+  entirely.
 
 
 ### Scan mode
@@ -166,9 +158,7 @@ EOF
 
 - `verdict="applied"` — all candidates applied and hygiene is green.
 - `verdict="blocking"` — at least one candidate failed to apply or
-  hygiene failed. Do **not** attempt to revert yourself. The skill
-  orchestrator owns the rollback. State what failed in the
-  rationale.
+  hygiene failed. State what failed in the rationale.
 
 Your only VET.md write is the `journal append` above — the CLI's
 per-file lock owns serialization. Do not write to `TASKS.md` or

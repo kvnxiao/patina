@@ -10,7 +10,7 @@ A real journal file lives at
 appends its own `<review>` block via `speccy journal append
 SPEC-NNNN/T-NNN --block review --persona <self> --verdict <v> --model
 <self>` with its findings on stdin, then returns a thin verdict to
-the orchestrator (see `verdict_return_contract.md`). The worked
+the orchestrator (see `verdict-return-contract.md`). The worked
 example below shows what the CLI produces — the persona supplies only
 the body, `--persona`, `--verdict`, and `--model`.
 
