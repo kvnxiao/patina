@@ -73,7 +73,9 @@ own judgment.
    four artifacts in step 3 without inventing details.
 
 3. **Produce four artifacts.** Once you can answer the user's intent
-   in your own words, present these four artifacts in one message:
+   in your own words, present these four artifacts in one message.
+   Stay at the "what / why" level throughout — brainstorming is about
+   the SPEC shape, not the code; resist diving into "how".
 
    1. **Restated ask, atomized.** Restate the user's ask in your own
       words, broken into atomic, first-principle requirements. Each
@@ -125,11 +127,6 @@ own judgment.
    This pre-check fires on every brainstorm invocation — including
    when brainstorm is used as a front-end to amendment flows (since
    amendments routed through brainstorm are still brainstorm sessions).
-
-   <!-- Note: the brainstorm pre-check below is an independent copy.
-        The parallel copies for plan and amend live in speccy-plan.md
-        and speccy-amend.md respectively (per DEC-001 / OQ-b: two
-        independent copies, no shared partial). -->
 
    **Mechanical/semantic split.** Mechanical issues are
    string-matchable from the draft artifacts: `TBD`/`TODO` strings,
@@ -224,23 +221,6 @@ not invent a new SPEC.md section for brainstorm output:
   a trade-off is load-bearing enough to deserve a durable decision
   record, promote it to a `<decision>` element block under
   `### Decisions` (DEC-NNN) instead.
-
-## Key principles
-
-- **One question at a time.** Don't overwhelm the user with batched
-  questions. Multiple-choice is preferred when answers are
-  enumerable.
-- **Scale to complexity.** The `2-3` alternative-framings count is
-  soft guidance. Trivial asks surface fewer artifacts; load-bearing
-  asks surface more.
-- **Atomize ruthlessly.** If a requirement reads "do X and Y", split
-  it. Each requirement should describe one observable outcome.
-- **No premature implementation.** Brainstorming is about the SPEC
-  shape, not the code. Stay at the "what / why" level; resist
-  diving into "how".
-- **Hard gate before SPEC.md.** Do not invoke
-  `/speccy-plan` until the user has explicitly
-  approved the framing.
 
 This recipe does not loop. After invoking
 `/speccy-plan` (new SPEC) or

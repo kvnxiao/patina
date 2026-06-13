@@ -117,43 +117,6 @@ Both rejections carry the documented stderr message naming the
 rejected value and the allowed range.
 </green>
 
-### Scenario 3 — Trivial fixture renders successfully under budget (CHK-004)
-
-<red>
-Pre-edit: the flag does not exist, so this scenario cannot run
-against the pre-edit binary. Baseline observed via the binary
-built from `git show HEAD~1` is `cargo run -- render
-fixtures/trivial.gv` exiting 0 in 0.04s with no stderr — establishing
-that the trivial fixture itself does not time out and any post-edit
-timeout regression would be a behavioural change, not an inherent
-fixture property.
-
-```
-$ ./target/debug/widget render fixtures/trivial.gv
-(stdout: rendered widget bytes)
-$ echo $?
-0
-```
-</red>
-
-<green>
-Post-edit: same trivial fixture with a generous budget, the binary
-exits 0 without writing any timeout-attributable stderr.
-
-```
-$ ./target/debug/widget render --timeout-ms 60000 fixtures/trivial.gv
-(stdout: rendered widget bytes — identical bytes to the pre-edit baseline)
-$ echo $?
-0
-$ ./target/debug/widget render --timeout-ms 60000 fixtures/trivial.gv 2>/tmp/stderr; cat /tmp/stderr
-(empty)
-```
-
-Stderr is empty; the post-edit binary produces no timeout-related
-output on a successful render, confirming the timeout machinery
-does not leak noise into the happy path.
-</green>
-
 ## Hygiene-gate evidence
 
 ```

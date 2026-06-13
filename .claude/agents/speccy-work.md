@@ -54,7 +54,7 @@ incremented round).
 
 ## Steps
 
-**Entry precondition (SPEC-0045 REQ-002, extended by SPEC-0047 REQ-002 / REQ-003):** before any Task dispatch, (i) resolve the target task per step 1, then open the per-task context read with a single `speccy context SPEC-NNNN/T-NNN --json` call (the bundle carries the task entry, its covering requirements and scenarios, the full per-task journal, the sibling index, the file paths, and a suggested merge-base diff command); (ii) apply the retry-shape rule summarized at step 2 (canonical statement at `.claude/speccy-references/retry-shape.md`) against the bundle's journal section rather than a separate file read, (iii) run `git status --porcelain`. **First-attempt shape** with non-empty stdout exits the skill (surface dirty paths on stderr); empty stdout proceeds with the first-attempt branch (today's SPEC-0045/REQ-002 behaviour). **Retry shape** proceeds with the retry branch regardless of stdout — the dirty paths are the prior pass's WIP that the retry implementer amends in place; no dirty-paths surface is written. If `speccy next --json` then returns `next_action.kind == "reconcile"`, dispatch the reconcile pass per the **Reconcile policy** below rather than the normal implementer flow.
+**Entry precondition (SPEC-0045 REQ-002, extended by SPEC-0047 REQ-002 / REQ-003):** before any Task dispatch, (i) resolve the target task per step 1, then open the per-task context read with a single `speccy context SPEC-NNNN/T-NNN --json` call (the bundle carries the task entry, its covering requirements and scenarios, the latest-round journal blocks inline with prior rounds as an attributes-only index, the sibling index, the file paths, and a suggested merge-base diff command); (ii) apply the retry-shape rule summarized at step 2 (canonical statement at `.claude/speccy-references/retry-shape.md`) against the bundle's journal section rather than a separate file read, (iii) run `git status --porcelain`. **First-attempt shape** with non-empty stdout exits the skill (surface dirty paths on stderr); empty stdout proceeds with the first-attempt branch (today's SPEC-0045/REQ-002 behaviour). **Retry shape** proceeds with the retry branch regardless of stdout — the dirty paths are the prior pass's WIP that the retry implementer amends in place; no dirty-paths surface is written. If `speccy next --json` then returns `next_action.kind == "reconcile"`, dispatch the reconcile pass per the **Reconcile policy** below rather than the normal implementer flow.
 
 **Reconcile policy.** When `speccy next --json` (in either per-spec
 or workspace form) returns `next_action.kind == "reconcile"`, iterate
@@ -106,14 +106,13 @@ construction (autonomous / rollback-biased / idempotent).
    (first-attempt shape or retry shape); the rest of the recipe
    branches on this result.
 
-   **Retry shape.** A task is in retry shape iff its journal
-   contains both an `<implementer>` element and a `<blockers>`
-   element whose `round` attribute matches the highest implementer
-   round. Otherwise it's first-attempt shape — the strict
-   clean-tree gate applies. See
-   `.claude/speccy-references/retry-shape.md` for the full rule
-   statement, read-only scope, worked examples, and the
-   "implementer awaiting review" edge case.
+   **Retry shape.** A task is in retry shape iff its journal contains
+both an `<implementer>` element and a `<blockers>` element whose
+`round` attribute matches the highest implementer round. Otherwise
+it's first-attempt shape — the strict clean-tree gate applies. See
+`.claude/speccy-references/retry-shape.md` for the full rule
+statement, read-only scope, worked examples, and the
+"implementer awaiting review" edge case.
 
 3. Branch on the rule result.
 
@@ -125,12 +124,17 @@ construction (autonomous / rollback-biased / idempotent).
 
    **Retry branch.** Enter retry mode:
 
-   - Read the most recent `<implementer>` block from the bundle's
-     journal section to understand the prior pass's stated `Completed`
-     work.
-   - Read the latest `<blockers>` block (the one whose `round`
-     matches the highest `<implementer>` round) from that same
-     journal section for the specific feedback to address.
+   - Read the latest-round `<implementer>` block inlined in the
+     bundle's journal section to understand the prior pass's stated
+     `Completed` work.
+   - Read the latest-round `<blockers>` block (the one whose `round`
+     matches the highest `<implementer>` round, also inlined) from
+     that same journal section for the specific feedback to address.
+   - Prior rounds are not inlined: the bundle lists them as an
+     attributes-only index (`round`, `block`, `persona`, `verdict`).
+     If a prior round's prose is needed — e.g. a persona blocking
+     across rounds — drill in explicitly with `speccy journal show
+     SPEC-NNNN/T-NNN --round N [--block <type>]`.
    - Amend the existing WIP in the working tree to address the
      blockers. Do not run `git restore`, `git clean`, or
      `git checkout` against the dirty paths; do not rewrite the
@@ -230,26 +234,17 @@ and for each thing you decide to add, place it in one tier:
    caught at review is a full bounce-and-respawn round. Address the
    findings now; do not defer them to the reviewers.
 
-   **Reviewer north-star map.** Each of the four review personas is
-   chasing one outcome. Hold your diff to all four — this is what
-   "good" looks like, not how the reviewers hunt for problems:
+   **Reviewer north-star map.** Hold your diff to all four review
+   outcomes:
 
-   - **Business.** The change does what the task's covered REQs
-     actually ask for — no more, no less. Every changed line traces
-     to a requirement; nothing in scope is left undone and nothing
-     out of scope sneaks in.
-   - **Tests.** Tests drive real behaviour and assert the specific
-     contract under test, and the evidence is honest and complete —
-     each covered CHK is accounted for, red/green pairs show what
-     they claim, and nothing is glossed.
-   - **Security.** Inputs are validated, errors are handled rather
-     than swallowed, and the change introduces no unsafe shortcut
-     (no panicking on attacker-influenced input, no secret or unsafe
-     default left in).
-   - **Style.** The diff reads as though the surrounding code's
-     author wrote it and re-applies the project's own conventions.
-     For the specifics, work the shared convention-drift checklist
-     below.
+   - **Business.** Every changed line traces to a covered REQ — no
+     more, no less.
+   - **Tests.** Tests drive real behaviour, each covered CHK is
+     accounted for, and the evidence is honest.
+   - **Security.** Inputs validated, errors handled not swallowed, no
+     unsafe shortcut or leaked secret.
+   - **Style.** Reads as the surrounding author wrote it; see the
+     convention-drift checklist below.
 
    ## Convention-drift checklist
 
@@ -319,26 +314,15 @@ diff you already have open — is far cheaper than a bounce-and-respawn.
    EOF
    ```
 
-   The CLI is the sole authority for the appended block's `date` and
-`round` attributes and for the journal's structural scaffolding
-(creating the file with frontmatter, sectioning where the journal
-has it). **Do not compute, supply, or hand-author `date`, `round`,
-or the block's open/close tags** — there is no flag to override
-them; the body you pipe on stdin is the inner text only, and the
-CLI emits the paired element. Validation runs before any write; a
-malformed body leaves the journal byte-identical.
+   The CLI owns the appended block's `date`, `round`, and open/close
+tags, plus the journal's frontmatter and sectioning. **Do not
+compute, supply, or hand-author any of them** — there is no override
+flag; the body you pipe on stdin is the inner text only. Validation
+runs before any write, so a malformed body leaves the journal
+byte-identical.
 
 
-   Here `round` derives as `max existing round + 1` (or `1` on a
-   fresh file, where the same append also creates the journal with
-   its three-field frontmatter). On a retry round the same command
-   appends after the existing journal contents and increments
-   `round` for you.
-
-   `--model` is required. Encode reasoning effort (when your host
-   harness exposes an effort knob) as a slash-suffix on the model
-   string (e.g. `claude-opus-4-8[1m]/low`); hosts without an effort
-   knob omit the suffix. The CLI validates `--model` is non-empty.
+   `--model` is required and validated non-empty.
 
    ## Sourcing your recorded identity
 
@@ -355,11 +339,9 @@ inherited environment variable.
 - **Effort suffix** — when the host exposes a reasoning-effort knob,
   read it from your own definition file (`effort:` on Claude Code,
   `model_reasoning_effort` on Codex) and append it as a slash-suffix
-  (e.g. `claude-opus-4-8[1m]/low`). Never read `CLAUDE_EFFORT` or
-  the `CLAUDE_CODE_EFFORT_LEVEL` runtime override — a sub-agent
-  records its definition-file effort even when dispatched from a
-  higher-effort parent session. A host with no effort knob omits
-  the suffix entirely.
+  (e.g. `claude-opus-4-8[1m]/low`); never read it from a runtime
+  env override. A host with no effort knob omits the suffix
+  entirely.
 
 
    Canonical journal `<implementer>` shape: `.claude/speccy-references/journal-implementer.md`.
@@ -373,28 +355,12 @@ inherited environment variable.
    `Evidence` field must include a CHK-by-CHK roll call labelling
    each CHK under the task's covered REQs as `demonstrated`,
    `hygiene`, or `judgment-only` -- see the canonical reference for
-   the format and what each label means.
+   the format and what each label means (the canonical reference
+   carries a full worked roll-call example).
 
-   Minimal Evidence roll-call shape -- substitute real CHK ids,
-   paths, and test names; the canonical reference carries the full
-   worked example:
-
-   ```
-   - Evidence: paper trail at `.speccy/specs/NNNN-slug/evidence/T-NNN.md`.
-     Roll call for CHKs under REQ-NNN:
-     - CHK-NNN (one-line CHK description): demonstrated →
-       evidence Scenario N covers <what the red/green pair shows>.
-     - CHK-NNN (one-line CHK description): hygiene →
-       `<test_name>` in `<file:path>` covers it under the project
-       test command.
-     - CHK-NNN (one-line CHK description): judgment-only →
-       no scriptable proof; reviewer-business / reviewer-style
-       judges on the diff.
-   ```
-
-   After the append, re-read the journal and confirm the new
-   `<implementer>` block landed and `speccy next --json` reports no
-   `journal_xml_malformed` consistency drift.
+   The CLI validates the block before any write, so a malformed body
+   never lands and no re-read is needed; confirm `speccy next --json`
+   reports no consistency drift.
 
 10. Exit. Do not continue to the next task. If the caller wants
    another task, the caller invokes this skill again.

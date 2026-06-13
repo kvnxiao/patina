@@ -13,18 +13,16 @@ counter, and (for review and ship steps) the multi-persona /
 multi-round fan-out — all leaf work happens in sub-agent contexts
 that exit when done.
 
-**Why fan-outs run inline in this skill's session.** Sub-agents
-cannot spawn sub-agents. The persona fan-out in `speccy-review`
-(five reviewer personas in parallel) and the drift-fix loop in
-`speccy-vet` (reviewer + implementer + simplifier sub-agents across
-up to three rounds) therefore cannot be delegated to a single
-"wrapper" sub-agent that follows the skill body — the wrapper would
-fail to spawn its leaf sub-agents. Instead, this orchestrator
-follows the `speccy-review` and `speccy-vet` skill bodies **inline
-in its own session** and spawns the leaf sub-agents directly. Only
-`speccy-work` (which never fans out) is delegated to a single
-sub-agent. Later sections reference this rule as "Why fan-outs run
-inline"; it is stated once here.
+**Why fan-outs run inline in this skill's session.**
+Sub-agents cannot spawn sub-agents, so the fan-out runs inline in the
+top-level session.
+The fan-outs in `speccy-review` (five reviewer personas) and
+`speccy-vet` (reviewer + implementer + simplifier across up to three
+rounds) cannot be delegated to a wrapper sub-agent — it would fail to
+spawn its leaves. This orchestrator therefore follows those two skill
+bodies **inline in its own session** and spawns the leaf sub-agents
+directly; only `speccy-work` (which never fans out) is delegated.
+Later sections reference this as "Why fan-outs run inline".
 
 ## When to use
 
@@ -76,31 +74,21 @@ inner-3:  simplifier polish — described in speccy-vet, run inline
             here (no loop: one scan + one apply with hygiene gate)
 ```
 
-The orchestrator owns the outer loop, the per-task retry counter,
-the review consolidation step (verify completeness via `speccy
-journal show`, flip state via `speccy task transition`, append the
-consolidated `<blockers>` via `speccy journal append`), and the vet
-round counter / snapshot management. Only the leaf work (one
-implementer pass, one persona review, one drift review, one drift
-fix, one simplifier scan / apply) lives in a spawned sub-agent. All
-lifecycle writes the orchestrator performs go through the CLI verbs
-(`task transition`, `journal append`, `journal show`); it never edits
-TASKS.md `state` attributes or journal files with file-editing tools.
+The orchestrator owns the outer loop, the counters, and the review
+consolidation / snapshot management; only the leaf work lives in
+spawned sub-agents. All lifecycle writes the orchestrator performs go
+through the CLI verbs (`task transition`, `journal append`, `journal
+show`); it never edits TASKS.md `state` attributes or journal files
+with file-editing tools.
 
 ## Context discipline
 
-`speccy-work` dispatches to **one** sub-agent because the
-implementer pass is single-shot and does not need to spawn its own
-sub-agents. Its final message comes back as a short status hint.
-
-`speccy-review` and `speccy-vet` run inline in this session per
-"Why fan-outs run inline" above; this orchestrator spawns their
-leaf sub-agents (`reviewer-business`, `reviewer-tests`,
-`reviewer-security`, `reviewer-style`, `reviewer-correctness`,
-`vet-reviewer`, `vet-implementer`, `vet-simplifier`) directly. The
-leaf sub-agents each return one short verdict block as their final
-message; only those final messages — not the per-persona
-reasoning — flow back into the orchestrator's context.
+`speccy-work` is delegated to one sub-agent; `speccy-review` and
+`speccy-vet` run inline (per "Why fan-outs run inline" above), with
+this orchestrator spawning their leaf sub-agents directly. Each leaf
+sub-agent returns one short verdict block — only those final messages,
+not the per-persona reasoning, flow back into the orchestrator's
+context.
 
 Sub-agent final messages are **status hints, not state**. The
 orchestrator always re-queries `speccy next SPEC-NNNN --json` after a

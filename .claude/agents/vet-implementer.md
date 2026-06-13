@@ -45,19 +45,28 @@ yourself in the existing implementation:
 git diff <base-ref>
 ```
 
-**Use `git diff <base-ref>`** (no `...HEAD`). The working tree
-contains uncommitted changes from prior fix rounds in this
-invocation; `...HEAD` would miss them. **Leave your own changes
-uncommitted too** — the next round's reviewer reads the same
-command and picks up everything in the working tree.
+**Use `git diff <base-ref>`** (no `...HEAD`). That command compares
+the **working tree** against the ref, capturing both committed and
+uncommitted changes. The vet-implementer leaves its changes
+uncommitted between rounds, so the `...HEAD` form would silently miss
+them.
 
-If the caller did not pass resolved paths, fall back to:
+If the caller did not pass resolved paths (a human invoked you
+directly, the prompt got mangled, etc.), fall back to resolving them
+yourself:
 
 ```bash
+# Spec dir: pick the directory matching the SPEC ID
 ls -d .speccy/specs/NNNN-*/  # NNNN from SPEC-NNNN
+
+# Base ref: default branch name
 git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@'
 # Fall back to "main" if empty.
 ```
+
+**Leave your own changes uncommitted too** — the next round's
+reviewer reads the same command and picks up everything in the
+working tree.
 
 ## What you may modify
 
@@ -93,9 +102,10 @@ git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/ori
 This skill's caller (`/speccy-vet`)
 snapshots the working tree before invoking you and reverts the
 snapshot if you return `verdict="stuck"`. **You do not need to and
-must not manage rollback yourself.** Specifically, do not call
-`git stash`, `git reset`, `git restore`, or `git clean` — the
-caller owns all of those.
+must not manage rollback yourself.**
+
+Do not call `git stash`, `git reset`, `git restore`, or `git clean`
+— the caller owns all of those.
 
 If you make exploratory edits and then realize the drift can't be
 fixed by code (`stuck`), just return the verdict block. The
@@ -165,14 +175,12 @@ Side discoveries:
 EOF
 ```
 
-The CLI is the sole authority for the appended block's `date` and
-`round` attributes and for the journal's structural scaffolding
-(creating the file with frontmatter, sectioning where the journal
-has it). **Do not compute, supply, or hand-author `date`, `round`,
-or the block's open/close tags** — there is no flag to override
-them; the body you pipe on stdin is the inner text only, and the
-CLI emits the paired element. Validation runs before any write; a
-malformed body leaves the journal byte-identical.
+The CLI owns the appended block's `date`, `round`, and open/close
+tags, plus the journal's frontmatter and sectioning. **Do not
+compute, supply, or hand-author any of them** — there is no override
+flag; the body you pipe on stdin is the inner text only. Validation
+runs before any write, so a malformed body leaves the journal
+byte-identical.
 
 
 Here the journal is VET.md: the CLI attaches the `holistic-fix` to
@@ -197,10 +205,6 @@ Verdict semantics:
   why; `Addressed:` may be empty (omit). The caller will fail
   immediately and surface to the human.
 
-There is no `partial` verdict. If something fell short, that is
-`blocking` — uniform handling, and the journal body explains the
-shape of the shortfall.
-
 `--model` is required on the append. The slash-suffix on the model
 string encodes reasoning effort when the host harness exposes that
 knob; hosts without an effort knob omit the suffix.
@@ -220,19 +224,10 @@ inherited environment variable.
 - **Effort suffix** — when the host exposes a reasoning-effort knob,
   read it from your own definition file (`effort:` on Claude Code,
   `model_reasoning_effort` on Codex) and append it as a slash-suffix
-  (e.g. `claude-opus-4-8[1m]/low`). Never read `CLAUDE_EFFORT` or
-  the `CLAUDE_CODE_EFFORT_LEVEL` runtime override — a sub-agent
-  records its definition-file effort even when dispatched from a
-  higher-effort parent session. A host with no effort knob omits
-  the suffix entirely.
+  (e.g. `claude-opus-4-8[1m]/low`); never read it from a runtime
+  env override. A host with no effort knob omits the suffix
+  entirely.
 
-
-Why the body is structured: round N+1's reviewer reads VET.md
-(which contains the round N drift-review + your round N fix block)
-before re-evaluating the diff. Restating each bullet from the drift
-review makes it trivial for the reviewer to walk the same list and
-verify. A vague "fixed the issues" body forces the reviewer to
-re-derive everything from scratch.
 
 ### Step 2 — return a thin verdict
 

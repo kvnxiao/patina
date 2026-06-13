@@ -37,18 +37,12 @@ Readiness semantics:
 
 ## Steps
 
-1. Confirm all tasks for the spec are `state="completed"`:
-
-   ```bash
-   speccy status SPEC-NNNN --json
-   ```
-
-   The JSON's `spec_md_path` and `tasks_md_path` fields locate the
-   files. Verify `speccy next SPEC-NNNN --json` returns
-   `"next_action": {"kind": "ship", ...}` (exit 0) — that is the
-   ship-readiness signal. If instead it returns `next_action: null`
-   with a non-zero exit, REPORT.md already exists and the SPEC has
-   already shipped; do not proceed.
+1. The `speccy next SPEC-NNNN --json` already run in "When to use"
+   confirms ship-readiness (`next_action.kind == "ship"`, exit 0) and
+   carries the `spec_md_path` and `tasks_md_path` fields that locate
+   the files — no separate `speccy status` call is needed. If instead
+   it returned `next_action: null` with a non-zero exit, REPORT.md
+   already exists and the SPEC has already shipped; do not proceed.
 
 2. Write `.speccy/specs/NNNN-slug/REPORT.md` with frontmatter
    (`spec`, `outcome`, `generated_at`), a `<report>` root element
@@ -65,13 +59,8 @@ Readiness semantics:
    makes the SPEC implemented, so the status flip belongs in the
    same PR, not in a follow-up. The status flip is hash-neutral
    because `status` is excluded from `spec_hash_at_generation`, so
-   TASKS.md does not need a hash refresh. Confirm the workspace is still clean:
-
-   ```bash
-   speccy status SPEC-NNNN --json
-   ```
-
-   `speccy status` should report no `TSK-003` mismatch for SPEC-NNNN.
+   TASKS.md does not need a hash refresh and `TSK-003` cannot fire —
+   no post-flip re-check is needed.
 4. Run the CI gate locally as a dry-run *after* the status flip so
    verify reads the post-ship tree:
 

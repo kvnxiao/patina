@@ -38,9 +38,7 @@ reconciliation are not forgotten.
    SPEC.md diff and appending the Changelog row. Do not re-check after
    applying fixes.
 
-   <!-- Note: the amend self-review below is an independent copy.
-        The parallel copy for plan lives in speccy-plan.md (per DEC-001 /
-        OQ-b: two independent copies, no shared partial). -->
+   <!-- Shared self-review core for plan + amend; supersedes SPEC-0034 DEC-001 (lists stabilized → extracted). Brainstorm's pre-check is intentionally separate. -->
 
    **Mechanical/semantic split.** Mechanical issues are
    string-matchable from the SPEC.md text: `TBD`/`TODO` strings,
@@ -59,7 +57,7 @@ reconciliation are not forgotten.
    any existing sequence, and `{issue}` is a one-line description of
    the problem. Do not substitute freeform prose.
 
-   **The eight check properties:**
+   **The check properties:**
 
    - **Routing fidelity.** Brainstorm artifacts landed in the
      correct SPEC.md sections: restated ask → Summary +
@@ -85,14 +83,12 @@ reconciliation are not forgotten.
      goal that a non-goal denies, or a requirement that violates an
      assumption, is an internal contradiction.
 
-   - **Placeholder leakage.** No `TBD`, `TODO`, or untouched
-     `<...>` template-placeholder strings remain in SPEC.md.
-     These are mechanical and should be fixed inline, not surfaced.
-
    - **Ambiguity.** No `<requirement>` wording is interpretable in
      two materially different ways that would lead to different
      implementations. If the requirement is ambiguous, surface it
      as a semantic issue.
+
+   Amend adds two deltas beyond the shared core:
 
    - **Changelog row presence.** The `## Changelog` section contains
      a new row explaining *why* this amendment was needed. A missing
@@ -138,14 +134,12 @@ reconciliation are not forgotten.
    name what changed in SPEC and what the next implementer attempt
    must address.
 
-   The CLI is the sole authority for the appended block's `date` and
-`round` attributes and for the journal's structural scaffolding
-(creating the file with frontmatter, sectioning where the journal
-has it). **Do not compute, supply, or hand-author `date`, `round`,
-or the block's open/close tags** — there is no flag to override
-them; the body you pipe on stdin is the inner text only, and the
-CLI emits the paired element. Validation runs before any write; a
-malformed body leaves the journal byte-identical.
+   The CLI owns the appended block's `date`, `round`, and open/close
+tags, plus the journal's frontmatter and sectioning. **Do not
+compute, supply, or hand-author any of them** — there is no override
+flag; the body you pipe on stdin is the inner text only. Validation
+runs before any write, so a malformed body leaves the journal
+byte-identical.
 
 
    Here `round` matches the current implementer round, so the next
@@ -172,11 +166,7 @@ malformed body leaves the journal byte-identical.
    (`<spec-dir>/journal/T-NNN.md`). When the spec has no `TASKS.md` yet,
    the commit contains `SPEC.md` (plus any journal files) without failing
    on the absent tasks file — drop the missing `TASKS.md` from the
-   staging list rather than requiring it to exist. The step uses narrow
-   file-list staging (never `git add -A` or `git add .`), so any
-   unrelated dirty paths outside `<spec-dir>/` remain in the working tree
-   untouched. The step is idempotent: re-running with nothing new to
-   record produces no new commit.
+   staging list rather than requiring it to exist.
 
    First run the branch-guard prelude so the commit lands on a feature
    branch rather than the repository's default branch. Supply the
@@ -184,12 +174,6 @@ malformed body leaves the journal byte-identical.
    the path that holds `SPEC.md`) — and run it:
 
 ## Branch-guard prelude
-
-This module is the single source of truth for the branch-guard prelude
-that the authoring skills run before their commit step. Each callsite
-pulls it in with a MiniJinja `include` directive naming
-`modules/references/branch-guard.md`; there is no verbatim copy of this
-prelude in any individual skill body.
 
 The prelude guarantees that HEAD is on a feature branch before any
 artifact is committed, so an authored `SPEC.md` / `TASKS.md` never lands
@@ -300,10 +284,7 @@ never on the reuse path.
      `<spec-dir>/TASKS.md` **only when it exists** (omit it from the list
      when the spec has no tasks file yet — do not let a missing path
      fail the stage), and each `<spec-dir>/journal/T-NNN.md` blocker file
-     appended this run. Do not use `git add -A` or `git add .`. Staging
-     unchanged content is a no-op, so passing the present paths
-     unconditionally is safe regardless of whether some were already
-     committed.
+     appended this run. Do not use `git add -A` or `git add .`.
    - **Title and body.**
      - **Title:** `[SPEC-NNNN]: amend — <why>` with `SPEC-NNNN`
        substituted for the resolved spec id, and `<why>` a title-length
@@ -320,12 +301,6 @@ never on the reuse path.
    mechanics:
 
 ## Shared commit recipe
-
-This module is the single source of truth for how a skill turns a
-just-written artifact into a git commit. Each callsite pulls it in with
-a MiniJinja `include` directive naming
-`modules/references/commit-recipe.md`; there is no verbatim copy of this
-recipe in any individual skill body.
 
 The caller supplies two — and only two — behaviour-varying parameters:
 
@@ -415,11 +390,9 @@ inherited environment variable.
 - **Effort suffix** — when the host exposes a reasoning-effort knob,
   read it from your own definition file (`effort:` on Claude Code,
   `model_reasoning_effort` on Codex) and append it as a slash-suffix
-  (e.g. `claude-opus-4-8[1m]/low`). Never read `CLAUDE_EFFORT` or
-  the `CLAUDE_CODE_EFFORT_LEVEL` runtime override — a sub-agent
-  records its definition-file effort even when dispatched from a
-  higher-effort parent session. A host with no effort knob omits
-  the suffix entirely.
+  (e.g. `claude-opus-4-8[1m]/low`); never read it from a runtime
+  env override. A host with no effort knob omits the suffix
+  entirely.
 
 
 Apply that rule to fill the `<model>` segment of the trailer line. When

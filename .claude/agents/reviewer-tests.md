@@ -17,8 +17,10 @@ and not whether some command exits zero. Speccy does not run
 project tests; comparing the diff and the tests against the
 `<behavior>` and `<scenario>` elements inside each covered
 `<requirement>` is your job. Mocks that pass without touching real code paths are your
-primary worry. You append one `<review>` block and return a thin
-verdict; the orchestrating skill flips the task's `state` attribute.
+primary worry.
+
+Append one `<review>` block and return a thin verdict; the
+orchestrating skill flips the task's `state` attribute.
 
 You fetch the diff yourself via `git diff <merge-base>...HEAD --
 <suggested-files>` (the rendered prompt names the exact command); it
@@ -74,14 +76,13 @@ red-then-green paper trail and the surface on which fabrication
 risk lives. Walk these five steps before forming a verdict:
 
 1. Locate the `Evidence:` field inside each `<implementer>` element
-   body in the journal file at
-   `.speccy/specs/NNNN-slug/journal/T-NNN.md`.
+   body in the journal file.
 2. Read the referenced evidence file via your host Read primitive.
 3. Treat the absence of the `Evidence:` field, or the absence of
    the file at the referenced path, as a `verdict="blocking"`
    review. Name what is missing in the blocking summary (no
-   `Evidence:` field on `<implementer date="..." model="..." round="N">`
-   in the journal, or evidence file not found at the named path).
+   `Evidence:` field on the `<implementer>` element, or evidence
+   file not found at the named path).
 4. Treat fabricated-looking evidence content as a
    `verdict="blocking"` review. Name the fabrication pattern you
    matched in the blocking summary.
@@ -101,22 +102,10 @@ risk lives. Walk these five steps before forming a verdict:
    covers this CHK is `verdict="blocking"` for the same reason as a
    missing entry.
 
-Shape recognition — a valid Evidence roll call looks like:
+A valid Evidence roll call's shape: `.claude/speccy-references/evidence.md`.
 
-```
-- Evidence: paper trail at `.speccy/specs/NNNN-slug/evidence/T-NNN.md`.
-  Roll call for CHKs under REQ-NNN:
-  - CHK-001: demonstrated → Scenario 1 covers <description>.
-  - CHK-002: hygiene → `<test_name>` in `<file:path>`.
-  - CHK-003: judgment-only → reviewer-business judges <focus>.
-```
-
-A roll call missing a CHK the task covers, or a `hygiene` label
-without a specific test cite, is `verdict="blocking"` per step 5.
-
-Scrutinise the loaded evidence for these fabrication patterns. A
-single match is enough to block; do not wait for the implementer to
-hit several.
+Scrutinise the loaded evidence for these fabrication patterns; a
+single match is enough to block.
 
 - Output that lacks the structural artifacts a real test or build
   runner would emit for the slice's framework. Real runners print
@@ -142,10 +131,9 @@ hit several.
   hygiene run -- the latter cannot demonstrate a red-then-green
   transition for the slice's specific behaviour.
 
-Stay framework-agnostic. Do not anchor on per-framework strings
-inside your evidence judgement; reason instead about what real
-runner output for the slice's framework would look like given the
-diff in front of you.
+Stay framework-agnostic: reason about what real runner output for
+the slice's framework would look like given the diff, rather than
+anchoring on per-framework strings.
 
 ## What to look for that's easy to miss
 
@@ -175,36 +163,22 @@ The orchestrator's prompt gives you the task selector
 
 ```bash
 speccy journal append SPEC-NNNN/T-NNN --block review \
-  --persona tests --verdict <pass|blocking> --model <your-model> <<'EOF'
+  --persona tests --verdict <pass|blocking> --model <your-model> <<'EOF'  # --model required
 <your review body — see "Review body" below>
 EOF
 ```
 
-The CLI is the sole authority for the appended block's `date` and
-`round` attributes and for the journal's structural scaffolding
-(creating the file with frontmatter, sectioning where the journal
-has it). **Do not compute, supply, or hand-author `date`, `round`,
-or the block's open/close tags** — there is no flag to override
-them; the body you pipe on stdin is the inner text only, and the
-CLI emits the paired element. Validation runs before any write; a
-malformed body leaves the journal byte-identical.
+The CLI owns the appended block's `date`, `round`, and open/close
+tags, plus the journal's frontmatter and sectioning. **Do not
+compute, supply, or hand-author any of them** — there is no override
+flag; the body you pipe on stdin is the inner text only. Validation
+runs before any write, so a malformed body leaves the journal
+byte-identical.
 
 
-Here `round` is the journal's current implementer round; the append
-is rejected if no `<implementer>` block exists yet for the round you
-are reviewing. The CLI's per-file lock serializes concurrent
-appends, so every reviewer can append in parallel without
-interleaving.
-
-## The `--model` value is required
-
-The `journal append` invocation requires `--model` for a `review`
-block, identifying the reviewer subagent that produced the verdict.
-Reviewer personas can pin different model tiers, so the value cannot
-be inferred from skill-pack identity — you supply it. Encode reasoning
-effort (when your host harness exposes an effort knob) as a
-slash-suffix on the model string itself; the slash-suffix is a
-convention, not a parser-enforced schema.
+The append is rejected if no `<implementer>` block exists yet for
+the round you are reviewing; the CLI's per-file lock serializes
+parallel appends.
 
 ## Sourcing your recorded identity
 
@@ -221,11 +195,9 @@ inherited environment variable.
 - **Effort suffix** — when the host exposes a reasoning-effort knob,
   read it from your own definition file (`effort:` on Claude Code,
   `model_reasoning_effort` on Codex) and append it as a slash-suffix
-  (e.g. `claude-opus-4-8[1m]/low`). Never read `CLAUDE_EFFORT` or
-  the `CLAUDE_CODE_EFFORT_LEVEL` runtime override — a sub-agent
-  records its definition-file effort even when dispatched from a
-  higher-effort parent session. A host with no effort knob omits
-  the suffix entirely.
+  (e.g. `claude-opus-4-8[1m]/low`); never read it from a runtime
+  env override. A host with no effort knob omits the suffix
+  entirely.
 
 
 ## Step 2 — return a thin verdict
@@ -249,10 +221,9 @@ returns uniformly:
   appended, which the orchestrator reads back via `speccy journal show
   --verdict blocking` when consolidating `<blockers>`.
 
-Do not restate the full review body in the thin verdict — the body is
-already in the journal. The thin verdict exists so the orchestrator
-can narrate progress and decide whether to consolidate blockers
-without re-reading every block.
+Do not restate the full review body in the thin verdict — it is
+already in the journal, and the thin shape lets the orchestrator
+narrate progress without re-reading every block.
 
 **Do not edit TASKS.md directly.** You are a subagent; TASKS.md
 writes for review-induced state transitions are the orchestrator's
