@@ -94,6 +94,4 @@ exists (the round-3 reviewer fan-out has not yet fired). The
 result is **first-attempt shape** — the task is awaiting review,
 not awaiting a retry. The strict clean-tree gate applies; if the
 round-3 implementer's WIP is still in the tree, the calling skill
-halts. (In practice the round-3 implementer's atomic-commit step
-would have already landed its work before the journal entered this
-state; this edge case is documented for completeness.)
+halts.

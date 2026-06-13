@@ -27,14 +27,13 @@ the primitive — adversarial diversity comes from fresh contexts per
 persona — and is bounded to one round of five sub-agents on one
 task.
 
-Because sub-agents cannot spawn sub-agents, this skill must run in a
-context that **is** the top-level session — either a human
-invocation (`/speccy-review …`) where the host CLI
-itself runs the skill body, or the
-`/speccy-orchestrate` outer loop which inlines this
-skill body into its own session at the `review` dispatch (it cannot
-delegate to a wrapper sub-agent that would then try to spawn the
-persona leaves).
+Sub-agents cannot spawn sub-agents, so the fan-out runs inline in the
+top-level session.
+This skill must run in the top-level session — either a human
+invocation
+(`/speccy-review …`) or the
+`/speccy-orchestrate` outer loop inlining this body at
+its `review` dispatch.
 
 ## When to use
 
@@ -110,15 +109,11 @@ documentation risk is suspected.
 
 The prompt for each spawn is:
 
-> Review task `SPEC-NNNN/T-NNN`. Open your per-task context read with a
-> single `speccy context SPEC-NNNN/T-NNN --json` call — the bundle
-> carries the task entry, its covering requirements and scenarios, the
-> full per-task journal (prior implementer handoffs, review verdicts,
-> and blockers), the sibling index, the file paths, and a suggested
-> merge-base diff command. Read the diff with that command, then apply
-> your persona's review criteria. Targeted follow-up reads via the
-> bundle's listed paths (e.g. the evidence file) remain legitimate
-> where your persona needs something outside the bundle.
+> Review task `SPEC-NNNN/T-NNN`. Run `speccy context SPEC-NNNN/T-NNN
+> --json` for the per-task bundle, read the diff with the bundle's
+> suggested diff command, then apply your persona's review criteria.
+> If a prior round's prose matters to your verdict, drill in with
+> `speccy journal show SPEC-NNNN/T-NNN --round N [--block <type>]`.
 >
 > Follow the verdict-return contract in your agent file: append your
 > own `<review>` block to the per-task journal via `speccy journal
@@ -219,14 +214,12 @@ speccy journal append SPEC-NNNN/T-NNN --block blockers <<'EOF'
 EOF
 ```
 
-The CLI is the sole authority for the appended block's `date` and
-`round` attributes and for the journal's structural scaffolding
-(creating the file with frontmatter, sectioning where the journal
-has it). **Do not compute, supply, or hand-author `date`, `round`,
-or the block's open/close tags** — there is no flag to override
-them; the body you pipe on stdin is the inner text only, and the
-CLI emits the paired element. Validation runs before any write; a
-malformed body leaves the journal byte-identical.
+The CLI owns the appended block's `date`, `round`, and open/close
+tags, plus the journal's frontmatter and sectioning. **Do not
+compute, supply, or hand-author any of them** — there is no override
+flag; the body you pipe on stdin is the inner text only. Validation
+runs before any write, so a malformed body leaves the journal
+byte-identical.
 
 
 The single-writer rule holds: the CLI's append lock owns write
@@ -276,12 +269,6 @@ silently, matching the prior behaviour), the `Co-Authored-By` trailer,
 and the HEREDOC commit mechanics:
 
 ## Shared commit recipe
-
-This module is the single source of truth for how a skill turns a
-just-written artifact into a git commit. Each callsite pulls it in with
-a MiniJinja `include` directive naming
-`modules/references/commit-recipe.md`; there is no verbatim copy of this
-recipe in any individual skill body.
 
 The caller supplies two — and only two — behaviour-varying parameters:
 
@@ -371,11 +358,9 @@ inherited environment variable.
 - **Effort suffix** — when the host exposes a reasoning-effort knob,
   read it from your own definition file (`effort:` on Claude Code,
   `model_reasoning_effort` on Codex) and append it as a slash-suffix
-  (e.g. `claude-opus-4-8[1m]/low`). Never read `CLAUDE_EFFORT` or
-  the `CLAUDE_CODE_EFFORT_LEVEL` runtime override — a sub-agent
-  records its definition-file effort even when dispatched from a
-  higher-effort parent session. A host with no effort knob omits
-  the suffix entirely.
+  (e.g. `claude-opus-4-8[1m]/low`); never read it from a runtime
+  env override. A host with no effort knob omits the suffix
+  entirely.
 
 
 Apply that rule to fill the `<model>` segment of the trailer line. When
@@ -388,19 +373,6 @@ The skill body does not check the current git branch; it trusts the
 caller / host to have placed the working tree on a feature branch.
 Commits land on whatever HEAD is.
 
-
-Reviewers append their own `<review>` block via `speccy journal
-append` and return a thin verdict; they never edit TASKS.md or the
-journal file with file-editing tools. This running session does not
-transcribe `<review>` blocks. It drives the review-induced writes
-exclusively through the CLI verbs the partial above details:
-`speccy journal show` to verify the round's reviews are complete and
-to read back blockers, `speccy task transition` for the `in-review`
-→ `completed` / `pending` state flip, and `speccy journal append
---block blockers` for the consolidated orchestrator-authored
-`<blockers>` block. No `<review>` or `<blockers>` block is ever
-appended to the `<task>` body in TASKS.md — TSK-006 rejects journal
-elements there.
 
 ### Exit
 
