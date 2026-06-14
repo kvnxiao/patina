@@ -5,11 +5,8 @@
 
 //! Integration coverage for the plan journal.
 //!
-//! The end-to-end `patina apply --yes` surface
-//! cannot run yet: the `apply` subcommand, the executor loop, and the
-//! mutation steps land in later tasks. These tests drive
-//! the `patina_core::journal` module directly — the layer these tests own —
-//! and prove the load-bearing properties those scenarios depend on:
+//! These tests drive the `patina_core::journal` module directly and prove
+//! the load-bearing properties those scenarios depend on:
 //!
 //! - the single up-front plan fsync paired with a directory fsync, with no
 //!   per-operation progress fsync (fsync shape);

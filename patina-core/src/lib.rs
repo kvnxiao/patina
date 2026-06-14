@@ -189,14 +189,12 @@ pub struct ApplyOptions {
     pub timestamp: String,
 }
 
-/// Options accepted by [`status`](fn@crate::status). Subsequent tasks extend
-/// this with the resolved repository root and output-format toggle.
+/// Options accepted by [`status`](fn@crate::status).
 #[derive(Debug, Default, Clone)]
 #[non_exhaustive]
 pub struct StatusOptions {}
 
-/// Options accepted by [`rollback`](fn@crate::rollback). Subsequent tasks
-/// extend this with the journal timestamp selector and confirmation toggles.
+/// Options accepted by [`rollback`](fn@crate::rollback).
 #[derive(Debug, Default, Clone)]
 #[non_exhaustive]
 pub struct RollbackOptions {}

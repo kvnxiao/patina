@@ -148,8 +148,7 @@ pub fn discover_modules(root: &Utf8Path) -> Result<Vec<ModuleHandle>, ModuleDisc
         if !module_manifest.is_file() {
             // Subdirectory without a patina.toml is silently skipped —
             // not every directory under the root is a module (e.g.
-            // `.git/`, scratch files). Stricter module-content
-            // validation is added later.
+            // `.git/`, scratch files).
             continue;
         }
 

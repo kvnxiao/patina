@@ -5,14 +5,11 @@
 
 //! Integration coverage for backup-on-overwrite.
 //!
-//! The end-to-end `patina apply --yes` surface cannot run
-//! yet: the `apply` subcommand, the executor loop that calls the backup
-//! writer, and the symlink executor land in later tasks.
 //! These tests drive the `patina_core::backups::backup_before_overwrite`
-//! entry point directly — the layer these tests own — by staging the on-disk
-//! states these tests cover (a pre-existing target, an absent
-//! target, a clean repository) and asserting the backup tree converges to
-//! the expected shape. Each test maps to one backup bullet:
+//! entry point directly by staging the on-disk states they cover (a
+//! pre-existing target, an absent target, a clean repository) and asserting
+//! the backup tree converges to the expected shape. Each test maps to one
+//! backup bullet:
 //!
 //! - overwriting a pre-existing `~/.zshrc` produces a backup holding the
 //!   original bytes at the mirrored path before the overwrite.

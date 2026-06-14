@@ -2,10 +2,7 @@
 //!
 //! These exercise the public `patina_core::apply::hooks` surface against
 //! the real host shell: shells resolve up front, `when` predicates filter,
-//! and a hook command's exit status classifies into a [`HookOutcome`]. The
-//! orchestration into the apply pipeline (which maps `Failed` to an abort
-//! or a rollback and to CLI exit codes) lands in later tasks; this task
-//! owns the classification primitives those tasks consume.
+//! and a hook command's exit status classifies into a [`HookOutcome`].
 
 use patina_core::ForceDeploy;
 use patina_core::HookError;

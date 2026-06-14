@@ -27,10 +27,10 @@ pub struct HookEntry {
     /// Shell command to execute.
     pub command: String,
     /// Optional explicit shell (e.g. `"bash"`, `"pwsh"`). Stored
-    /// verbatim — the shell-on-PATH check is deferred.
+    /// verbatim; this layer does not check it against `PATH`.
     pub shell: Option<String>,
-    /// Optional `when` predicate as raw expression source. Parsing
-    /// / evaluation through `MiniJinja` is deferred.
+    /// Optional `when` predicate as raw expression source. This layer does
+    /// not parse or evaluate it through `MiniJinja`.
     pub when: Option<String>,
     /// If `true`, a non-zero exit from the hook aborts the apply.
     /// Defaults to `true` when the field is omitted.

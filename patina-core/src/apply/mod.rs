@@ -33,7 +33,7 @@
 //! target paths (tilde expansion and canonicalization live in
 //! [`crate::paths`]). Plan construction, journal persistence, the
 //! diff-and-prompt loop, and the apply orchestration that calls these
-//! executors land in their own tasks.
+//! executors live in their own modules.
 
 pub mod engine;
 pub mod hooks;
@@ -205,8 +205,8 @@ pub enum ExecutorError {
 
     /// Creating a symbolic link on Windows failed because the process
     /// lacks the privilege (Developer Mode off and not elevated). The
-    /// prompt/elevate flow is deferred; the engine surfaces
-    /// the typed error so the CLI can exit non-zero with the message.
+    /// engine surfaces the typed error so the CLI can exit non-zero with
+    /// the message.
     #[error(
         "creating a symbolic link at {target} requires Windows Developer Mode or an elevated process: {source}"
     )]

@@ -2,9 +2,9 @@
 //!
 //! This crate builds the only binary in the workspace meant to run
 //! *elevated*. The main `patina.exe` re-invokes it via `ShellExecuteEx`
-//! with the `runas` verb (wired in a later task), triggering exactly one
-//! UAC prompt; the helper then performs the single requested elevated
-//! action and exits with a documented code.
+//! with the `runas` verb, triggering exactly one UAC prompt; the helper
+//! then performs the single requested elevated action and exits with a
+//! documented code.
 //!
 //! Its sole responsibility in v1.0 is the `enable-developer-mode`
 //! subcommand, which sets the Developer Mode registry switch

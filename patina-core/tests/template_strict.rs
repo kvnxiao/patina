@@ -21,7 +21,7 @@ fn resolver() -> Resolver {
 /// At the plan-computation level, a `gitconfig.tmpl` body referencing
 /// `{{ user_email }}` with no `user_email` in any layer fails with a typed
 /// error naming the variable. The CLI maps this to exit 1 with the name on
-/// stderr once the apply pipeline lands.
+/// stderr.
 #[test]
 fn template_with_undefined_variable_fails_naming_it() {
     let body = "[user]\nemail = {{ user_email }}";

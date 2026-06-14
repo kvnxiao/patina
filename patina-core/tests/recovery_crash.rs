@@ -5,14 +5,11 @@
 
 //! Integration coverage for crash recovery.
 //!
-//! The end-to-end `patina apply --yes` surface cannot run
-//! yet: the `apply` subcommand, the executor loop, and the backup writer
-//! land in later tasks. These tests drive the
-//! `patina_core::journal::recover_orphans` entry point directly — the
-//! layer these tests own — by staging the on-disk crash states these tests
-//! cover (a flushed `<ts>.plan`, a per-apply backup tree, no
-//! `<ts>.COMMIT`) and asserting recovery converges backward to the
-//! pre-apply state. Each test maps to one recovery bullet:
+//! These tests drive the `patina_core::journal::recover_orphans` entry
+//! point directly by staging the on-disk crash states they cover (a flushed
+//! `<ts>.plan`, a per-apply backup tree, no `<ts>.COMMIT`) and asserting
+//! recovery converges backward to the pre-apply state. Each test maps to one
+//! recovery bullet:
 //!
 //! - N-of-M completed ops are reversed from backups; orphan plan and progress
 //!   files are removed (the headline scenario).

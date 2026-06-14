@@ -122,7 +122,7 @@ mode = "copy"
 #[test]
 fn carries_optional_when_expression_verbatim() {
     // The optional `when` field is parsed and carried as raw source
-    // (evaluation lands later).
+    // (not evaluated here).
     let toml = r#"
 [[file]]
 source = "wmrc"

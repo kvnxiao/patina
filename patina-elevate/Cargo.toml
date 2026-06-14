@@ -42,8 +42,8 @@ clap = { workspace = true }
 # `winsafe` carries the registry-write API: the write
 # (`AppModelUnlock\AllowDevelopmentWithoutDevLicense`) lives in its `advapi`
 # feature, with `kernel` for the base handle types. `taskschd` is deliberately
-# NOT enabled — that surface belongs to a later task. The dependency only exists on
-# Windows targets so a non-Windows build never resolves it into the graph.
+# NOT enabled here. The dependency only exists on Windows targets so a
+# non-Windows build never resolves it into the graph.
 [target.'cfg(windows)'.dependencies]
 winsafe = { workspace = true }
 

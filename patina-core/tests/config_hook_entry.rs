@@ -93,7 +93,7 @@ command = "echo hi"
 #[test]
 fn preserves_when_expression_verbatim() {
     // Eleventh scenario: when = "patina.os == 'macos'" -> stored raw.
-    // MiniJinja compilation is deferred.
+    // Not compiled through MiniJinja here.
     let toml = r#"
 [[hook]]
 event = "pre_apply"
@@ -109,8 +109,8 @@ when = "patina.os == 'macos'"
 
 #[test]
 fn preserves_shell_verbatim() {
-    // Parse-time rule 3: shell string is stored verbatim; PATH check
-    // is deferred.
+    // Parse-time rule 3: shell string is stored verbatim; not checked
+    // against PATH here.
     let toml = r#"
 [[hook]]
 event = "post_apply"

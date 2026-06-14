@@ -5,13 +5,10 @@
 
 //! Integration coverage for count-based backup retention.
 //!
-//! The end-to-end `patina apply --yes` surface cannot run
-//! yet: the `apply` subcommand and the commit→GC sequencing in the
-//! executor land in later tasks. These tests drive the
-//! `patina_core::backups::gc_retain` entry point directly — the layer
-//! these tests own — by staging the on-disk backup tree these tests
-//! cover and asserting retention converges to the expected shape. Each
-//! test maps to one retention bullet:
+//! These tests drive the `patina_core::backups::gc_retain` entry point
+//! directly by staging the on-disk backup tree they cover and asserting
+//! retention converges to the expected shape. Each test maps to one
+//! retention bullet:
 //!
 //! - 15 historical cycles + a successful apply prune down to exactly 10,
 //!   keeping the newest.

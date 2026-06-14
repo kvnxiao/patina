@@ -381,9 +381,9 @@ fn render_diff(
             pager.binary()
         ));
     }
-    // Piping to a resolved external pager is deferred; the embedded
-    // renderer is always the source of the rendered string so output
-    // stays deterministic for the fallback path.
+    // Patina does not pipe to an external pager; the embedded renderer is
+    // always the source of the rendered string so output stays
+    // deterministic for the fallback path.
     Ok(rendered)
 }
 

@@ -917,9 +917,9 @@ fn planned_operation(
     match mode {
         // A `[[directory]]` `symlink` (the atomic whole-directory
         // `SymlinkDir`) maps to the same durable symlink op shape as a
-        // `[[file]]` `symlink`. `SymlinkTree` is the clearly-marked
-        // dispatch point the per-leaf executor fills in; until then it
-        // shares the symlink op shape so the plan is well-formed.
+        // `[[file]]` `symlink`. `SymlinkTree` shares that symlink op shape
+        // so the plan is well-formed; the executor handles its per-leaf
+        // expansion.
         FileMode::Symlink | FileMode::SymlinkDir | FileMode::SymlinkTree => {
             PlannedOperation::symlink(source.as_str(), target.as_str(), disposition)
         }

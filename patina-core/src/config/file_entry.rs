@@ -89,9 +89,9 @@ pub struct ManagedEntry {
     /// single-target entries become a one-element vec internally so
     /// downstream consumers do not need to special-case the shape.
     pub targets: Vec<Utf8PathBuf>,
-    /// Optional `when` predicate as raw expression source. Evaluation
-    /// through `MiniJinja` lands later; this module only parses and
-    /// carries it (mirrors [`HookEntry.when`](super::HookEntry::when)).
+    /// Optional `when` predicate as raw expression source. This module
+    /// only parses and carries it, and does not evaluate it through
+    /// `MiniJinja` (mirrors [`HookEntry.when`](super::HookEntry::when)).
     pub when: Option<String>,
 }
 

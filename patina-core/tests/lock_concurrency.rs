@@ -22,11 +22,8 @@
 //!   invariant that justifies relying on `Drop` / the OS rather than an
 //!   explicit unlock.
 //!
-//! The end-to-end `patina apply --yes` / `patina status` surface
-//! cannot run yet — the CLI subcommands, executor loop,
-//! and exit-code mapping land in later tasks. These tests drive the
-//! `patina_core::lock` primitive directly through the `lock_helper`
-//! example process, which is the layer these tests own.
+//! These tests drive the `patina_core::lock` primitive directly through the
+//! `lock_helper` example process.
 
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
