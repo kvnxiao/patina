@@ -5,6 +5,7 @@ title: Patina watch — filesystem event loop, per-OS service install, drift det
 status: implemented
 created: 2026-05-25
 supersedes: []
+archived_at: 2026-06-14
 ---
 
 # SPEC-0003: Patina watch — filesystem event loop, per-OS service install, drift detection
