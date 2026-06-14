@@ -13,11 +13,12 @@ assumptions and open questions, then stop and wait for explicit user
 approval. Only after the user approves the framing does the agent
 invoke `/speccy-plan` to write SPEC.md.
 
-The output of this skill is **ephemeral chat**: nothing is written to
-disk. Salient outputs flow into SPEC.md's existing sections when
-`/speccy-plan` runs next (see "Routing" below).
-Inspired by the obra/superpowers brainstorming skill, trimmed to
-Speccy's stay-small principles.
+The output of this skill is **ephemeral chat**: salient outputs flow
+into SPEC.md's existing sections when `/speccy-plan`
+runs next (see "Routing" below). The one exception is a deliberately
+deferred future-spec candidate, which the skill appends to
+`.speccy/BACKLOG.md` at step 7. Inspired by the obra/superpowers
+brainstorming skill, trimmed to Speccy's stay-small principles.
 
 ## When to use
 
@@ -61,6 +62,12 @@ own judgment.
    them into SPEC.md's existing sections (Summary prose and
    `<requirement>` grounding) when `/speccy-plan` runs
    next (see "Routing" below) — never into a standalone report file.
+
+   Then read the backlog as candidate input. When `.speccy/BACKLOG.md`
+   is present, read it and fold its entries into the candidate framings
+   you propose at step 3 — a deferred candidate may be exactly the slice
+   the user is now reaching for. Absence is normal and silent: a missing
+   file is not an error, proceed without comment.
 
    Don't dump the context back at the user — use it to ground your
    clarifying questions.
@@ -184,7 +191,110 @@ own judgment.
    re-present. Continue until the user explicitly approves the
    framing.
 
-7. **Invoke the writing skill.** Once the user has approved, invoke
+7. **Record a future-spec candidate, if one was deliberately deferred.**
+   When the Socratic exchange settled on cutting a piece of scope worth
+   its OWN later spec, append a candidate with provenance
+   `SPEC-NNNN, brainstorm`, per the reference below. This is the one
+   disk write the brainstorm itself performs; everything else stays
+   ephemeral chat. Brainstorm writes no SPEC and never promotes a
+   candidate, so it never strikes a backlog entry — promotion is the
+   writing skill's job. Brainstorm itself never commits; the writing
+   skill it hands off to at step 8 (`/speccy-plan` for a
+   new SPEC, `/speccy-amend` for an amendment) sweeps this
+   dirty `.speccy/BACKLOG.md` into its commit, so the candidate is
+   recorded durably rather than left as an uncommitted working-tree
+   change.
+
+## Backlog ledger entry shape
+
+The repo's future-spec register lives at `.speccy/BACKLOG.md` — a user-owned,
+git-tracked file, sibling to `MEMORY.md` and distinct from it. `speccy init`,
+`speccy init --force`, and reeject never create, enumerate, or overwrite it, so
+learned content survives speccy CLI updates. Its **absence is normal and
+silent**: a missing or malformed file produces no `speccy verify` error or
+warning, and the CLI never reads it. The backlog is a flat, unordered list of
+candidate specs — ideas worth their own SPEC later, not deferrals within a spec
+already in flight.
+
+### When to append a candidate
+
+A producing phase appends an entry here only when it deliberately cuts a piece
+of scope worth its OWN later spec — "not this spec, but its own SPEC later."
+Self-create the file with the header below (copied verbatim) on first append,
+then record the cut in the four-field shape below.
+
+Distinguish the two kinds of cut. A future-spec candidate goes here. A cut that
+is merely out of the current spec's scope is a spec-local Non-goal — it belongs
+in that SPEC's `## Non-goals`, not the backlog.
+
+### The file header
+
+When the file self-creates on first append, the producing skill copies in this
+preamble verbatim so the lifecycle stays legible to the next reader:
+
+```markdown
+# Speccy backlog — future-spec candidates
+
+> User-owned, git-tracked, never created or overwritten by `speccy init`,
+> `speccy init --force`, or reeject. Absence is normal and silent; the CLI
+> never reads this file. Distinct from `MEMORY.md` (durable loop conventions)
+> and from spec-local deferred surfaces (`## Non-goals`, deferred decisions,
+> deferred coverage): each entry below should become its OWN spec. Promotion
+> retires an entry by deletion. See
+> `resources/modules/references/backlog-ledger.md` for the entry shape.
+```
+
+### The four-field entry shape
+
+Every entry carries the same four fields, one line per field:
+
+- **Title** — the prospective spec named in a phrase.
+- **What & why** — what the spec would deliver plus the value it carries: the
+  case for building it.
+- **Deferred-because** — why it is not being built now: out of the current
+  slice, needs infrastructure that does not exist yet, or blocked on some
+  named prerequisite.
+- **Provenance** — the originating spec and phase that surfaced the candidate,
+  e.g. `SPEC-NNNN, ship` or `SPEC-NNNN, plan`, or `manual` for a hand-added
+  entry.
+
+### Authoring discipline
+
+- **Terse.** One phrase per field. The backlog is a working list scanned at
+  plan time, not a design document; a candidate that needs a paragraph to
+  justify wants its own brainstorm, not a longer backlog line.
+
+- **Provenance must resolve to a real spec and phase**, never a fabricated one
+  — or `manual` when added by hand. Honest provenance is what lets a reader
+  trace a candidate back to the moment it surfaced.
+
+- **Promotion strikes the entry by deletion.** When a candidate becomes its own
+  SPEC, delete its line; the promotion trail lives in git history and the new
+  SPEC's own provenance. The backlog reads as current candidates only, never a
+  tombstone field.
+
+- **Many entries from one spec's loop is a focus smell.** The per-spec add rate
+  is itself feedback: a single spec spawning a long tail of backlog entries
+  signals the slice was drawn too wide or the work kept discovering adjacent
+  scope. This is a signal to weigh, not an enforced threshold — nothing gates
+  on it.
+
+### Worked example
+
+The placeholders below are illustrative — substitute your own values.
+
+```markdown
+- Title: Cross-repo spec linking.
+- What & why: let a SPEC in one repo reference requirements in another so a
+  shared contract has one source of truth; removes the copy-paste drift between
+  the two repos that share the protocol.
+- Deferred-because: needs a cross-repo resolution surface that does not exist
+  yet — out of the current single-repo slice.
+- Provenance: SPEC-0042, ship.
+```
+
+
+8. **Invoke the writing skill.** Once the user has approved, invoke
    the right skill for the path:
 
    - For a **new SPEC**, invoke `/speccy-plan`, which
@@ -198,9 +308,10 @@ own judgment.
      and spec-hash re-record — so the brainstormed amendment doesn't
      drop the reconciliation steps and produce hash drift.
 
-   The brainstorm chat is ephemeral — nothing was written to disk
-   during steps 1-6. The salient outputs flow into SPEC.md via the
-   routing list below when the writing prompt runs.
+   The brainstorm chat is ephemeral — the only disk write is the
+   backlog entry from step 7, if a future-spec candidate was deferred.
+   The salient outputs flow into SPEC.md via the routing list below
+   when the writing prompt runs.
 
 ## Routing brainstorm outputs into SPEC.md
 
@@ -222,7 +333,12 @@ not invent a new SPEC.md section for brainstorm output:
   record, promote it to a `<decision>` element block under
   `### Decisions` (DEC-NNN) instead.
 
-This recipe does not loop. After invoking
-`/speccy-plan` (new SPEC) or
-`/speccy-amend` (existing SPEC), the next step is
-`/speccy-decompose SPEC-NNNN` (decompose into TASKS.md).
+## Exit
+
+Brainstorm's output is the framing the user approved, which flows into SPEC.md
+via the routing list above when the writing skill runs; its only disk write is
+a deferred future-spec candidate appended to `.speccy/BACKLOG.md` at step 7. The
+skill ends by invoking `/speccy-plan` (new SPEC)
+or `/speccy-amend` (existing SPEC); the step after that is
+`/speccy-decompose SPEC-NNNN` (decompose into TASKS.md). Single
+pass, no loop.

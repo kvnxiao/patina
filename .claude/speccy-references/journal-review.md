@@ -1,9 +1,9 @@
 # Worked-instance reference: per-task journal `<review>` block
 
-This file shows the canonical shape of a `<review>`
-block inside a per-task journal file. The example continues the
-SPEC-NNNN widget-render-timeout scenario from the sibling reference
-files in this directory.
+Canonical shape of a `<review>` block inside a per-task journal file,
+continuing the `SPEC-0042` widget-render-timeout worked instance from the
+sibling reference files in this directory. Illustrative example — substitute
+your own ids and values.
 
 A real journal file lives at
 `.speccy/specs/NNNN-slug/journal/T-NNN.md`. Each reviewer persona
@@ -21,12 +21,19 @@ the body, `--persona`, `--verdict`, and `--model`.
 After an implementer turn flips the task to `state="in-review"`, the
 reviewer-orchestrator fans out one persona per reviewer; each persona
 appends its own `<review>` block. The CLI's per-file lock serializes
-the concurrent appends, so the blocks land without interleaving. A
-journal file with one round of review looks like:
+the concurrent appends, so the blocks land without interleaving.
+
+In this worked instance, round-1 review of `T-001` **blocks**:
+reviewer-tests and reviewer-correctness both catch an off-by-one (the
+value parser rejects the inclusive maximum 600000 that REQ-001 requires
+accepted); business, security, and style pass. The orchestrator
+synthesises a `<blockers>` block (see `journal-blockers.md`) and flips
+the task back to `state="pending"`. The round-2 implementer fixes the
+range bound, and the round-2 fan-out passes.
 
 ```markdown
 ---
-spec: SPEC-NNNN
+spec: SPEC-0042
 task: T-001
 generated_at: 2026-05-21T19:45:00Z
 ---
@@ -36,49 +43,74 @@ generated_at: 2026-05-21T19:45:00Z
 </implementer>
 
 <review persona="business" verdict="pass" model="claude-sonnet-4-6[1m]/medium" date="2026-05-21T20:30:00Z" round="1">
-The `--timeout-ms` flag satisfies REQ-001 and REQ-002 as written.
-The 30000ms default and 1..=600000 range match the SPEC's
-guardrail values verbatim; the stderr line uses the configured
-budget (per DEC-002) rather than measured elapsed time, which
-preserves the deterministic-message property the CI integration
-test depends on. Exit code 124 matches DEC-001's GNU `timeout(1)`
-compatibility goal. No business-scope drift: the library crate
-remains free of the timeout knob (per the SPEC's non-goal), and
-no retry-on-timeout behaviour leaked in.
+Scope is clean. The timeout knob stays a CLI affordance — the
+`widget-core` library crate gains no timeout parameter (per the SPEC's
+non-goal), and no retry-on-timeout behaviour leaked in. Exit code 124
+matches DEC-001's GNU `timeout(1)` compatibility goal, and the stderr
+line uses the configured budget (per DEC-002) rather than measured
+elapsed time, preserving the deterministic-message property the CI
+integration test depends on. I leave the range-boundary verification
+to reviewer-tests.
 </review>
 
-<review persona="tests" verdict="pass" model="claude-opus-4-8[1m]/low" date="2026-05-21T20:35:00Z" round="1">
-Red-then-green paper trail in
-`.speccy/specs/NNNN-widget-render-timeout/evidence/T-001.md`
-records three scenarios with concrete pre-edit and post-edit
-command output. Pre-edit baseline for scenario 1 uses GNU
-`timeout(1)` as the external abort signal — distinguishing the
-124 from the wrapper versus the 124 from the binary — which is
-the right shape for "the abort signal moved from external to
-internal". Scenario 2 captures both boundary rejections (0 and
-600001) with full stderr text. Hygiene gates `cargo test`,
-`cargo clippy`, `cargo +nightly fmt --check`, `cargo deny check`
-all exited 0 in the recorded run.
+<review persona="tests" verdict="blocking" model="claude-opus-4-8[1m]/low" date="2026-05-21T20:35:00Z" round="1">
+Blocking on a coverage gap that hides a requirement violation. The
+round-1 unit tests check the range parser rejects 0 and 600001 and
+accepts 1 and 30000, but never exercise the inclusive maximum 600000.
+Running `widget render --timeout-ms 600000 fixtures/trivial.gv` by hand
+returns clap exit 2 (`--timeout-ms must be between 1 and 600000 (got
+600000)`), where REQ-001's done-when requires 600000 to parse
+successfully. The red-then-green trail in
+`.speccy/specs/0042-widget-render-timeout/evidence/T-001.md` is honest
+for the three CHK scenarios it backs (CHK-001 / CHK-003 / CHK-004) and
+the hygiene gate is green — but the missing boundary case is exactly
+the gap the roll call exists to surface. Fix: accept 600000 and add a
+regression test pinning the boundary.
+</review>
+
+<review persona="correctness" verdict="blocking" model="claude-opus-4-8[1m]/low" date="2026-05-21T20:38:00Z" round="1">
+Same root cause, stated as a logic error. The value parser declares
+`.range(1..600000)` — an exclusive Rust range whose end value 600000 is
+excluded — so the inclusive bound REQ-001 documents (`1..=600000`) is
+off by one at the top. The fix is `.range(1..=600000)`. The exit-124
+abort path, the `RenderError::TimedOut { budget_ms }` mapping, and the
+DEC-002 budget-value stderr formatting are all correct; the defect is
+isolated to the range literal in `widget-cli/src/args.rs`.
 </review>
 
 <review persona="security" verdict="pass" model="claude-sonnet-4-6[1m]/medium" date="2026-05-21T20:40:00Z" round="1">
 No security-relevant changes. The `--timeout-ms` flag accepts only
 `u32` values via the `clap` range parser; no arbitrary string
 handling, no file-path expansion, no subprocess invocation. The
-new `RenderError::TimedOut { budget_ms }` variant carries a single
-`u32` field with no user-controlled prose, eliminating any
-log-injection vector through the error message.
+`RenderError::TimedOut { budget_ms }` variant carries a single `u32`
+field with no user-controlled prose, eliminating any log-injection
+vector through the error message.
 </review>
 
 <review persona="style" verdict="pass" model="claude-sonnet-4-6[1m]/medium" date="2026-05-21T20:42:00Z" round="1">
-Diff stays within the suggested files. `RenderArgs::timeout_ms`
-follows the existing `clap` field naming convention (snake_case,
-no `arg_` prefix). The new `RenderError::TimedOut` variant docstring
-explains the `budget_ms` field semantics (configured value, not
-elapsed). No `unwrap()` or `expect()` introduced in production
-code; the budget arithmetic uses `Duration::from_millis` with the
-range-parser-bounded input so overflow is unreachable. No
-`#[allow(...)]` directives added.
+Diff stays within the suggested files. `RenderArgs::timeout_ms` follows
+the existing `clap` field naming convention (snake_case, no `arg_`
+prefix). The new `RenderError::TimedOut` variant docstring explains the
+`budget_ms` field semantics (configured value, not elapsed). No
+`unwrap()` or `expect()` introduced in production code; no `#[allow(...)]`
+directives added.
+</review>
+
+<blockers date="2026-05-21T20:45:00Z" round="1">
+... (synthesised blocker — see journal-blockers.md)
+</blockers>
+
+<implementer date="2026-05-21T21:30:00Z" model="claude-opus-4-8[1m]/low" round="2">
+... (round-2 fix — see journal-implementer.md)
+</implementer>
+
+<review persona="tests" verdict="pass" model="claude-opus-4-8[1m]/low" date="2026-05-21T21:55:00Z" round="2">
+Round-2 fix verified. `widget render --timeout-ms 600000` now parses
+and proceeds (exit 0 on the trivial fixture); `--timeout-ms 600001`
+still exits 2. The new `range_parser_accepts_600000` regression test
+pins the boundary, and the rest of the suite is unchanged-green. The
+round-1 blocker is resolved; business, security, and style re-passed on
+the unchanged surface.
 </review>
 ```
 

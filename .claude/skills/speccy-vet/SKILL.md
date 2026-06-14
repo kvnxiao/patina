@@ -478,7 +478,7 @@ You supply only `--verdict` and the one-line body:
   (including every Phase 0 early-exit path).
 - body — a single line summarising what happened (examples: `"Drift
   cleared on round 2; simplifier applied; clean."`, `"Phase 0
-  integrity check failed: task T-003 not completed."`, `"Drift round
+  integrity check failed: task T-NNN not completed."`, `"Drift round
   budget exhausted at round 3 without a pass."`).
 
 Validation runs before any write; a malformed body or an attempt to

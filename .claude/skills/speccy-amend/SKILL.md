@@ -11,8 +11,9 @@ then re-records the spec hash.
 
 ## When to use
 
-When `speccy status` reports `TSK-003: spec hash mismatch`, or when the
-user signals that intent has shifted mid-loop. Use this rather than
+When `speccy status` reports a spec-hash mismatch (TASKS.md stale relative to
+SPEC.md), or when the user signals that intent has shifted mid-loop. Use this
+rather than
 manually editing SPEC.md so that the Changelog row and TASKS.md
 reconciliation are not forgotten.
 
@@ -38,7 +39,7 @@ reconciliation are not forgotten.
    SPEC.md diff and appending the Changelog row. Do not re-check after
    applying fixes.
 
-   <!-- Shared self-review core for plan + amend; supersedes SPEC-0034 DEC-001 (lists stabilized → extracted). Brainstorm's pre-check is intentionally separate. -->
+   <!-- Shared self-review core, included by the plan and amend skills. -->
 
    **Mechanical/semantic split.** Mechanical issues are
    string-matchable from the SPEC.md text: `TBD`/`TODO` strings,
@@ -155,15 +156,18 @@ byte-identical.
    speccy lock SPEC-NNNN
    ```
 
-6. Re-run `speccy status` to confirm `TSK-003` cleared.
+6. Re-run `speccy status` to confirm the spec-hash mismatch cleared.
 
 7. Branch-guard, then commit the amend's reconcile delta. After the
-   `TSK-003`-clear check in step 6 confirms the SPEC and tasks are back
+   mismatch-clear check in step 6 confirms the SPEC and tasks are back
    in sync, commit this amend's delta so the reconciled artifacts are
    recorded together. The commit covers the spec's `SPEC.md`, the
-   reconciled `TASKS.md` **when one exists**, and any per-task journal
+   reconciled `TASKS.md` **when one exists**, any per-task journal
    blocker files this amend appended this run
-   (`<spec-dir>/journal/T-NNN.md`). When the spec has no `TASKS.md` yet,
+   (`<spec-dir>/journal/T-NNN.md`), and `.speccy/BACKLOG.md` when it is
+   dirty — a brainstorm session framing this amendment may have appended
+   a future-spec candidate, and amend commits that inherited mutation
+   rather than leaving it dirty. When the spec has no `TASKS.md` yet,
    the commit contains `SPEC.md` (plus any journal files) without failing
    on the absent tasks file — drop the missing `TASKS.md` from the
    staging list rather than requiring it to exist.
@@ -283,8 +287,10 @@ never on the reuse path.
      amend delta and nothing else: `<spec-dir>/SPEC.md`, the reconciled
      `<spec-dir>/TASKS.md` **only when it exists** (omit it from the list
      when the spec has no tasks file yet — do not let a missing path
-     fail the stage), and each `<spec-dir>/journal/T-NNN.md` blocker file
-     appended this run. Do not use `git add -A` or `git add .`.
+     fail the stage), each `<spec-dir>/journal/T-NNN.md` blocker file
+     appended this run, plus `.speccy/BACKLOG.md` under the existence
+     guard below, so a brainstorm-framed amendment's inherited append
+     rides into this commit. Do not use `git add -A` or `git add .`.
    - **Title and body.**
      - **Title:** `[SPEC-NNNN]: amend — <why>` with `SPEC-NNNN`
        substituted for the resolved spec id, and `<why>` a title-length
@@ -293,6 +299,21 @@ never on the reuse path.
        off the row you just wrote.
      - **Body:** the full text of that newest `## Changelog` row,
        explaining why the amendment was needed.
+
+## Staging the inherited backlog
+
+Stage `.speccy/BACKLOG.md` whenever it exists, so a candidate this loop touched
+— one this skill appended or struck, or one a preceding brainstorm session
+appended and left dirty — rides into this commit rather than persisting as an
+uncommitted working-tree change. Guard the add on the file's existence:
+`git add` on an unchanged path is a no-op, and the guard also catches a
+first-append `.speccy/BACKLOG.md` that is still untracked, which `git diff`
+would miss:
+
+```bash
+test -f .speccy/BACKLOG.md && git add .speccy/BACKLOG.md
+```
+
 
    With those two parameters fixed, run the shared recipe — it defines
    the no-git short-circuit, the unified stage-then-`git diff --cached
@@ -406,5 +427,6 @@ fallback string
 This recipe is a single pass, not a loop -- but step 6 is the gate. If
 the lint still fires, repeat from step 1 (something was missed).
 
-Suggest the next step: `/speccy-work SPEC-NNNN` to pick up any tasks
-that flipped back to `state="pending"`.
+Suggest the next step: `/speccy-orchestrate SPEC-NNNN` to
+drive the loop over any tasks that flipped back to `state="pending"`, or
+`/speccy-work SPEC-NNNN` to pick them up one at a time.

@@ -1,8 +1,8 @@
 # Worked-instance reference: `TASKS.md`
 
-This file shows the canonical shape of a Speccy
-`TASKS.md`. The example continues the SPEC-NNNN widget-render-timeout
-scenario from `spec.md` in this directory.
+Canonical shape of a Speccy `TASKS.md`, continuing the `SPEC-0042`
+widget-render-timeout worked instance from `spec.md` in this directory.
+Illustrative example — substitute your own ids and values.
 
 A real `TASKS.md` lives at `.speccy/specs/NNNN-slug/TASKS.md` and is
 parsed by `speccy verify` against the `TSK-*` lint family.
@@ -11,11 +11,11 @@ parsed by `speccy verify` against the `TSK-*` lint family.
 
 ```markdown
 ---
-spec: SPEC-NNNN
+spec: SPEC-0042
 spec_hash_at_generation: a1b2c3d4e5f60718293a4b5c6d7e8f9001122334455667788990aabbccddeeff
 generated_at: 2026-05-21T19:30:00Z
 ---
-# Tasks: SPEC-NNNN Widget render timeout flag — `widget render` accepts `--timeout-ms` and aborts long renders
+# Tasks: SPEC-0042 Widget render timeout flag — `widget render` accepts `--timeout-ms` and aborts long renders
 
 <task id="T-001" state="pending" covers="REQ-001 REQ-002">
 ## Add `--timeout-ms` flag and wire it into the render entrypoint
@@ -57,7 +57,7 @@ Suggested files: `widget-cli/src/args.rs`,
 </task-scenarios>
 </task>
 
-<task id="T-002" state="pending" covers="REQ-002">
+<task id="T-002" state="pending" covers="REQ-003">
 ## Document the timeout behaviour in `widget render --help` and the README
 
 Extend the `--timeout-ms` help text in `widget-cli/src/args.rs` to
@@ -91,23 +91,23 @@ Suggested files: `widget-cli/src/args.rs`, `README.md`
   `generated_at`. The hash binds the task decomposition to the SPEC
   revision it was generated from.
 - The `# Tasks: SPEC-NNNN ...` heading appears as the first non-empty
-  Markdown line after the frontmatter (the `TSK-001` "TASKS heading
-  matches SPEC" rule).
+  Markdown line after the frontmatter; the heading-matches-SPEC lint
+  flags any mismatch.
 - Each `<task>` element is a direct child of the document root (no
   outer `<tasks>` wrapper; the parser rejects that element).
-- Required `<task>` attributes: `id` (e.g. `T-001`), `state` (one of
+- Required `<task>` attributes: `id` (e.g. `T-NNN`), `state` (one of
   `pending`, `in-progress`, `in-review`, `completed`), `covers`
-  (space-separated list of `REQ-NNN` ids — see the
-  `covers="REQ-001 REQ-002"` form above; this is the canonical
-  multi-requirement coverage shape).
+  (space-separated list of `REQ-NNN` ids — the multi-requirement form
+  is `covers="REQ-001 REQ-002"` as on `T-001` above, the single-cover
+  form is `covers="REQ-003"` as on `T-002`).
 - Each `<task>` body opens with `## <one-line task title>`, then
   prose describing the work, then a `<task-scenarios>` block with
   Given/When/Then prose and a `Suggested files:` line naming the
   files the implementer is likely to touch.
 - No `<implementer>`, `<review>`, or `<blockers>` elements appear
   in `TASKS.md`; those live in the per-task journal
-  file at `.speccy/specs/NNNN-slug/journal/T-NNN.md` (the `TSK-006`
-  "no journal elements in TASKS.md" rule).
+  file at `.speccy/specs/NNNN-slug/journal/T-NNN.md`. A journal element
+  placed in `TASKS.md` is flagged by the misplaced-journal-element lint.
 - Unresolved placeholder substrings (the conventional unfinished-draft
   markers and angle-bracket ellipses) do not appear anywhere in a real
   TASKS.md.

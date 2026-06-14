@@ -1,9 +1,12 @@
 # Worked-instance reference: `SPEC.md`
 
-This file shows the canonical shape of a Speccy
-`SPEC.md`. The example values describe a small, plausible feature
-(adding a `--timeout` flag to a hypothetical `widget render` CLI). The
-shape is what matters; the prose is illustration, not load-bearing.
+Canonical shape of a Speccy `SPEC.md`, shown as one concrete worked
+instance: a `--timeout-ms` flag added to a hypothetical `widget render`
+CLI (`SPEC-0042`, slug `widget-render-timeout`). The ids and values are an
+**illustrative example — substitute your own** when authoring; they are
+concrete here so the shape reads as a real spec rather than a blank, and so
+the sibling references (`tasks.md`, the journal trio, `evidence.md`,
+`report.md`) can share one coherent example end-to-end.
 
 A real `SPEC.md` lives at `.speccy/specs/NNNN-slug/SPEC.md` and is
 parsed by `speccy verify` against the `SPC-*`, `REQ-*`, `QST-*` lint
@@ -13,7 +16,7 @@ families.
 
 ```markdown
 ---
-id: SPEC-NNNN
+id: SPEC-0042
 slug: widget-render-timeout
 title: Widget render timeout flag — `widget render` accepts `--timeout-ms` and aborts long renders
 status: in-progress
@@ -21,7 +24,7 @@ created: 2026-05-21
 supersedes: []
 ---
 
-# SPEC-NNNN: Widget render timeout flag — `widget render` accepts `--timeout-ms` and aborts long renders
+# SPEC-0042: Widget render timeout flag — `widget render` accepts `--timeout-ms` and aborts long renders
 
 ## Summary
 
@@ -30,8 +33,8 @@ a cycle no upstream pre-pass caught. A user running the CLI from a shell
 script has no signal to break the loop; the process must be killed
 externally. This SPEC adds a `--timeout-ms <N>` flag (default 30000,
 range 1..=600000) that aborts the render with exit code 124 and a stderr
-message naming the elapsed milliseconds when the render exceeds the
-budget.
+message naming the configured millisecond budget when the render exceeds
+it, and documents the flag in `--help` and the README.
 
 ## Goals
 
@@ -45,6 +48,8 @@ budget.
   value and the allowed range.
 - Successful renders below the timeout exit 0 with no stderr noise
   attributable to the timeout machinery.
+- The flag's contract (default, range, exit code) is discoverable from
+  `widget render --help` and the README without reading the source.
 </goals>
 
 ## Non-goals
@@ -84,6 +89,8 @@ and the allowed range.
   `--timeout-ms must be between 1 and 600000 (got 0)`.
 - `widget render --timeout-ms 600001` exits 2; stderr contains the
   same range message with `got 600001`.
+- `widget render --timeout-ms 600000` parses successfully — the
+  inclusive upper bound is accepted, not rejected.
 - `widget render --timeout-ms 30000` parses successfully and
   proceeds to render.
 - Omitting the flag defaults to 30000.
@@ -156,6 +163,48 @@ then the process exits 0 and stderr contains no substring
 </scenario>
 </requirement>
 
+<requirement id="REQ-003">
+### REQ-003: Timeout contract documented in `--help` and the README
+
+The `--timeout-ms` help text and the README's render-command docs
+name the default (30000), the inclusive range (`1..=600000`), and the
+exit code on overshoot (124), so a user discovers the contract without
+reading the source.
+
+<done-when>
+- `widget render --help` output names the default `30000`, the range
+  `1..=600000`, and exit code `124`.
+- The README's render-command section carries a "Timeout"
+  sub-heading whose body names the same default, range, and exit
+  code as `--help`.
+</done-when>
+
+<behavior>
+- Given the built binary, when `widget render --help` runs, then the
+  output contains the substrings `default: 30000`, `1..=600000`, and
+  `exit code 124`.
+- Given the README at HEAD, when its render-command section is
+  scanned for a "Timeout" sub-heading, then the heading is present
+  and its body names the same default, range, and exit code as the
+  `--help` output.
+</behavior>
+
+<scenario id="CHK-005">
+Given a built `widget` binary at HEAD,
+when `widget render --help` runs,
+then the output contains the substrings `default: 30000`,
+`1..=600000`, and `exit code 124`.
+</scenario>
+
+<scenario id="CHK-006">
+Given the README at HEAD,
+when a reader reads the render command's "Timeout" sub-heading,
+then the prose reads clearly and names the same default, range, and
+exit code as the `--help` output. Readability is a persona-review
+judgment, not a scriptable assertion.
+</scenario>
+</requirement>
+
 ## Decisions
 
 <decision id="DEC-001">
@@ -170,19 +219,28 @@ elapsed time so that integration tests can grep for an exact string
 without flake-prone wall-clock arithmetic.
 </decision>
 
+<decision id="DEC-003">
+The 600000ms upper bound is enforced at the CLI argument layer only.
+`widget-core` library callers continue to accept any `Duration`: the
+bound is a typo guardrail for interactive and scripted CLI use, not an
+invariant of the render engine, so embedding callers that legitimately
+need a longer budget are not constrained.
+</decision>
+
 ## Notes
 
 The 600000ms (10-minute) upper bound is a defensive guardrail against
-typo'd values like `--timeout-ms 3000000`. If a real workload needs a
-longer budget, raising the cap is a follow-up SPEC, not a config
-knob.
+typo'd values like `--timeout-ms 3000000`. If a real CLI workload needs
+a longer budget, raising the cap is a follow-up SPEC, not a config
+knob — and per DEC-003 the cap never reaches library callers, who pass
+any `Duration` directly.
 
 ## Changelog
 
 <changelog>
 | Date | Author | Summary |
 | --- | --- | --- |
-| 2026-05-21 | acme-author | Initial SPEC: `--timeout-ms` flag, exit 124 on budget overrun. |
+| 2026-05-21 | acme-author | Initial SPEC: `--timeout-ms` flag (REQ-001), exit-124 abort on overshoot (REQ-002), and `--help`/README documentation (REQ-003). |
 </changelog>
 ```
 
@@ -201,7 +259,7 @@ knob.
   the proof handle `speccy check` and `REPORT.md` reference.
 - `## Changelog` carries a `<changelog>` table in the
   `Date | Author | Summary` shape; the parser requires it, so a SPEC
-  authored without it trips `SPC-001`.
+  authored without it fails the changelog-required lint.
 - Unresolved placeholder substrings (the conventional unfinished-draft
   markers and angle-bracket ellipses) do not appear anywhere in a real
   SPEC.md; example values are concrete and load-bearing.

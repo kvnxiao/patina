@@ -120,13 +120,13 @@ construction (autonomous / rollback-biased / idempotent).
    command reports the spec is unknown, stop and report.
 
 2. If that first query returned `next_action.kind == "reconcile"`
-   (REQ-007, REQ-008 — the CLI's consistency check flags drift from
-   a prior crashed session), run the reconcile pass per the
-   **Reconcile policy** above, then re-query; enter the dispatch
-   loop only when `consistency.status == "ok"`. The pass is
-   autonomous — no `AskUserQuestion`, no "press enter to continue"
-   surface, anywhere in the dispatch path — and it owns every drift
-   kind in REQ-006's enum, including `state_in_progress_orphaned`
+   (the CLI's consistency check flags drift from a prior crashed
+   session), run the reconcile pass per the **Reconcile policy**
+   above, then re-query; enter the dispatch loop only when
+   `consistency.status == "ok"`. The pass is autonomous — no
+   `AskUserQuestion`, no "press enter to continue" surface, anywhere
+   in the dispatch path — and it owns every drift kind in the CLI's
+   reconcile enum, including `state_in_progress_orphaned`
    (dirty tree) and `state_in_progress_clean` (clean tree), so the
    orchestrator never scans TASKS.md for `state="in-progress"`
    itself. Each subsequent loop iteration's
@@ -178,32 +178,30 @@ Repeat until a stop condition fires:
 
 ## Work dispatch
 
-**Clean-tree precondition (SPEC-0045 REQ-002, extended by SPEC-0047
-REQ-002).** Before spawning the `speccy-work` sub-agent, run three
-steps in the orchestrator's running session:
+**Clean-tree precondition.** Before spawning the `speccy-work` sub-agent, the
+orchestrator runs the gate in its own session: resolve the target task from
+`next_action.task_id`, read `<spec-dir>/journal/T-NNN.md` (if present) and
+classify its shape via the retry-shape rule below, then:
 
-1. Resolve the target task from `next_action.task_id`.
-2. Read `<spec-dir>/journal/T-NNN.md` (if it exists) and apply the
-   retry-shape rule summarized immediately below (canonical
-   statement at `.claude/speccy-references/retry-shape.md`).
-3. Run `git status --porcelain`. **First-attempt shape** with
-   non-empty stdout halts the outer loop and surfaces the dirty
-   paths to the user — no `speccy-work` sub-agent is spawned, and
-   the loop does not advance (today's SPEC-0045/REQ-002 behaviour,
-   unchanged). Empty stdout proceeds to the dispatch below.
-   **Retry shape** proceeds to spawn the `speccy-work` sub-agent
-   regardless of stdout — the dirty paths are the prior pass's WIP
-   that the retry implementer amends in place; no dirty-paths
-   surface is written. The retry case is the one named by the
-   `SPEC-NNNN → work T-NNN (retry 2/5 after blocking review)`
-   status line below.
+**Clean-tree gate.** With the target task resolved and its shape classified by
+the retry-shape rule, run `git status --porcelain` and branch:
 
-This check fires in the orchestrator's session (not delegated to
-the sub-agent) because the outer loop's invariant — every
-dispatched implementer turn begins on a known tree shape — must be
-enforced by the loop owner. The `speccy-work` skill body re-runs
-the same retry-aware precondition defensively at its own entry as
-a second-level guard.
+- **First-attempt shape + non-empty stdout** → stop without dispatching the
+  implementer and surface the dirty paths on stderr. The gate keeps a turn from
+  starting on top of unrelated working-tree changes.
+- **First-attempt shape + empty stdout** → proceed.
+- **Retry shape** → proceed regardless of stdout. The dirty paths are the prior
+  pass's WIP that the retry implementer amends in place; no dirty-paths surface
+  is written.
+
+An orchestrator runs this gate before spawning the worker; the worker re-runs it
+defensively at its own entry.
+
+
+For this orchestrator, "stop without dispatching" means halting the outer loop
+and surfacing the dirty paths — no `speccy-work` sub-agent is spawned and the
+loop does not advance. The retry case is the one named by the
+`SPEC-NNNN → work T-NNN (retry 2/5 after blocking review)` status line below.
 
 **Retry shape.** A task is in retry shape iff its journal contains
 both an `<implementer>` element and a `<blockers>` element whose
@@ -319,9 +317,9 @@ Before each dispatch, write one short status line so the user can
 follow the loop without reading sub-agent transcripts:
 
 ```
-SPEC-NNNN → work T-003
-SPEC-NNNN → review T-003
-SPEC-NNNN → work T-003 (retry 2/5 after blocking review)
+SPEC-NNNN → work T-NNN
+SPEC-NNNN → review T-NNN
+SPEC-NNNN → work T-NNN (retry 2/5 after blocking review)
 SPEC-NNNN → vet
 SPEC-NNNN → ready to ship — confirm before proceeding?
 ```
