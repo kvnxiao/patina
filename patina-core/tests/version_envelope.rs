@@ -1,6 +1,6 @@
-//! Integration coverage for the shared version-envelope helper (REQ-007,
-//! T-001). The helper is the single codec the journal plan file, the
-//! committed apply record, and the SPEC-0003 drift cache frame their
+//! Integration coverage for the shared version-envelope helper.
+//! The helper is the single codec the journal plan file, the
+//! committed apply record, and the drift cache frame their
 //! `postcard` bodies with.
 
 use patina_core::FILE_MAJOR_VERSION;

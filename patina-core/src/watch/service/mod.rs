@@ -1,4 +1,4 @@
-//! The per-OS background-service abstraction (SPEC-0003 REQ-001 / REQ-003).
+//! The per-OS background-service abstraction.
 //!
 //! `patina watch install` registers the watcher as a per-user background
 //! service that launches the foreground watcher (`patina watch --foreground`)
@@ -13,8 +13,8 @@
 //! returns the backend for the running host. macOS returns the `launchd`
 //! backend; Linux returns the `systemd` backend when `systemd --user` is
 //! reachable and the [`unsupported`] stub otherwise (non-systemd init systems
-//! are served by `patina watch --foreground` under the user's own supervisor,
-//! DEC-010); Windows returns the `scheduled_task` backend, which registers a
+//! are served by `patina watch --foreground` under the user's own
+//! supervisor); Windows returns the `scheduled_task` backend, which registers a
 //! per-user, non-elevated Scheduled Task.
 //!
 //! The `launchd`, `systemd`, and `scheduled_task` backend modules are each
@@ -23,11 +23,11 @@
 //! the docs build on the other OS (the docs gate runs on Linux, where
 //! `launchd` and `scheduled_task` are compiled out).
 //!
-//! ## Counter recovery (DEC-012)
+//! ## Counter recovery
 //!
 //! [`ServiceStatus`] carries two watcher-internal counters,
 //! `subscriptions_count` and `re_applies_since_start`, that the running watcher
-//! emits only to its structured log (REQ-009 / DEC-009). `status` is a
+//! emits only to its structured log. `status` is a
 //! separate, short-lived process and cannot read the watcher's in-memory state,
 //! so it recovers the two counters by reading the most recent rotated log file
 //! under `<state>/patina/logs/` ([`recover_log_counters`]). When the log is
@@ -65,13 +65,13 @@ pub const FOREGROUND_ARGS: [&str; 2] = ["watch", "--foreground"];
 #[non_exhaustive]
 pub enum ServiceError {
     /// `install` was called but the service is already registered. The user
-    /// must `patina watch uninstall` before re-installing (REQ-001).
+    /// must `patina watch uninstall` before re-installing.
     #[error("the patina watcher service is already installed; run `patina watch uninstall` first")]
     AlreadyInstalled,
 
     /// The running host has no implemented service backend yet (the factory
     /// returned the [`unsupported`] stub). Directs the user to the foreground
-    /// escape hatch (DEC-010).
+    /// escape hatch.
     #[error(
         "no background-service backend is available on this host; \
          run `patina watch --foreground` under your own supervisor instead"
@@ -114,8 +114,8 @@ pub enum LifecycleResult {
     /// `restart` asked the supervisor to stop then start the service.
     Restarted,
     /// The lifecycle action was a no-op because the service was not installed
-    /// (REQ-003: lifecycle subcommands on a not-installed service are no-ops
-    /// with a clear message, not supervisor errors).
+    /// (lifecycle subcommands on a not-installed service are no-ops with a
+    /// clear message, not supervisor errors).
     NotInstalled,
 }
 
@@ -144,13 +144,13 @@ impl LifecycleResult {
     }
 }
 
-/// The current state of the registered service (REQ-003 `status` `--json`
+/// The current state of the registered service (the `status` `--json`
 /// object).
 ///
 /// `installed`, `running`, `last_fired_at`, and `last_exit_code` are derived
 /// from the platform supervisor query; `subscriptions_count` and
-/// `re_applies_since_start` are recovered from the watcher's structured log
-/// (DEC-012). A field is `None` when its source is absent (no apply ever ran,
+/// `re_applies_since_start` are recovered from the watcher's structured log.
+/// A field is `None` when its source is absent (no apply ever ran,
 /// or the log is unreadable).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServiceStatus {
@@ -168,15 +168,15 @@ pub struct ServiceStatus {
     pub re_applies_since_start: Option<u64>,
 }
 
-/// A per-OS background-service backend (REQ-001 / REQ-003).
+/// A per-OS background-service backend.
 ///
 /// Each method is a thin wrapper over the platform's native service
 /// primitives; none requires admin or sudo on its default path. `install`
 /// points the service at the running binary's canonical absolute path invoked
 /// with `watch --foreground`.
 pub trait ServiceBackend {
-    /// Register the service with the platform supervisor and load it
-    /// (REQ-001). Returns [`ServiceError::AlreadyInstalled`] when the service
+    /// Register the service with the platform supervisor and load it.
+    /// Returns [`ServiceError::AlreadyInstalled`] when the service
     /// is already registered.
     ///
     /// # Errors
@@ -186,7 +186,7 @@ pub trait ServiceBackend {
     fn install(&self) -> Result<LifecycleResult, ServiceError>;
 
     /// Stop the running watcher (if any), unregister the service, and remove
-    /// its descriptor (REQ-003). A not-installed service is a no-op returning
+    /// its descriptor. A not-installed service is a no-op returning
     /// [`LifecycleResult::NotInstalled`].
     ///
     /// # Errors
@@ -195,7 +195,7 @@ pub trait ServiceBackend {
     /// removal fails.
     fn uninstall(&self) -> Result<LifecycleResult, ServiceError>;
 
-    /// Ask the supervisor to start the installed service (REQ-003). A
+    /// Ask the supervisor to start the installed service. A
     /// not-installed service is a no-op returning
     /// [`LifecycleResult::NotInstalled`].
     ///
@@ -204,8 +204,8 @@ pub trait ServiceBackend {
     /// Returns a [`ServiceError`] when the supervisor invocation fails.
     fn start(&self) -> Result<LifecycleResult, ServiceError>;
 
-    /// Ask the supervisor to stop the running service without unregistering it
-    /// (REQ-003). A not-installed service is a no-op returning
+    /// Ask the supervisor to stop the running service without unregistering it.
+    /// A not-installed service is a no-op returning
     /// [`LifecycleResult::NotInstalled`].
     ///
     /// # Errors
@@ -213,7 +213,7 @@ pub trait ServiceBackend {
     /// Returns a [`ServiceError`] when the supervisor invocation fails.
     fn stop(&self) -> Result<LifecycleResult, ServiceError>;
 
-    /// Stop then start the service (REQ-003). A not-installed service is a
+    /// Stop then start the service. A not-installed service is a
     /// no-op returning [`LifecycleResult::NotInstalled`].
     ///
     /// # Errors
@@ -221,7 +221,7 @@ pub trait ServiceBackend {
     /// Returns a [`ServiceError`] when either underlying action fails.
     fn restart(&self) -> Result<LifecycleResult, ServiceError>;
 
-    /// Query the supervisor for the service's current state (REQ-003). The
+    /// Query the supervisor for the service's current state. The
     /// `subscriptions_count` / `re_applies_since_start` counters are recovered
     /// from the structured log by the caller, not here.
     ///
@@ -233,11 +233,11 @@ pub trait ServiceBackend {
     fn status(&self) -> Result<ServiceStatus, ServiceError>;
 }
 
-/// Return the background-service backend for the running host (REQ-001).
+/// Return the background-service backend for the running host.
 ///
 /// Dispatches on [`HostOs::current`]: macOS returns the `launchd` backend;
 /// Linux returns the `systemd` backend when `systemd --user` is reachable
-/// and the [`unsupported`] stub otherwise (non-systemd init, DEC-010); Windows
+/// and the [`unsupported`] stub otherwise (non-systemd init); Windows
 /// returns the `scheduled_task` backend (a per-user, non-elevated Scheduled
 /// Task). The backend is bound to `state_dir`, the resolved per-machine state
 /// root, so `status` can recover the watcher's log counters from
@@ -259,25 +259,25 @@ pub fn current(state_dir: &Utf8Path) -> Box<dyn ServiceBackend> {
         HostOs::MacOs => Box::new(launchd::LaunchdBackend::new(state_dir.to_path_buf())),
         // Linux: drive `systemd --user` when its user bus is reachable; on a
         // non-systemd init the user manager is absent, so fall back to the
-        // foreground-escape-hatch stub (DEC-010).
+        // foreground-escape-hatch stub.
         #[cfg(target_os = "linux")]
         HostOs::Linux if systemd::SystemdBackend::is_available() => {
             Box::new(systemd::SystemdBackend::new(state_dir.to_path_buf()))
         }
-        // Windows: a per-user, non-elevated Scheduled Task (REQ-001). HKCU-
+        // Windows: a per-user, non-elevated Scheduled Task. HKCU-
         // scoped, so it lives in `patina-core` rather than `patina-elevate`.
         #[cfg(windows)]
         HostOs::Windows => Box::new(scheduled_task::ScheduledTaskBackend::new(
             state_dir.to_path_buf(),
         )),
         // Non-systemd Linux (and any other host without a reachable supervisor)
-        // falls back to the foreground escape hatch (DEC-010).
+        // falls back to the foreground escape hatch.
         _ => Box::new(unsupported::UnsupportedBackend),
     }
 }
 
 /// The canonical absolute path of the running `patina` binary, for the service
-/// descriptor's program arguments (REQ-001: `current_exe` → canonicalize).
+/// descriptor's program arguments (`current_exe` → canonicalize).
 ///
 /// # Errors
 ///
@@ -296,7 +296,7 @@ pub fn canonical_binary_path() -> Result<Utf8PathBuf, ServiceError> {
 use crate::watch::logging::LOGS_DIR;
 
 /// Recover the watcher's `subscriptions_count` and `re_applies_since_start`
-/// counters from the most recent rotated log under `<state>/logs/` (DEC-012).
+/// counters from the most recent rotated log under `<state>/logs/`.
 ///
 /// Reads the newest `watch.log*` file in the log directory and scans it for the
 /// last `subscriptions=<n>` field (logged on each `watch_started` /
@@ -470,7 +470,7 @@ patina_core: re_apply re_apply_id=b re_apply_files_changed=0
     #[test]
     fn recover_log_counters_reports_none_when_logs_dir_is_absent() {
         // No `<state>/logs/` at all: both counters are None, not an error
-        // (DEC-012: a missing log reports null rather than failing status).
+        // (a missing log reports null rather than failing status).
         let tmp = tempfile::tempdir().expect("tempdir");
         let state = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).expect("utf-8 temp path");
         assert_eq!(recover_log_counters(&state), (None, None));
@@ -479,7 +479,7 @@ patina_core: re_apply re_apply_id=b re_apply_files_changed=0
     #[test]
     fn recover_log_counters_reads_the_most_recent_rotated_log() {
         // Two daily-rotated files: the lexically-greatest date suffix is the
-        // newest, and its counters are the ones recovered (DEC-012).
+        // newest, and its counters are the ones recovered.
         let tmp = tempfile::tempdir().expect("tempdir");
         let state = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).expect("utf-8 temp path");
         let logs = state.join(LOGS_DIR);

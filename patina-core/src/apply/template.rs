@@ -1,14 +1,14 @@
-//! Implicit template-render executor (REQ-005).
+//! Implicit template-render executor.
 //!
-//! Templating keys off the **source** `.tmpl` suffix (REQ-005): a source
-//! file ending in `.tmpl` is rendered through the shared T-008 `MiniJinja`
+//! Templating keys off the **source** `.tmpl` suffix: a source
+//! file ending in `.tmpl` is rendered through the shared `MiniJinja`
 //! [`Engine`] **exactly once** against the resolved variable context, and
 //! the same rendered bytes are written to each declared target. The target
 //! is declared as its final, suffix-less path (`source = "gitconfig.tmpl"`,
 //! `target = "~/.gitconfig"`), so the executor writes to the target
 //! verbatim — it does not strip anything from the target. The materialized
 //! object is a regular file, never a symlink. Rendering once (rather than
-//! per target) is the REQ-005 guarantee a multi-target `.tmpl` entry must
+//! per target) is the guarantee a multi-target `.tmpl` entry must
 //! honour.
 
 use super::CompletionRecord;
@@ -21,7 +21,7 @@ use camino::Utf8Path;
 use camino::Utf8PathBuf;
 
 /// Render a `.tmpl` source once and write the result to each declared
-/// target verbatim (REQ-005 declares targets suffix-less).
+/// target verbatim (targets are declared suffix-less).
 pub(super) fn render(
     source: &Utf8Path,
     targets: &[Utf8PathBuf],
@@ -97,7 +97,7 @@ mod tests {
     #[test]
     fn renders_once_and_writes_each_declared_target() {
         let (_td, dir) = utf8_tempdir();
-        // Source carries `.tmpl`; targets are declared suffix-less per REQ-005.
+        // Source carries `.tmpl`; targets are declared suffix-less.
         let source = dir.join("agent.toml.tmpl");
         fs_err::write(&source, b"name = {{ who }}").expect("write template");
         let t1 = dir.join("claude").join("agent.toml");

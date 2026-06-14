@@ -7,8 +7,8 @@
     reason = "integration tests use direct [0] / [1] indexing for assertion-only record inspection where the vector length is asserted immediately above; a bounds-check panic is acceptable test signal."
 )]
 
-//! Multi-target fan-out coverage for the file-mode executors (REQ-005,
-//! T-014, CHK-042 / CHK-043 / CHK-044). A `[[file]]` entry declaring
+//! Multi-target fan-out coverage for the file-mode executors. A `[[file]]`
+//! entry declaring
 //! `targets = [t1, t2, ...]` materializes the source at every target
 //! according to the mode, and a `.tmpl` source is rendered once and
 //! written to each target.
@@ -47,7 +47,7 @@ fn resolver() -> Resolver {
     Resolver::new(Builtins::for_tests())
 }
 
-/// CHK-042: a multi-target `symlink` entry fans out to N symbolic links,
+/// A multi-target `symlink` entry fans out to N symbolic links,
 /// each pointing at the same canonical source path.
 #[test]
 fn symlink_fans_out_to_every_target() {
@@ -74,7 +74,7 @@ fn symlink_fans_out_to_every_target() {
     assert_eq!(records[1].target, t2);
 }
 
-/// CHK-043: a multi-target `copy` entry writes a byte copy at every
+/// A multi-target `copy` entry writes a byte copy at every
 /// target.
 #[test]
 fn copy_fans_out_to_every_target() {
@@ -106,9 +106,9 @@ fn copy_fans_out_to_every_target() {
     }
 }
 
-/// CHK-044: a multi-target `.tmpl` *source* entry renders the template once
+/// A multi-target `.tmpl` *source* entry renders the template once
 /// against the resolved context and writes the same rendered bytes to each
-/// declared target. Per REQ-005 (and CHK-044) the targets are declared
+/// declared target. The targets are declared
 /// suffix-less (`source = "agent.toml.tmpl"`,
 /// `targets = ["~/.claude/agent.toml", "~/.codex/agent.toml"]`); the executor
 /// writes to each declared target verbatim.

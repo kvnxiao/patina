@@ -1,12 +1,12 @@
-//! Format-preserving `patina.toml` manifest writer (DEC-007).
+//! Format-preserving `patina.toml` manifest writer.
 //!
 //! `patina-core::config` is parse-only on the read side
 //! ([`parse_module_config`](super::parse_module_config) deserializes via
-//! the `toml` crate). SPEC-0002's `init` / `add` / `remove` commands must
+//! the `toml` crate). The `init` / `add` / `remove` commands must
 //! also *write* and *edit* manifests, and they must do so without
 //! disturbing the user's hand-written comments, key ordering, or
 //! whitespace — a one-entry delete may not rewrite sibling `[[file]]`
-//! entries. DEC-007 selects `toml_edit` (format/comment-preserving) for
+//! entries. We select `toml_edit` (format/comment-preserving) for
 //! exactly that reason; this module is the write side.
 //!
 //! Every function here operates on manifest text (`String` in, `String`
@@ -74,10 +74,9 @@ pub enum ConfigWriteError {
 /// Emit a root manifest declaring the repository-root marker.
 ///
 /// The returned text is a `[patina]` table with `root = true` and a
-/// `created_at` RFC 3339 string field set to `created_at` (REQ-001
-/// done-when). `created_at` is the only timestamp permitted in a
-/// user-facing artefact, because the manifest is configuration the user
-/// keeps under version control.
+/// `created_at` RFC 3339 string field set to `created_at`. `created_at`
+/// is the only timestamp permitted in a user-facing artefact, because
+/// the manifest is configuration the user keeps under version control.
 ///
 /// # Arguments
 ///
@@ -302,7 +301,7 @@ fn parse_document(doc_text: &str) -> Result<DocumentMut, ConfigWriteError> {
 
 /// Map a [`FileMode`] to the collapsed manifest `mode` string the parser
 /// accepts, or `None` for the implicit [`FileMode::TemplateRender`] which
-/// never declares a `mode`. The collapsed spellings (DEC-002) mirror the
+/// never declares a `mode`. The collapsed spellings mirror the
 /// per-table allowlists in
 /// [`ManagedEntry`](super::ManagedEntry): the redundant `symlink-dir` /
 /// `copy-tree` strings no longer exist — a `[[directory]]` `symlink`
@@ -399,9 +398,9 @@ editor = \"vim\"
 
     #[test]
     fn append_each_mode_uses_the_collapsed_parser_accepted_spelling() {
-        // DEC-002: the table supplies the file/dir context, so the
-        // executor modes collapse onto the parser-accepted strings — the
-        // removed `symlink-dir` / `copy-tree` spellings must never appear.
+        // The table supplies the file/dir context, so the executor modes
+        // collapse onto the parser-accepted strings — the removed
+        // `symlink-dir` / `copy-tree` spellings must never appear.
         for (mode, spelling) in [
             (FileMode::Symlink, "symlink"),
             (FileMode::SymlinkDir, "symlink"),

@@ -1,14 +1,14 @@
-//! The watcher's structured-log sink (SPEC-0003 REQ-009 / DEC-009).
+//! The watcher's structured-log sink.
 //!
-//! SPEC-0003 owns `<state>/patina/logs/` and the rotating-log stack the
-//! watcher writes its metrics into. SPEC-0001's [`state_dir::resolve`]
+//! The watcher owns `<state>/patina/logs/` and the rotating-log stack the
+//! watcher writes its metrics into. [`state_dir::resolve`]
 //! creates only `journal/` and `backups/`; it deliberately does not create
 //! `logs/`. This module fills that gap: [`build_file_appender`] lazily
 //! creates `<state>/patina/logs/` on first start and builds a daily-rotating
 //! [`tracing_appender::rolling::RollingFileAppender`] that keeps the seven
 //! most recent files.
 //!
-//! The watcher (T-008) composes the returned non-blocking writer into its
+//! The watcher composes the returned non-blocking writer into its
 //! `tracing` subscriber as the file layer (in foreground mode it also keeps a
 //! stderr layer). The returned [`tracing_appender::non_blocking::WorkerGuard`]
 //! must be held for the watcher's process lifetime: dropping it flushes and
@@ -46,7 +46,7 @@ pub(super) const LOGS_DIR: &str = "logs";
 const FILENAME_PREFIX: &str = "watch.log";
 
 /// Number of rotated log files to retain. Older files are pruned by the
-/// appender on rotation (REQ-009: "keeping the 7 most recent files").
+/// appender on rotation, keeping the 7 most recent files.
 const MAX_LOG_FILES: usize = 7;
 
 /// Errors returned when building the watcher's file-appender stack.

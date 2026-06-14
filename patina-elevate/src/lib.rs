@@ -1,4 +1,4 @@
-//! `patina-elevate` — a standalone Windows-only privilege helper (REQ-008).
+//! `patina-elevate` — a standalone Windows-only privilege helper.
 //!
 //! This crate builds the only binary in the workspace meant to run
 //! *elevated*. The main `patina.exe` re-invokes it via `ShellExecuteEx`
@@ -10,7 +10,7 @@
 //! subcommand, which sets the Developer Mode registry switch
 //! (`AllowDevelopmentWithoutDevLicense` under `AppModelUnlock` in `HKLM`)
 //! to `1`. Keeping it a separate, dependency-light binary (no
-//! `patina-core` / `patina-cli`; DEC-002) keeps the surface UAC must trust
+//! `patina-core` / `patina-cli`) keeps the surface UAC must trust
 //! as small as possible.
 //!
 //! ## Why a library plus a thin binary
@@ -18,7 +18,7 @@
 //! The command surface ([`Cli`], [`run`]) lives here in the library so it
 //! can be unit-tested on any host without depending on the binary
 //! artifact. The binary itself is gated behind the `windows` feature
-//! (DEC-003 / CHK-015) and is therefore absent from non-Windows release
+//! and is therefore absent from non-Windows release
 //! builds — but the parsing contract it relies on is exercised by the
 //! library's own cross-platform tests regardless.
 //!
@@ -54,8 +54,8 @@ pub struct Cli {
 /// intercepts the unknown-subcommand path: clap's default
 /// [`ErrorKind::InvalidSubcommand`] message reports only the offending
 /// token and the bare `Usage:` line, and does *not* enumerate the
-/// available subcommands. REQ-008's done-when requires the exit-2 usage
-/// message to *list the supported subcommands*, so on that one error
+/// available subcommands. The exit-2 usage
+/// message must *list the supported subcommands*, so on that one error
 /// kind we print clap's own rendered error to stderr, follow it with a
 /// line listing the supported subcommands (derived from the command
 /// definition, not hard-coded), and exit with clap's usage exit code
@@ -81,7 +81,7 @@ pub fn parse_or_exit() -> Cli {
             // clap's `InvalidSubcommand` rendering names the offending
             // token and the bare `Usage:` line but omits the subcommand
             // list. Print it as clap would, then append the supported
-            // subcommands so the exit-2 path satisfies REQ-008's
+            // subcommands so the exit-2 path satisfies the
             // "listing the supported subcommands" contract. Writing to a
             // locked stderr handle is the same primitive clap's own
             // `Error::exit` uses; the workspace `disallowed-macros` gate
@@ -133,16 +133,16 @@ pub fn run(command: &Command) -> ExitCode {
         Command::EnableDeveloperMode => match devmode::enable_developer_mode() {
             Ok(()) => ExitCode::SUCCESS,
             Err(error) => {
-                // REQ-026 routes user-facing output through `output::Reporter`,
+                // User-facing output normally routes through `output::Reporter`,
                 // but this helper deliberately has no `patina-core` dependency
-                // (DEC-002) and therefore no Reporter, and pulling in `tracing`
+                // and therefore no Reporter, and pulling in `tracing`
                 // for one error line would widen the surface UAC must trust. A
                 // raw stderr write is the right primitive here, so the workspace
                 // `disallowed-macros` gate is suppressed at this one documented
                 // site (clippy.toml sanctions exactly this carve-out).
                 #[expect(
                     clippy::disallowed_macros,
-                    reason = "helper has no Reporter (DEC-002); typed error to stderr is the documented exit-1 path (REQ-008)"
+                    reason = "helper has no Reporter; typed error to stderr is the documented exit-1 path"
                 )]
                 {
                     eprintln!("patina-elevate: enable-developer-mode failed: {error}");
@@ -168,7 +168,7 @@ mod tests {
 
     #[test]
     fn unknown_subcommand_is_a_usage_error() {
-        // REQ-008 scenario: an unrecognised subcommand is a clap usage error.
+        // An unrecognised subcommand is a clap usage error.
         // clap maps this to a non-zero exit via `Error::exit` — exit code 2 —
         // which the real process exercises in `tests/cli.rs`.
         let err = Cli::try_parse_from(["patina-elevate", "frobnicate"])
@@ -178,7 +178,7 @@ mod tests {
 
     #[test]
     fn rendered_help_lists_the_supported_subcommand() {
-        // REQ-008 scenario: the usage surface lists `enable-developer-mode` so
+        // The usage surface lists `enable-developer-mode` so
         // a caller who mis-invokes can discover the correct subcommand. clap
         // enumerates subcommands in the long help rather than in the bare
         // unknown-subcommand error, so assert against the command's help.

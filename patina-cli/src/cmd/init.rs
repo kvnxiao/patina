@@ -1,4 +1,4 @@
-//! `patina init` command logic (REQ-001).
+//! `patina init` command logic.
 //!
 //! `patina init [path]` scaffolds a root `patina.toml` at the target
 //! directory (the positional argument, or the current working directory
@@ -8,7 +8,7 @@
 //! exists at the target, the command refuses with a typed error and exits
 //! 1 without touching the existing file or the state directory.
 //!
-//! `init` is a mutating command (REQ-009): it acquires the engine's
+//! `init` is a mutating command: it acquires the engine's
 //! exclusive advisory lock at `<state>/lock` before any filesystem
 //! mutation. The manifest-write engine semantics live in
 //! `patina_core::config` ([`scaffold_root_manifest`]) and the persisted
@@ -16,13 +16,13 @@
 //! ([`write_persisted_default`]); this module is presentation and control
 //! flow only, all output routed through the [`Reporter`].
 //!
-//! ## Determinism (REQ-010)
+//! ## Determinism
 //!
 //! Both the success and the already-initialized failure paths produce
 //! byte-stable stdout: the success JSON names only the created path and the
 //! persisted pointer, and the failure error names only the existing file
 //! path. Neither carries the manifest's `created_at` timestamp, so two runs
-//! against the same target produce identical stdout (CHK-017).
+//! against the same target produce identical stdout.
 
 use crate::cli::InitArgs;
 use crate::cmd::MANIFEST_FILENAME;
@@ -65,7 +65,7 @@ pub async fn run(args: &InitArgs, reporter: &mut impl Reporter) -> Result<i32> {
         return Ok(refuse_existing(&manifest_path, args.json, reporter));
     }
 
-    // REQ-009: take the exclusive advisory lock before any mutation. Map
+    // Take the exclusive advisory lock before any mutation. Map
     // the lock error through `EngineError` so a contention timeout reaches
     // the exit-code-4 mapping in `ExitCode::from_error_chain`.
     let state = resolve_state_dir().map_err(EngineError::from)?;
@@ -81,7 +81,7 @@ pub async fn run(args: &InitArgs, reporter: &mut impl Reporter) -> Result<i32> {
     }
 
     // Create the target directory now that we hold the lock, so no filesystem
-    // mutation precedes lock acquisition (REQ-009). Creating a directory that
+    // mutation precedes lock acquisition. Creating a directory that
     // already exists is idempotent (the CWD case is always a no-op).
     fs_err::create_dir_all(target.as_std_path())
         .with_context(|| format!("failed to create target directory {target}"))?;
@@ -92,7 +92,7 @@ pub async fn run(args: &InitArgs, reporter: &mut impl Reporter) -> Result<i32> {
 
     // The persisted pointer must be the canonical absolute repo path so a
     // later bare `patina apply` resolves the same directory regardless of
-    // how `init` was invoked (REQ-001).
+    // how `init` was invoked.
     let canonical = canonicalize_path(&target).map_err(EngineError::from)?;
     write_persisted_default(&state, &canonical).map_err(EngineError::from)?;
 
@@ -105,11 +105,11 @@ pub async fn run(args: &InitArgs, reporter: &mut impl Reporter) -> Result<i32> {
     Ok(ExitCode::Success.code())
 }
 
-/// Handle the already-initialized refusal (REQ-001) and return exit code 1.
+/// Handle the already-initialized refusal and return exit code 1.
 /// The existing manifest is left untouched and the state directory is never
 /// written. Under `--json` a deterministic error document naming the
 /// existing path goes to stdout, so the failing `--json` stdout is itself
-/// byte-stable across reruns per REQ-010 and CHK-017; otherwise the message
+/// byte-stable across reruns; otherwise the message
 /// goes to stderr as a warning.
 fn refuse_existing(manifest_path: &Utf8Path, json: bool, reporter: &mut impl Reporter) -> i32 {
     let message = format!("{manifest_path} already exists");
@@ -125,7 +125,7 @@ fn refuse_existing(manifest_path: &Utf8Path, json: bool, reporter: &mut impl Rep
 ///
 /// A positional path is returned verbatim; when omitted the current working
 /// directory is used. The directory is created by the caller under the
-/// exclusive lock (REQ-009), not here, so that no mutation precedes the lock.
+/// exclusive lock, not here, so that no mutation precedes the lock.
 fn resolve_target_path(path: Option<&Utf8Path>) -> Result<Utf8PathBuf> {
     if let Some(path) = path {
         Ok(path.to_owned())
@@ -137,14 +137,14 @@ fn resolve_target_path(path: Option<&Utf8Path>) -> Result<Utf8PathBuf> {
 }
 
 /// The single-line next-step hint printed as the final stdout line on the
-/// human success path (REQ-001 done-when).
+/// human success path.
 fn next_step_hint(target: &Utf8Path) -> String {
     format!("Next: run `patina add {target}` to register an existing dotfile.")
 }
 
 /// Build the `--json` success envelope: the canonical repo path and the
 /// persisted-pointer path. Both fields are deterministic for a given
-/// target, so two successful runs produce byte-identical stdout (REQ-010).
+/// target, so two successful runs produce byte-identical stdout.
 fn json_envelope(canonical: &Utf8Path, state: &Utf8Path) -> String {
     let envelope = serde_json::json!({
         "initialized": canonical.as_str(),
@@ -155,8 +155,8 @@ fn json_envelope(canonical: &Utf8Path, state: &Utf8Path) -> String {
 
 /// Build the `--json` already-exists error envelope: the typed error tag, the
 /// existing manifest path, and the human message. Deterministic for a given
-/// path, so the failing `--json` stdout is byte-stable across reruns (REQ-010,
-/// CHK-017). Mirrors [`json_envelope`] for the success path.
+/// path, so the failing `--json` stdout is byte-stable across reruns.
+/// Mirrors [`json_envelope`] for the success path.
 fn error_envelope(manifest_path: &Utf8Path, message: &str) -> String {
     let envelope = serde_json::json!({
         "error": "already_exists",
@@ -168,7 +168,7 @@ fn error_envelope(manifest_path: &Utf8Path, message: &str) -> String {
 
 /// The manifest's `created_at` RFC 3339 timestamp. This is the only place
 /// `init` emits a wall-clock value, and it lands in the configuration file
-/// (not stdout), so stdout determinism (REQ-010) is preserved.
+/// (not stdout), so stdout determinism is preserved.
 fn rfc3339_now() -> String {
     jiff::Timestamp::now().to_string()
 }

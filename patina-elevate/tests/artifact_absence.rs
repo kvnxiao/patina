@@ -1,5 +1,5 @@
-//! CHK-015: a non-Windows release build of the workspace produces the main
-//! `patina` binary but no `patina-elevate` artifact (DEC-003).
+//! A non-Windows release build of the workspace produces the main
+//! `patina` binary but no `patina-elevate` artifact.
 //!
 //! The `patina-elevate` bin is gated `required-features = ["windows"]`, off
 //! by default, so a plain `cargo build --release` skips it on macOS/Linux.
@@ -14,7 +14,7 @@
 //! appear in it.
 //!
 //! Skipped on Windows, where the opposite is required (the bin *is* built);
-//! CHK-015 is a non-Windows-only contract.
+//! this is a non-Windows-only contract.
 
 #![cfg(not(windows))]
 

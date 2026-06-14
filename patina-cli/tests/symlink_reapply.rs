@@ -3,7 +3,7 @@
     reason = "integration tests use .expect() on fixtures and asserted output; allow-expect-in-tests covers #[cfg(test)] modules but not the helper functions in tests/*.rs integration crates."
 )]
 
-//! REQ-005 idempotency / migration safety for the default per-file
+//! Idempotency / migration safety for the default per-file
 //! [`Symlink`](patina_core::FileMode::Symlink) mode: applying a `[[file]]`
 //! symlink entry must never destroy its repository source — neither on a
 //! re-apply over patina's own link, nor on a first apply over a *foreign*

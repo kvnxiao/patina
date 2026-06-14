@@ -24,7 +24,7 @@ dunce = "1.0"
 fs-err = "3.0"
 fs2 = "0.4"
 # Snapshot testing (dev-only). The diff renderer's golden-output test
-# (REQ-010: Unchanged targets omit their per-entry block and a single
+# (unchanged targets omit their per-entry block and a single
 # summary count line is printed) asserts against a committed snapshot so a
 # regression in the human diff body shows as a reviewable snapshot diff.
 # `default-features = false` drops the optional colour/glob/redaction extras
@@ -34,7 +34,7 @@ jiff = "0.2"
 minijinja = "2.20"
 notify = "8.2"
 notify-debouncer-full = "0.7"
-# REQ-007 / DEC-013: desktop drift notifications. The emit path sits behind an
+# Desktop drift notifications. The emit path sits behind an
 # internal `NotificationSink` trait so headless CI drives a capture sink; only
 # the production sink touches `notify-rust`. `default-features` left on:
 # the crate's per-OS backend (zbus/DBus on Linux, mac-notification-sys on
@@ -56,12 +56,12 @@ tracing-appender = "0.2"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Host identity (hostname / username) via OS syscalls, not the unreliable
 # `$HOSTNAME` / `$USER` env vars — those are unset under non-login shells and
-# the systemd/launchd watcher services SPEC-0003 ships.
+# the systemd/launchd watcher services Patina ships.
 whoami = "2.1"
 # Windows-only: registry (Developer Mode flag) + process-token elevation
-# read for REQ-007. `advapi` covers registry + tokens; `kernel` covers the
+# read. `advapi` covers registry + tokens; `kernel` covers the
 # base handle types. `taskschd` is deliberately NOT enabled — that surface
-# belongs to SPEC-0003's watcher service install, and enabling an unused
+# belongs to the watcher service install, and enabling an unused
 # feature now violates the enable-only-needed-features rule.
 winsafe = { version = "0.0.27", features = ["advapi", "kernel"] }
 

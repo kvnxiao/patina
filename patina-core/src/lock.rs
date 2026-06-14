@@ -1,5 +1,4 @@
-//! Advisory file lock coordinating mutations and read-only commands
-//! (REQ-023).
+//! Advisory file lock coordinating mutations and read-only commands.
 //!
 //! The engine serializes concurrent invocations through a single
 //! advisory lock file at `<state>/patina/lock`. Two acquisition modes
@@ -9,13 +8,13 @@
 //!   (`apply`, `rollback`) for the full apply duration. A second exclusive
 //!   acquirer, or any shared acquirer, blocks until the holder releases. The
 //!   mutating subcommands cap their wait at [`EXCLUSIVE_TIMEOUT`]; on expiry
-//!   [`acquire`] returns [`LockError::Timeout`], which T-020 maps to process
+//!   [`acquire`] returns [`LockError::Timeout`], which the CLI maps to process
 //!   exit code 4.
 //! - **Shared** ([`LockKind::Shared`]) — held by the read-only subcommand
 //!   (`status`). Multiple shared holders coexist, but a shared holder blocks an
 //!   exclusive acquirer and vice versa. `status` caps its wait at
-//!   [`SHARED_TIMEOUT`]; on expiry it warns and proceeds without the lock
-//!   (REQ-023's read-only escape hatch). The lock module surfaces the typed
+//!   [`SHARED_TIMEOUT`]; on expiry it warns and proceeds without the lock (the
+//!   read-only escape hatch). The lock module surfaces the typed
 //!   [`LockError::Timeout`]; the warn-and-proceed policy lives at the `status`
 //!   call site.
 //!
@@ -58,7 +57,7 @@ use thiserror::Error;
 
 /// The exclusive-lock wait cap for the mutating subcommands (`apply`,
 /// `rollback`). On expiry [`acquire`] returns [`LockError::Timeout`],
-/// which T-020 maps to exit code 4.
+/// which the CLI maps to exit code 4.
 pub const EXCLUSIVE_TIMEOUT: Duration = Duration::from_mins(1);
 
 /// The shared-lock wait cap for the read-only subcommand (`status`). On
@@ -135,7 +134,7 @@ impl LockKind {
 pub enum LockError {
     /// The lock could not be acquired within the caller's timeout
     /// because another process held a conflicting lock for the whole
-    /// window. The mutating subcommands map this to exit code 4 (T-020);
+    /// window. The mutating subcommands map this to exit code 4;
     /// `status` catches it to warn and proceed without the lock.
     #[error("timed out acquiring {} lock on `{path}` after {waited:?}", kind.label())]
     Timeout {
@@ -268,7 +267,7 @@ pub fn acquire(path: &Utf8Path, kind: LockKind, timeout: Duration) -> Result<Loc
 /// This is the zero-wait counterpart to [`acquire`]: it makes exactly one
 /// `try_lock_*` attempt and, if the lock is already held, returns
 /// [`LockError::Contended`] immediately rather than polling. It exists for
-/// the apply path's `NonBlocking` policy (the SPEC-0003 watcher), which
+/// the apply path's `NonBlocking` policy (the watcher), which
 /// must skip on contention instead of blocking a background reapply.
 ///
 /// On success the returned [`LockGuard`] holds the lock until it is

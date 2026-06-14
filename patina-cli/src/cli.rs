@@ -1,4 +1,4 @@
-//! The clap-derived command-line surface for `patina` (REQ-017).
+//! The clap-derived command-line surface for `patina`.
 //!
 //! `apply`, `status`, and `rollback` land so far; the `debug` family is
 //! wired by its own task. The derive surface is kept thin — parsing only —
@@ -13,7 +13,7 @@ use clap::Parser;
 use clap::Subcommand;
 use clap::ValueEnum;
 
-/// Resolve a command's outcome to a process exit code (REQ-022).
+/// Resolve a command's outcome to a process exit code.
 ///
 /// This is the single funnel every subcommand terminates through, so the
 /// exit-code contract lives in one place. A subcommand returns
@@ -206,7 +206,7 @@ pub struct InitArgs {
 /// The four mode flags (`--symlink` / `--copy` / `--template` /
 /// `--symlink-tree`) form a mutually-exclusive clap group: declaring two
 /// produces a usage error (exit 2). Which flags are valid depends on the
-/// source kind (REQ-008): `--symlink` and `--copy` apply to either a file
+/// source kind: `--symlink` and `--copy` apply to either a file
 /// or a directory source; `--template` is file-only; `--symlink-tree` is
 /// directory-only. The kind/mode compatibility is enforced at use-site in
 /// `cmd::add` with a typed error, since clap cannot see the source's

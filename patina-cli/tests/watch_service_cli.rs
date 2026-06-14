@@ -1,5 +1,4 @@
-//! Integration tests for the `patina watch` background-service lifecycle CLI
-//! (SPEC-0003 REQ-001 / REQ-003; CHK-006 surface).
+//! Integration tests for the `patina watch` background-service lifecycle CLI.
 //!
 //! These tests exercise the deterministic, supervisor-free surface of the
 //! lifecycle commands: the not-installed no-op paths and the `status` object
@@ -40,7 +39,7 @@ fn watch_with_no_mode_reports_the_usage_hint() {
 }
 
 /// `patina watch start` with no installed service exits 1 with a clear
-/// message rather than a spurious supervisor error (REQ-003).
+/// message rather than a spurious supervisor error.
 ///
 /// On macOS the launchd backend finds no plist (`is_installed()` false) and
 /// returns the not-installed no-op; on a host with no implemented backend the
@@ -69,7 +68,7 @@ fn start_with_no_installed_service_exits_one_with_a_clear_message() {
 /// `systemd --user` on a systemd Linux host, the Scheduled Task on Windows)
 /// reports the "service not installed; run `patina watch install`" no-op; a
 /// host with no reachable backend (non-systemd Linux) reports the unsupported
-/// `--foreground` escape hatch (DEC-010). Which one fires depends on the test
+/// `--foreground` escape hatch. Which one fires depends on the test
 /// host's OS *and* (on Linux) whether `systemd --user` is reachable, so the
 /// lifecycle tests accept either rather than pinning to one.
 fn not_installed_or_unsupported(stderr: &str) -> bool {
@@ -80,7 +79,7 @@ fn not_installed_or_unsupported(stderr: &str) -> bool {
 }
 
 /// `patina watch stop` / `restart` / `uninstall` on a not-installed service
-/// are likewise no-ops that do not error spuriously (REQ-003). On macOS they
+/// are likewise no-ops that do not error spuriously. On macOS they
 /// exit 1 with the not-installed message; on an unsupported host the stub
 /// errors with the foreground hint. None of them mutate anything.
 #[test]
@@ -111,7 +110,7 @@ fn stop_and_uninstall_on_a_not_installed_service_do_not_error_spuriously() {
 
 /// `patina watch status --json` on a not-installed service emits a clean JSON
 /// object reporting `installed = false`, `running = false`, and the six named
-/// fields, exiting 0 (REQ-003 / CHK-006 shape; DEC-012 counters are null when
+/// fields, exiting 0 (counters are null when
 /// the watcher has never logged).
 #[test]
 fn status_json_on_a_not_installed_service_reports_a_clean_object() {
@@ -137,7 +136,7 @@ fn status_json_on_a_not_installed_service_reports_a_clean_object() {
         Some(&serde_json::Value::Bool(false)),
         "a not-installed service reports running=false; got: {stdout}"
     );
-    // DEC-012: the two recovered counters are present as JSON null when the
+    // The two recovered counters are present as JSON null when the
     // watcher has never logged under this isolated state tree.
     for field in [
         "last_fired_at",

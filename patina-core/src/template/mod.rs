@@ -1,13 +1,13 @@
 //! Single strict-undefined `MiniJinja` environment for `.tmpl` rendering
-//! and `when` predicate evaluation (REQ-009).
+//! and `when` predicate evaluation.
 //!
 //! One [`minijinja::Environment`], configured with
 //! [`UndefinedBehavior::SemiStrict`](minijinja::UndefinedBehavior) (see
 //! the "Why `SemiStrict`" section below), serves both callers:
 //!
-//! - `*.tmpl` file rendering (the executor in T-014 calls [`Engine::render`]).
+//! - `*.tmpl` file rendering (the executor calls [`Engine::render`]).
 //! - `when` expression evaluation on `[[file]]` and `[[hook]]` entries (the
-//!   plan/pipeline in T-014 / T-015 calls [`Engine::eval_when`]).
+//!   plan/pipeline calls [`Engine::eval_when`]).
 //!
 //! Both methods take the same [`minijinja::Value`] context built once per
 //! apply from the six-layer [`Resolver`] (see
@@ -30,9 +30,9 @@
 //!
 //! `MiniJinja`'s [`UndefinedBehavior::Strict`] errors the moment an
 //! undefined value is *tested* — including the condition of an
-//! `{% if defined %}` block — which would break the REQ-009 `{% else %}`
+//! `{% if defined %}` block — which would break the `{% else %}`
 //! carve-out. [`UndefinedBehavior::SemiStrict`] is the exact behaviour
-//! the SPEC's assumption documents: an undefined value still errors when
+//! we want by design: an undefined value still errors when
 //! it is *emitted* (`{{ user_email }}`) or coerced into a concrete type,
 //! but a bare `{% if missing %}` test treats the undefined as falsy and
 //! falls through to `{% else %}`. For `when` predicates,
@@ -73,14 +73,13 @@ use thiserror::Error;
 /// internal and never user-visible.
 const TEMPLATE_NAME: &str = "<patina-template>";
 
-/// Failure modes returned by the template subsystem (REQ-009).
+/// Failure modes returned by the template subsystem.
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum TemplateError {
     /// A template body or `when` predicate referenced a variable that is
     /// undefined at every resolution layer. The `Display` names the
-    /// offending variable(s) so the user can fix the source (REQ-009
-    /// done-when).
+    /// offending variable(s) so the user can fix the source.
     #[error("undefined variable(s) referenced: {names}")]
     UndefinedVariable {
         /// Comma-separated list of the undefined variable names, sorted
@@ -102,7 +101,7 @@ pub enum TemplateError {
 ///
 /// Construct once per apply via [`Engine::new`] and clone freely — the
 /// inner [`Environment`] lives behind an [`Arc`], so every clone shares
-/// the same instance (the property CHK verifies for REQ-009).
+/// the same instance (the property under test).
 #[derive(Debug, Clone)]
 #[must_use = "construct the engine then call `render` / `eval_when`"]
 pub struct Engine {
@@ -177,9 +176,9 @@ impl Engine {
 /// Under `SemiStrict`, an expression that resolves to an undefined value
 /// (a bare `missing_var`, or the short-circuit result of
 /// `true and missing_var`) returns `Ok(undefined)` rather than erroring.
-/// REQ-009 requires such a `when` to be reported as an undefined-variable
-/// error naming the offending variable — not silently treated as false.
-/// A defined result is returned as its truthiness.
+/// Such a `when` must be reported as an undefined-variable error naming
+/// the offending variable — not silently treated as false. A defined
+/// result is returned as its truthiness.
 fn coerce_when_result(
     value: &Value,
     tracker: &std::sync::Mutex<strict::UndefinedTracker>,
@@ -268,10 +267,11 @@ mod tests {
 
     #[test]
     fn eval_when_undefined_variable_names_it() {
-        // CHK-020 short-circuits `missing_var` unless the left operand is
-        // true. Build a left operand that is always true on the test host
-        // (`patina.os == <this host's os>`) so the predicate genuinely
-        // reaches the undefined operand regardless of where tests run.
+        // The `and` short-circuits `missing_var` unless the left operand
+        // is true. Build a left operand that is always true on the test
+        // host (`patina.os == <this host's os>`) so the predicate
+        // genuinely reaches the undefined operand regardless of where
+        // tests run.
         let resolver = resolver();
         let os = resolver.get("patina.os").expect("patina.os resolves");
         let expr = format!("patina.os == '{os}' and missing_var");

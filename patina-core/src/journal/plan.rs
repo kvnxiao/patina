@@ -1,4 +1,4 @@
-//! The binary plan record and its version envelope (REQ-011).
+//! The binary plan record and its version envelope.
 //!
 //! A plan file is laid out as a fixed-size version envelope followed by
 //! the `postcard`-encoded [`Plan`] body:
@@ -30,7 +30,7 @@ use serde::Serialize;
 pub const FILE_MAJOR_VERSION: u16 = 1;
 
 /// One planned filesystem operation. This is the minimal record the
-/// journal needs in v1; the executor (T-014) and recovery (T-011) extend
+/// journal needs in v1; the executor and recovery extend
 /// the variant set with the inverse-operation data they require. The
 /// representation is intentionally self-describing so a decoded plan can
 /// be probed against the filesystem during recovery without re-reading
@@ -45,8 +45,8 @@ pub enum PlannedOperation {
         source: String,
         /// Absolute target path the link is created at.
         target: String,
-        /// How this operation relates to the live filesystem (REQ-002).
-        /// For a tree op this is the per-op aggregate (DEC-007).
+        /// How this operation relates to the live filesystem.
+        /// For a tree op this is the per-op aggregate.
         disposition: Disposition,
     },
     /// Render a template from `source` and write the output to `target`.
@@ -55,7 +55,7 @@ pub enum PlannedOperation {
         source: String,
         /// Absolute target path the rendered output is written to.
         target: String,
-        /// How this operation relates to the live filesystem (REQ-002).
+        /// How this operation relates to the live filesystem.
         disposition: Disposition,
     },
     /// Copy bytes from `source` to `target` (used where a link is not
@@ -65,8 +65,8 @@ pub enum PlannedOperation {
         source: String,
         /// Absolute target path the bytes are copied to.
         target: String,
-        /// How this operation relates to the live filesystem (REQ-002).
-        /// For a tree op this is the per-op aggregate (DEC-007).
+        /// How this operation relates to the live filesystem.
+        /// For a tree op this is the per-op aggregate.
         disposition: Disposition,
     },
 }
@@ -117,8 +117,8 @@ impl PlannedOperation {
         }
     }
 
-    /// How this operation relates to the live filesystem (REQ-002). For a
-    /// tree op this is the per-op aggregate disposition (DEC-007).
+    /// How this operation relates to the live filesystem. For a
+    /// tree op this is the per-op aggregate disposition.
     #[must_use = "the disposition decides whether the operation writes, and how recovery reverses it"]
     pub fn disposition(&self) -> Disposition {
         match self {
@@ -130,11 +130,11 @@ impl PlannedOperation {
 }
 
 /// The full set of operations one `patina apply` will perform, recorded
-/// durably before any mutation begins (REQ-011).
+/// durably before any mutation begins.
 ///
 /// A plan is content-deterministic: the same source repository and the
 /// same variable context produce a byte-identical encoded plan, modulo
-/// the timestamp in the filename (REQ-011 `<done-when>`). The encoder
+/// the timestamp in the filename. The encoder
 /// preserves operation order, which is also the order in which the
 /// progress cursor records completions.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -212,7 +212,7 @@ mod tests {
     use super::*;
 
     fn sample() -> Plan {
-        // One Create, one Update, one Unchanged target (CHK-004) so the
+        // One Create, one Update, one Unchanged target so the
         // round-trip below proves every disposition variant survives the
         // envelope, not just whichever one a single-op fixture happened to use.
         Plan::new(vec![
@@ -230,7 +230,7 @@ mod tests {
     }
 
     #[test]
-    fn per_op_dispositions_round_trip(/* CHK-004 */) {
+    fn per_op_dispositions_round_trip() {
         // A plan with one Create, one Update, and one Unchanged op must
         // decode with each op's disposition unchanged. `PartialEq` on the
         // whole plan above already gates this, but asserting the per-op
@@ -291,7 +291,7 @@ mod tests {
 
     #[test]
     fn on_disk_major_is_held_at_one() {
-        // REQ-013 / DEC-005: the pre-release on-disk format major is 1 and
+        // The pre-release on-disk format major is 1 and
         // does not bump per breaking change until v1.0. A regression that
         // bumped it (e.g. back to 2) would make older binaries refuse files
         // this binary writes, so the value is pinned by this assertion.
@@ -299,7 +299,7 @@ mod tests {
     }
 
     #[test]
-    fn envelope_major_byte_reads_as_one(/* CHK-017 */) {
+    fn envelope_major_byte_reads_as_one() {
         let bytes = sample().encode().expect("encode");
         assert_eq!(
             Plan::read_envelope_version(&bytes).expect("read envelope"),
@@ -308,7 +308,7 @@ mod tests {
     }
 
     #[test]
-    fn major_two_buffer_is_refused_not_misdecoded(/* CHK-018 */) {
+    fn major_two_buffer_is_refused_not_misdecoded() {
         // A buffer prefixed with major 2 wrapping an otherwise valid plan
         // body must fail with a version mismatch rather than decode, since
         // `decode_envelope` refuses `found > supported` and the supported

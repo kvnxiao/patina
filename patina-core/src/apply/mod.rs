@@ -1,4 +1,4 @@
-//! File-mode executors with multi-target fan-out (REQ-005).
+//! File-mode executors with multi-target fan-out.
 //!
 //! Each [`FileMode`] has an executor that
 //! materializes a single source path at one or more target paths. The
@@ -21,9 +21,9 @@
 //! materialized filesystem object. A single-file source produces one
 //! record per target; a directory-source symlink walk produces one record
 //! per walked file per target. Keeping this per-target (and per-walked-file)
-//! granularity throughout lets T-010's progress cursor record one entry per
-//! materialized object so backups (T-012), status (T-017), and rollback
-//! (T-018) inherit the same unit without special-casing the multi-target
+//! granularity throughout lets the progress cursor record one entry per
+//! materialized object so backups, status, and rollback
+//! inherit the same unit without special-casing the multi-target
 //! shape.
 //!
 //! # Scope
@@ -61,8 +61,7 @@ pub use hooks::run_hook;
 pub use hooks::should_run;
 pub(crate) use retry::with_sharing_violation_retry;
 
-/// Which leaves of a tree-mode target a tree executor (re)writes
-/// (REQ-003 / DEC-007).
+/// Which leaves of a tree-mode target a tree executor (re)writes.
 ///
 /// A single-target executor ignores this; it is only consulted by the
 /// recursive [`copy_tree`](copy::copy_tree) and per-leaf
@@ -73,8 +72,8 @@ pub(crate) use retry::with_sharing_violation_retry;
 ///   tests.
 /// - [`LeafWrite::Only`] — write only the leaves whose plan-time disposition is
 ///   not `Unchanged`, leaving the clean leaves' inode/mtime untouched (the
-///   churn-removal goal of DEC-002). The set holds paths relative to the
-///   declared target directory, in the same form [`walk_files`] yields.
+///   churn-removal goal). The set holds paths relative to the declared target
+///   directory, in the same form [`walk_files`] yields.
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum LeafWrite<'a> {
     /// Write every walked leaf.
@@ -95,7 +94,7 @@ impl LeafWrite<'_> {
 }
 
 /// What an executor materialized at a target, for the
-/// [`CompletionRecord`] one-per-object handoff to T-010.
+/// [`CompletionRecord`] one-per-object handoff.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Materialization {
@@ -160,7 +159,7 @@ impl CompletionRecord {
     }
 }
 
-/// Failures a file-mode executor can surface (REQ-005).
+/// Failures a file-mode executor can surface.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum ExecutorError {
@@ -206,7 +205,7 @@ pub enum ExecutorError {
 
     /// Creating a symbolic link on Windows failed because the process
     /// lacks the privilege (Developer Mode off and not elevated). The
-    /// prompt/elevate flow is deferred to SPEC-0002; this SPEC surfaces
+    /// prompt/elevate flow is deferred; the engine surfaces
     /// the typed error so the CLI can exit non-zero with the message.
     #[error(
         "creating a symbolic link at {target} requires Windows Developer Mode or an elevated process: {source}"
@@ -241,7 +240,7 @@ pub enum ExecutorError {
 ///
 /// Returns an [`ExecutorError`] for the first target that fails. Already
 /// materialized targets are left in place; the multi-target atomic
-/// revert contract (REQ-005 / REQ-013) is the orchestrator's
+/// revert contract is the orchestrator's
 /// responsibility via the journaled per-object records, not this
 /// executor's.
 pub fn materialize(
@@ -261,8 +260,7 @@ pub fn materialize(
     }
 }
 
-/// Materialize a tree-mode target, writing only the leaves `write` selects
-/// (REQ-003 / DEC-007).
+/// Materialize a tree-mode target, writing only the leaves `write` selects.
 ///
 /// The engine calls this for a `copy-tree` / `symlink-tree` target whose
 /// per-op aggregate is not `Unchanged`: a fresh tree passes

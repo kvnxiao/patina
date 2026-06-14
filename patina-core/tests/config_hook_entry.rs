@@ -3,7 +3,7 @@
     reason = "integration tests use direct [0] indexing for assertion-only fixture inspection where the vector length is already asserted immediately above; bounds-check panics would be acceptable test signal anyway."
 )]
 
-//! Integration tests for the `[[hook]]` table-array schema (REQ-006).
+//! Integration tests for the `[[hook]]` table-array schema.
 
 use patina_core::ConfigParseError;
 use patina_core::HookEvent;
@@ -13,8 +13,7 @@ use patina_core::config::parse_module_config_str;
 #[test]
 fn parses_pre_apply_hook_with_must_succeed_default() {
     // Ninth scenario: event = "pre_apply", command = "echo hi", no
-    // must_succeed -> defaults to true. CHK-014 covers the same shape
-    // ("exit 0" command).
+    // must_succeed -> defaults to true.
     let toml = r#"
 [[hook]]
 event = "pre_apply"
@@ -30,7 +29,7 @@ command = "echo hi"
 
 #[test]
 fn must_succeed_defaults_to_true_per_chk_014() {
-    // CHK-014: event = "pre_apply", command = "exit 0", no must_succeed.
+    // event = "pre_apply", command = "exit 0", no must_succeed.
     let toml = r#"
 [[hook]]
 event = "pre_apply"
@@ -57,7 +56,7 @@ must_succeed = false
 
 #[test]
 fn rejects_on_change_event_listing_accepted_values() {
-    // CHK-013: event = "on_change" -> Display contains "on_change",
+    // event = "on_change" -> Display contains "on_change",
     // "pre_apply", and "post_apply".
     let toml = r#"
 [[hook]]
@@ -77,7 +76,7 @@ command = "echo hi"
 
 #[test]
 fn rejects_on_drift_event_listing_accepted_values() {
-    // SPEC-0001 explicitly calls out on_drift as a v1.0 non-goal; same
+    // on_drift is a v1.0 non-goal; same
     // typed-error shape as on_change.
     let toml = r#"
 [[hook]]
@@ -94,7 +93,7 @@ command = "echo hi"
 #[test]
 fn preserves_when_expression_verbatim() {
     // Eleventh scenario: when = "patina.os == 'macos'" -> stored raw.
-    // MiniJinja compilation is deferred to T-008.
+    // MiniJinja compilation is deferred.
     let toml = r#"
 [[hook]]
 event = "pre_apply"
@@ -111,7 +110,7 @@ when = "patina.os == 'macos'"
 #[test]
 fn preserves_shell_verbatim() {
     // Parse-time rule 3: shell string is stored verbatim; PATH check
-    // is deferred to T-015.
+    // is deferred.
     let toml = r#"
 [[hook]]
 event = "post_apply"

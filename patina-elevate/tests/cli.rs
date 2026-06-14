@@ -1,11 +1,10 @@
-//! Process-level integration tests for the `patina-elevate` binary
-//! (REQ-008).
+//! Process-level integration tests for the `patina-elevate` binary.
 //!
 //! These assert the real exit codes the spawned process produces — the
 //! arg-parsing contract that the library unit tests cover in-process, here
 //! proven end-to-end through `clap`'s own `Error::exit`.
 //!
-//! The binary is gated behind the `windows` feature (DEC-003 / CHK-015), so
+//! The binary is gated behind the `windows` feature, so
 //! it is only built when that feature is enabled. When it is absent (a plain
 //! `cargo test` on any host without `--features windows`) the
 //! process-spawning tests no-op. Run them with
@@ -17,7 +16,7 @@ use std::process::Command;
 /// built (the `windows` feature was off, so Cargo skipped it).
 ///
 /// Cargo sets `CARGO_BIN_EXE_patina-elevate` at compile time even when the
-/// bin's `required-features` (DEC-003: `windows`) are off and the bin was
+/// bin's `required-features` (`windows`) are off and the bin was
 /// never produced, so the compile-time env var alone is not a reliable
 /// "was it built" signal. Guard on the file actually existing on disk;
 /// otherwise a plain `cargo test` (no `--features windows`) would spawn a
@@ -29,7 +28,7 @@ fn elevate_bin() -> Option<&'static str> {
 
 #[test]
 fn unknown_subcommand_exits_2() {
-    // REQ-008 scenario: an unsupported subcommand exits 2 and prints a usage
+    // An unsupported subcommand exits 2 and prints a usage
     // message listing `enable-developer-mode`. The process surfaces the clap
     // usage error as exit code 2, and `parse_or_exit` appends the
     // supported-subcommand listing to that error's stderr so the named
@@ -55,7 +54,7 @@ fn unknown_subcommand_exits_2() {
 
 #[test]
 fn help_lists_the_supported_subcommand() {
-    // REQ-008 scenario: the usage surface lists `enable-developer-mode` so a
+    // The usage surface lists `enable-developer-mode` so a
     // mis-invoking caller can discover the correct subcommand. `--help` is
     // where clap enumerates subcommands; it exits 0.
     let Some(bin) = elevate_bin() else {
@@ -99,14 +98,14 @@ fn enable_developer_mode_off_windows_exits_1() {
     );
 }
 
-/// CHK-014: elevated `patina-elevate.exe enable-developer-mode` sets the
+/// An elevated `patina-elevate.exe enable-developer-mode` sets the
 /// registry flag to `1` and exits `0`. Gated `#[cfg(windows)]` `#[ignore]`
 /// because CI is not Windows and the path needs a real UAC accept against a
 /// machine whose Developer Mode is OFF — neither is available in automation.
 /// Run by hand on an elevated Windows shell with `--ignored`.
 #[cfg(windows)]
 #[test]
-#[ignore = "needs an elevated Windows host with Developer Mode OFF and a real UAC accept (CHK-014)"]
+#[ignore = "needs an elevated Windows host with Developer Mode OFF and a real UAC accept"]
 fn enable_developer_mode_elevated_sets_flag_and_exits_0() {
     let bin = elevate_bin().expect("the bin is built on Windows under --features windows");
     let out = Command::new(bin)
@@ -125,8 +124,8 @@ fn enable_developer_mode_elevated_sets_flag_and_exits_0() {
     assert_eq!(flag, Some(1), "the Developer Mode flag must read back as 1");
 }
 
-/// Read the Developer Mode DWORD back out for the CHK-014 assertion above.
-/// Duplicated read (DEC-002 forbids depending on `patina-core`).
+/// Read the Developer Mode DWORD back out for the assertion above.
+/// Duplicated read (the helper must not depend on `patina-core`).
 #[cfg(windows)]
 fn read_dev_mode_flag() -> Result<Option<u32>, Box<dyn std::error::Error>> {
     use winsafe::co;

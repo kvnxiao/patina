@@ -1,10 +1,10 @@
-//! End-to-end `patina apply` orchestration (REQ-017).
+//! End-to-end `patina apply` orchestration.
 //!
 //! The file-mode executors ([`crate::apply::materialize`]), the hook
 //! runner ([`crate::apply::hooks`]), the plan journal
 //! ([`crate::journal`]), and the backup tree ([`crate::backups`]) each
 //! own one slice of an apply. This module is the orchestrator that wires
-//! them together into the two-phase shape REQ-017 describes:
+//! them together into the two-phase shape described here:
 //!
 //! 1. [`plan`] resolves the repository, enumerates modules, parses every module
 //!    manifest, resolves the active profile and variable context, canonicalizes
@@ -102,8 +102,7 @@ impl Default for ApplyRequest {
     }
 }
 
-/// How [`execute`] obtains the exclusive advisory lock guarding the apply
-/// (REQ-030).
+/// How [`execute`] obtains the exclusive advisory lock guarding the apply.
 ///
 /// The default ([`LockPolicy::Blocking`]) reproduces the pre-amendment
 /// behaviour byte-for-byte: acquire exclusive with [`exclusive_timeout`],
@@ -112,12 +111,12 @@ impl Default for ApplyRequest {
 ///
 /// - [`LockPolicy::NonBlocking`] — make a single non-blocking attempt and, on
 ///   contention, return [`crate::lock::LockError::Contended`] before any
-///   filesystem mutation. The SPEC-0003 watcher uses this to skip a reapply
-///   while a CLI run holds the lock.
+///   filesystem mutation. The watcher uses this to skip a reapply while a CLI
+///   run holds the lock.
 /// - [`LockPolicy::Held`] — reuse a guard the caller already acquired,
-///   acquiring nothing further. The SPEC-0002 `remove` / `promote` commands use
-///   this to re-journal while already holding the exclusive lock, without
-///   deadlocking against their own held lock.
+///   acquiring nothing further. The `remove` / `promote` commands use this to
+///   re-journal while already holding the exclusive lock, without deadlocking
+///   against their own held lock.
 ///
 /// The guard variant carries a non-`Clone` [`LockGuard`], so the policy is
 /// passed to [`execute`] as a distinct argument rather than living on the
@@ -139,16 +138,16 @@ pub enum LockPolicy {
 }
 
 /// The plan-time classification of one declared target the source fans out
-/// to (REQ-001 / DEC-007).
+/// to.
 ///
 /// For a single-target mode (`symlink`, `copy`, `template`, `symlink-dir`)
 /// the `aggregate` is simply that target's own disposition and `leaves` is
 /// empty. For a tree mode (`copy-tree`, `symlink-tree`) the `aggregate` is
-/// the per-op aggregate DEC-007 defines — `Unchanged` iff every materialized
+/// the per-op aggregate — `Unchanged` iff every materialized
 /// leaf is `Unchanged`, `Create` iff the target directory is absent,
 /// otherwise `Update` — and `leaves` carries the per-leaf disposition the
-/// execute write-skip (T-005) and the per-leaf diff / `--json` reporting
-/// (T-009 / T-010) consume.
+/// execute write-skip and the per-leaf diff / `--json` reporting
+/// consume.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct TargetDisposition {
@@ -162,14 +161,14 @@ pub struct TargetDisposition {
 }
 
 /// One materialized leaf of a tree-mode target with its plan-time
-/// disposition (DEC-007).
+/// disposition.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct LeafDisposition {
     /// The leaf's path relative to the declared target directory, in the
     /// same `walk_files` order the executor materializes leaves.
     pub relative: Utf8PathBuf,
-    /// How this leaf relates to the live filesystem (REQ-001).
+    /// How this leaf relates to the live filesystem.
     pub disposition: Disposition,
 }
 
@@ -186,9 +185,9 @@ pub struct ResolvedOperation {
     /// Canonical absolute target paths the source fans out to.
     pub targets: Vec<Utf8PathBuf>,
     /// Plan-time classification of each declared target, parallel to and
-    /// aligned with [`targets`](Self::targets) (REQ-001 / DEC-007). The
-    /// execute write-skip (T-005) and the per-entry diff / `--json`
-    /// reporting (T-009 / T-010) read these so the live filesystem read
+    /// aligned with [`targets`](Self::targets). The
+    /// execute write-skip and the per-entry diff / `--json`
+    /// reporting read these so the live filesystem read
     /// happens once, at plan time.
     pub dispositions: Vec<TargetDisposition>,
     /// Index of the managed entry that produced this operation, assigned
@@ -197,8 +196,8 @@ pub struct ResolvedOperation {
     /// as a single monotonic `u32` space. This index — not a re-derivation
     /// from operation position — is what [`execute`] records on each
     /// [`ExpectedTarget`], so a `[[file]]` and a `[[directory]]` entry can
-    /// never collide on an index and per-entry atomic rollback (REQ-019 /
-    /// DEC-009) groups targets by their declared entry.
+    /// never collide on an index and per-entry atomic rollback
+    /// groups targets by their declared entry.
     pub entry_index: u32,
 }
 
@@ -261,9 +260,9 @@ pub enum ApplyResult {
         warnings: Vec<String>,
         /// Whether this invocation was a full no-op: every target classified
         /// `Unchanged` and nothing to reap, so the apply wrote nothing to disk
-        /// and the prior commit remains authoritative (REQ-007). The CLI uses
+        /// and the prior commit remains authoritative. The CLI uses
         /// this to print the deterministic "up to date" line instead of
-        /// "Applied." (REQ-008). A normal committed apply sets it `false`.
+        /// "Applied." A normal committed apply sets it `false`.
         up_to_date: bool,
     },
     /// A `must_succeed` `post_apply` hook failed; the file operations
@@ -307,17 +306,17 @@ pub fn plan(
     // in two ordered buckets — `[[file]]` entries and `[[directory]]`
     // entries — each in declaration order across all modules as the modules
     // are iterated. Emitting from these buckets files-then-directories
-    // gives the single deterministic order REQ-009 mandates while a managed
+    // gives the single deterministic order while a managed
     // entry's canonicalization stays where it always was (per-module, under
     // that module's tilde/home context).
     //
     // Each bucket slot is an `Option<ResolvedEntry>`: a `when`-false entry
     // contributes `None`, so it still occupies its position in the declared
-    // sequence (and thus its `entry_index`, REQ-009) but emits no operation
-    // and no diff line (DEC-004). The `when` gate runs at the top of the
+    // sequence (and thus its `entry_index`) but emits no operation
+    // and no diff line. The `when` gate runs at the top of the
     // per-entry body, before `resolve_entry` canonicalizes the source — so a
     // gated-off entry whose source is absent or wrong-kind on this OS is
-    // never canonicalized or validated (REQ-009 ordering).
+    // never canonicalized or validated (ordering).
     let mut file_entries: Vec<Option<ResolvedEntry>> = Vec::new();
     let mut directory_entries: Vec<Option<ResolvedEntry>> = Vec::new();
     let mut hooks: Vec<HookEntry> = Vec::new();
@@ -374,7 +373,7 @@ pub fn plan(
 /// `patina status` and the apply-time orphan reap).
 ///
 /// Everything up to — but not including — the per-module entry loop is
-/// identical between the two passes (REQ-005's repo-shared / per-profile
+/// identical between the two passes (the repo-shared / per-profile
 /// layer pushes, the active-profile resolution, the shared `MiniJinja`
 /// engine). Factoring it here keeps the `when` gate seeing the same variable
 /// context in planning and in status, so an entry that plans on this host is
@@ -394,7 +393,7 @@ struct PlanningContext {
 ///
 /// Resolves the repository and state directory, the active profile, and the
 /// resolver's repo-shared (`[variables]`) and active-profile
-/// (`[profiles.<name>.variables]`) layers (REQ-005). The per-module layer is
+/// (`[profiles.<name>.variables]`) layers. The per-module layer is
 /// *not* pushed here — each pass pushes it during its own module loop, in
 /// declaration order, so a module's `[variables]` is in scope for that
 /// module's entries' `when` predicates.
@@ -411,8 +410,8 @@ fn build_planning_context(
     let state_dir = resolve_state_dir()?;
     let builtins = Builtins::current();
 
-    // The shared `MiniJinja` engine that evaluates every `when` predicate
-    // (REQ-004 / DEC-006): `[[file]]` / `[[directory]]` / `[[hook]]` and
+    // The shared `MiniJinja` engine that evaluates every `when` predicate:
+    // `[[file]]` / `[[directory]]` / `[[hook]]` and
     // `[[auto_match]]` all route through this one instance. It is built
     // before profile resolution because auto-match `when` predicates are
     // evaluated through it (against a built-ins-only resolver, since the
@@ -432,7 +431,7 @@ fn build_planning_context(
 
     // The root manifest's repo-shared `[variables]` table and the active
     // profile's `[profiles.<name>.variables]` table are the two layers this
-    // pass populates (REQ-005). Resolution precedence is fixed by the
+    // pass populates. Resolution precedence is fixed by the
     // resolver's layer order (CLI > per-machine > per-profile > per-module >
     // repo-shared > built-ins); pushing them here changes no precedence.
     let root_config = parse_root_config(&root_manifest)?;
@@ -464,7 +463,7 @@ fn build_planning_context(
 
 /// Recompute the set of canonical target paths the *current* repository plan
 /// manages, keyed by [`crate::status::manage_key`] for cross-time comparison
-/// against the recorded commit (REQ-007 / REQ-003).
+/// against the recorded commit.
 ///
 /// This is the `when`-aware, `symlink-tree`-aware managed set both
 /// `patina status` (to classify a dropped target ORPHANED) and the apply-time
@@ -472,19 +471,18 @@ fn build_planning_context(
 /// differences that make it safe to run for status, where the plan would
 /// refuse:
 ///
-/// - **`when` gating (REQ-003).** An entry whose `when` is false on this host
-///   contributes no managed target, so a `[[file]]` whose `when` has been
-///   edited to false has its prior target fall out of the set and classify
-///   ORPHANED (CHK-019). The gate uses the same [`Engine::eval_when`] and
-///   layered resolver as planning, so the two passes agree on which entries are
-///   active.
-/// - **Tree-mode leaf expansion (REQ-007).** A `symlink-tree` or `copy-tree`
+/// - **`when` gating.** An entry whose `when` is false on this host contributes
+///   no managed target, so a `[[file]]` whose `when` has been edited to false
+///   has its prior target fall out of the set and classify ORPHANED. The gate
+///   uses the same [`Engine::eval_when`] and layered resolver as planning, so
+///   the two passes agree on which entries are active.
+/// - **Tree-mode leaf expansion.** A `symlink-tree` or `copy-tree`
 ///   `[[directory]]` entry is expanded into one managed key per *live* source
 ///   leaf, walked in the same `walk_files` order the executor used, so a
 ///   deleted source leaf is absent from the set and its recorded target leaf
-///   classifies ORPHANED (CHK-014). Both modes materialize one object per leaf
-///   and journal each leaf as its own target, so both must expand here; every
-///   other mode contributes its declared target(s) directly.
+///   classifies ORPHANED. Both modes materialize one object per leaf and
+///   journal each leaf as its own target, so both must expand here; every other
+///   mode contributes its declared target(s) directly.
 ///
 /// Unlike [`plan`], this never canonicalizes the source or kind-checks it:
 /// status must not fail because a `when`-true entry's source is missing or
@@ -515,7 +513,7 @@ pub fn current_managed_targets() -> Result<BTreeSet<Utf8PathBuf>, EngineError> {
         }
 
         for entry in config.files.iter().chain(&config.directories) {
-            // `when`-false entries manage nothing this run (REQ-003): their
+            // `when`-false entries manage nothing this run: their
             // prior targets fall out of the set and classify ORPHANED.
             if let Some(expr) = entry.when.as_deref()
                 && !engine.eval_when(expr, &resolver)?
@@ -598,13 +596,13 @@ struct ResolvedEntry {
     /// Canonical absolute target paths the source fans out to.
     targets: Vec<Utf8PathBuf>,
     /// Plan-time classification of each declared target, parallel to
-    /// [`targets`](Self::targets) (REQ-001 / DEC-007). Computed during
+    /// [`targets`](Self::targets). Computed during
     /// resolution while the template engine and resolver are in scope (a
     /// template target is classified against its freshly rendered output).
     dispositions: Vec<TargetDisposition>,
 }
 
-/// Impose REQ-009's single deterministic order on the resolved entries and
+/// Impose the single deterministic order on the resolved entries and
 /// assign each managed entry its index over the full declared sequence.
 ///
 /// Every `[[file]]` entry (in declaration order across all modules) is
@@ -613,12 +611,12 @@ struct ResolvedEntry {
 /// directories). The index advances for **every** declared entry,
 /// including a `when`-false one (passed as `None`): a gated-off entry
 /// occupies its index but emits no [`PlannedOperation`] and no
-/// [`ResolvedOperation`] (REQ-009 / DEC-004). That index is carried on each
+/// [`ResolvedOperation`]. That index is carried on each
 /// [`ResolvedOperation`] so [`execute`] records the planned index rather
 /// than re-deriving one from operation position — guaranteeing no
 /// `[[file]]` and `[[directory]]` entry collide on an index and that
-/// targets sharing an entry form one atomic rollback unit (DEC-009 /
-/// REQ-019). The returned [`PlannedOperation`] vec is the per-target
+/// targets sharing an entry form one atomic rollback unit. The
+/// returned [`PlannedOperation`] vec is the per-target
 /// durable plan, parallel to the engine's existing wire format; the index
 /// lives on the resolved-op side only, so the `entry: u32` journal layout
 /// is unchanged (no version bump).
@@ -635,7 +633,7 @@ fn assemble_plan_operations(
             // The durable `PlannedOperation` is per declared target and
             // carries the target's whole-op (aggregate, for tree modes)
             // disposition; the in-memory `ResolvedOperation` carries the
-            // full per-target/per-leaf classification (DEC-007).
+            // full per-target/per-leaf classification.
             for (target, target_disposition) in resolved.targets.iter().zip(&resolved.dispositions)
             {
                 operations.push(planned_operation(
@@ -662,20 +660,20 @@ fn assemble_plan_operations(
 /// canonicalize the entry's source and resolve its targets by declared
 /// location.
 ///
-/// This enforces the REQ-009 per-entry order: step (1) the `when` gate runs
+/// This enforces the per-entry order: step (1) the `when` gate runs
 /// first, so a `when`-false entry returns `Ok(None)` and is **never**
 /// canonicalized; step (2) canonicalization happens only for a surviving
 /// (`when`-true or no-`when`) entry. Returning `None` lets the caller keep
 /// the entry's slot in the declared sequence (and thus its `entry_index`)
-/// while emitting no operation or diff line (DEC-004). For a multi-target
+/// while emitting no operation or diff line. For a multi-target
 /// entry the gate is above the target loop, so `when` gates all targets
-/// together (REQ-003).
+/// together.
 ///
-/// Step (3) of the REQ-009 order — the plan-time source existence-and-kind
+/// Step (3) of the order — the plan-time source existence-and-kind
 /// validation — runs inside [`resolve_entry`], right after the source is
 /// canonicalized, so a `when`-false entry (which returns `Ok(None)` here
 /// before `resolve_entry` is ever called) is never canonicalized or
-/// validated (REQ-002 / CHK-022).
+/// validated.
 fn gate_and_resolve_entry(
     entry: &ManagedEntry,
     module_path: &Utf8Path,
@@ -698,16 +696,16 @@ fn gate_and_resolve_entry(
 }
 
 /// Classify each declared target of one resolved entry against live
-/// filesystem state at plan time (REQ-001 / DEC-007).
+/// filesystem state at plan time.
 ///
 /// Single-target modes classify the target directly. Tree modes
 /// (`copy-tree`, `symlink-tree`) enumerate the source leaves with
 /// [`walk_files`](crate::apply::walk_files) and classify each leaf, then
-/// fold the per-leaf results into the per-op aggregate DEC-007 defines:
+/// fold the per-leaf results into the per-op aggregate:
 /// `Create` if the target directory is absent, otherwise `Unchanged` iff
 /// every leaf is `Unchanged`, otherwise `Update`. The per-leaf dispositions
-/// ride along on each [`TargetDisposition`] for the T-005 execute write-skip
-/// and the T-009 / T-010 per-leaf reporting.
+/// ride along on each [`TargetDisposition`] for the execute write-skip
+/// and the per-leaf reporting.
 ///
 /// A template target is classified against its freshly rendered output,
 /// rendered once here through `engine` / `resolver`.
@@ -742,7 +740,7 @@ fn classify_entry(
 }
 
 /// Classify one declared target — a single-target leaf, or a whole tree
-/// expanded per leaf (DEC-007).
+/// expanded per leaf.
 fn classify_target(
     mode: FileMode,
     source: &Utf8Path,
@@ -760,7 +758,7 @@ fn classify_target(
         });
     }
 
-    // Tree mode (DEC-007). A target directory that does not yet exist is a
+    // Tree mode. A target directory that does not yet exist is a
     // whole-op Create; its leaves would all be Create, so there is no need
     // to walk-and-classify them for the aggregate. Recording no per-leaf
     // entries here is fine: the execute path materializes the whole tree on
@@ -792,7 +790,7 @@ fn classify_target(
     }
 
     // The target exists, so the op is not a Create; it is Unchanged iff every
-    // materialized leaf is Unchanged, otherwise Update (DEC-007).
+    // materialized leaf is Unchanged, otherwise Update.
     let aggregate = if all_unchanged {
         Disposition::Unchanged
     } else {
@@ -803,13 +801,13 @@ fn classify_target(
 
 /// Canonicalize one managed entry's source and resolve its targets under
 /// `module_path` and `home`, then validate the canonical source's existence
-/// and kind against the entry's declared table (REQ-002, step 3 of the
-/// REQ-009 order). The source is canonicalized through the filesystem; each
+/// and kind against the entry's declared table (step 3 of the
+/// order). The source is canonicalized through the filesystem; each
 /// target is resolved by *declared location* via [`resolve_location`] so a
 /// symlink already occupying the target is never followed back to the source.
 /// The file/directory order and the entry-index space are imposed by the
 /// caller; this resolves paths, performs the plan-time source check, and
-/// classifies each resolved target against live state (REQ-001) using
+/// classifies each resolved target against live state using
 /// `engine` / `resolver` to render a template target's comparison bytes.
 ///
 /// # Errors
@@ -842,7 +840,7 @@ fn resolve_entry(
         targets.push(resolve_location(&expanded)?);
     }
     // Classify each resolved target against live filesystem state at plan
-    // time (REQ-001). A template target is compared against its freshly
+    // time. A template target is compared against its freshly
     // rendered output, rendered here while the engine and resolver are in
     // scope (the double render at execute time is accepted per the
     // assumptions).
@@ -856,7 +854,7 @@ fn resolve_entry(
 }
 
 /// Validate a canonical source path against the kind declared by its
-/// table-array (REQ-002 / DEC-008).
+/// table-array.
 ///
 /// `paths::canonicalize` falls back to a *lexical* resolution for a
 /// non-existent path, so a missing source does not fail at canonicalization;
@@ -909,7 +907,7 @@ fn validate_source_kind(source: &Utf8Path, kind: EntryKind) -> Result<(), Engine
 
 /// Build the durable [`PlannedOperation`] for one resolved
 /// `(mode, source, target)`, carrying the target's plan-time disposition
-/// (the per-op aggregate for tree modes, DEC-007).
+/// (the per-op aggregate for tree modes).
 fn planned_operation(
     mode: FileMode,
     source: &Utf8Path,
@@ -920,7 +918,7 @@ fn planned_operation(
         // A `[[directory]]` `symlink` (the atomic whole-directory
         // `SymlinkDir`) maps to the same durable symlink op shape as a
         // `[[file]]` `symlink`. `SymlinkTree` is the clearly-marked
-        // dispatch point T-007's per-leaf executor fills in; until then it
+        // dispatch point the per-leaf executor fills in; until then it
         // shares the symlink op shape so the plan is well-formed.
         FileMode::Symlink | FileMode::SymlinkDir | FileMode::SymlinkTree => {
             PlannedOperation::symlink(source.as_str(), target.as_str(), disposition)
@@ -935,21 +933,21 @@ fn planned_operation(
 }
 
 /// Materialize one declared target according to its plan-time disposition,
-/// upholding REQ-003's write-and-backup skip.
+/// upholding the write-and-backup skip.
 ///
 /// - **Aggregate `Unchanged`** — the target (single-target or whole tree)
 ///   matches desired state, so it is neither backed up nor written. No
 ///   [`CompletionRecord`] is produced; the commit records it from the resolved
-///   plan instead (REQ-004).
+///   plan instead.
 /// - **Single-target `Create` / `Update`** — back up the pre-existing target (a
 ///   no-op for an absent `Create` target, since [`backup_before_overwrite`]
 ///   only stashes something that exists), then materialize it as today.
 /// - **Tree `Create` / `Update`** — back up the target directory as a unit
-///   (DEC-007: today's whole-directory backup, which captures every leaf's
-///   prior bytes), then (re)write only the leaves whose per-leaf disposition is
-///   not `Unchanged`. A `Create` aggregate carries no per-leaf entries, so
-///   every leaf is written ([`LeafWrite::All`]); an `Update` aggregate writes
-///   only the drifted leaves ([`LeafWrite::Only`]), leaving clean leaves'
+///   (today's whole-directory backup, which captures every leaf's prior bytes),
+///   then (re)write only the leaves whose per-leaf disposition is not
+///   `Unchanged`. A `Create` aggregate carries no per-leaf entries, so every
+///   leaf is written ([`LeafWrite::All`]); an `Update` aggregate writes only
+///   the drifted leaves ([`LeafWrite::Only`]), leaving clean leaves'
 ///   inode/mtime untouched.
 ///
 /// # Errors
@@ -972,8 +970,8 @@ fn materialize_target(
     engine: &Engine,
     resolver: &Resolver,
 ) -> Result<Vec<CompletionRecord>, EngineError> {
-    // An Unchanged target is left exactly as it is: no backup, no write
-    // (REQ-003). Its commit-record entry is sourced from the resolved plan.
+    // An Unchanged target is left exactly as it is: no backup, no write.
+    // Its commit-record entry is sourced from the resolved plan.
     if disposition.aggregate == Disposition::Unchanged {
         return Ok(Vec::new());
     }
@@ -992,7 +990,7 @@ fn materialize_target(
         )?);
     }
 
-    // Tree Create/Update (DEC-007): back up the whole target directory as a
+    // Tree Create/Update: back up the whole target directory as a
     // unit so every leaf's prior bytes are captured, then write only the
     // drifted leaves. A Create aggregate has no per-leaf entries (the target
     // dir is absent), so write every leaf.
@@ -1038,7 +1036,7 @@ fn materialize_target(
               no-op short-circuit, hooks, flush, materialize, commit/rollback, \
               GC — in the fixed order the crash-safety contract depends on. \
               Splitting a phase into a helper would hide that ordering behind a \
-              call without removing any step; the REQ-007 no-op gate is one such \
+              call without removing any step; the no-op gate is one such \
               step and pushed it four lines past the lint's ceiling."
 )]
 pub async fn execute(
@@ -1051,7 +1049,7 @@ pub async fn execute(
     let template_engine = Engine::new();
 
     // Whether this run reaps targets a prior apply committed that the current
-    // plan no longer manages (REQ-007 / REQ-003). A full `apply` (`Blocking`)
+    // plan no longer manages. A full `apply` (`Blocking`)
     // and a watcher re-apply (`NonBlocking`) reconcile the whole plan, so they
     // reap. The `Held` path is a surgical single-target re-journal driven by
     // `patina remove` / `patina promote` under a caller-held lock: those
@@ -1064,10 +1062,10 @@ pub async fn execute(
     // mutation, including orphan recovery. On the `NonBlocking`
     // contention path this returns early — before `recover_orphans` and
     // the plan flush below — so a contended attempt mutates nothing
-    // (no recovery, no plan, no COMMIT, no backup), upholding REQ-030's
+    // (no recovery, no plan, no COMMIT, no backup), upholding the
     // zero-write guarantee. Recovering only under the held lock also
     // prevents a second apply from reversing a live in-flight apply's
-    // operations (REQ-013 / REQ-030).
+    // operations.
     let _guard = match policy {
         LockPolicy::Blocking => acquire_lock(
             &resolved.lock_path(),
@@ -1082,13 +1080,13 @@ pub async fn execute(
     // computing fresh work.
     recover_orphans(&journal_dir, &backups_dir)?;
 
-    // Windows-only symlink-elevation gate (SPEC-0002 REQ-007). Runs after
+    // Windows-only symlink-elevation gate. Runs after
     // recovery and BEFORE the first backup / materialize, so a plan that
     // needs Developer Mode cannot mutate the filesystem without consent.
     // This is the engine-side backstop: the CLI normally drives the UAC
     // prompt before calling `execute`, so a `RequireElevation` verdict here
     // means the gate was reached without that orchestration — refuse to
-    // proceed with a typed signal (REQ-007). On a host that is already
+    // proceed with a typed signal. On a host that is already
     // elevated, proceed but warn (running Patina elevated is discouraged).
     // On macOS / Linux `HostDevModeProbe` reports `NotWindows`, so the
     // decision is always `Proceed`: no registry read, no early return.
@@ -1103,7 +1101,7 @@ pub async fn execute(
         GateDecision::RequireElevation => return Err(EngineError::DevModeRequired),
     }
 
-    // Full no-op short-circuit (REQ-007): return before the plan flush so
+    // Full no-op short-circuit: return before the plan flush so
     // nothing is written this run (see `is_full_noop` for the condition).
     if is_full_noop(resolved, reap)? {
         return Ok(ApplyResult::Applied {
@@ -1144,13 +1142,13 @@ pub async fn execute(
 
     // Materialize every operation, backing up each pre-existing target
     // first — except a target classified `Unchanged` at plan time, which is
-    // neither backed up nor (re)written so its inode/mtime is preserved
-    // (REQ-003). Track completion records (paired with the index of the
+    // neither backed up nor (re)written so its inode/mtime is preserved.
+    // Track completion records (paired with the index of the
     // `[[file]]` entry that produced them) so a post_apply hook failure can
     // reverse them and the commit record can group targets into atomic
-    // rollback units (REQ-019). Only the targets actually written produce a
+    // rollback units. Only the targets actually written produce a
     // record; `Unchanged` targets are recorded in the commit from the
-    // resolved plan instead (REQ-004, see `build_apply_record`).
+    // resolved plan instead (see `build_apply_record`).
     let mut completed: Vec<(u32, CompletionRecord)> = Vec::new();
     let mut op_index: u32 = 0;
     for op in &resolved.operations {
@@ -1158,10 +1156,10 @@ pub async fn execute(
         // sequence (files then directories) rather than re-deriving one from
         // operation position, so a `[[file]]` and a `[[directory]]` entry can
         // never collide on an index and rollback groups targets by their
-        // declared entry (DEC-009).
+        // declared entry.
         let entry_index = op.entry_index;
         // Each declared target carries its plan-time disposition, parallel to
-        // `targets` (T-004); drive the per-target / per-leaf write-skip off it.
+        // `targets`; drive the per-target / per-leaf write-skip off it.
         for (target, disposition) in op.targets.iter().zip(&op.dispositions) {
             let records = materialize_target(
                 op.mode,
@@ -1208,10 +1206,10 @@ pub async fn execute(
     } else {
         // Reap targets a prior apply committed that the current plan no
         // longer manages — a removed entry, a `when` flipped to false
-        // (REQ-003), or a deleted `symlink-tree` source leaf (REQ-007). Each
+        // or a deleted `symlink-tree` source leaf. Each
         // orphan's prior bytes are backed up into this run's backup tree
-        // before it is removed (REQ-014); a directory is never removed
-        // (DEC-005). Runs after the post_apply hooks succeed, so a hook
+        // before it is removed; a directory is never removed.
+        // Runs after the post_apply hooks succeed, so a hook
         // failure rolls back the materializations without having reaped.
         // Skipped on the `Held` path (`patina remove` / `promote`), which
         // re-journals one surgically-modified target and must not reap.
@@ -1224,7 +1222,7 @@ pub async fn execute(
         // sentinels for exactly those cycles are dropped in lockstep: a
         // commit whose backups are gone can no longer be faithfully reversed
         // (its overwrite-restores are gone), so it must not remain
-        // rollback- or status-eligible (REQ-015 / REQ-019). An all-fresh
+        // rollback- or status-eligible. An all-fresh
         // apply writes no backup directory and so is never pruned here —
         // rolling back to it correctly deletes its fresh targets.
         let pruned = gc_retain(&backups_dir, crate::backups::RETENTION_COUNT)?;
@@ -1241,23 +1239,22 @@ pub async fn execute(
 
 /// Build the [`ApplyRecord`] persisted in this run's COMMIT sentinel from
 /// the resolved plan's `last_apply` metadata and per-target/per-leaf
-/// dispositions. `patina status` (T-017) decodes this to classify the live
+/// dispositions. `patina status` decodes this to classify the live
 /// filesystem against the last committed apply.
 ///
 /// Every managed target becomes one [`ExpectedTarget`] — **including
 /// `Unchanged` targets** that the execute write-skip left untouched and that
-/// therefore produced no [`CompletionRecord`] (REQ-004). Sourcing the record
+/// therefore produced no [`CompletionRecord`]. Sourcing the record
 /// from the resolved plan rather than from the written objects keeps an
 /// `Unchanged` target in the commit, so `status` reports it managed (`Clean`)
 /// and [`reap_orphans`] never removes it. A symlink records its canonical link
 /// target (which is also its source); a copy or render records its canonical
 /// source path and a `blake3` hash of the live target bytes — read back so the
-/// recorded hash matches exactly what `status` computes (REQ-029); the live
+/// recorded hash matches exactly what `status` computes; the live
 /// bytes hold the desired output whether the target was just written
 /// (`Create` / `Update`) or already matched (`Unchanged`). Each target carries
-/// its real plan-time [`Disposition`] (per-leaf for a tree, DEC-007), the
-/// marker recovery and rollback read to leave an `Unchanged` target in place
-/// (REQ-002).
+/// its real plan-time [`Disposition`] (per-leaf for a tree), the
+/// marker recovery and rollback read to leave an `Unchanged` target in place.
 fn build_apply_record(resolved: &ResolvedPlan) -> Result<ApplyRecord, EngineError> {
     let vars = &resolved.resolver;
     let last_apply = LastApply {
@@ -1294,8 +1291,8 @@ fn build_apply_record(resolved: &ResolvedPlan) -> Result<ApplyRecord, EngineErro
     Ok(ApplyRecord::new(last_apply, targets))
 }
 
-/// Append one [`ExpectedTarget`] per materialized leaf of a tree-mode target
-/// (DEC-007): the commit records per-leaf so `status` and `rollback` resolve
+/// Append one [`ExpectedTarget`] per materialized leaf of a tree-mode target:
+/// the commit records per-leaf so `status` and `rollback` resolve
 /// each leaf independently.
 ///
 /// A `Create` aggregate carries no per-leaf dispositions (the target dir was
@@ -1303,7 +1300,7 @@ fn build_apply_record(resolved: &ResolvedPlan) -> Result<ApplyRecord, EngineErro
 /// same [`walk_files`](crate::apply::walk_files) walk the executor used, each
 /// recorded as `Create`. Otherwise the per-leaf dispositions computed at plan
 /// time are recorded verbatim, so an `Update` tree records its drifted leaves
-/// as `Update` / `Create` and its clean leaves as `Unchanged` (REQ-004), and a
+/// as `Update` / `Create` and its clean leaves as `Unchanged`, and a
 /// fully-`Unchanged` tree records every leaf as `Unchanged`.
 fn record_tree_targets(
     targets: &mut Vec<ExpectedTarget>,
@@ -1342,7 +1339,7 @@ fn record_tree_targets(
 ///
 /// A symlink-family mode records the canonical link target (= the source); a
 /// content mode records the source path and a `blake3` hash of the live target
-/// bytes (REQ-029). The live read is correct for every disposition: a `Create`
+/// bytes. The live read is correct for every disposition: a `Create`
 /// or `Update` target was just written to the desired output, and an
 /// `Unchanged` target already matched it.
 fn expected_target(
@@ -1378,21 +1375,21 @@ fn expected_target(
 }
 
 /// Reap targets a prior committed apply materialized that the current plan
-/// no longer manages (REQ-007 / REQ-003).
+/// no longer manages.
 ///
 /// Reads the last committed [`ApplyRecord`] and the current managed-target
 /// set ([`current_managed_targets`], the same `when`-aware /
 /// `symlink-tree`-aware set `patina status` classifies against). A recorded
 /// target whose [`manage_key`](crate::status::manage_key) is absent from the
 /// current set is an orphan: the entry was removed, its `when` flipped false
-/// (CHK-019), or — for a `symlink-tree` leaf — its source leaf was deleted
-/// (CHK-014, CHK-015). Each orphan still present on disk is backed up into
+/// or — for a `symlink-tree` leaf — its source leaf was deleted.
+/// Each orphan still present on disk is backed up into
 /// this run's backup tree — the same never-overwrite-without-backup
-/// guarantee every mutating path upholds (REQ-014) — and then removed.
+/// guarantee every mutating path upholds — and then removed.
 ///
 /// A directory is never removed, even one left empty after its last leaf
 /// link is reaped: Patina cannot prove it owns a directory that may also
-/// hold files written outside Patina (DEC-005). The check is on the live
+/// hold files written outside Patina. The check is on the live
 /// entry's kind, so an intermediate `symlink-tree` directory survives while
 /// its orphaned leaf links are removed.
 ///
@@ -1402,8 +1399,8 @@ fn expected_target(
 /// recomputation, a backup, or a removal fails.
 fn reap_orphans(resolved: &ResolvedPlan, backups_dir: &Utf8Path) -> Result<(), EngineError> {
     for target in detect_orphans(resolved)? {
-        // Record the prior bytes in a backup before removal (CHK-019 /
-        // REQ-014). The stash uses this run's timestamped backup tree, the
+        // Record the prior bytes in a backup before removal. The
+        // stash uses this run's timestamped backup tree, the
         // same one materialize stashes overwrites into.
         backup_before_overwrite(backups_dir, &resolved.timestamp, &target)?;
         remove_target(&target)?;
@@ -1413,12 +1410,12 @@ fn reap_orphans(resolved: &ResolvedPlan, backups_dir: &Utf8Path) -> Result<(), E
 
 /// Whether `resolved` is a full no-op: every planned target classifies
 /// `Unchanged`, a prior committed apply exists to stay authoritative, and the
-/// reap set is empty (REQ-007). `reap` mirrors [`execute`]'s policy gate — a
+/// reap set is empty. `reap` mirrors [`execute`]'s policy gate — a
 /// `Held` run never reaps, so its orphan set is not consulted.
 ///
-/// This is the single source of truth for the REQ-007 condition, shared by
+/// This is the single source of truth for the condition, shared by
 /// [`execute`]'s pre-flush short-circuit and the public [`plan_is_full_noop`]
-/// probe the CLI calls to decide whether to skip the diff-and-prompt (REQ-009).
+/// probe the CLI calls to decide whether to skip the diff-and-prompt.
 /// The `Unchanged` check is pure (it reads the plan-time dispositions, no IO);
 /// the prior-commit and orphan checks read the journal and re-derive the
 /// managed set.
@@ -1447,14 +1444,14 @@ fn is_full_noop(resolved: &ResolvedPlan, reap: bool) -> Result<bool, EngineError
     if !all_unchanged {
         return Ok(false);
     }
-    // A full no-op keeps the prior commit authoritative (REQ-007), so one must
+    // A full no-op keeps the prior commit authoritative, so one must
     // exist. A first-ever apply with an empty plan is vacuously all-`Unchanged`
     // but has no baseline; it must fall through and commit an (empty) record to
     // establish one, preserving the pre-existing commit-always contract.
     if crate::journal::read_latest_commit(resolved.journal_dir())?.is_none() {
         return Ok(false);
     }
-    // A reap is work to do (REQ-009): an all-`Unchanged` plan that still has an
+    // A reap is work to do: an all-`Unchanged` plan that still has an
     // orphan to remove is not a no-op.
     if !detect_orphans(resolved)?.is_empty() {
         return Ok(false);
@@ -1464,10 +1461,10 @@ fn is_full_noop(resolved: &ResolvedPlan, reap: bool) -> Result<bool, EngineError
 
 /// Whether a `patina apply` over `resolved` would be a full no-op under the
 /// CLI's default reaping (`Blocking`) policy — every target `Unchanged`, a
-/// prior commit present, and nothing to reap (REQ-007).
+/// prior commit present, and nothing to reap.
 ///
 /// The CLI calls this *before* prompting so a fully-satisfied repo skips the
-/// diff-and-prompt confirmation and never reads stdin (REQ-009). It is a
+/// diff-and-prompt confirmation and never reads stdin. It is a
 /// read-only probe: [`execute`] re-checks the same condition under the held
 /// lock, so this decision only governs the prompt, never whether a write
 /// happens. Because the CLI's `apply` path always reaps, this fixes `reap`
@@ -1488,9 +1485,9 @@ pub fn plan_is_full_noop(resolved: &ResolvedPlan) -> Result<bool, EngineError> {
 /// Reads the last committed [`ApplyRecord`] and the current managed-target
 /// set ([`current_managed_targets`]), returning each recorded target whose
 /// [`manage_key`](crate::status::manage_key) is absent from the current set,
-/// is still on disk, and is not a directory (DEC-005). Shared by
+/// is still on disk, and is not a directory. Shared by
 /// [`reap_orphans`] — which backs up and removes each returned target — and
-/// by the REQ-007 full-no-op short-circuit in [`execute`], which only needs
+/// by the full-no-op short-circuit in [`execute`], which only needs
 /// to know whether this set is empty (a non-empty reap set means there is
 /// work to do, so the run is not a no-op). Splitting the detection out keeps
 /// the "what counts as an orphan" rule in one place rather than copying the
@@ -1524,7 +1521,7 @@ fn detect_orphans(resolved: &ResolvedPlan) -> Result<Vec<Utf8PathBuf>, EngineErr
         let Ok(meta) = fs_err::symlink_metadata(&target) else {
             continue;
         };
-        // Never remove a directory (DEC-005): Patina cannot prove it owns a
+        // Never remove a directory: Patina cannot prove it owns a
         // directory that may also hold files written by another tool. This
         // is the guard that keeps a `symlink-tree` intermediate directory in
         // place while its orphaned leaf links are reaped.
@@ -1642,9 +1639,9 @@ pub fn is_content_materialization(materialization: &Materialization) -> bool {
 
 #[cfg(test)]
 mod tests {
-    //! Unit coverage for the REQ-030 lock-acquisition policy (T-027)
-    //! and the REQ-013/REQ-030 acquire-then-recover orphan-safety
-    //! reorder (T-028).
+    //! Unit coverage for the lock-acquisition policy
+    //! and the acquire-then-recover orphan-safety
+    //! reorder.
     //!
     //! These drive [`execute`] in-process so a `Held` policy can pass a
     //! test-controlled [`LockGuard`] and a `NonBlocking` policy can be
@@ -1657,8 +1654,8 @@ mod tests {
     //! `<ts>.plan`, commits a `<ts>.COMMIT`, and then deletes the plan —
     //! enough surface to assert the journal side effects the scenarios name.
     //!
-    //! CHK-067 (the default `Blocking` policy preserves REQ-021
-    //! byte-identical stdout across two `patina apply --yes` runs) is
+    //! The default `Blocking` policy preserving
+    //! byte-identical stdout across two `patina apply --yes` runs is
     //! covered end-to-end through the CLI in
     //! `patina-cli/tests/deterministic_stdout.rs`; that suite already drives
     //! the `Blocking` path, so it is not re-proved here.
@@ -1700,7 +1697,7 @@ mod tests {
         }
     }
 
-    // REQ-009 / DEC-009 ordering: with two `[[file]]` entries and one
+    // Ordering: with two `[[file]]` entries and one
     // `[[directory]]` entry, both file operations are emitted before the
     // directory operation, each block in declaration order. The directory
     // entry is the `[[directory]]` `symlink` default (atomic `SymlinkDir`).
@@ -1735,7 +1732,7 @@ mod tests {
         );
     }
 
-    // REQ-009 / DEC-009 index space: entry indices form a single monotonic
+    // Index space: entry indices form a single monotonic
     // sequence across both tables (all `[[file]]` entries, then all
     // `[[directory]]` entries), and no `[[file]]` and `[[directory]]` entry
     // share an index.
@@ -1781,7 +1778,7 @@ mod tests {
         );
     }
 
-    // REQ-009 / DEC-004: a `when`-false entry (a `None` slot) occupies its
+    // A `when`-false entry (a `None` slot) occupies its
     // index in the declared sequence but emits no operation and no resolved
     // op, so the surviving entries keep the indices they would have had if
     // the gated-off entry were present-but-empty rather than compacted away.
@@ -1828,7 +1825,7 @@ mod tests {
         );
     }
 
-    /// REQ-002: a `[[file]]` entry whose canonical source is a directory is
+    /// A `[[file]]` entry whose canonical source is a directory is
     /// a plan-time kind mismatch directing the author to `[[directory]]`. The
     /// error names the source path and both tables so the message is
     /// actionable.
@@ -1857,7 +1854,7 @@ mod tests {
         );
     }
 
-    /// REQ-002 (symmetric): a `[[directory]]` entry whose canonical source is
+    /// Symmetric: a `[[directory]]` entry whose canonical source is
     /// a regular file is a kind mismatch directing the author to `[[file]]`.
     #[test]
     fn directory_entry_with_file_source_is_a_kind_mismatch() {
@@ -1884,7 +1881,7 @@ mod tests {
         );
     }
 
-    /// REQ-002: a source that does not exist on disk is a "source not found"
+    /// A source that does not exist on disk is a "source not found"
     /// error, not a kind mismatch. `paths::canonicalize` resolves a missing
     /// path lexically, so the existence check is this explicit probe.
     #[test]
@@ -1902,7 +1899,7 @@ mod tests {
         );
     }
 
-    /// REQ-002: a `[[file]]` source that is a file and a `[[directory]]`
+    /// A `[[file]]` source that is a file and a `[[directory]]`
     /// source that is a directory both validate cleanly — the matched-kind
     /// path raises no error.
     #[test]
@@ -1981,7 +1978,7 @@ mod tests {
         }
     }
 
-    // CHK-065: under the NonBlocking policy against a lock held by a
+    // Under the NonBlocking policy against a lock held by a
     // test-controlled guard, the apply returns the typed contention error
     // and writes no `<ts>.plan` or `<ts>.COMMIT`.
     #[tokio::test]
@@ -2023,7 +2020,7 @@ mod tests {
         drop(held);
     }
 
-    // CHK-066: under the Held policy with the caller's own exclusive guard,
+    // Under the Held policy with the caller's own exclusive guard,
     // the apply completes (it does not time out against its own lock) and a
     // `<ts>.COMMIT` record is present.
     #[tokio::test]
@@ -2058,7 +2055,7 @@ mod tests {
         );
     }
 
-    // CHK-068: under the NonBlocking policy against a lock held by a
+    // Under the NonBlocking policy against a lock held by a
     // test-controlled guard AND with a pending orphan `<ts>.plan` in the
     // journal, the apply returns the typed contention error, leaves the
     // orphan plan and its progress untouched (recovery never runs because
@@ -2127,7 +2124,7 @@ mod tests {
     /// A `symlink-tree` entry expands to one managed key per *live* source
     /// leaf, mirrored under the declared target the same way the executor
     /// materializes them — so a source leaf that no longer exists contributes
-    /// no key and its recorded target leaf will classify ORPHANED (CHK-014).
+    /// no key and its recorded target leaf will classify ORPHANED.
     #[test]
     fn insert_managed_targets_expands_symlink_tree_per_live_leaf() {
         use crate::status::manage_key;
@@ -2208,12 +2205,12 @@ mod tests {
         assert_eq!(got, expected);
     }
 
-    // --- SPEC-0005 T-004: plan-time disposition classification ------------
+    // --- plan-time disposition classification ------------
     //
     // These drive `classify_entry` / `classify_target` — the unit `plan`
     // calls during entry resolution to populate `ResolvedOperation` and the
     // durable `PlannedOperation`. They build tempdir fixtures matching the
-    // REQ-001 scenarios (CHK-001/002/003) so no repository discovery or
+    // scenarios so no repository discovery or
     // process-env mutation is needed (the workspace forbids `unsafe`).
 
     fn utf8_tempdir() -> (TempDir, Utf8PathBuf) {
@@ -2256,7 +2253,7 @@ mod tests {
             .aggregate
     }
 
-    // CHK-001: a symlink already pointing at its source, a copy whose bytes
+    // A symlink already pointing at its source, a copy whose bytes
     // match, and a template whose bytes match the rendered output all
     // classify Unchanged.
     #[test]
@@ -2309,7 +2306,7 @@ mod tests {
         );
     }
 
-    // CHK-002: with the copy target's bytes mutated and the symlink target
+    // With the copy target's bytes mutated and the symlink target
     // deleted, the copy classifies Update, the symlink classifies Create,
     // and an untouched template stays Unchanged.
     #[test]
@@ -2346,7 +2343,7 @@ mod tests {
         );
     }
 
-    // CHK-003: a copy-tree materialized to three leaves with one drifted out
+    // A copy-tree materialized to three leaves with one drifted out
     // of band classifies that one leaf Update and the other two Unchanged,
     // and the durable tree op's aggregate disposition is Update.
     #[test]
@@ -2400,7 +2397,7 @@ mod tests {
     }
 
     // A copy-tree whose target directory is absent classifies the whole op
-    // Create without enumerating leaves (DEC-007).
+    // Create without enumerating leaves.
     #[test]
     fn copy_tree_absent_target_is_create_aggregate() {
         let (_td, dir) = utf8_tempdir();
@@ -2458,8 +2455,7 @@ mod tests {
 
     // The durable plan carries the classified disposition: a satisfied copy
     // entry assembles a `PlannedOperation::Copy` whose disposition is
-    // Unchanged, threaded from `ResolvedEntry` through `assemble_plan_operations`
-    // (REQ-002).
+    // Unchanged, threaded from `ResolvedEntry` through `assemble_plan_operations`.
     #[test]
     fn assemble_plan_threads_disposition_onto_durable_operation() {
         let resolved = ResolvedEntry {

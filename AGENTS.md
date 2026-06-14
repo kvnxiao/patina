@@ -64,7 +64,7 @@ Each SPEC's `<assumptions>` block is authoritative; load-bearing for v1.0:
 - **`fs2` advisory lock semantics** — paper over POSIX `flock(2)` vs Windows `LockFileEx` for single-CLI and watcher↔CLI coordination.
 - **`tokio` file I/O remains `spawn_blocking`-backed** in v1.0; we accept the cost.
 - **MiniJinja strict-undefined** (including the Jinja2 `{% else %}` empty-string rule) is acceptable.
-- **Per-machine state directory must not live on cloud-sync paths** (iCloud / OneDrive / Dropbox / Box / Google Drive / Syncthing). SPEC-0002 adds doctor warnings; SPEC-0001 documents only.
+- **Per-machine state directory must not live on cloud-sync paths** (iCloud / OneDrive / Dropbox / Box / Google Drive / Syncthing). `patina doctor` warns when it does; the constraint is otherwise documented only.
 
 ---
 

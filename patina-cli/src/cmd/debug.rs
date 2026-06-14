@@ -1,5 +1,5 @@
 //! `patina debug journal <path>` / `patina debug drift-cache <path>`
-//! command logic (REQ-020, REQ-007).
+//! command logic.
 //!
 //! The `debug` group is a namespace for post-mortem tooling; `journal`
 //! decodes a binary `<ts>.plan` file and `drift-cache` decodes a watcher
@@ -17,7 +17,7 @@
 //! | Missing / unreadable path, version mismatch, corrupt body | 1 |
 //!
 //! A version mismatch (a file written by a newer binary) and a missing
-//! path are both generic failures under REQ-022's exit-code-1 bucket; the
+//! path are both generic failures under the exit-code-1 bucket; the
 //! reporter names the path and, for a mismatch, both versions.
 
 use crate::cli::DebugCommand;
@@ -167,7 +167,7 @@ mod tests {
 
     #[test]
     fn renders_a_valid_drift_cache_to_stdout_and_exits_zero() {
-        // CHK-018: a populated drift cache renders with the version, the
+        // A populated drift cache renders with the version, the
         // bound journal timestamp, the target path, and both hashes; exit 0.
         let dir = tempfile::tempdir().expect("tempdir");
         let dir = Utf8Path::from_path(dir.path()).expect("utf8 tempdir");

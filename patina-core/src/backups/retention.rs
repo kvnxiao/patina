@@ -1,5 +1,5 @@
 //! Count-based backup retention: keep the newest N apply cycles, GC the
-//! rest (REQ-015).
+//! rest.
 
 use super::BackupError;
 use camino::Utf8Path;
@@ -15,7 +15,7 @@ use camino::Utf8Path;
 ///
 /// Call this *after* an apply's `COMMIT` sentinel is durable. A failed
 /// apply — one that never committed — simply does not call this, so its
-/// historical backups are left intact (REQ-015).
+/// historical backups are left intact.
 ///
 /// A missing `backups_dir`, or one holding `keep` or fewer subdirectories,
 /// removes nothing and returns an empty list.

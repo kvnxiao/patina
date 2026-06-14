@@ -1,4 +1,4 @@
-//! `patina remove <path>` command logic (REQ-003).
+//! `patina remove <path>` command logic.
 //!
 //! `patina remove <path>` unmanages a target. It removes the target's
 //! `[[file]]` entry from its module's `patina.toml`, replaces the target on
@@ -10,20 +10,20 @@
 //!
 //! This is the first command to drive the engine re-apply under
 //! [`LockPolicy::Held`](patina_core::LockPolicy): it holds ONE exclusive
-//! advisory lock for the whole command (REQ-009) so the re-apply that writes
+//! advisory lock for the whole command so the re-apply that writes
 //! the fresh `<ts>.COMMIT` reuses the already-held guard instead of
 //! self-contending against the command's own lock.
 //!
 //! ## Reconstructing the last-applied content
 //!
-//! The committed apply record (SPEC-0001 REQ-029) maps each target to its
+//! The committed apply record maps each target to its
 //! canonical journaled source path. For a symlink or copy target the
 //! last-applied content is the bytes of that source, read from the
 //! repository. For a template-rendered target (the journaled source ends in
 //! `.tmpl`) the journal records only a blake3 hash of the rendered bytes, so
 //! the content is reconstructed by re-rendering the source through `MiniJinja`
 //! against the variable context resolved at remove time — the deliberate
-//! "reset to current source intent" semantics (DEC-005).
+//! "reset to current source intent" semantics.
 //!
 //! Module-level engine semantics (planning, journaling, manifest editing,
 //! repo discovery, template rendering) live in `patina_core`; this module is
@@ -76,7 +76,7 @@ pub async fn run(
     let target = expand_tilde(&args.path, &home);
     let target_key = manage_key(&target);
 
-    // REQ-009: take ONE exclusive advisory lock for the whole command. The
+    // Take ONE exclusive advisory lock for the whole command. The
     // re-apply below reuses this guard via LockPolicy::Held rather than
     // acquiring a second time (which would self-contend).
     let (state, guard) = acquire_state_and_lock()?;
@@ -94,14 +94,14 @@ pub async fn run(
         return Ok(report_unmanaged(args, reporter));
     };
 
-    // Confirm before mutating (REQ-009: never mutate without consent).
+    // Confirm before mutating (never mutate without consent).
     if !confirm(args, tty, reader, reporter) {
         return Ok(ExitCode::UserDeclined.code());
     }
 
     // Plan against the CURRENT managed set (before the entry is removed) so
     // the resolver carries the variable context a template target needs for
-    // its last-applied re-render (DEC-005).
+    // its last-applied re-render.
     let timestamp = current_timestamp();
     let resolved =
         plan_apply(&ApplyRequest::default(), &timestamp).context("failed to compute the plan")?;
@@ -142,7 +142,7 @@ pub async fn run(
 ///
 /// - Symlink / copy targets: the source bytes read from the repository.
 /// - Template targets (`.tmpl` source): re-rendered through `MiniJinja` against
-///   the variable context the plan resolved (DEC-005).
+///   the variable context the plan resolved.
 fn reconstruct_content(expected: &ExpectedTarget, resolved: &ResolvedPlan) -> Result<Vec<u8>> {
     let source = Utf8PathBuf::from(expected.source());
     if source.as_str().ends_with(TEMPLATE_SUFFIX) {
@@ -283,7 +283,7 @@ fn report_success(args: &RemoveArgs, target: &Utf8Path, reporter: &mut impl Repo
 }
 
 /// Build the `--json` success envelope. Deterministic for a given input (no
-/// timestamps / PIDs), so it satisfies REQ-010.
+/// timestamps / PIDs).
 fn success_envelope(target: &Utf8Path, resolved_target: &Utf8Path, purged: bool) -> String {
     let envelope = serde_json::json!({
         "removed": target.as_str(),

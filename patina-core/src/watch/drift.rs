@@ -1,5 +1,4 @@
-//! The watcher's drift-detection handler (SPEC-0003 REQ-007 / DEC-003 /
-//! DEC-004 / DEC-008 / DEC-013).
+//! The watcher's drift-detection handler.
 //!
 //! When a debounced batch touches a watched **content** target (a copy- or
 //! template-mode file Patina owns), the foreground loop hands it here. For each
@@ -10,19 +9,19 @@
 //! - writes a `drift` warn event to the structured log (`drift_path`,
 //!   `drift_expected_hash`, `drift_actual_hash`, in the underscore field-name
 //!   convention the watcher's `re_apply_*` metric fields already use);
-//! - upserts the `<state>/patina/drift.cache` atomically (the T-004
+//! - upserts the `<state>/patina/drift.cache` atomically (the
 //!   [`write_drift_cache`] tempfile-then-rename), keyed on the target path so a
 //!   repeated edit replaces rather than duplicates the entry;
 //! - emits a desktop notification (title `"Patina: drift detected"`, body
 //!   naming the target path) through the [`NotificationSink`], gated by the
-//!   per-target 60-second rate limit (DEC-004).
+//!   per-target 60-second rate limit.
 //!
 //! The cache is the watcher's notification ledger; it is **never** read by
-//! `patina status`, which derives DRIFTED from SPEC-0001 REQ-018's own live
-//! re-hash (REQ-007). The handler never auto-syncs the target back to source
-//! (DEC-003) — it only observes and notifies.
+//! `patina status`, which derives DRIFTED from its own live
+//! re-hash. The handler never auto-syncs the target back to source
+//! — it only observes and notifies.
 //!
-//! ## Clear-on-new-journal (REQ-007 `<done-when>`)
+//! ## Clear-on-new-journal
 //!
 //! A drift entry is only meaningful relative to the apply it was measured
 //! against. When a fresh `patina apply` commits, its journal becomes the new
@@ -32,21 +31,21 @@
 //! and clears the prior era's entries before binding the new timestamp and
 //! upserting this batch's divergences. A cache already bound to the current
 //! journal is left intact, so the per-target rate-limit ledger survives across
-//! batches within one journal era (DEC-004). This is what keeps a `patina debug
+//! batches within one journal era. This is what keeps a `patina debug
 //! drift-cache` view from showing entries mis-bound to a journal they were
 //! never measured against.
 //!
 //! ## Why the rate limit reads the cache's own `detected_at_unix`
 //!
-//! DEC-004 caps notifications at one per target per 60-second window. The
-//! window is keyed on the [`DriftEntry::detected_at_unix`] the previous drift
-//! detection persisted: before notifying, the handler checks the cache for a
-//! prior entry for the same target and suppresses the notification when the
-//! prior detection is within the window. The cache is therefore the single
+//! The rate limit caps notifications at one per target per 60-second window.
+//! The window is keyed on the [`DriftEntry::detected_at_unix`] the previous
+//! drift detection persisted: before notifying, the handler checks the cache
+//! for a prior entry for the same target and suppresses the notification when
+//! the prior detection is within the window. The cache is therefore the single
 //! source of truth for the rate limit (no parallel in-memory ledger), so the
 //! limit survives across debounced batches the same way the cache does.
 //!
-//! ## The notification sink (DEC-013)
+//! ## The notification sink
 //!
 //! The emit path sits behind [`NotificationSink`] so headless CI — which has no
 //! notification daemon — drives a capture sink that records `(title, body)`
@@ -62,10 +61,10 @@ use crate::watch::subscriptions::ContentTarget;
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
 
-/// Desktop-notification title for a detected drift (REQ-007 `<done-when>`).
+/// Desktop-notification title for a detected drift.
 pub const NOTIFICATION_TITLE: &str = "Patina: drift detected";
 
-/// The per-target notification rate-limit window in seconds (DEC-004): at most
+/// The per-target notification rate-limit window in seconds: at most
 /// one notification per target per this many seconds, regardless of how many FS
 /// events fire. Hardcoded in v1.0; configurability is deferred to v1.1.
 pub const RATE_LIMIT_WINDOW_SECS: i64 = 60;
@@ -74,7 +73,7 @@ pub const RATE_LIMIT_WINDOW_SECS: i64 = 60;
 /// (`<state>/patina/drift.cache`), the watcher's notification ledger.
 pub const DRIFT_CACHE_FILENAME: &str = "drift.cache";
 
-/// A sink the drift handler emits desktop notifications through (DEC-013).
+/// A sink the drift handler emits desktop notifications through.
 ///
 /// The production [`NotifySink`] calls `notify-rust`; a test sink records the
 /// `(title, body)` pairs in memory so the drift scenarios assert
@@ -88,7 +87,7 @@ pub trait NotificationSink {
 }
 
 /// The production notification sink: emits a real desktop notification via
-/// `notify-rust` (REQ-007 / DEC-013).
+/// `notify-rust`.
 ///
 /// A failure to reach the OS notification daemon (no `DBus` session bus on
 /// Linux, a denied notification permission on macOS) is logged at `warn` and
@@ -130,7 +129,7 @@ pub enum DriftOutcome {
     /// entry.
     Notified,
     /// Drift was detected but the notification was suppressed by the per-target
-    /// 60-second rate limit (DEC-004); the cache entry was still refreshed.
+    /// 60-second rate limit; the cache entry was still refreshed.
     RateLimited,
     /// The target could not be read (e.g. it was deleted between the FS event
     /// and the hash). Logged and skipped; no notification, no cache write. A
@@ -179,12 +178,12 @@ pub fn handle_target_events(
     sink: &impl NotificationSink,
 ) -> Vec<DriftOutcome> {
     let cache_path = state_dir.join(DRIFT_CACHE_FILENAME);
-    // The prior cache backs the rate-limit decision (DEC-004). A missing or
+    // The prior cache backs the rate-limit decision. A missing or
     // unreadable cache is treated as "no prior detections": the first drift
     // after a watcher start always notifies.
     let mut cache = load_drift_cache_file(&cache_path)
         .unwrap_or_else(|_| DriftCache::new(journal_ts, Vec::new()));
-    // Clear-on-new-journal (REQ-007 `<done-when>`): when a fresh `patina apply`
+    // Clear-on-new-journal: when a fresh `patina apply`
     // commits, its journal becomes the new truth and the prior drift cache is
     // stale — every entry was measured against the superseded apply's
     // expectations, so it must be dropped rather than silently re-labeled with
@@ -194,7 +193,7 @@ pub fn handle_target_events(
     // are cleared here before the new timestamp is bound and this batch's
     // divergences are upserted. A cache that is already bound to the current
     // journal is left intact, so the rate limit survives across batches within
-    // one journal era (DEC-004). A fresh/empty cache (no prior file) is bound to
+    // one journal era. A fresh/empty cache (no prior file) is bound to
     // the current timestamp by construction above and has nothing to clear.
     if cache.journal_ts != journal_ts {
         cache.entries.clear();
@@ -267,7 +266,7 @@ pub fn handle_target_events(
 }
 
 /// Whether `target` was notified within the last [`RATE_LIMIT_WINDOW_SECS`]
-/// seconds, per the cache's recorded `detected_at_unix` (DEC-004). A target
+/// seconds, per the cache's recorded `detected_at_unix`. A target
 /// with no prior entry, or a prior entry older than the window, is not
 /// rate-limited.
 fn recently_notified(cache: &DriftCache, target: &Utf8Path, now_unix: i64) -> bool {
@@ -312,7 +311,7 @@ mod tests {
     use std::sync::Mutex;
     use tempfile::TempDir;
 
-    /// A capture notification sink (DEC-013): records the `(title, body)` pairs
+    /// A capture notification sink: records the `(title, body)` pairs
     /// it was asked to emit so a test can assert on the count and content
     /// without a real OS notification daemon.
     #[derive(Default)]
@@ -354,7 +353,7 @@ mod tests {
         path
     }
 
-    /// CHK-011: an applied copy-mode target recorded with hash H1, overwritten
+    /// An applied copy-mode target recorded with hash H1, overwritten
     /// to bytes hashing to H2 ≠ H1, drives exactly one notification and a
     /// drift-cache entry naming the target with `expected = H1, actual = H2`.
     #[test]
@@ -381,7 +380,7 @@ mod tests {
         );
 
         assert_eq!(outcomes, vec![DriftOutcome::Notified]);
-        assert_eq!(sink.count(), 1, "exactly one notification (CHK-011)");
+        assert_eq!(sink.count(), 1, "exactly one notification");
         let (title, body) = sink.last().expect("one notification");
         assert_eq!(title, NOTIFICATION_TITLE);
         assert!(body.contains(".gitconfig"), "body names the target: {body}");
@@ -394,7 +393,7 @@ mod tests {
         assert_ne!(entry.expected_hash, entry.actual_hash);
     }
 
-    /// DEC-004: a second drift detection on the same target within the
+    /// A second drift detection on the same target within the
     /// 60-second window is rate-limited — at most one notification, though the
     /// cache entry is refreshed to the latest observation.
     #[test]
@@ -434,7 +433,7 @@ mod tests {
         assert_eq!(
             sink.count(),
             1,
-            "the second detection within 60s is suppressed (DEC-004)"
+            "the second detection within 60s is suppressed"
         );
         // The cache entry is still refreshed to the latest observation.
         let cache = load_drift_cache_file(dir.join(DRIFT_CACHE_FILENAME)).expect("cache");
@@ -544,7 +543,7 @@ mod tests {
         assert!(!dir.join(DRIFT_CACHE_FILENAME).exists());
     }
 
-    /// REQ-007 `<done-when>` (clear-on-new-journal): once a new `patina apply`
+    /// Clear-on-new-journal: once a new `patina apply`
     /// commits, its journal becomes the new truth, so the next drift batch the
     /// watcher processes against the new `journal_ts` drops the prior journal
     /// era's entries rather than re-labeling them with the new timestamp. The
@@ -616,8 +615,8 @@ mod tests {
     /// A repeated drift on the **same** target within one journal era keeps the
     /// rate-limit ledger intact: the timestamp does not advance, so the
     /// clear-on-new-journal path does not fire and the prior entry survives to
-    /// suppress the second notification (DEC-004 boundary against the new
-    /// clear-on-new-journal behaviour).
+    /// suppress the second notification (the rate-limit boundary against the
+    /// new clear-on-new-journal behaviour).
     #[test]
     fn same_journal_era_preserves_the_rate_limit_ledger() {
         let (_temp, dir) = temp_state();

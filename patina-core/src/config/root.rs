@@ -1,8 +1,7 @@
-//! Parsing of the repository root `patina.toml`'s variable tables
-//! (REQ-005).
+//! Parsing of the repository root `patina.toml`'s variable tables.
 //!
 //! The root manifest carries two variable sources that planning layers
-//! into the resolver (wired by T-004, not here):
+//! into the resolver (wired elsewhere, not here):
 //!
 //! - the repo-shared `[variables]` table, and
 //! - one `[profiles.<name>.variables]` table per declared profile.
@@ -10,7 +9,7 @@
 //! This module is parse-and-return only: it reads the root manifest,
 //! validates each table against the reserved `patina.*` namespace via
 //! [`crate::variables::reject_reserved_keys`], and hands back the raw
-//! [`toml::value::Table`]s for T-004 to push into the resolver. It does
+//! [`toml::value::Table`]s for the resolver to ingest. It does
 //! no layering and no precedence work.
 //!
 //! A missing manifest, a missing `[variables]` table, or a missing
@@ -35,7 +34,7 @@ use std::collections::BTreeMap;
 ///
 /// Both fields are empty when the manifest declares no such tables (or
 /// is absent). The raw [`toml::value::Table`] form is preserved
-/// verbatim so T-004 can push these into the resolver without a second
+/// verbatim so the resolver can ingest these without a second
 /// TOML pass, exactly as the per-module parser preserves its
 /// `[variables]` table.
 #[derive(Debug, Clone, Default)]
@@ -75,8 +74,7 @@ pub enum RootConfigError {
     },
 
     /// A root `[variables]` or `[profiles.<name>.variables]` table
-    /// declared a key inside the reserved `patina.*` namespace
-    /// (REQ-005 / REQ-007).
+    /// declared a key inside the reserved `patina.*` namespace.
     #[error(transparent)]
     Variable(#[from] VariableError),
 }

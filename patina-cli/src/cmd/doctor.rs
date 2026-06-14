@@ -1,17 +1,17 @@
-//! `patina doctor` read-only environment inspection (REQ-005, REQ-010).
+//! `patina doctor` read-only environment inspection.
 //!
 //! `patina doctor` inspects the per-machine state directory, the resolved
 //! repository path, the running OS, and the declared file modes in the
 //! repository, then emits an exhaustively-specified set of findings. The
-//! finding set is the complete v1.0 set; adding to it requires a SPEC
-//! amendment (DEC-004 keeps cloud-sync detection out of scope).
+//! finding set is the complete v1.0 set (cloud-sync detection is out of
+//! scope).
 //!
 //! The read-only path (no `--fix`) acquires only the SHARED advisory lock
-//! (REQ-009) with the read-only escape hatch: a
+//! with the read-only escape hatch: a
 //! [`SHARED_TIMEOUT`] expiry warns and proceeds
 //! rather than blocking the user.
 //!
-//! The `--fix` path (REQ-006) is mutating: it acquires the EXCLUSIVE lock,
+//! The `--fix` path is mutating: it acquires the EXCLUSIVE lock,
 //! then walks the fixable findings — Developer Mode missing on Windows and a
 //! missing `default_repo` pointer — prompting per finding (or auto-accepting
 //! under `--yes`) and remediating on accept. Non-fixable findings (UNC paths,
@@ -20,13 +20,13 @@
 //! flag. Each remediation that runs emits a structured `tracing` event
 //! recording the finding code, the chosen remediation, and the outcome.
 //!
-//! Exit codes follow REQ-005: 0 when only warning/info findings were raised;
+//! Exit codes: 0 when only warning/info findings were raised;
 //! 1 only on an error-level finding. The v1.0 finding set has no error-level
 //! finding, so the exit-1 path is reserved for future additions.
 //!
-//! Output follows REQ-010: human findings to stderr, `--json` emits a single
+//! Output: human findings to stderr, `--json` emits a single
 //! deterministic document on stdout (no timestamps / PIDs / random ids), so
-//! two runs against unchanged state are byte-identical (CHK-018). The findings
+//! two runs against unchanged state are byte-identical. The findings
 //! computation ([`compute_findings`]) is pure over its inputs so the whole
 //! finding set is unit-testable on the macOS/Linux CI, with the
 //! Windows-specific reads gated behind the [`Inputs`] struct the caller fills.
@@ -60,7 +60,7 @@ use patina_core::resolve_state_dir;
 use patina_core::windows_build_supports_dev_mode;
 use patina_core::write_persisted_default;
 
-/// A single doctor finding (REQ-005). Carries a stable [`FindingCode`], a
+/// A single doctor finding. Carries a stable [`FindingCode`], a
 /// [`Level`], a human message, and the path the finding concerns when one
 /// applies.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -79,7 +79,7 @@ pub struct Finding {
 }
 
 /// The stable code identifying a doctor finding. The string label
-/// ([`FindingCode::label`]) is part of the JSON contract (REQ-010) and the
+/// ([`FindingCode::label`]) is part of the JSON contract and the
 /// human output, so it is defined once on the enum.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FindingCode {
@@ -110,7 +110,7 @@ impl FindingCode {
 
 /// A finding's severity. `Info` is advisory, `Warning` does not fail the
 /// command, `Error` would (no v1.0 finding is `Error`; the variant reserves
-/// the exit-1 path for future additions per REQ-005).
+/// the exit-1 path for future additions).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Level {
     /// Advisory note; never affects the exit code.
@@ -169,7 +169,7 @@ pub struct Inputs {
 ///
 /// Without `--fix` this is the read-only diagnostic path: acquire the SHARED
 /// lock (with the read-only escape hatch) and report findings. With `--fix`
-/// (REQ-006) it is the mutating remediation path: acquire the EXCLUSIVE lock,
+/// it is the mutating remediation path: acquire the EXCLUSIVE lock,
 /// then prompt-and-remediate each fixable finding.
 ///
 /// # Errors
@@ -179,7 +179,7 @@ pub struct Inputs {
 /// failures are not fatal: doctor is a diagnostic, so it reports what it can
 /// and treats an unresolvable repository as "no repository-scoped findings"
 /// rather than aborting; a shared-lock timeout is downgraded to a stderr
-/// warning (REQ-009 read-only escape hatch). On the `--fix` path an
+/// warning (the read-only escape hatch). On the `--fix` path an
 /// exclusive-lock timeout maps to exit 4 via the engine-error chain, and a
 /// remediation failure (the persisted-default write, or the Windows helper
 /// running but leaving the flag off) is a hard error (exit 1).
@@ -228,15 +228,15 @@ fn run_report(args: &DoctorArgs, state: &Utf8Path, reporter: &mut impl Reporter)
     Ok(exit_code(&findings).code())
 }
 
-/// The interactive remediation path (`--fix`, REQ-006).
+/// The interactive remediation path (`--fix`).
 ///
 /// A non-TTY `--fix` without `--yes` cannot prompt, so it refuses up front
-/// with exit 1 (REQ-006) before taking any lock or mutating anything. With a
-/// TTY (or `--yes`) it acquires the EXCLUSIVE lock (REQ-009), recomputes the
+/// with exit 1 before taking any lock or mutating anything. With a
+/// TTY (or `--yes`) it acquires the EXCLUSIVE lock, recomputes the
 /// findings under the lock, then walks each fixable finding: prompt (or
 /// auto-accept under `--yes`) and remediate on accept. Non-fixable findings
 /// still surface as warnings. Each remediation that runs emits a structured
-/// `tracing` event (REQ-006).
+/// `tracing` event.
 fn run_fix(
     args: &DoctorArgs,
     state: &Utf8Path,
@@ -245,7 +245,7 @@ fn run_fix(
     reporter: &mut impl Reporter,
 ) -> Result<i32> {
     // Non-TTY without --yes: no per-finding consent is possible, so refuse
-    // before acquiring the lock or mutating anything (REQ-006).
+    // before acquiring the lock or mutating anything.
     if !args.yes && tty == Tty::NonInteractive {
         reporter.warn(
             "`patina doctor --fix` cannot prompt in a non-TTY shell; \
@@ -254,7 +254,7 @@ fn run_fix(
         return Ok(ExitCode::Generic.code());
     }
 
-    // REQ-009: take the EXCLUSIVE lock before any mutation — distinct from the
+    // Take the EXCLUSIVE lock before any mutation — distinct from the
     // read-only path's shared lock. A contention timeout reaches the exit-4
     // mapping through the engine-error chain.
     let lock_path = state.join("lock");
@@ -276,7 +276,7 @@ fn run_fix(
                 fix_dev_mode(args, tty, reader, reporter)?;
             }
             // Non-fixable findings: surface the warning, name why Patina
-            // cannot remedy them, and move on (REQ-006).
+            // cannot remedy them, and move on.
             FindingCode::WinUnc | FindingCode::WinOsOld => {
                 reporter.warn(&format!(
                     "[{}] {} is not auto-fixable: {}",
@@ -295,7 +295,7 @@ fn run_fix(
 }
 
 /// Remediate the `DOC-NO-DEFAULT-REPO` finding by writing the current working
-/// directory's canonical absolute path as the persisted default (REQ-006). The
+/// directory's canonical absolute path as the persisted default. The
 /// CWD must be a valid Patina repository; canonicalization failure is a hard
 /// error (exit 1).
 fn fix_default_repo(
@@ -333,7 +333,7 @@ fn fix_default_repo(
 }
 
 /// Remediate the `DOC-WIN-DEVMODE` finding by driving the one-time UAC
-/// elevation flow (REQ-007) and re-checking the registry afterward (REQ-006).
+/// elevation flow and re-checking the registry afterward.
 /// Off Windows this finding never fires, so the body is Windows-only; the
 /// non-Windows stub keeps the single call site compiling on every platform.
 #[cfg(windows)]
@@ -470,7 +470,7 @@ fn repository_declares_symlink(repo_root: &Utf8Path) -> bool {
 /// is unit-testable on any platform.
 ///
 /// The order is stable (UNC, Developer Mode, OS-too-old, then the
-/// state-directory note) so the rendered output is deterministic (REQ-010).
+/// state-directory note) so the rendered output is deterministic.
 #[must_use = "the computed findings drive the output and exit code"]
 pub fn compute_findings(inputs: &Inputs) -> Vec<Finding> {
     let mut findings = Vec::new();
@@ -531,7 +531,7 @@ pub fn compute_findings(inputs: &Inputs) -> Vec<Finding> {
     findings
 }
 
-/// The exit code REQ-005 assigns: 1 if any error-level finding was raised,
+/// The exit code: 1 if any error-level finding was raised,
 /// otherwise 0. The v1.0 finding set has no error-level finding, so this is 0
 /// in practice; the error branch reserves the exit-1 path for future additions.
 fn exit_code(findings: &[Finding]) -> ExitCode {
@@ -545,7 +545,7 @@ fn exit_code(findings: &[Finding]) -> ExitCode {
 /// Build the `--json` envelope: a single object with a `findings` array of
 /// `{code, level, message, path?}` objects. Deterministic for a given input
 /// (no timestamps / PIDs), so two runs against unchanged state are
-/// byte-identical (CHK-018, REQ-010).
+/// byte-identical.
 fn json_envelope(findings: &[Finding]) -> String {
     let array: Vec<serde_json::Value> = findings
         .iter()
@@ -564,8 +564,8 @@ fn json_envelope(findings: &[Finding]) -> String {
     serde_json::to_string_pretty(&envelope).unwrap_or_else(|_| "{}".to_owned())
 }
 
-/// Render the findings to stderr as one warning line each (REQ-010 routes all
-/// findings to stderr regardless of format). A clean environment prints a
+/// Render the findings to stderr as one warning line each (all
+/// findings go to stderr regardless of format). A clean environment prints a
 /// single "no findings" line so the user gets explicit confirmation.
 fn render_human(findings: &[Finding], reporter: &mut impl Reporter) {
     if findings.is_empty() {
@@ -667,7 +667,7 @@ mod tests {
 
     #[test]
     fn fix_in_non_tty_without_yes_refuses_exit_one() {
-        // REQ-006: a non-TTY --fix without --yes cannot prompt, so it refuses
+        // A non-TTY --fix without --yes cannot prompt, so it refuses
         // with exit 1 naming the missing --yes flag — before any lock or
         // mutation. The state path is never touched because we return first.
         let mut reader = ScriptedReader::new(&[]);
@@ -778,7 +778,7 @@ mod tests {
     #[test]
     fn windows_devmode_finding_requires_symlink_and_disabled() {
         // Symlink declared + Developer Mode disabled ⇒ the warning fires and
-        // names Developer Mode and the registry path (CHK-010).
+        // names Developer Mode and the registry path.
         let inputs = Inputs {
             is_windows: true,
             dev_mode: DevModeStatus::Disabled,

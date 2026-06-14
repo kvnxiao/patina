@@ -3,19 +3,19 @@
     reason = "integration tests use .expect() on fixture setup; allow-expect-in-tests covers #[cfg(test)] modules but not the helper functions in tests/*.rs integration crates."
 )]
 
-//! Integration coverage for backup-on-overwrite (T-012 / REQ-014).
+//! Integration coverage for backup-on-overwrite.
 //!
-//! The end-to-end `patina apply --yes` surface CHK-025 names cannot run
+//! The end-to-end `patina apply --yes` surface cannot run
 //! yet: the `apply` subcommand, the executor loop that calls the backup
-//! writer, and the symlink executor land in later tasks (T-014, T-016).
+//! writer, and the symlink executor land in later tasks.
 //! These tests drive the `patina_core::backups::backup_before_overwrite`
-//! entry point directly — the layer T-012 owns — by staging the on-disk
-//! state the SPEC scenarios describe (a pre-existing target, an absent
+//! entry point directly — the layer these tests own — by staging the on-disk
+//! states these tests cover (a pre-existing target, an absent
 //! target, a clean repository) and asserting the backup tree converges to
-//! the REQ-014 shape. Each test maps to one REQ-014 `<done-when>` bullet:
+//! the expected shape. Each test maps to one backup bullet:
 //!
-//! - CHK-025: overwriting a pre-existing `~/.zshrc` produces a backup holding
-//!   the original bytes at the mirrored path before the overwrite.
+//! - overwriting a pre-existing `~/.zshrc` produces a backup holding the
+//!   original bytes at the mirrored path before the overwrite.
 //! - "fresh target produces no backup entry": an absent target yields no backup
 //!   file.
 //! - "the repo is never written during apply": backups land under the state
@@ -81,7 +81,7 @@ fn snapshot(dir: &Utf8Path) -> Vec<(String, Vec<u8>)> {
 
 #[test]
 fn overwriting_a_pre_existing_target_stashes_the_original_bytes() {
-    // CHK-025: a pre-existing `~/.zshrc` with "original" is backed up before
+    // A pre-existing `~/.zshrc` with "original" is backed up before
     // the engine would replace it with a symlink.
     let scene = Scene::new();
     let zshrc = scene.home.join(".zshrc");
@@ -110,7 +110,7 @@ fn overwriting_a_pre_existing_target_stashes_the_original_bytes() {
 
 #[test]
 fn a_freshly_created_target_produces_no_backup_entry() {
-    // REQ-014 done-when: a target that does not pre-exist (a template render
+    // A target that does not pre-exist (a template render
     // to a new `~/.gitconfig`) yields no backup entry.
     let scene = Scene::new();
     let gitconfig = scene.home.join(".gitconfig");
@@ -128,7 +128,7 @@ fn a_freshly_created_target_produces_no_backup_entry() {
 
 #[test]
 fn backups_never_write_into_the_dotfiles_repository() {
-    // REQ-014 done-when: after backups run, the dotfiles repository is
+    // After backups run, the dotfiles repository is
     // byte-for-byte unchanged — the engine writes only under the state tree.
     let scene = Scene::new();
     // A repository whose source files the engine reads but must not mutate.

@@ -1,13 +1,13 @@
-//! The per-operation progress cursor (REQ-012).
+//! The per-operation progress cursor.
 //!
 //! As the executor completes each operation it appends one record to
 //! `<state>/patina/journal/<ts>.progress`. The cursor is advisory: it is
 //! written through to the kernel page cache but is **never** `fsync`-ed
 //! per operation. After a crash the last record may lag the real
 //! filesystem state by at most one operation, which is why crash
-//! recovery (T-011) probes the filesystem rather than trusting the
+//! recovery probes the filesystem rather than trusting the
 //! cursor. Skipping the per-op `fsync` is what keeps a 100-operation
-//! apply from paying 100 durability syscalls (REQ-012 `<behavior>`).
+//! apply from paying 100 durability syscalls.
 //!
 //! Each record is a fixed-width little-endian `u32` operation index
 //! followed by a single completion-marker byte. The fixed width makes a
@@ -53,7 +53,7 @@ impl ProgressCursor {
     }
 
     /// Append a completion record for `op_index`. Deliberately not
-    /// `fsync`-ed (REQ-012).
+    /// `fsync`-ed.
     ///
     /// # Errors
     ///
@@ -73,7 +73,7 @@ impl ProgressCursor {
 
     /// Decode the completed operation indices recorded in `bytes`,
     /// discarding any torn trailing record shorter than `RECORD_LEN`.
-    /// Used by crash recovery (T-011) to read back a cursor that was
+    /// Used by crash recovery to read back a cursor that was
     /// never `fsync`-ed.
     #[must_use = "the decoded indices drive recovery reconciliation"]
     pub fn decode_completed(bytes: &[u8]) -> Vec<u32> {

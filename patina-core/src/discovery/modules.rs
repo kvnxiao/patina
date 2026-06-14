@@ -1,4 +1,4 @@
-//! Module enumeration (REQ-004).
+//! Module enumeration.
 //!
 //! Walks the resolved repository root and returns module handles for
 //! every `patina.toml` in an immediate subdirectory of the root.
@@ -93,8 +93,7 @@ impl From<ManifestHeadError> for ModuleDiscoveryError {
 /// manifest is validated (must declare `root = true`) and per-module
 /// manifests are validated (must omit `root` or declare it `false`).
 /// A `patina.toml` at depth ≥ 2 below the root is a hard error
-/// (T-004 will parse `[[file]]` / `[[hook]]` schemas; here we only
-/// validate structure).
+/// (here we only validate structure).
 ///
 /// # Errors
 ///
@@ -149,8 +148,8 @@ pub fn discover_modules(root: &Utf8Path) -> Result<Vec<ModuleHandle>, ModuleDisc
         if !module_manifest.is_file() {
             // Subdirectory without a patina.toml is silently skipped —
             // not every directory under the root is a module (e.g.
-            // `.git/`, scratch files). T-004 / T-014 add stricter
-            // module-content validation.
+            // `.git/`, scratch files). Stricter module-content
+            // validation is added later.
             continue;
         }
 

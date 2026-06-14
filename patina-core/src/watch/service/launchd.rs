@@ -1,5 +1,4 @@
-//! The macOS `launchd` `LaunchAgent` service backend (SPEC-0003 REQ-001 /
-//! REQ-003).
+//! The macOS `launchd` `LaunchAgent` service backend.
 //!
 //! `install` writes a per-user `LaunchAgent` plist to
 //! `~/Library/LaunchAgents/com.patina.watcher.plist` (mode `0644`) with
@@ -11,7 +10,7 @@
 //! service out, and removes the plist; `status` reads
 //! `launchctl print gui/$(id -u)/com.patina.watcher` for liveness, last-fired,
 //! and last-exit, and recovers the watcher's log counters from the rotated
-//! structured log (DEC-012).
+//! structured log.
 //!
 //! None of these paths require admin or sudo: a per-user GUI-domain
 //! `LaunchAgent` is owned by the invoking user.
@@ -34,7 +33,7 @@ use std::process::Command;
 /// watcher's log counters from `<state_dir>/logs/`.
 #[derive(Debug, Clone)]
 pub struct LaunchdBackend {
-    /// The resolved per-machine state root, for log-counter recovery (DEC-012).
+    /// The resolved per-machine state root, for log-counter recovery.
     state_dir: Utf8PathBuf,
 }
 
@@ -46,7 +45,7 @@ impl LaunchdBackend {
     }
 
     /// The current user's numeric uid, for the `gui/<uid>` `launchd` domain
-    /// target. Resolved via `id -u`, exactly the substitution the SPEC's
+    /// target. Resolved via `id -u`, exactly the substitution the
     /// `launchctl bootstrap gui/$(id -u)` command names; falls back to the
     /// `UID` environment variable, then `0`, if `id` is unavailable.
     fn uid() -> String {
@@ -187,7 +186,7 @@ impl ServiceBackend for LaunchdBackend {
         // `launchctl print` exits non-zero when the service is installed but
         // not currently loaded; treat that as "not running" rather than an
         // error so a stopped-but-installed service still produces a clean
-        // status object (CHK-006).
+        // status object.
         let print = Command::new("launchctl")
             .args(["print", &Self::service_target()])
             .output()
@@ -229,7 +228,7 @@ fn write_plist(path: &Utf8Path, binary: &Utf8Path) -> Result<(), ServiceError> {
     Ok(())
 }
 
-/// Set the plist file's permission bits to `0644` (REQ-001 / CHK-001).
+/// Set the plist file's permission bits to `0644`.
 #[cfg(unix)]
 fn set_mode_0644(path: &Utf8Path) -> Result<(), ServiceError> {
     use std::os::unix::fs::PermissionsExt;
@@ -251,7 +250,7 @@ fn set_mode_0644(_path: &Utf8Path) -> Result<(), ServiceError> {
 
 /// Render the `LaunchAgent` plist XML for the watcher service: `RunAtLoad =
 /// true`, `KeepAlive` for on-failure restart, and `ProgramArguments` of the
-/// canonical `binary` plus `watch --foreground` (REQ-001).
+/// canonical `binary` plus `watch --foreground`.
 fn render_plist(binary: &Utf8Path) -> String {
     use std::fmt::Write as _;
 
@@ -354,7 +353,7 @@ mod tests {
         let binary = Utf8Path::new("/usr/local/bin/patina");
         let plist = render_plist(binary);
 
-        // REQ-001: the plist must declare the service label, RunAtLoad, the
+        // The plist must declare the service label, RunAtLoad, the
         // KeepAlive on-failure restart, and the foreground program arguments.
         assert!(plist.contains(&format!("<string>{SERVICE_LABEL}</string>")));
         assert!(plist.contains("<key>RunAtLoad</key>\n\t<true/>"));
@@ -404,7 +403,7 @@ gui/501/com.patina.watcher = {
 
     #[test]
     fn parse_launchctl_print_treats_a_non_running_state_as_stopped() {
-        // CHK-006: an installed-but-stopped service reports running = false and
+        // an installed-but-stopped service reports running = false and
         // surfaces the recorded last exit code.
         let dump = "\
 gui/501/com.patina.watcher = {
@@ -422,7 +421,7 @@ gui/501/com.patina.watcher = {
     fn write_plist_sets_the_file_mode_to_0644() {
         use std::os::unix::fs::PermissionsExt;
 
-        // CHK-001: the written LaunchAgent plist must exist with mode 0644.
+        // the written LaunchAgent plist must exist with mode 0644.
         // `write_plist` is pure filesystem work against a path argument, so a
         // tempdir-scoped write fully exercises the mode without launchctl.
         let tmp = tempfile::tempdir().expect("tempdir");
@@ -435,7 +434,7 @@ gui/501/com.patina.watcher = {
             .permissions()
             .mode();
         // Compare only the permission bits; the file-type bits in `mode` are
-        // platform-set and not what CHK-001 constrains.
+        // platform-set and not what this test constrains.
         assert_eq!(
             mode & 0o777,
             0o644,
@@ -446,7 +445,7 @@ gui/501/com.patina.watcher = {
 
     #[test]
     fn parse_launchctl_print_reports_none_exit_code_when_never_run() {
-        // CHK-006: `last_exit_code` is None when the service has no recorded
+        // `last_exit_code` is None when the service has no recorded
         // exit (never run since load).
         let dump = "gui/501/com.patina.watcher = {\n\tstate = waiting\n}\n";
         let parsed = parse_launchctl_print(dump);

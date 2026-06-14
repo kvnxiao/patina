@@ -1,5 +1,5 @@
 //! `patina rollback`: reverse the most recent committed apply via the
-//! journal and backups (REQ-019, T-018).
+//! journal and backups.
 //!
 //! Rollback is the inverse of apply. It finds the most recent committed
 //! apply that has not already been rolled back, replays each operation's
@@ -14,9 +14,9 @@
 //! first, then backup *presence* decides between restore and delete. The three
 //! outcomes, in evaluation order:
 //!
-//! - A target the apply recorded as `Unchanged` (REQ-006) is *left in place*:
-//!   the apply skipped both its write and its backup, so its live state already
-//!   is the pre-apply state. The backup is never consulted.
+//! - A target the apply recorded as `Unchanged` is *left in place*: the apply
+//!   skipped both its write and its backup, so its live state already is the
+//!   pre-apply state. The backup is never consulted.
 //! - A target with a backup under `<state>/patina/backups/<ts>/` is an
 //!   *overwrite*: the apply replaced a pre-existing file, so the original bytes
 //!   are restored from the backup.
@@ -24,9 +24,9 @@
 //!   nothing, so reversing means deleting it.
 //!
 //! Either way the post-rollback state of each target matches the apply's
-//! pre-apply state (REQ-019 `<done-when>`).
+//! pre-apply state.
 //!
-//! ## Per-`[[file]]`-entry atomicity (REQ-019)
+//! ## Per-`[[file]]`-entry atomicity
 //!
 //! A multi-target `[[file]]` entry reverts as an atomic unit: every target
 //! in the entry reaches its pre-apply state, or the entry fails and every
@@ -36,7 +36,7 @@
 //! implemented in `replay` by snapshotting each target's post-apply state
 //! before mutating, then rolling the snapshot back in on any failure.
 //!
-//! ## Locking (REQ-023)
+//! ## Locking
 //!
 //! Rollback is mutating, so it takes the **exclusive** advisory lock for
 //! its whole duration, exactly like apply.
@@ -70,7 +70,7 @@ pub enum RollbackError {
     /// A multi-target `[[file]]` entry could not be reverted as a unit: a
     /// target's restore/delete failed and the entry's already-reverted
     /// targets were rolled forward to their post-apply state, so no partial
-    /// restore is left behind (REQ-019). The CLI surfaces this as exit
+    /// restore is left behind. The CLI surfaces this as exit
     /// code 1.
     #[error(
         "rollback of `[[file]]` entry {entry} failed and was reverted to its \
@@ -152,7 +152,7 @@ fn reverse_record(
 
 /// One `[[file]]` entry's recorded targets, grouped for atomic rollback.
 /// Each target carries its commit-recorded disposition so [`replay_entry`]
-/// can leave `Unchanged` targets in place (REQ-006).
+/// can leave `Unchanged` targets in place.
 struct EntryGroup<'a> {
     entry: u32,
     targets: Vec<RevertTarget<'a>>,
@@ -161,9 +161,8 @@ struct EntryGroup<'a> {
 /// Group a record's targets by their `entry` index, preserving the order in
 /// which entries (and targets within an entry) were applied. Consecutive
 /// targets sharing an entry index belong to the same `[[file]]` entry and
-/// revert as one atomic unit (REQ-019). Each target carries its recorded
-/// disposition so an `Unchanged` target is left untouched on rollback
-/// (REQ-006).
+/// revert as one atomic unit. Each target carries its recorded
+/// disposition so an `Unchanged` target is left untouched on rollback.
 fn group_by_entry(record: &ApplyRecord) -> Vec<EntryGroup<'_>> {
     let mut groups: Vec<EntryGroup<'_>> = Vec::new();
     for expected in &record.targets {

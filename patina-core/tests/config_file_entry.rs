@@ -4,7 +4,7 @@
 )]
 
 //! Integration tests for the kind-typed `[[file]]` / `[[directory]]`
-//! table-array schema (REQ-001).
+//! table-array schema.
 
 use patina_core::ConfigParseError;
 use patina_core::FileMode;
@@ -36,7 +36,7 @@ mode = "symlink"
 
 #[test]
 fn file_with_omitted_mode_resolves_to_file_kind_symlink() {
-    // CHK-001: a [[file]] with source = "zshrc", target = "~/.zshrc" and
+    // A [[file]] with source = "zshrc", target = "~/.zshrc" and
     // no mode resolves to file kind and symlink mode.
     let toml = r#"
 [[file]]
@@ -51,7 +51,7 @@ target = "~/.zshrc"
 
 #[test]
 fn directory_symlink_tree_resolves_to_directory_kind_per_leaf_symlink() {
-    // CHK-002: a [[directory]] with source = "mpv", target = "~/.config/mpv",
+    // A [[directory]] with source = "mpv", target = "~/.config/mpv",
     // mode = "symlink-tree" resolves to directory kind and per-leaf symlink.
     let toml = r#"
 [[directory]]
@@ -73,7 +73,7 @@ mode = "symlink-tree"
 
 #[test]
 fn directory_omitted_mode_resolves_to_atomic_whole_directory_symlink() {
-    // REQ-001 done-when: a [[directory]] with mode omitted resolves to the
+    // A [[directory]] with mode omitted resolves to the
     // atomic whole-directory symlink (the prior `symlink-dir` behavior).
     let toml = r#"
 [[directory]]
@@ -87,7 +87,7 @@ target = "~/.config/nvim"
 
 #[test]
 fn directory_copy_resolves_to_recursive_copy() {
-    // REQ-001 done-when: a [[directory]] with mode = "copy" resolves to a
+    // A [[directory]] with mode = "copy" resolves to a
     // recursive directory copy (the prior `copy-tree` behavior).
     let toml = r#"
 [[directory]]
@@ -122,7 +122,7 @@ mode = "copy"
 #[test]
 fn carries_optional_when_expression_verbatim() {
     // The optional `when` field is parsed and carried as raw source
-    // (evaluation lands in T-005).
+    // (evaluation lands later).
     let toml = r#"
 [[file]]
 source = "wmrc"
@@ -139,7 +139,7 @@ when = "patina.os == 'windows'"
 
 #[test]
 fn file_with_symlink_tree_mode_is_rejected_naming_accepted_file_modes() {
-    // CHK-003: a [[file]] declaring mode = "symlink-tree" fails with a
+    // A [[file]] declaring mode = "symlink-tree" fails with a
     // typed error whose message contains `symlink-tree` and the accepted
     // [[file]] modes `symlink` and `copy`.
     let toml = r#"
@@ -161,7 +161,7 @@ mode = "symlink-tree"
 
 #[test]
 fn file_with_removed_dir_mode_names_accepted_file_modes() {
-    // REQ-001 done-when: a [[file]] declaring a removed `symlink-dir` /
+    // A [[file]] declaring a removed `symlink-dir` /
     // `copy-tree` mode is rejected naming the accepted [[file]] modes.
     for removed in ["symlink-dir", "copy-tree"] {
         let toml = format!(
@@ -186,7 +186,7 @@ mode = "{removed}"
 
 #[test]
 fn directory_with_removed_mode_names_accepted_directory_modes() {
-    // REQ-001 done-when: a [[directory]] declaring `symlink-dir` or
+    // A [[directory]] declaring `symlink-dir` or
     // `copy-tree` is rejected naming the accepted [[directory]] modes
     // `symlink`, `symlink-tree`, `copy`.
     for removed in ["symlink-dir", "copy-tree"] {
@@ -213,7 +213,7 @@ mode = "{removed}"
 
 #[test]
 fn directory_with_tmpl_source_is_rejected() {
-    // REQ-001: a [[directory]] whose source ends in `.tmpl` is rejected —
+    // A [[directory]] whose source ends in `.tmpl` is rejected —
     // template render is file-only.
     let toml = r#"
 [[directory]]
@@ -366,7 +366,7 @@ target = "~/.gitconfig"
 
 #[test]
 fn both_tables_parse_together_into_their_respective_vecs() {
-    // REQ-001 behavior: a manifest with both a [[file]] (mode omitted) and
+    // A manifest with both a [[file]] (mode omitted) and
     // a [[directory]] with mode = "symlink-tree" resolves the file entry to
     // a single-file symlink and the directory entry to per-leaf symlinks.
     let toml = r#"

@@ -3,19 +3,19 @@
     reason = "integration tests use .expect() on fixture setup; allow-expect-in-tests covers #[cfg(test)] modules but not the helper functions in tests/*.rs integration crates."
 )]
 
-//! Integration coverage for crash recovery (T-011 / REQ-013).
+//! Integration coverage for crash recovery.
 //!
-//! The end-to-end `patina apply --yes` surface CHK-024 names cannot run
+//! The end-to-end `patina apply --yes` surface cannot run
 //! yet: the `apply` subcommand, the executor loop, and the backup writer
-//! land in later tasks (T-012, T-014, T-016). These tests drive the
+//! land in later tasks. These tests drive the
 //! `patina_core::journal::recover_orphans` entry point directly — the
-//! layer T-011 owns — by staging the on-disk crash state the SPEC
-//! scenarios describe (a flushed `<ts>.plan`, a per-apply backup tree, no
+//! layer these tests own — by staging the on-disk crash states these tests
+//! cover (a flushed `<ts>.plan`, a per-apply backup tree, no
 //! `<ts>.COMMIT`) and asserting recovery converges backward to the
-//! pre-apply state. Each test maps to one REQ-013 `<done-when>` bullet:
+//! pre-apply state. Each test maps to one recovery bullet:
 //!
-//! - CHK-024: N-of-M completed ops are reversed from backups; orphan plan and
-//!   progress files are removed (the headline scenario).
+//! - N-of-M completed ops are reversed from backups; orphan plan and progress
+//!   files are removed (the headline scenario).
 //! - "interrupted before any op executed": no targets touched, orphan files
 //!   removed, filesystem unchanged.
 //! - "recovery is idempotent": a second pass is a clean no-op.
@@ -74,7 +74,7 @@ impl Scene {
     fn stage_overwrite(&self, name: &str, original: &str, new_content: &str) -> PlannedOperation {
         let target = self.target(name);
         // The engine stashed the original under the per-apply backup root
-        // before mutating (REQ-014 layout).
+        // before mutating.
         let backup = mirror_backup_path(&self.backups, TS, &target);
         if let Some(parent) = backup.parent() {
             fs_err::create_dir_all(parent).expect("backup parent");
@@ -132,7 +132,7 @@ impl Scene {
     }
 }
 
-// CHK-024: an apply that completed 3 of 5 file operations before SIGKILL,
+// An apply that completed 3 of 5 file operations before SIGKILL,
 // with the backup directory intact, when recovery runs, restores the 3
 // previously-overwritten targets from backups to their pre-apply content
 // and removes the orphaned plan + progress files.
@@ -175,7 +175,7 @@ fn restores_overwritten_targets_and_clears_orphan_files() {
     assert!(!scene.progress_exists(), "orphan progress removed");
 }
 
-// REQ-013 <done-when>: an apply interrupted before any operation executed
+// An apply interrupted before any operation executed
 // leaves the filesystem in the pre-apply state; the plan and progress
 // files are removed.
 #[test]
@@ -196,7 +196,7 @@ fn interrupted_before_any_op_touches_nothing_and_clears_orphan() {
     assert!(!scene.progress_exists(), "orphan progress removed");
 }
 
-// REQ-013 <done-when>: recovery is idempotent — running it twice yields
+// Recovery is idempotent — running it twice yields
 // the same final state as running it once, with no error on the second
 // pass.
 #[test]
@@ -236,7 +236,7 @@ fn recovery_is_idempotent() {
     assert!(!b_exists_after_first);
 }
 
-// REQ-013 <done-when>: recovery never proceeds forward. An operation that
+// Recovery never proceeds forward. An operation that
 // never started (fresh target absent, no backup) is left absent — recovery
 // rolls back, it does not finish the half-done apply by creating it.
 #[test]
@@ -262,7 +262,7 @@ fn recovery_rolls_back_and_never_completes_an_unstarted_op() {
     );
 }
 
-// REQ-013 <behavior> / probe-over-cursor: a progress cursor that lies
+// Probe-over-cursor: a progress cursor that lies
 // (reports more completed than the filesystem reflects) does not change
 // the reversal, because recovery probes the filesystem and consults the
 // backup directory rather than trusting the cursor.

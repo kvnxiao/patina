@@ -1,5 +1,4 @@
-//! Windows `ERROR_SHARING_VIOLATION` retry-with-backoff wrapper (REQ-010,
-//! DEC-006).
+//! Windows `ERROR_SHARING_VIOLATION` retry-with-backoff wrapper.
 //!
 //! On Windows, antivirus scans, cloud-sync uploads, and indexers
 //! transiently hold a file open with no sharing, so a write that would
@@ -9,7 +8,7 @@
 //! backoff (`50, 100, 200, 400, 800, 1600` ms — six retries, ~3.15s total).
 //! Any other error is re-raised immediately, and the violation is re-raised
 //! unchanged after the sixth failed retry so the normal apply
-//! failure/rollback path (REQ-013 in SPEC-0001) handles it.
+//! failure/rollback path handles it.
 //!
 //! On macOS and Linux there is no `FILE_SHARE_NONE` equivalent for ordinary
 //! writes, so the wrapper is a pure pass-through: it runs the operation
@@ -26,7 +25,7 @@
 #[cfg(windows)]
 const ERROR_SHARING_VIOLATION: i32 = 32;
 
-/// Fixed exponential backoff between retries, in milliseconds (DEC-006). Six
+/// Fixed exponential backoff between retries, in milliseconds. Six
 /// entries means six retries after the initial attempt; the cumulative wait
 /// is `50+100+200+400+800+1600 = 3150` ms (~3.15s) before the violation is
 /// re-raised as a real failure.
@@ -87,7 +86,7 @@ pub(crate) fn with_sharing_violation_retry<T>(
     #[cfg(not(windows))]
     {
         // No `FILE_SHARE_NONE` equivalent for ordinary writes off Windows:
-        // run once and surface the result as-is (REQ-010 pass-through).
+        // run once and surface the result as-is (pass-through).
         op()
     }
 }
