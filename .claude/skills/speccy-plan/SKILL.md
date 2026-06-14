@@ -487,10 +487,19 @@ fallback string
 `Co-Authored-By: Speccy Skill Pack <noreply@anthropic.com>`.
 
 
+7. **Continue into decompose.** With `SPEC.md` committed, invoke
+   `/speccy-decompose SPEC-NNNN` to produce `TASKS.md`.
+   Follow it inline in this session, not as an isolated spawned sub-agent.
+   Sub-agents cannot spawn sub-agents, so the fan-out runs inline in the
+top-level session.
+   Decompose fans out to `plan-architect`, and its exit owns the pre-loop
+   checkpoint — so this skill surfaces none of its own.
+
 ## Exit
 
 `SPEC.md` is written, self-reviewed once, and committed alone on a feature
 branch — `TASKS.md` is `/speccy-decompose`'s commit, not this
-skill's, so the new-spec path lands two commits (one per skill). Single pass,
-no loop. Next step: `/speccy-decompose SPEC-NNNN` to decompose
-into `TASKS.md`.
+skill's, so the new-spec path lands two commits (one per skill). This skill
+then continues into `/speccy-decompose SPEC-NNNN` (step 7),
+which produces `TASKS.md` and stops at the pre-loop checkpoint. Single pass,
+no loop.

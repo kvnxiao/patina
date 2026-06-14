@@ -1,6 +1,6 @@
 ---
 name: speccy-orchestrate
-description: 'Drive the Speccy implementation + review loop for one SPEC end-to-end by chaining speccy-work, speccy-review, and speccy-vet until the spec is ready to ship. Use when the user says "orchestrate SPEC-NNNN", "speccy-orchestrate SPEC-NNNN", "run the full loop on SPEC-NNNN", "autopilot SPEC-NNNN", or wants to drive a spec from current state to ready-to-ship without chaining single-task skills by hand. Requires: an existing SPEC-NNNN with TASKS.md. Stops one step before shipping (calling speccy-ship is irreversible — it opens a PR) and asks the user before continuing. Do NOT trigger for ad-hoc "implement one task" or "review one task" asks — prefer speccy-work or speccy-review for single-task primitives.'
+description: 'Drive the Speccy implementation + review loop for one SPEC end-to-end by chaining speccy-work, speccy-review, and speccy-vet until the spec is ready to ship. Use when the user says "orchestrate SPEC-NNNN", "speccy-orchestrate SPEC-NNNN", "run the full loop on SPEC-NNNN", "autopilot SPEC-NNNN", or wants to drive a spec from current state to ready-to-ship without chaining single-task skills by hand. Requires: an existing SPEC-NNNN with TASKS.md. Stops one step before shipping (speccy-ship pushes a branch and opens a PR, an outward-facing action) and asks the user before continuing. Do NOT trigger for ad-hoc "implement one task" or "review one task" asks — prefer speccy-work or speccy-review for single-task primitives.'
 ---
 
 # /speccy-orchestrate
@@ -34,8 +34,8 @@ Later sections reference this as "Why fan-outs run inline".
   against existing tasks; it does not plan or decompose.
 
 Stops one step before invoking `/speccy-ship`
-(ship opens a PR — irreversible — and is always confirmed by the
-user). Do not invoke this skill for ad-hoc "implement one task" or
+(ship pushes a branch and opens a PR — an outward-facing action —
+and is always confirmed by the user). Do not invoke this skill for ad-hoc "implement one task" or
 "review one task" asks; prefer the single-task primitives.
 
 ## Argument
@@ -285,8 +285,9 @@ workflow has already completed and the only remaining step is user
 confirmation before opening a PR.
 
 Ask the user via `AskUserQuestion` whether to invoke
-`/speccy-ship` now. Ship opens a PR — irreversible —
-so this confirmation is always explicit; never auto-ship.
+`/speccy-ship` now. Ship pushes a branch and opens a
+PR — an outward-facing action that notifies reviewers and triggers
+CI — so this confirmation is always explicit; never auto-ship.
 
 - On confirm: spawn a `speccy-ship` sub-agent.
   Invoke the `Task` tool with `subagent_type: "speccy-ship"`. The
