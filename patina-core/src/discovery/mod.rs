@@ -5,12 +5,11 @@
 //!
 //! - [`repo`] resolves the dotfiles repository root from the `PATINA_REPO`
 //!   environment variable, a walk-up from the current working directory, or a
-//!   persisted default path under the per-machine state directory (REQ-003).
+//!   persisted default path under the per-machine state directory.
 //! - [`modules`] enumerates per-module `patina.toml` files in immediate
-//!   subdirectories of the resolved root (REQ-004).
+//!   subdirectories of the resolved root.
 //!
-//! T-005 will land a shared `state_dir::resolve()` helper; until then
-//! the persisted-default path is computed OS-specifically inside
+//! The persisted-default path is computed OS-specifically inside
 //! [`repo`] so [`repo::resolve_repository_root`] can attempt all three
 //! sources for its triple-fail error message.
 
@@ -34,8 +33,7 @@ use serde::Deserialize;
 pub(crate) const MANIFEST_FILENAME: &str = "patina.toml";
 
 /// Minimal projection of `patina.toml` covering only the `[patina]`
-/// table fields this module needs to validate. Full `[[file]]` /
-/// `[[hook]]` schemas land in T-004.
+/// table fields this module needs to validate.
 #[derive(Debug, Deserialize, Default)]
 pub(crate) struct ManifestHead {
     #[serde(default)]

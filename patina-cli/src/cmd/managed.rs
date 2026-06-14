@@ -1,8 +1,8 @@
 //! Shared scaffolding for the commands that edit a single managed target
 //! under one held exclusive lock and re-journal by re-applying.
 //!
-//! `remove` (REQ-003) and `promote` (REQ-004) both: take ONE exclusive
-//! advisory lock for the whole command (REQ-009), locate the journaled
+//! `remove` and `promote` both: take ONE exclusive
+//! advisory lock for the whole command, locate the journaled
 //! [`ExpectedTarget`](patina_core::ExpectedTarget) for an input path in the
 //! latest commit, do
 //! command-specific filesystem work, and then re-journal by driving the
@@ -35,7 +35,7 @@ use patina_core::resolve_state_dir;
 pub(crate) const TEMPLATE_SUFFIX: &str = ".tmpl";
 
 /// Resolve the per-machine state directory and acquire the engine's
-/// exclusive advisory lock at `<state>/lock` (REQ-009).
+/// exclusive advisory lock at `<state>/lock`.
 ///
 /// The returned guard is held by the caller for the whole command and reused
 /// by [`rejournal`] via [`LockPolicy::Held`], so the re-apply does not

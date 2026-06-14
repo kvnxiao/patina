@@ -1,4 +1,4 @@
-//! Per-machine state directory resolution (REQ-016).
+//! Per-machine state directory resolution.
 //!
 //! The engine stores its journal, backups, persisted profile choice,
 //! persisted default repository path, and advisory lock under a single
@@ -17,11 +17,11 @@
 //! same host returns the same path and is a filesystem no-op.
 //!
 //! The lazily-created files `profile`, `default_repo`, and `lock`
-//! belong to their owning subsystems (T-007, T-003, T-013); this
+//! belong to their owning subsystems; this
 //! module only creates the directory tree.
 //!
 //! `<state>/patina/logs/` is deliberately NOT created here. The watcher
-//! owns that directory and its rotating-log stack (SPEC-0003 REQ-009),
+//! owns that directory and its rotating-log stack,
 //! creating it lazily on first start via [`crate::watch::logging`];
 //! [`resolve`] creates only `journal/` and `backups/`.
 //!

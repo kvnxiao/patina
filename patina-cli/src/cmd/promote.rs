@@ -1,4 +1,4 @@
-//! `patina promote <target>` command logic (REQ-004).
+//! `patina promote <target>` command logic.
 //!
 //! `patina promote <target>` reconciles a copy-mode target that the user
 //! edited outside Patina: it copies the target's current bytes back into the
@@ -12,15 +12,15 @@
 //!   source — the bytes the user sees through the link are the repository bytes
 //!   — so there is nothing to copy back and promotion is meaningless.
 //! - **Template-rendered targets** (the journaled source ends in `.tmpl`).
-//!   Templating is non-invertible (DEC-006): the rendered bytes cannot be
-//!   turned back into a template, so promotion cannot recover the source.
+//!   Templating is non-invertible: the rendered bytes cannot be turned back
+//!   into a template, so promotion cannot recover the source.
 //!
 //! A `copy-tree` target promotes the individual leaf file named, not the whole
 //! tree: the journal carries one [`ExpectedTarget`] per materialized leaf, so
 //! the lookup resolves the single leaf and only its source is rewritten.
 //!
 //! Like `remove`, `promote` holds ONE exclusive advisory lock for the whole
-//! command (REQ-009) and re-journals under
+//! command and re-journals under
 //! [`LockPolicy::Held`](patina_core::LockPolicy) via the shared
 //! [`crate::cmd::managed`] scaffolding, so the re-apply reuses the held guard
 //! instead of self-contending.
@@ -67,7 +67,7 @@ pub async fn run(
     let target = expand_tilde(&args.target, &home);
     let target_key = manage_key(&target);
 
-    // REQ-009: take ONE exclusive advisory lock for the whole command. The
+    // Take ONE exclusive advisory lock for the whole command. The
     // re-apply below reuses this guard via LockPolicy::Held.
     let (state, guard) = acquire_state_and_lock()?;
 
@@ -90,13 +90,13 @@ pub async fn run(
         return Ok(code);
     }
 
-    // Confirm before mutating (REQ-009: never mutate without consent).
+    // Confirm before mutating (never mutate without consent).
     if !confirm(args, tty, reader, reporter) {
         return Ok(ExitCode::UserDeclined.code());
     }
 
     // Copy the target's current bytes back into the repository source the
-    // target was materialized from (REQ-029 records that canonical source).
+    // target was materialized from (the journal records that canonical source).
     let target_path = Utf8PathBuf::from(expected.target());
     let source_path = Utf8PathBuf::from(expected.source());
     let bytes = fs_err::read(target_path.as_std_path())
@@ -229,7 +229,7 @@ fn report_success(
 }
 
 /// Build the `--json` success envelope. Deterministic for a given input (no
-/// timestamps / PIDs), so it satisfies REQ-010.
+/// timestamps / PIDs).
 fn success_envelope(target: &Utf8Path, resolved_target: &Utf8Path, source: &Utf8Path) -> String {
     let envelope = serde_json::json!({
         "promoted": target.as_str(),

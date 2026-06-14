@@ -1,9 +1,8 @@
-//! Integration coverage for the widened committed apply record (REQ-029,
-//! T-026): the `<state>/patina/journal/<ts>.COMMIT` sentinel records, per
+//! Integration coverage for the widened committed apply record: the
+//! `<state>/patina/journal/<ts>.COMMIT` sentinel records, per
 //! target, the canonical source path and — for content targets — a 32-byte
 //! `blake3` hash of the materialized bytes, behind a version envelope whose
-//! major is the journal's `FILE_MAJOR_VERSION` (held at `1` pre-release; see
-//! the on-disk format policy in `AGENTS.md`).
+//! major is the journal's `FILE_MAJOR_VERSION` (held at `1` pre-release).
 //!
 //! Each test builds a self-contained tempdir dotfiles repository, points
 //! `PATINA_REPO` at it, isolates the per-machine state directory under the
@@ -183,7 +182,7 @@ fn canonical(path: &Utf8Path) -> String {
         .into_string()
 }
 
-// CHK-062: a copy-mode `[[file]]` records, for its target, the canonical
+// A copy-mode `[[file]]` records, for its target, the canonical
 // source path and a 32-byte blake3 hash of the source bytes.
 #[test]
 fn copy_target_records_canonical_source_and_blake3_hash() {
@@ -217,7 +216,7 @@ fn copy_target_records_canonical_source_and_blake3_hash() {
     );
 }
 
-// REQ-029 done-when: a symlink target records its canonical link target as
+// A symlink target records its canonical link target as
 // its source.
 #[test]
 fn symlink_target_records_link_target_as_source() {
@@ -251,7 +250,7 @@ fn symlink_target_records_link_target_as_source() {
     }
 }
 
-// CHK-063: two consecutive applies of unchanged source record a
+// Two consecutive applies of unchanged source record a
 // byte-identical blake3 hash for the content target.
 #[test]
 fn two_applies_record_byte_identical_hash() {
@@ -274,7 +273,7 @@ fn two_applies_record_byte_identical_hash() {
     );
 }
 
-// CHK-064: the COMMIT file's first two bytes are the little-endian u16
+// The COMMIT file's first two bytes are the little-endian u16
 // major version, matching the journal's supported FILE_MAJOR_VERSION.
 #[test]
 fn commit_envelope_major_matches_supported() {
@@ -296,7 +295,7 @@ fn commit_envelope_major_matches_supported() {
     );
 }
 
-// REQ-029 done-when: the read side compares the recorded blake3 — an
+// The read side compares the recorded blake3 — an
 // external edit drifts, no edit stays clean.
 #[test]
 fn status_uses_recorded_blake3_for_drift() {
@@ -329,12 +328,12 @@ fn status_uses_recorded_blake3_for_drift() {
     );
 }
 
-// SPEC-0004 T-002 / REQ-009 / DEC-009: a committed apply over both the
+// A committed apply over both the
 // `[[file]]` and `[[directory]]` table-arrays records a single monotonic
 // entry-index space — every declared entry gets a distinct index, no
 // `[[file]]` and `[[directory]]` entry collide, and targets sharing a
 // declared entry share its index — while the COMMIT version envelope major
-// stays the journal's supported major (no per-SPEC bump).
+// stays the journal's supported major (no version bump).
 #[test]
 fn directory_and_file_entries_get_distinct_indices_and_envelope_major_is_unchanged() {
     let f = Fixture::new();
@@ -390,14 +389,14 @@ fn directory_and_file_entries_get_distinct_indices_and_envelope_major_is_unchang
         "every `[[file]]` entry index must precede the `[[directory]]` entry index (got files {a},{b}; dir {d_one})"
     );
 
-    // The wire-format major is unchanged by this SPEC (DEC-009): it stays
-    // the journal's supported FILE_MAJOR_VERSION, with no per-SPEC bump.
+    // The wire-format major is unchanged: it stays
+    // the journal's supported FILE_MAJOR_VERSION, with no version bump.
     let bytes = f.commit_bytes();
     let envelope = bytes.get(..2).expect("COMMIT file has a 2-byte envelope");
     let major = u16::from_le_bytes([envelope[0], envelope[1]]);
     assert_eq!(
         major, FILE_MAJOR_VERSION,
-        "the COMMIT envelope major must stay the supported major — this SPEC introduces no version bump"
+        "the COMMIT envelope major must stay the supported major — this change introduces no version bump"
     );
 }
 

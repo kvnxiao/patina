@@ -3,7 +3,7 @@
     reason = "integration tests use .expect() on fixture setup; allow-expect-in-tests covers #[cfg(test)] modules but not the helper functions in tests/*.rs integration crates."
 )]
 
-//! Docs-structure integration test (REQ-027, CHK-056 / CHK-057 / CHK-058).
+//! Docs-structure integration test.
 //!
 //! Parses `docs/ARCHITECTURE.md` and `docs/USER_GUIDE.md` as `CommonMark` and
 //! asserts that each carries its required set of `##`-level headings by exact
@@ -12,8 +12,8 @@
 //!
 //! The test gates *structure* only — heading existence by exact text and
 //! bullet membership in a named section. It never substring-matches the prose
-//! around the headings, per the test-hygiene rule in AGENTS.md prohibiting
-//! tests over editorial choices. A heading rename or a bullet-text change (even
+//! around the headings, to avoid asserting on editorial choices. A heading
+//! rename or a bullet-text change (even
 //! a prefix-preserving one like `Dropbox` → `Dropbox (via Smart Sync)`) fails
 //! the test naming the missing literal.
 
@@ -117,7 +117,7 @@ fn read_doc(file: &str) -> String {
 
 #[test]
 fn architecture_has_required_h2_headings() {
-    // CHK-056: docs/ARCHITECTURE.md carries its four structural anchors by
+    // docs/ARCHITECTURE.md carries its four structural anchors by
     // exact text. A renamed or deleted heading drops out of the set and fails
     // here naming the missing literal.
     let headings = h2_headings(&read_doc("ARCHITECTURE.md"));
@@ -136,7 +136,7 @@ fn architecture_has_required_h2_headings() {
 
 #[test]
 fn user_guide_has_required_h2_headings() {
-    // CHK-057: docs/USER_GUIDE.md carries its six structural anchors by exact
+    // docs/USER_GUIDE.md carries its six structural anchors by exact
     // text.
     let headings = h2_headings(&read_doc("USER_GUIDE.md"));
     for required in [
@@ -156,7 +156,7 @@ fn user_guide_has_required_h2_headings() {
 
 #[test]
 fn user_guide_state_directory_lists_cloud_sync_providers() {
-    // CHK-058: the `## State directory` section lists each of the six
+    // The `## State directory` section lists each of the six
     // cloud-sync providers as a literal bullet entry. Membership is by exact
     // text, so a prefix-extended bullet (`Dropbox (via Smart Sync)`) does NOT
     // satisfy the `Dropbox` requirement.

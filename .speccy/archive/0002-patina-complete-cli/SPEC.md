@@ -5,6 +5,7 @@ title: Patina complete CLI surface and Windows symlink elevation
 status: implemented
 created: 2026-05-25
 supersedes: []
+archived_at: 2026-06-14
 ---
 
 # SPEC-0002: Patina complete CLI surface and Windows symlink elevation

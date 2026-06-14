@@ -3,8 +3,7 @@
     reason = "integration tests use .expect() on fixture setup; the lint's allow-expect-in-tests covers #[cfg(test)] modules but not the helper functions in tests/*.rs integration crates."
 )]
 
-//! Integration tests for per-machine state directory resolution
-//! (REQ-016 / T-005).
+//! Integration tests for per-machine state directory resolution.
 //!
 //! These tests exercise `state_dir::resolve_with_env`, the testable
 //! core that takes an explicit [`HostOs`] and an environment-lookup
@@ -99,8 +98,8 @@ fn windows_resolves_under_localappdata() {
 
 #[test]
 fn resolve_does_not_create_lazy_files() {
-    // The owners of `profile` (T-007), `default_repo` (T-003), and
-    // `lock` (T-013) create those files lazily. `resolve` must only
+    // The owners of `profile`, `default_repo`, and
+    // `lock` create those files lazily. `resolve` must only
     // create the directory tree, not the files.
     let (_keep, t) = utf8_tempdir();
     let env = env_map(vec![("XDG_STATE_HOME", t.to_string())]);
@@ -118,7 +117,7 @@ fn resolve_does_not_create_lazy_files() {
 fn resolve_does_not_write_to_external_repository() {
     // Given a tempdir repository alongside a resolved state directory,
     // when resolve runs, then no file under the repository directory
-    // was modified by the engine. (REQ-016: the dotfiles repository is
+    // was modified by the engine. (The dotfiles repository is
     // never written to.)
     let (_keep_state, t) = utf8_tempdir();
     let (_keep_repo, repo) = utf8_tempdir();

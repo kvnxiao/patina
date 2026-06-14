@@ -5,6 +5,7 @@ title: Patina skip-if-satisfied — idempotent no-op re-apply via Create/Update/
 status: implemented
 created: 2026-06-02
 supersedes: []
+archived_at: 2026-06-14
 ---
 
 # SPEC-0005: Patina skip-if-satisfied — idempotent no-op re-apply via Create/Update/Unchanged classification

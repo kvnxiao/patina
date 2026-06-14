@@ -1,8 +1,7 @@
-//! The committed apply record persisted in the `<ts>.COMMIT` sentinel
-//! (REQ-018, T-017).
+//! The committed apply record persisted in the `<ts>.COMMIT` sentinel.
 //!
-//! Before T-017 the commit sentinel was an empty marker file: its mere
-//! presence beside a `<ts>.plan` told crash recovery (T-011) the apply
+//! Earlier the commit sentinel was an empty marker file: its mere
+//! presence beside a `<ts>.plan` told crash recovery the apply
 //! had committed. `patina status` needs more than presence — it must know
 //! *what* the last committed apply materialized, and the expected state
 //! of each target, so it can classify the live filesystem against it. The
@@ -22,7 +21,7 @@
 //! - One [`ExpectedTarget`] per materialized object, in apply order. Each
 //!   records the canonical absolute target path, the canonical source the
 //!   target was materialized from, and — for content targets — the content hash
-//!   `status` compares the live filesystem against (REQ-029):
+//!   `status` compares the live filesystem against:
 //!   - a [`ExpectedTarget::Symlink`] records the canonical link target the
 //!     symlink should point at; that link target is also the symlink's source.
 //!   - a [`ExpectedTarget::Content`] records the canonical source path the
@@ -31,11 +30,11 @@
 //!     surfaces as drift.
 //!
 //! The content hash is `blake3` rather than a `std::hash` fingerprint so the
-//! same hash serves the journal here and the SPEC-0003 drift cache, which
+//! same hash serves the journal here and the drift cache, which
 //! compares a freshly computed `blake3` of a target against this recorded
-//! value (REQ-029). The record shares the journal's
+//! value. The record shares the journal's
 //! [`FILE_MAJOR_VERSION`](super::FILE_MAJOR_VERSION); per the pre-release
-//! no-bump policy (see `AGENTS.md`) the on-disk major is held at `1` and is
+//! no-bump policy the on-disk major is held at `1` and is
 //! not bumped per breaking change until v1.0.
 
 use super::Disposition;
@@ -59,15 +58,15 @@ pub enum ExpectedTarget {
         /// Canonical absolute target path of the symlink itself.
         target: String,
         /// Canonical absolute path the link is expected to point at. This is
-        /// the canonical source for a symlink target (REQ-029).
+        /// the canonical source for a symlink target.
         link_target: String,
         /// Index of the `[[file]]` entry that materialized this target.
-        /// Targets sharing an entry index form one atomic rollback unit
-        /// (REQ-019): a multi-target entry reverts every target as a unit
+        /// Targets sharing an entry index form one atomic rollback unit:
+        /// a multi-target entry reverts every target as a unit
         /// or fails the whole entry.
         entry: u32,
-        /// How this target was classified at plan time (REQ-002). Per-leaf
-        /// for a tree target (DEC-007); recovery and rollback leave an
+        /// How this target was classified at plan time. Per-leaf
+        /// for a tree target; recovery and rollback leave an
         /// `Unchanged` target in place.
         disposition: Disposition,
     },
@@ -77,15 +76,15 @@ pub enum ExpectedTarget {
         /// Canonical absolute target path of the file.
         target: String,
         /// Canonical absolute source path the bytes were copied or rendered
-        /// from (REQ-029).
+        /// from.
         source: String,
         /// 32-byte `blake3` hash of the expected bytes.
         hash: [u8; 32],
         /// Index of the `[[file]]` entry that materialized this target
         /// (see [`ExpectedTarget::Symlink::entry`]).
         entry: u32,
-        /// How this target was classified at plan time (REQ-002). Per-leaf
-        /// for a tree target (DEC-007); recovery and rollback leave an
+        /// How this target was classified at plan time. Per-leaf
+        /// for a tree target; recovery and rollback leave an
         /// `Unchanged` target in place.
         disposition: Disposition,
     },
@@ -100,8 +99,8 @@ impl ExpectedTarget {
         }
     }
 
-    /// The canonical absolute source path this target was materialized from
-    /// (REQ-029): the recorded link target for a symlink, or the copied /
+    /// The canonical absolute source path this target was materialized from:
+    /// the recorded link target for a symlink, or the copied /
     /// rendered source for a content target.
     #[must_use = "the source path maps the target back to its origin"]
     pub fn source(&self) -> &str {
@@ -112,8 +111,7 @@ impl ExpectedTarget {
     }
 
     /// The index of the `[[file]]` entry that materialized this target.
-    /// Rollback groups targets by this index to honour per-entry atomicity
-    /// (REQ-019).
+    /// Rollback groups targets by this index to honour per-entry atomicity.
     #[must_use = "the entry index groups targets into atomic rollback units"]
     pub fn entry(&self) -> u32 {
         match self {
@@ -121,8 +119,8 @@ impl ExpectedTarget {
         }
     }
 
-    /// How this target was classified at plan time (REQ-002). Per-leaf for a
-    /// tree target (DEC-007); recovery and rollback leave an `Unchanged`
+    /// How this target was classified at plan time. Per-leaf for a
+    /// tree target; recovery and rollback leave an `Unchanged`
     /// target in place.
     #[must_use = "the disposition decides whether rollback and recovery touch this target"]
     pub fn disposition(&self) -> Disposition {
@@ -134,7 +132,7 @@ impl ExpectedTarget {
 
 /// Compute the 32-byte `blake3` content hash of a byte slice. Used both
 /// when recording an apply and when probing the live file during status, so
-/// the two agree byte-for-byte (REQ-029).
+/// the two agree byte-for-byte.
 #[must_use = "the hash is compared to detect content drift"]
 pub fn content_hash(bytes: &[u8]) -> [u8; 32] {
     *blake3::hash(bytes).as_bytes()
@@ -258,7 +256,7 @@ mod tests {
                     disposition: Disposition::Update,
                 },
                 // Third target so the round-trip below exercises all three
-                // disposition variants (CHK-005), including an `Unchanged`
+                // disposition variants, including an `Unchanged`
                 // target that recovery and rollback must leave in place.
                 ExpectedTarget::Content {
                     target: "/home/u/.vimrc".to_owned(),
@@ -279,7 +277,7 @@ mod tests {
     }
 
     #[test]
-    fn per_leaf_dispositions_round_trip_at_major_one(/* CHK-005, CHK-017 */) {
+    fn per_leaf_dispositions_round_trip_at_major_one() {
         // A record with one Create, one Update, and one Unchanged target
         // must decode with each target's disposition unchanged, and the
         // envelope major byte must be 1. Whole-record `PartialEq` above
@@ -321,7 +319,7 @@ mod tests {
     }
 
     #[test]
-    fn envelope_major_byte_reads_as_one(/* CHK-017 */) {
+    fn envelope_major_byte_reads_as_one() {
         let bytes = record().encode().expect("encode");
         assert_eq!(
             version_envelope::read_envelope_version(&bytes).expect("read envelope"),
@@ -330,7 +328,7 @@ mod tests {
     }
 
     #[test]
-    fn major_two_buffer_is_refused_not_misdecoded(/* CHK-018 */) {
+    fn major_two_buffer_is_refused_not_misdecoded() {
         // An ApplyRecord buffer prefixed with major 2 must fail to decode
         // now that the supported major is 1.
         let mut bytes = record().encode().expect("encode");
@@ -364,8 +362,8 @@ mod tests {
     #[test]
     fn content_hash_is_blake3_of_the_bytes() {
         // Pin the helper to the canonical blake3 digest so a silent swap to
-        // a different hash function is caught (REQ-029 names blake3 so the
-        // journal hash matches the SPEC-0003 drift cache).
+        // a different hash function is caught; the journal hash must match
+        // the drift cache.
         assert_eq!(
             content_hash(b"payload"),
             *blake3::hash(b"payload").as_bytes()

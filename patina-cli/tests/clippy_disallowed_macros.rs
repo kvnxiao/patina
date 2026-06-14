@@ -3,21 +3,20 @@
     reason = "integration tests use .expect() on fixture setup; allow-expect-in-tests covers #[cfg(test)] modules but not the helper functions in tests/*.rs integration crates."
 )]
 
-//! Integration test for the workspace `disallowed-macros` clippy gate
-//! (REQ-026, CHK-053 / CHK-054).
+//! Integration test for the workspace `disallowed-macros` clippy gate.
 //!
-//! REQ-026 makes the `output::Reporter` abstraction the only sanctioned site
+//! The `output::Reporter` abstraction is the only sanctioned site
 //! for user-facing prints: `println!`, `eprintln!`, `print!`, and `eprint!`
 //! are denied everywhere else via the workspace `clippy.toml`'s
 //! `disallowed-macros` list. This suite proves two halves of that contract:
 //!
 //! 1. The contract is *declared* — the real workspace `clippy.toml` lists all
-//!    four macros under `disallowed-macros` (CHK-053's config half).
+//!    four macros under `disallowed-macros`.
 //! 2. The contract *bites* — a fresh `println!("hi")` in a non-`output` file
 //!    makes clippy fail with a `clippy::disallowed_macros` diagnostic that
 //!    names the offending file, while the `tracing`-style macros and a
 //!    module-scoped `#[expect(clippy::disallowed_macros, ...)]` carve-out stay
-//!    clean (CHK-054 and its sibling scenarios).
+//!    clean.
 //!
 //! Rather than mutate the checked-in source tree (which would race with other
 //! parallel tests and risk leaving the tree dirty on failure), the "bites"
@@ -44,7 +43,7 @@ fn workspace_clippy_toml() -> Utf8PathBuf {
 
 #[test]
 fn clippy_toml_lists_all_four_print_macros() {
-    // CHK-053 (config half): the workspace clippy.toml must declare every raw
+    // The workspace clippy.toml must declare every raw
     // print macro under `disallowed-macros`. Parse the real file as TOML and
     // assert each entry is present as a literal string. Missing any one would
     // leave a hole an `eprint!` (etc.) could slip through.
@@ -83,7 +82,7 @@ fn scratch_crate(temp: &TempDir, body: &str) -> Utf8PathBuf {
         "[package]\nname = \"scratch\"\nversion = \"0.0.0\"\nedition = \"2021\"\n\n[workspace]\n",
     )
     .expect("write Cargo.toml");
-    // Name the file `plan.rs` to mirror the SPEC scenario's
+    // Name the file `plan.rs` to mirror a realistic
     // `patina-core/src/plan.rs`; the assertion checks the diagnostic names it.
     fs_err::write(root.join("src/plan.rs"), body).expect("write plan.rs");
     // `pub mod` so the fixture's `pub fn`s are reachable crate API; a private
@@ -143,8 +142,8 @@ fn run_clippy(crate_root: &Utf8Path) -> (bool, Vec<String>) {
 
 #[test]
 fn raw_println_outside_output_module_fails_clippy_naming_the_file() {
-    // CHK-054: a fresh `println!("hi")` in a non-`output` file (here `plan.rs`,
-    // mirroring the SPEC scenario's `patina-core/src/plan.rs`) makes clippy
+    // A fresh `println!("hi")` in a non-`output` file (here `plan.rs`,
+    // mirroring `patina-core/src/plan.rs`) makes clippy
     // exit non-zero with a `disallowed_macros` diagnostic that names the file.
     let temp = TempDir::new().expect("tempdir");
     let crate_root = scratch_crate(&temp, "pub fn shout() {\n    println!(\"hi\");\n}\n");

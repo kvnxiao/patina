@@ -1,5 +1,4 @@
-//! Integration tests for the `patina apply` CLI surface (REQ-017,
-//! CHK-028 / CHK-029 / CHK-030).
+//! Integration tests for the `patina apply` CLI surface.
 //!
 //! Each test builds a self-contained tempdir dotfiles repository, points
 //! `PATINA_REPO` at it, and isolates the per-machine state directory under
@@ -15,7 +14,7 @@ use std::process::Command;
 
 #[test]
 fn non_tty_apply_previews_without_mutating() {
-    // CHK-028: a symlink [[file]] entry, `patina apply` (no --yes) in a
+    // A symlink [[file]] entry, `patina apply` (no --yes) in a
     // non-TTY: exit 0, no symlink created, stdout shows the diff.
     let f = Fixture::new();
     let module = f.module(
@@ -41,7 +40,7 @@ fn non_tty_apply_previews_without_mutating() {
 
 #[test]
 fn post_apply_hook_failure_rolls_back_and_exits_3() {
-    // CHK-029: a post_apply hook `exit 1` (must_succeed = true default),
+    // A post_apply hook `exit 1` (must_succeed = true default),
     // `patina apply --yes`: file ops execute then reverse, exit code 3.
     let f = Fixture::new();
     let module = f.module(
@@ -68,7 +67,7 @@ fn post_apply_hook_failure_rolls_back_and_exits_3() {
 
 #[test]
 fn force_deploy_downgrades_hook_failure_and_exits_0() {
-    // CHK-030: same hook, `patina apply --yes --force-deploy`: file ops
+    // Same hook, `patina apply --yes --force-deploy`: file ops
     // execute, hook fails but is NOT rolled back, stderr warns naming the
     // hook, exit code 0.
     let f = Fixture::new();
@@ -225,8 +224,8 @@ fn missing_pager_falls_back_with_warning() {
 #[cfg(not(windows))]
 #[test]
 fn non_windows_symlink_apply_skips_dev_mode_flow() {
-    // CHK-013 mirror / task scenario 1: on macOS or Linux, a symlink
-    // `[[file]]` apply proceeds exactly as in SPEC-0001 — the Developer
+    // On macOS or Linux, a symlink
+    // `[[file]]` apply proceeds exactly as on the prior platforms — the Developer
     // Mode gate reports `Proceed` (the probe is `NotWindows`), so no
     // registry read happens and `patina-elevate` is never spawned. The
     // proof is positive: the symlink lands and the command exits 0, which
@@ -273,7 +272,7 @@ fn non_windows_symlink_apply_skips_dev_mode_flow() {
     );
 }
 
-// CHK-012: on a Windows host with Developer Mode OFF and a symlink
+// On a Windows host with Developer Mode OFF and a symlink
 // `[[file]]`, a `patina apply --yes` whose UAC consent is declined creates
 // no symbolic link, names `Developer Mode` and `patina doctor --fix` on
 // stderr, and exits 5. Gated `#[ignore]` because it needs a real Windows
@@ -305,7 +304,7 @@ fn windows_declined_uac_exits_5_and_creates_no_symlink() {
     );
 }
 
-// CHK-013: on a Windows host with Developer Mode ON, the apply creates the
+// On a Windows host with Developer Mode ON, the apply creates the
 // symlink with no UAC prompt and no `patina-elevate.exe` spawn. Gated
 // `#[ignore]` because it needs a real Windows host with Developer Mode
 // enabled; CI is not Windows.

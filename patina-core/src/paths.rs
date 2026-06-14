@@ -1,4 +1,4 @@
-//! Absolute-path canonicalization with lexical fallback (REQ-010).
+//! Absolute-path canonicalization with lexical fallback.
 //!
 //! Every repository path, source path, target path, and
 //! state-directory path the engine reads is canonicalized to absolute
@@ -17,7 +17,7 @@
 //!
 //! [`expand_tilde`] handles the separate user-input concern of
 //! expanding a leading `~` to the resolved home directory (the
-//! `patina.home` built-in from REQ-007). It is purely lexical and does
+//! `patina.home` built-in). It is purely lexical and does
 //! not touch the filesystem; callers pipe its output into
 //! [`canonicalize`] when they want an absolute, symlink-resolved form.
 

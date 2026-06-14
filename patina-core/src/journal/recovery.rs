@@ -1,25 +1,25 @@
 //! Crash recovery: converge backward to the pre-apply state via a
-//! filesystem probe (REQ-013, T-011).
+//! filesystem probe.
 //!
 //! On every apply startup, before computing a fresh plan, the engine
 //! calls [`recover_orphans`]. It scans the journal directory for *orphan*
 //! plans — a `<ts>.plan` with neither a `<ts>.COMMIT` (the apply
-//! committed; T-010) nor a `<ts>.ROLLED_BACK` (a prior rollback closed it
-//! out; T-018) sentinel. An orphan is the fingerprint of a `kill -9`
+//! committed) nor a `<ts>.ROLLED_BACK` (a prior rollback closed it
+//! out) sentinel. An orphan is the fingerprint of a `kill -9`
 //! mid-apply: the plan was made durable but the run never reached commit.
 //!
 //! For each orphan, recovery:
 //!
-//! 1. Decodes the plan, reusing T-010's version-envelope check so a plan from a
+//! 1. Decodes the plan, reusing the version-envelope check so a plan from a
 //!    newer binary is refused rather than mis-read.
 //! 2. Probes the filesystem for each operation's target
 //!    ([`probe`](super::probe)) and consults the per-apply backup directory
 //!    ([`mirror_backup_path`](super::mirror_backup_path)).
-//! 3. **Reverses backward** — never forward (DEC-011). The disposition the plan
-//!    recorded for the operation decides the outcome, evaluated in this order:
-//!    - disposition == `Unchanged` (REQ-005): the apply neither backed up nor
-//!      wrote this target, so the live entry is already the pre-apply entry —
-//!      leave it in place and do **not** consult the backup directory.
+//! 3. **Reverses backward** — never forward. The disposition the plan recorded
+//!    for the operation decides the outcome, evaluated in this order:
+//!    - disposition == `Unchanged`: the apply neither backed up nor wrote this
+//!      target, so the live entry is already the pre-apply entry — leave it in
+//!      place and do **not** consult the backup directory.
 //!    - a target with a backup is an *overwrite*: restore the original bytes
 //!      from the backup.
 //!    - a target with no backup is a *fresh creation*: delete it.
@@ -36,8 +36,7 @@
 //!
 //! The advisory progress cursor is **ignored** for the reversal decision:
 //! recovery trusts the filesystem probe and the backup directory, not the
-//! cursor's last record, which may lie about how far the apply got
-//! (REQ-012, CHK probe-over-cursor scenario).
+//! cursor's last record, which may lie about how far the apply got.
 //!
 //! # Examples
 //!
@@ -63,8 +62,8 @@ use super::probe::mirror_backup_path;
 use super::probe::operation_target;
 use camino::Utf8Path;
 
-/// Filename suffix for the rollback sentinel written by `patina rollback`
-/// (T-018). Recovery treats a `<ts>.ROLLED_BACK` plan as already closed,
+/// Filename suffix for the rollback sentinel written by `patina rollback`.
+/// Recovery treats a `<ts>.ROLLED_BACK` plan as already closed,
 /// exactly like a committed one, and never re-reverses it.
 pub const ROLLED_BACK_SUFFIX: &str = ".ROLLED_BACK";
 
@@ -183,11 +182,11 @@ fn reverse_orphan(
 /// Reverse a single planned operation back to its pre-apply state.
 ///
 /// An operation the plan recorded as [`Disposition::Unchanged`] is left in
-/// place ahead of the backup-presence decision (REQ-005): apply skips the
+/// place ahead of the backup-presence decision: apply skips the
 /// write and the backup for such a target, so its live state already *is*
 /// the pre-apply state and there is nothing to reverse. This holds at any
 /// crash point because the plan is fsync'd before any mutation, so the
-/// disposition the orphan plan carries is authoritative. Per DEC-007 the
+/// disposition the orphan plan carries is authoritative. The
 /// disposition read here is the durable per-op aggregate, so a tree op
 /// whose aggregate is `Unchanged` is left whole.
 ///
@@ -301,7 +300,7 @@ mod tests {
 
     #[test]
     fn unchanged_marked_orphan_target_is_left_in_place() {
-        // CHK-008 / REQ-005: an orphan plan whose target is marked
+        // An orphan plan whose target is marked
         // `Unchanged` must be preserved by recovery even though no backup
         // exists for it — apply skipped the write and the backup, so the
         // live entry already is the pre-apply entry.
@@ -347,7 +346,7 @@ mod tests {
 
     #[test]
     fn create_marked_orphan_target_with_no_backup_is_deleted() {
-        // CHK-009 / REQ-005: an orphan plan whose target is marked `Create`
+        // An orphan plan whose target is marked `Create`
         // with no backup is a fresh creation the crashed apply made, so
         // recovery removes it. This is the unchanged Create-with-no-backup
         // behavior, asserted now that the Unchanged arm precedes it.

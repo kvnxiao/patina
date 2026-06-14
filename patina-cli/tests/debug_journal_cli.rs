@@ -3,8 +3,7 @@
     reason = "integration tests use .expect() on fixtures; allow-expect-in-tests covers #[cfg(test)] modules but not the helper functions in tests/*.rs integration crates."
 )]
 
-//! Integration tests for the `patina debug journal <path>` CLI surface
-//! (REQ-020, CHK-034 / CHK-050).
+//! Integration tests for the `patina debug journal <path>` CLI surface.
 //!
 //! The subcommand decodes a binary `<ts>.plan` file and renders it. A
 //! committed apply deletes its plan file at commit, so these tests write a
@@ -41,7 +40,7 @@ fn code(output: &Output) -> i32 {
 
 #[test]
 fn decodes_a_plan_and_prints_its_modes_and_targets() {
-    // CHK-034: a plan declaring symlink + copy operations renders with the
+    // A plan declaring symlink + copy operations renders with the
     // matching mode words and at least one absolute target on stdout, exit 0.
     let temp = TempDir::new().expect("tempdir");
     let dir = Utf8Path::from_path(temp.path()).expect("utf8 tempdir");
@@ -71,7 +70,7 @@ fn decodes_a_plan_and_prints_its_modes_and_targets() {
 
 #[test]
 fn missing_path_exits_one_and_names_the_path_on_stderr() {
-    // CHK (REQ-020 done-when): a non-existent path -> exit 1, path on stderr.
+    // A non-existent path -> exit 1, path on stderr.
     let out = invoke(&["debug", "journal", "/nonexistent/path.plan"]);
     assert_eq!(code(&out), 1, "missing path must exit 1");
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -83,7 +82,7 @@ fn missing_path_exits_one_and_names_the_path_on_stderr() {
 
 #[test]
 fn newer_version_envelope_exits_one_and_names_both_versions() {
-    // CHK (REQ-020 done-when): a plan whose envelope major is u16::MAX is
+    // A plan whose envelope major is u16::MAX is
     // refused by a binary whose supported major is 1 -> exit 1, both
     // versions plus the word "version" on stderr.
     let temp = TempDir::new().expect("tempdir");
@@ -116,7 +115,7 @@ fn newer_version_envelope_exits_one_and_names_both_versions() {
 
 #[test]
 fn debug_help_names_journal_subcommand() {
-    // CHK-050: `patina debug --help` names `journal` and exits 0.
+    // `patina debug --help` names `journal` and exits 0.
     let out = invoke(&["debug", "--help"]);
     assert_eq!(
         code(&out),

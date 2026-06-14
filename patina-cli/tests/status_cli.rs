@@ -4,8 +4,7 @@
     reason = "integration tests use .expect()/panic! on fixtures and asserted JSON; allow-*-in-tests covers #[cfg(test)] modules but not the helper functions in tests/*.rs integration crates."
 )]
 
-//! Integration tests for the `patina status` CLI surface (REQ-018,
-//! CHK-031 / CHK-032 / CHK-048).
+//! Integration tests for the `patina status` CLI surface.
 //!
 //! Each test builds a self-contained tempdir dotfiles repository, applies
 //! it (`patina apply --yes`), optionally perturbs a materialized target,
@@ -133,7 +132,7 @@ fn state_for(doc: &serde_json::Value, suffix: &str) -> String {
 
 #[test]
 fn three_clean_operations_report_clean_counter_three() {
-    // CHK-031: three file operations applied, no subsequent change ->
+    // Three file operations applied, no subsequent change ->
     // clean = 3, drifted/missing/orphaned = 0.
     let f = Fixture::new();
     let module = f.module(
@@ -172,7 +171,7 @@ fn three_clean_operations_report_clean_counter_three() {
 
 #[test]
 fn edited_copy_target_reports_drifted() {
-    // CHK-032: a copy-mode target edited after apply -> drifted = 1 and the
+    // A copy-mode target edited after apply -> drifted = 1 and the
     // files entry for that path has state = drifted.
     let f = Fixture::new();
     let module = f.module(
@@ -196,7 +195,7 @@ fn edited_copy_target_reports_drifted() {
 
 #[test]
 fn multi_target_entry_reports_one_entry_per_target() {
-    // CHK-048: a [[file]] with two copy targets; one edited externally ->
+    // A [[file]] with two copy targets; one edited externally ->
     // two files entries, one clean and one drifted, clean >= 1, drifted >= 1.
     let f = Fixture::new();
     let module = f.module(

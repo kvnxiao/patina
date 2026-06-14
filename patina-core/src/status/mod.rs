@@ -1,13 +1,13 @@
 //! `patina status`: classify every managed target as CLEAN / DRIFTED /
-//! MISSING / ORPHANED against the last committed apply (REQ-018, T-017).
+//! MISSING / ORPHANED against the last committed apply.
 //!
 //! Status is the read-only mirror of apply. It reads the most recent
-//! committed apply record from the journal (the `<ts>.COMMIT` sentinel
-//! T-017 taught the commit path to populate), recomputes the *current*
+//! committed apply record from the journal (the `<ts>.COMMIT` sentinel the
+//! commit path populates), recomputes the *current*
 //! repository plan to know which targets are still managed, and compares
 //! each recorded target to the live filesystem.
 //!
-//! ## States (REQ-018 `<done-when>`)
+//! ## States
 //!
 //! - **CLEAN** — target exists and matches the recorded expectation.
 //! - **DRIFTED** — target exists but content / link target differs.
@@ -15,19 +15,19 @@
 //! - **ORPHANED** — target exists but the *current* plan no longer manages it
 //!   (it was in a prior apply, then removed from the repo).
 //!
-//! ## Multi-target counting (REQ-005 / REQ-018)
+//! ## Multi-target counting
 //!
 //! A `[[file]]` entry with N targets contributes N entries to the report
 //! and N to the aggregate counters. The recorded apply already holds one
 //! [`ExpectedTarget`](crate::journal::ExpectedTarget) per materialized
 //! object, so the per-target shape falls out for free.
 //!
-//! ## Locking (REQ-023)
+//! ## Locking
 //!
 //! Status takes the **shared** advisory lock so it never reads a journal a
 //! concurrent apply is mid-write on. The shared wait is capped at
 //! [`SHARED_TIMEOUT`]; on expiry status warns and proceeds without the
-//! lock (REQ-023's read-only escape hatch). The warning text is returned
+//! lock (the read-only escape hatch). The warning text is returned
 //! in [`StatusReport::warnings`] so the CLI can route it to stderr.
 
 pub(crate) mod classify;
@@ -91,7 +91,7 @@ impl StatusReport {
 /// Compute the status report for the resolved dotfiles repository.
 ///
 /// Resolves the repository and state directory, takes the shared lock
-/// (warning and proceeding on timeout per REQ-023), reads the last
+/// (warning and proceeding on timeout), reads the last
 /// committed apply, recomputes the current plan to know which targets are
 /// still managed, and classifies each recorded target.
 ///
@@ -109,7 +109,7 @@ pub fn report(current_plan_targets: &BTreeSet<Utf8PathBuf>) -> Result<StatusRepo
     let mut warnings = Vec::new();
     // Shared lock with the read-only escape hatch: a timeout means a
     // mutating apply held the lock past SHARED_TIMEOUT, so we warn and read
-    // anyway rather than blocking the user (REQ-023).
+    // anyway rather than blocking the user.
     let _guard = match acquire_lock(&lock_path, LockKind::Shared, SHARED_TIMEOUT) {
         Ok(guard) => Some(guard),
         Err(LockError::Timeout { path, waited, .. }) => {
@@ -163,9 +163,9 @@ pub fn report(current_plan_targets: &BTreeSet<Utf8PathBuf>) -> Result<StatusRepo
 /// through to the repo source, so the target would never appear to be its
 /// own managed location and every applied symlink would falsely report as
 /// ORPHANED at status time. It drops `when`-false entries (so a flipped-off
-/// entry's prior target classifies ORPHANED, CHK-019) and expands a
+/// entry's prior target classifies ORPHANED) and expands a
 /// `symlink-tree` entry into one key per live source leaf (so a deleted
-/// source leaf's prior target classifies ORPHANED, CHK-014).
+/// source leaf's prior target classifies ORPHANED).
 ///
 /// # Errors
 ///
@@ -195,7 +195,7 @@ pub fn current_plan_targets() -> Result<BTreeSet<Utf8PathBuf>, EngineError> {
 /// same declared target yields the same key regardless of when it was
 /// computed.
 ///
-/// Public so the SPEC-0002 `remove` / `promote` commands can match a
+/// Public so the `remove` / `promote` commands can match a
 /// user-supplied target path against a journaled
 /// [`ExpectedTarget::target`](crate::ExpectedTarget::target) under the same
 /// cross-time key, rather than re-deriving the parent-canonical+verbatim-leaf

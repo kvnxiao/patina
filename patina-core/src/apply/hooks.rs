@@ -1,11 +1,11 @@
 //! Hook execution with `must_succeed` semantics and the `--force-deploy`
-//! override (REQ-006).
+//! override.
 //!
-//! The parser side (T-004) produces a [`HookEntry`] per `[[hook]]` table
+//! The parser side produces a [`HookEntry`] per `[[hook]]` table
 //! array; this module runs those hooks at the right times in the apply
 //! pipeline and reports each hook's outcome back to the orchestrator. The
 //! responsibilities split into three steps, called in order by the apply
-//! pipeline (T-016 / T-018):
+//! pipeline:
 //!
 //! 1. **Resolve shells up front.** [`resolve_shells`] resolves every hook's
 //!    shell *before any hook runs*. An explicit `shell` that does not resolve
@@ -14,9 +14,9 @@
 //!    command executes. An omitted `shell` defaults to `bash` on macOS / Linux
 //!    and `pwsh` on Windows.
 //! 2. **Filter by `when`.** [`should_run`] evaluates a hook's optional `when`
-//!    predicate through the shared T-008 [`Engine`] against the resolved
-//!    variable context. A hook whose predicate is `false` is filtered out
-//!    before execution; a hook with no predicate always runs.
+//!    predicate through the shared [`Engine`] against the resolved variable
+//!    context. A hook whose predicate is `false` is filtered out before
+//!    execution; a hook with no predicate always runs.
 //! 3. **Run and classify.** [`run_hook`] spawns the resolved shell with the
 //!    hook command, awaits its exit status, and maps the status to a
 //!    [`HookOutcome`] under the hook's `must_succeed` flag and the
@@ -82,7 +82,7 @@ impl ForceDeploy {
     }
 }
 
-/// Failures from hook preparation and execution (REQ-006).
+/// Failures from hook preparation and execution.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum HookError {
@@ -161,7 +161,7 @@ pub enum HookOutcome {
 ///
 /// Returns [`HookError::ShellNotFound`] naming the first explicit shell
 /// that does not resolve on `PATH`. Resolving all shells before running
-/// any hook is the REQ-006 contract: an unresolved shell aborts the apply
+/// any hook is the contract: an unresolved shell aborts the apply
 /// before any file operation or hook command executes.
 pub fn resolve_shells(
     hooks: &[HookEntry],

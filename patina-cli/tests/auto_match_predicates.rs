@@ -3,23 +3,23 @@
     reason = "integration tests use .expect() on fixture setup and assertions; allow-expect-in-tests covers #[cfg(test)] modules but not the top level of a tests/*.rs integration crate."
 )]
 
-//! REQ-004 / DEC-006 / DEC-010 (SPEC-0004): every `when` site — including
+//! Every `when` site — including
 //! `[[auto_match]]` profile rules — is evaluated by the one shared
 //! `MiniJinja` engine, and the narrow single-equality predicate evaluator
 //! is gone.
 //!
 //! These end-to-end tests drive `PATINA_REPO=<tempdir> patina apply` over
-//! fixture repos and assert the four CHKs the task covers:
+//! fixture repos and assert four behaviours:
 //!
-//! - CHK-008: an `[[auto_match]]` rule matching the host's `patina.os` resolves
-//!   its profile (parity with the removed evaluator).
-//! - CHK-009: a `[[file]]` `when` using the wider grammar (`!=`) the narrow
-//!   evaluator rejected now evaluates true and materializes its target.
-//! - CHK-020: a `[[file]]` `when` misspelling a built-in (`patina.oss`) fails
-//!   the apply with a typed error naming the variable — never a silent drop.
-//! - CHK-021: an `[[auto_match]]` `when` referencing `patina.profile`
-//!   (unresolved during profile resolution) fails with a typed
-//!   undefined-variable error naming it, rather than silently failing to match.
+//! - An `[[auto_match]]` rule matching the host's `patina.os` resolves its
+//!   profile (parity with the removed evaluator).
+//! - A `[[file]]` `when` using the wider grammar (`!=`) the narrow evaluator
+//!   rejected now evaluates true and materializes its target.
+//! - A `[[file]]` `when` misspelling a built-in (`patina.oss`) fails the apply
+//!   with a typed error naming the variable — never a silent drop.
+//! - An `[[auto_match]]` `when` referencing `patina.profile` (unresolved during
+//!   profile resolution) fails with a typed undefined-variable error naming it,
+//!   rather than silently failing to match.
 
 mod common;
 
@@ -43,7 +43,7 @@ fn write_root(f: &Fixture, body: &str) {
 
 #[test]
 fn auto_match_rule_on_os_resolves_its_profile() {
-    // CHK-008: an `[[auto_match]]` rule whose `when` matches the host's
+    // An `[[auto_match]]` rule whose `when` matches the host's
     // `patina.os` selects profile `p`. The `--json` envelope's `profile`
     // field is the observable resolution result.
     let f = Fixture::new();
@@ -75,7 +75,7 @@ fn auto_match_rule_on_os_resolves_its_profile() {
 
 #[test]
 fn file_inequality_predicate_materializes_target() {
-    // CHK-009: a `[[file]]` `when` using `!=` (rejected by the removed
+    // A `[[file]]` `when` using `!=` (rejected by the removed
     // narrow evaluator) now evaluates true and materializes the target —
     // no `UnsupportedPredicate` error.
     let f = Fixture::new();
@@ -101,7 +101,7 @@ fn file_inequality_predicate_materializes_target() {
 
 #[test]
 fn file_misspelled_builtin_fails_and_names_the_variable() {
-    // CHK-020: a `[[file]]` `when` misspelling `patina.os` as `patina.oss`
+    // A `[[file]]` `when` misspelling `patina.os` as `patina.oss`
     // accesses an undefined variable. The apply must exit non-zero, stderr
     // must name `patina.oss`, and the target must not be silently dropped
     // (created or not — it must not be created, and the run must fail).
@@ -132,7 +132,7 @@ fn file_misspelled_builtin_fails_and_names_the_variable() {
 
 #[test]
 fn auto_match_referencing_patina_profile_fails_and_names_it() {
-    // CHK-021: an `[[auto_match]]` `when` referencing `patina.profile`
+    // An `[[auto_match]]` `when` referencing `patina.profile`
     // accesses a variable unresolved during profile resolution (it is
     // precisely what that pass computes). The apply must exit non-zero and
     // stderr must name `patina.profile`, rather than the rule silently

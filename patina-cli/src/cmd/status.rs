@@ -1,4 +1,4 @@
-//! `patina status` command logic (REQ-018).
+//! `patina status` command logic.
 //!
 //! Classifies every managed target as CLEAN / DRIFTED / MISSING /
 //! ORPHANED against the last committed apply and renders the result —
@@ -10,7 +10,7 @@
 //!
 //! Status is read-only: it never mutates and always exits 0 on a
 //! successful read. A shared-lock timeout is surfaced as a stderr warning
-//! (REQ-023's read-only escape hatch), not a non-zero exit.
+//! (the read-only escape hatch), not a non-zero exit.
 
 use crate::cli::StatusArgs;
 use crate::exit_code::ExitCode;
@@ -50,7 +50,7 @@ pub async fn run(args: &StatusArgs, reporter: &mut impl Reporter) -> Result<i32>
 }
 
 /// Build the `--json` envelope: `last_apply`, `files`, and the four
-/// aggregate counters (REQ-018 `<done-when>`).
+/// aggregate counters.
 fn json_envelope(report: &StatusReport) -> String {
     let last_apply = report
         .last_apply

@@ -1,12 +1,12 @@
-//! Human-readable rendering of a decoded plan journal (REQ-020).
+//! Human-readable rendering of a decoded plan journal.
 //!
 //! `patina debug journal <path>` decodes a `<ts>.plan` file (the binary,
 //! `postcard`-encoded [`Plan`](super::Plan) behind its version envelope)
 //! and prints it for a human reading a post-mortem. The output is a
 //! one-line summary per operation followed by indented detail; it is
-//! deliberately **not** a stable, machine-parsed format (REQ-020) and is
+//! deliberately **not** a stable, machine-parsed format and is
 //! the one user-facing path allowed to carry a wall-clock timestamp
-//! (the plan's recorded `<ts>`, REQ-021).
+//! (the plan's recorded `<ts>`).
 //!
 //! The plan body records only the resolved file operations — symlink,
 //! render, and copy, each with a repo-relative `source` and an absolute
@@ -43,7 +43,7 @@ use thiserror::Error;
 pub enum PlanRenderError {
     /// The plan file at `path` could not be opened or read. The wrapped
     /// error carries the underlying IO cause; `path` is surfaced so the
-    /// CLI can name it (CHK: missing-path scenario).
+    /// CLI can name it.
     #[error("could not read plan file `{path}`: {source}")]
     Read {
         /// The path that could not be read.

@@ -1,12 +1,8 @@
-//! Integration coverage for hook `must_succeed` semantics (REQ-006,
-//! T-015).
+//! Integration coverage for hook `must_succeed` semantics.
 //!
 //! These exercise the public `patina_core::apply::hooks` surface against
 //! the real host shell: shells resolve up front, `when` predicates filter,
-//! and a hook command's exit status classifies into a [`HookOutcome`]. The
-//! orchestration into the apply pipeline (which maps `Failed` to an abort
-//! or a rollback and to CLI exit codes) lands in T-016 / T-018; this task
-//! owns the classification primitives those tasks consume.
+//! and a hook command's exit status classifies into a [`HookOutcome`].
 
 use patina_core::ForceDeploy;
 use patina_core::HookError;
@@ -54,8 +50,8 @@ fn is_clean_literal_char(c: char) -> bool {
 
 #[tokio::test]
 async fn pre_apply_failure_with_must_succeed_classifies_failed() {
-    // Mirrors the CHK scenario: a `pre_apply` hook returning non-zero with
-    // the default `must_succeed = true`. The orchestrator (T-016) maps
+    // A `pre_apply` hook returning non-zero with
+    // the default `must_succeed = true`. The orchestrator maps
     // this `Failed` classification to exit code 2 and runs no file op.
     let hooks = vec![hook_on_default_shell(HookEvent::PreApply, "exit 1")];
     let resolved = resolve_shells(&hooks, HostOs::current()).expect("shells resolve");
@@ -81,7 +77,7 @@ async fn pre_apply_failure_with_must_succeed_classifies_failed() {
 #[tokio::test]
 async fn post_apply_failure_with_must_succeed_classifies_failed() {
     // A `post_apply` failure under `must_succeed = true` is the rollback
-    // trigger (T-018 maps it to exit 3). The event on the entry tells the
+    // trigger (it maps to exit 3). The event on the entry tells the
     // orchestrator it is the post-apply branch.
     let hooks = vec![hook_on_default_shell(HookEvent::PostApply, "exit 1")];
     let resolved = resolve_shells(&hooks, HostOs::current()).expect("shells resolve");
@@ -128,7 +124,7 @@ async fn non_must_succeed_failure_only_warns() {
 
 #[test]
 fn unresolved_explicit_shell_errors_before_any_hook_runs() {
-    // The CHK scenario: a hook declaring a shell that does not exist on
+    // A hook declaring a shell that does not exist on
     // PATH. `resolve_shells` errors before producing any runnable hook,
     // so the orchestrator never spawns a command or touches a file.
     let entry = HookEntry {
@@ -148,7 +144,7 @@ fn unresolved_explicit_shell_errors_before_any_hook_runs() {
 
 #[test]
 fn when_predicate_filters_out_non_matching_host() {
-    // Mirrors the CHK scenario: a hook gated on an OS the host is not.
+    // A hook gated on an OS the host is not.
     let r = resolver();
     let os = r.get("patina.os").expect("patina.os resolves");
     let other = if os == "macos" { "linux" } else { "macos" };
@@ -167,7 +163,7 @@ fn when_predicate_filters_out_non_matching_host() {
 
 #[test]
 fn when_predicate_runs_on_matching_env_var() {
-    // CHK scenario: `when = "patina.env.CI == 'true'"` evaluated against
+    // `when = "patina.env.CI == 'true'"` evaluated against
     // the live process environment. The workspace forbids `unsafe`, so the
     // test cannot mutate the environment to inject `CI`; instead it picks an
     // env var already set in the process and compares against its live

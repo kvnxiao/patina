@@ -1,20 +1,20 @@
-//! `patina watch` command logic (REQ-001 / REQ-003 / REQ-004 / REQ-006).
+//! `patina watch` command logic.
 //!
 //! The command has two modes. `--foreground` runs the watcher loop inline
 //! ([`patina_core::run_foreground`]), attached to the invoking shell, until
-//! Ctrl-C (SIGINT) or — on POSIX — SIGTERM shuts it down (DEC-011). The
+//! Ctrl-C (SIGINT) or — on POSIX — SIGTERM shuts it down. The
 //! lifecycle subcommands (`install` / `uninstall` / `start` / `stop` /
 //! `restart` / `status`) manage the per-OS background service through the
-//! [`patina_core::watch::service`] backend (REQ-001 / REQ-003).
+//! [`patina_core::watch::service`] backend.
 //!
 //! All lifecycle subcommands except `status` acquire the exclusive advisory
-//! lock (SPEC-0001 REQ-023); `status` acquires the shared lock. The engine
+//! lock; `status` acquires the shared lock. The engine
 //! semantics (state-dir resolution, the service backend, log-counter recovery)
 //! live in `patina_core`; this module is control flow, lock acquisition, and
 //! output formatting only, all routed through the [`Reporter`].
 //!
 //! Before starting any mode, the command surfaces the forward-compatible-but-
-//! ignored `[watcher] debounce_ms` warning (REQ-006 / DEC-002) through the
+//! ignored `[watcher] debounce_ms` warning through the
 //! reporter.
 
 use crate::cli::WatchArgs;
@@ -67,14 +67,14 @@ pub async fn run(args: &WatchArgs, reporter: &mut impl Reporter) -> Result<i32> 
     Ok(ExitCode::Generic.code())
 }
 
-/// Run a background-service lifecycle subcommand (REQ-001 / REQ-003).
+/// Run a background-service lifecycle subcommand.
 ///
 /// Resolves the per-machine state directory, acquires the advisory lock the
 /// subcommand requires (exclusive for every mutating action, shared for the
 /// read-only `status`), then drives the matching
 /// [`patina_core::ServiceBackend`] method and renders the outcome. A
 /// not-installed service is a no-op with a clear stderr message rather than a
-/// supervisor error (REQ-003); an already-installed `install` exits 1 with a
+/// supervisor error; an already-installed `install` exits 1 with a
 /// typed error.
 fn run_lifecycle(command: &WatchCommand, json: bool, reporter: &mut impl Reporter) -> Result<i32> {
     let state =
@@ -83,10 +83,10 @@ fn run_lifecycle(command: &WatchCommand, json: bool, reporter: &mut impl Reporte
     let lock_path = state.join("lock");
 
     // `status` is read-only: it acquires the shared lock and, on a shared-lock
-    // timeout, warns and proceeds without it (REQ-023's read-only escape hatch,
+    // timeout, warns and proceeds without it (the read-only escape hatch,
     // matching `patina status`). Every other lifecycle action mutates the
     // service registration and acquires the exclusive lock, mapping a timeout
-    // to exit code 4 via the error-chain funnel (SPEC-0001 REQ-023).
+    // to exit code 4 via the error-chain funnel.
     if let WatchCommand::Status = command {
         let _guard = match acquire_lock(&lock_path, LockKind::Shared, SHARED_TIMEOUT) {
             Ok(guard) => Some(guard),
@@ -119,10 +119,9 @@ fn run_lifecycle(command: &WatchCommand, json: bool, reporter: &mut impl Reporte
 /// On success it emits the `result` word (a JSON envelope under `--json`, a
 /// human line otherwise) and returns `0`. A [`LifecycleResult::NotInstalled`]
 /// is a no-op (no supervisor action, no mutation) that names the clear
-/// "service not installed" message on stderr and exits `1` per REQ-003's
+/// "service not installed" message on stderr and exits `1` per the
 /// behavior block. An error is surfaced through the reporter and returns `1`;
-/// an already-installed `install` therefore exits 1 with its typed message
-/// (REQ-001).
+/// an already-installed `install` therefore exits 1 with its typed message.
 fn render_lifecycle(
     result: std::result::Result<LifecycleResult, ServiceError>,
     json: bool,
@@ -131,7 +130,7 @@ fn render_lifecycle(
     match result {
         Ok(LifecycleResult::NotInstalled) => {
             // No-op: not a spurious supervisor error, but the behavior block
-            // (REQ-003) signals exit 1 with this exact stderr message.
+            // signals exit 1 with this exact stderr message.
             reporter.warn("service not installed; run `patina watch install` first");
             if json {
                 reporter.json(
@@ -183,8 +182,8 @@ fn render_status(
     }
 }
 
-/// Build the `status --json` envelope (REQ-003 `<done-when>`): the six fields,
-/// with the recovered counters rendered as JSON `null` when absent (DEC-012).
+/// Build the `status --json` envelope: the six fields,
+/// with the recovered counters rendered as JSON `null` when absent.
 fn status_envelope(status: &ServiceStatus) -> String {
     let envelope = serde_json::json!({
         "installed": status.installed,
@@ -226,7 +225,7 @@ fn opt_to_string<T: std::fmt::Display>(value: Option<T>) -> String {
 }
 
 /// Read the root manifest and, if it declares the ignored `[watcher]
-/// debounce_ms` key, surface the typed warning (REQ-006 / DEC-002).
+/// debounce_ms` key, surface the typed warning.
 ///
 /// Best-effort: a repository that cannot be discovered or a manifest that
 /// cannot be read is not this warning's concern (the foreground start path
@@ -244,7 +243,7 @@ fn emit_debounce_warning(reporter: &mut impl Reporter) {
     }
 }
 
-/// The shutdown future for the foreground watcher (DEC-011): resolve on Ctrl-C
+/// The shutdown future for the foreground watcher: resolve on Ctrl-C
 /// (SIGINT) on every platform, or — on POSIX — on SIGTERM, whichever arrives
 /// first. A failure to install a handler resolves the future (shutting the
 /// watcher down) rather than leaving it unstoppable.
@@ -279,7 +278,7 @@ mod tests {
 
     #[test]
     fn status_envelope_carries_the_six_fields_with_null_for_absent_counters() {
-        // REQ-003 / DEC-012: the JSON object names all six fields, and an
+        // The JSON object names all six fields, and an
         // absent recovered counter renders as JSON null rather than being
         // dropped.
         let status = ServiceStatus {
@@ -307,7 +306,7 @@ mod tests {
 
     #[test]
     fn render_lifecycle_not_installed_warns_and_exits_one() {
-        // REQ-003 behavior block: a lifecycle action on a not-installed service
+        // The behavior block: a lifecycle action on a not-installed service
         // names the clear "service not installed" message on stderr and exits
         // 1 (a no-op, not a spurious supervisor error).
         let mut reporter = BufferReporter::new();
@@ -324,7 +323,7 @@ mod tests {
 
     #[test]
     fn render_lifecycle_already_installed_error_exits_one() {
-        // REQ-001: install on an already-installed service exits 1 with the
+        // Install on an already-installed service exits 1 with the
         // typed message surfaced to stderr.
         let mut reporter = BufferReporter::new();
         let code = render_lifecycle(Err(ServiceError::AlreadyInstalled), true, &mut reporter);

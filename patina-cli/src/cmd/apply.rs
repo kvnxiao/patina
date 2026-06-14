@@ -1,13 +1,13 @@
-//! `patina apply` command logic (REQ-017).
+//! `patina apply` command logic.
 //!
-//! This module owns the decision tree REQ-017 specifies — TTY prompt vs
+//! This module owns the decision tree — TTY prompt vs
 //! non-TTY preview, `--yes`, `--json`, `--pager` — and maps the engine's
 //! [`ApplyResult`] onto the process exit code. The engine semantics
 //! (planning, journaling, executors, hooks, rollback) live in
 //! `patina_core`; this module is presentation and control flow only, all
 //! output routed through the [`Reporter`].
 //!
-//! ## Exit codes (REQ-017 / CHK-028..030)
+//! ## Exit codes
 //!
 //! | Outcome                                   | Code |
 //! |-------------------------------------------|------|
@@ -92,11 +92,11 @@ pub async fn run(
         return run_json(&resolved, &request, args.yes, reporter).await;
     }
 
-    // Full no-op probe (REQ-009): a fully-satisfied repo with nothing to reap
+    // Full no-op probe: a fully-satisfied repo with nothing to reap
     // shows no diff and no confirmation prompt, and reads no stdin. The engine
     // re-checks this under the held lock; this probe only governs the
-    // prompt-skip. `execute_plan` then writes nothing (REQ-007) and reports
-    // the deterministic up-to-date line (REQ-008).
+    // prompt-skip. `execute_plan` then writes nothing and reports
+    // the deterministic up-to-date line.
     let is_full_noop =
         plan_is_full_noop(&resolved).context("failed to determine apply plan state")?;
 
@@ -113,7 +113,7 @@ pub async fn run(
         Confirmation::Declined => return Ok(ExitCode::UserDeclined.code()),
     }
 
-    // Windows-only Developer Mode gate (REQ-007): if the plan creates
+    // Windows-only Developer Mode gate: if the plan creates
     // symbolic links and Developer Mode is off (and we are not elevated),
     // drive the one-time UAC elevation flow before mutating. On macOS /
     // Linux this is always `Proceed`.
@@ -141,12 +141,12 @@ enum Confirmation {
 }
 
 /// Decide whether to proceed with the apply, prompting the user only on the
-/// interactive review path (REQ-009).
+/// interactive review path.
 ///
 /// A full no-op (`is_full_noop`) proceeds **without** touching the reporter's
 /// prompt or reading a line from `reader`: the short-circuit precedes the
 /// diff-and-prompt branch, so a fully-satisfied repo is never asked to
-/// confirm and `execute_plan` then writes nothing. This is the core REQ-009
+/// confirm and `execute_plan` then writes nothing. This is the core
 /// observable — the interactive-TTY prompt-skip — and is exercised directly
 /// by the unit tests below with a recording reader that counts stdin reads.
 fn confirm_apply(
@@ -158,12 +158,12 @@ fn confirm_apply(
 ) -> Confirmation {
     if is_full_noop {
         // No diff, no prompt, no stdin read: the no-op writes nothing whether
-        // or not the user would have confirmed (REQ-009).
+        // or not the user would have confirmed.
         return Confirmation::Proceed;
     }
     match (yes, tty) {
         (true, _) => Confirmation::Proceed,
-        // Non-TTY without --yes: preview only, exit 0 (CHK-028).
+        // Non-TTY without --yes: preview only, exit 0.
         (false, Tty::NonInteractive) => Confirmation::PreviewOnly,
         (false, Tty::Interactive) => {
             reporter.prompt("Apply? [y/N] ");
@@ -177,14 +177,14 @@ fn confirm_apply(
     }
 }
 
-/// Drive the Windows Developer Mode symlink-elevation gate (REQ-007).
+/// Drive the Windows Developer Mode symlink-elevation gate.
 ///
 /// Returns `Ok(None)` when the apply may proceed (no symlink in the plan,
 /// not on Windows, Developer Mode already on, or the helper just enabled
 /// it). Returns `Ok(Some(code))` to short-circuit the command with a
 /// terminal exit code: `5` when the user declines the UAC consent dialog,
-/// honouring CHK-012's stderr-substring contract. Returns `Err` when the
-/// helper ran but the flag still reads off afterward (exit 1, REQ-007).
+/// honouring the stderr-substring contract. Returns `Err` when the
+/// helper ran but the flag still reads off afterward (exit 1).
 ///
 /// On macOS / Linux [`decide_symlink_gate`] reports `Proceed` (the probe is
 /// `NotWindows`), so this never reads the registry and never spawns the
@@ -218,7 +218,7 @@ fn drive_elevation(reporter: &mut impl Reporter) -> Result<Option<i32>> {
     match patina_core::launch_elevate_helper().context("failed to launch the elevation helper")? {
         patina_core::ElevationOutcome::EnabledNow => Ok(None),
         patina_core::ElevationOutcome::Declined => {
-            // CHK-012: stderr must name `Developer Mode` and
+            // stderr must name `Developer Mode` and
             // `patina doctor --fix`; exit 5 (user declined).
             reporter.warn(
                 "Developer Mode was not enabled (elevation declined). \
@@ -264,7 +264,7 @@ async fn run_json(
         return Ok(ExitCode::Success.code());
     }
 
-    // Windows Developer Mode gate (REQ-007) applies to the JSON apply path
+    // Windows Developer Mode gate applies to the JSON apply path
     // too: a symlink-bearing plan on a dev-mode-disabled host drives the
     // UAC flow before any mutation. No-op on macOS / Linux.
     if let Some(exit) = drive_dev_mode_gate(resolved, reporter)? {
@@ -290,12 +290,12 @@ async fn run_json(
 /// [`Disposition`](patina_core::Disposition) label (`create` / `update` /
 /// `unchanged`), derived purely from the plan-time classification and reusing
 /// the canonical [`Disposition::label`](patina_core::Disposition::label)
-/// mapping (REQ-011). For tree modes the array lists
-/// per-leaf rows with per-leaf `state` (DEC-003 / DEC-007), mirroring the
+/// mapping. For tree modes the array lists
+/// per-leaf rows with per-leaf `state`, mirroring the
 /// per-leaf routing the human diff uses, so a drifted tree reports each leaf's
 /// own state rather than the per-op aggregate. The `state` field is a pure
 /// function of the disposition, so it inherits the deterministic-stdout
-/// contract (REQ-012).
+/// contract.
 fn json_envelope(resolved: &ResolvedPlan, result: &str) -> String {
     let plan: Vec<serde_json::Value> = resolved
         .operations
@@ -322,7 +322,7 @@ fn json_envelope(resolved: &ResolvedPlan, result: &str) -> String {
 /// A single-target mode (empty `leaves`) yields one row carrying the target's
 /// own disposition label. A tree mode yields one row per materialized leaf,
 /// each carrying that leaf's path (under the declared target) and its per-leaf
-/// disposition label (DEC-003 / DEC-007) — the same per-leaf routing the human
+/// disposition label — the same per-leaf routing the human
 /// diff renderer uses, so the two surfaces agree on what an entry expands to.
 fn plan_rows(
     op: &patina_core::ResolvedOperation,
@@ -381,9 +381,9 @@ fn render_diff(
             pager.binary()
         ));
     }
-    // Piping to a resolved external pager is deferred; the embedded
-    // renderer is always the source of the rendered string so output
-    // stays deterministic for the fallback path REQ-017 specifies.
+    // Patina does not pipe to an external pager; the embedded renderer is
+    // always the source of the rendered string so output stays
+    // deterministic for the fallback path.
     Ok(rendered)
 }
 
@@ -397,7 +397,7 @@ fn report_result(result: &ApplyResult, reporter: &mut impl Reporter) {
             for warning in warnings {
                 reporter.warn(warning);
             }
-            // REQ-008: a full no-op prints a deterministic up-to-date line
+            // A full no-op prints a deterministic up-to-date line
             // (no timestamp, PID, or state path) instead of "Applied.".
             if *up_to_date {
                 reporter.line("Already up to date. No changes to apply.");
@@ -418,7 +418,7 @@ fn report_result(result: &ApplyResult, reporter: &mut impl Reporter) {
     }
 }
 
-/// Exit code for an apply result (REQ-022 table).
+/// Exit code for an apply result.
 fn exit_code_for(result: &ApplyResult) -> i32 {
     match result {
         ApplyResult::Applied { .. } => ExitCode::Success,
@@ -493,8 +493,8 @@ mod tests {
     }
 
     #[test]
-    fn full_noop_interactive_skips_prompt_and_reads_no_stdin(/* CHK-013, REQ-009 */) {
-        // The core REQ-009 observable: a fully-satisfied plan on an
+    fn full_noop_interactive_skips_prompt_and_reads_no_stdin() {
+        // The core observable: a fully-satisfied plan on an
         // interactive TTY must NOT present the confirmation prompt and must
         // read no stdin. `RecordingReader` counts every `read_line`, so the
         // `reads == 0` assertion fails on a single stray read; `BufferReporter.err`
@@ -559,7 +559,7 @@ mod tests {
     }
 
     #[test]
-    fn yes_proceeds_without_prompting_on_any_tty(/* CHK-028 sibling */) {
+    fn yes_proceeds_without_prompting_on_any_tty() {
         // `--yes` proceeds without consulting the reader on either TTY kind.
         for tty in [Tty::Interactive, Tty::NonInteractive] {
             let mut reader = RecordingReader::default();
@@ -572,7 +572,7 @@ mod tests {
     }
 
     #[test]
-    fn non_tty_without_yes_previews_only(/* CHK-028 */) {
+    fn non_tty_without_yes_previews_only() {
         let mut reader = RecordingReader::default();
         let mut reporter = BufferReporter::new();
         let decision = confirm_apply(

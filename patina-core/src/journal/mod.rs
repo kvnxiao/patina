@@ -1,5 +1,5 @@
 //! Crash-safe plan journal: the binary plan file plus the per-operation
-//! progress cursor (REQ-011, REQ-012).
+//! progress cursor.
 //!
 //! Before the engine mutates any file on disk it computes the full plan
 //! (the list of file operations and hook invocations) and durably
@@ -8,15 +8,14 @@
 //! a future format change can be detected and refused rather than
 //! mis-decoded. The single up-front `fsync` of the plan file, paired
 //! with an `fsync` of its parent directory, is the durability point that
-//! lets a `kill -9` mid-apply converge deterministically on the next run
-//! (REQ-011).
+//! lets a `kill -9` mid-apply converge deterministically on the next run.
 //!
 //! As each operation completes the engine appends a record to
 //! `<state>/patina/journal/<ts>.progress`. The progress cursor is
 //! advisory: it is written through to the kernel page cache but is
 //! deliberately **not** `fsync`-ed per operation, because crash recovery
-//! (T-011) probes the real filesystem rather than trusting the cursor
-//! (REQ-012). After every operation settles the engine writes and
+//! probes the real filesystem rather than trusting the cursor.
+//! After every operation settles the engine writes and
 //! `fsync`s a `<ts>.COMMIT` sentinel, and only then deletes the plan and
 //! progress files for that timestamp.
 //!
@@ -35,7 +34,7 @@
 //!
 //! The [`Syncer`] trait abstracts the three durability syscalls
 //! (`fsync` on a file, `fsync` on a directory) so the executor and the
-//! T-011 recovery suite can substitute a recording fake that counts
+//! recovery suite can substitute a recording fake that counts
 //! calls and asserts the fsync shape without touching real hardware.
 //!
 //! # Examples
@@ -127,7 +126,7 @@ pub enum JournalError {
 
     /// The plan file declares a major format version newer than this
     /// binary understands. Refusing it is intentional: a forward-compat
-    /// decode would silently misread the plan (REQ-011 version envelope).
+    /// decode would silently misread the plan.
     #[error(
         "journal plan major version {found} is newer than supported version {supported}; \
          upgrade patina to read this plan"
@@ -143,7 +142,7 @@ pub enum JournalError {
 impl From<crate::version_envelope::EnvelopeError> for JournalError {
     /// Map the shared envelope codec's failure arms onto the journal's own
     /// error vocabulary so the journal's public error type is unchanged by
-    /// the extraction (REQ-007).
+    /// the extraction.
     fn from(err: crate::version_envelope::EnvelopeError) -> Self {
         match err {
             crate::version_envelope::EnvelopeError::Truncated { got, need } => {
@@ -172,7 +171,7 @@ impl Journal {
     /// Serialize `plan`, write it to `<dir>/<timestamp>.plan`, then
     /// `fsync` the plan file and the journal directory — in that order —
     /// before returning. On return the plan is durable and the engine
-    /// may begin mutating the filesystem (REQ-011).
+    /// may begin mutating the filesystem.
     ///
     /// The journal directory is created if it does not yet exist (the
     /// `state_dir` module also creates it; this call is idempotent).
@@ -209,7 +208,7 @@ impl Journal {
     }
 
     /// Append a completion record for operation index `op_index` to the
-    /// progress cursor. Deliberately **not** `fsync`-ed (REQ-012): crash
+    /// progress cursor. Deliberately **not** `fsync`-ed: crash
     /// recovery probes the filesystem rather than trusting this cursor.
     ///
     /// # Errors
@@ -222,11 +221,11 @@ impl Journal {
     /// Write `<ts>.COMMIT` carrying the committed [`ApplyRecord`], `fsync`
     /// it and the journal directory, then delete this run's plan and
     /// progress files. After this returns the apply is durably committed
-    /// and recovery will skip its timestamp (REQ-011 `<behavior>`).
+    /// and recovery will skip its timestamp.
     ///
-    /// The sentinel body is the encoded `record`: crash recovery (T-011)
+    /// The sentinel body is the encoded `record`: crash recovery
     /// keys on the sentinel's *existence* and never decodes the body, so
-    /// the payload is invisible to it; `patina status` (T-017) reads the
+    /// the payload is invisible to it; `patina status` reads the
     /// body to classify the live filesystem against the last apply.
     ///
     /// # Errors
@@ -270,7 +269,7 @@ impl Journal {
 ///
 /// "Newest" is the lexically greatest `<ts>` prefix, which is chronological
 /// for the compact UTC timestamp the engine writes. A `<ts>` carrying a
-/// `ROLLED_BACK` sentinel beside its `COMMIT` (T-018) is excluded: it has been
+/// `ROLLED_BACK` sentinel beside its `COMMIT` is excluded: it has been
 /// reversed and no longer describes the live filesystem.
 ///
 /// Returning the full descending list (not just the maximum) is what lets
@@ -370,7 +369,7 @@ pub(crate) fn read_latest_commit_with_ts(
 /// `<ts>.COMMIT` sentinel (no apply has ever committed, every commit has since
 /// been rolled back, or every remaining sentinel is torn or corrupt).
 ///
-/// `patina status` (T-017) is the reader: it decodes the latest apply's
+/// `patina status` is the reader: it decodes the latest apply's
 /// recorded targets and classifies each against the live filesystem. This is
 /// the `<ts>`-less convenience wrapper over the crate-internal
 /// `read_latest_commit_with_ts`, which owns the torn-sentinel fallback and the
@@ -386,7 +385,7 @@ pub fn read_latest_commit(dir: impl AsRef<Utf8Path>) -> Result<Option<ApplyRecor
 }
 
 /// Drop every journal sentinel for the `timestamps` whose backup cycles
-/// have been garbage-collected (REQ-015).
+/// have been garbage-collected.
 ///
 /// After [`backups::gc_retain`](crate::backups::gc_retain) prunes an apply's
 /// backup directory, that apply can no longer be faithfully reversed — the

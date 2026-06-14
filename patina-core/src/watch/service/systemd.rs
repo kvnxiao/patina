@@ -1,5 +1,4 @@
-//! The Linux `systemd --user` service backend (SPEC-0003 REQ-001 / REQ-003 /
-//! DEC-005 / DEC-010).
+//! The Linux `systemd --user` service backend.
 //!
 //! `install` writes a per-user unit to
 //! `~/.config/systemd/user/patina-watcher.service` (`Restart=on-failure`,
@@ -10,20 +9,19 @@
 //! stop-then-start; `uninstall` stops, `systemctl --user disable`s, and removes
 //! the unit file; `status` queries `systemctl --user` for liveness, last-fired,
 //! and last-exit, and recovers the watcher's log counters from the rotated
-//! structured log (DEC-012).
+//! structured log.
 //!
-//! Per DEC-005, neither `install` nor `uninstall` invokes
+//! Neither `install` nor `uninstall` invokes
 //! `loginctl enable-linger` / `disable-linger`, and there is no `--linger`
 //! flag: a user who wants the watcher to survive logout runs
-//! `sudo loginctl enable-linger $USER` themselves (documented in
-//! `docs/USER_GUIDE.md`). None of these paths require admin or sudo: a
-//! `systemd --user` unit is owned by the invoking user.
+//! `sudo loginctl enable-linger $USER` themselves. None of these paths require
+//! admin or sudo: a `systemd --user` unit is owned by the invoking user.
 //!
 //! On a host where `systemd --user` is unavailable (a non-systemd init, or a
 //! systemd build without the user bus reachable), the [`super::current`]
 //! factory returns the [`super::unsupported`] stub instead of this backend, so
 //! the user is directed at `patina watch --foreground` under their own
-//! supervisor (DEC-010).
+//! supervisor.
 
 use super::FOREGROUND_ARGS;
 use super::LifecycleResult;
@@ -45,7 +43,7 @@ pub const UNIT_NAME: &str = "patina-watcher.service";
 /// watcher's log counters from `<state_dir>/logs/`.
 #[derive(Debug, Clone)]
 pub struct SystemdBackend {
-    /// The resolved per-machine state root, for log-counter recovery (DEC-012).
+    /// The resolved per-machine state root, for log-counter recovery.
     state_dir: Utf8PathBuf,
 }
 
@@ -59,7 +57,7 @@ impl SystemdBackend {
     /// Whether `systemd --user` is reachable on this host.
     ///
     /// The factory uses this to decide between the systemd backend and the
-    /// [`super::unsupported`] fallback (DEC-010). A successful
+    /// [`super::unsupported`] fallback. A successful
     /// `systemctl --user is-system-running` *invocation* (any exit code, even
     /// the `degraded` / `offline` non-zero ones — the bus answered) proves the
     /// user bus is reachable; a spawn failure (no `systemctl` binary) or an
@@ -227,7 +225,7 @@ impl ServiceBackend for SystemdBackend {
 /// that surfaces on stderr regardless of exit code (`is-system-running` exits
 /// non-zero for `degraded` / `offline` even when the bus *did* answer). Any
 /// other stderr — empty, or a benign state word — means the user manager
-/// answered, so the host is a systemd host (DEC-010 routing decision).
+/// answered, so the host is a systemd host.
 fn bus_reachable(stderr: &str) -> bool {
     !stderr.contains("Failed to connect to bus")
 }
@@ -282,7 +280,7 @@ fn write_unit(path: &Utf8Path, binary: &Utf8Path) -> Result<(), ServiceError> {
 
 /// Render the systemd unit for the watcher service: `Restart=on-failure`,
 /// `WantedBy=default.target`, and `ExecStart` of the canonical `binary` plus
-/// `watch --foreground` (REQ-001).
+/// `watch --foreground`.
 ///
 /// Each `ExecStart` token is quoted and escaped through [`systemd_exec_quote`]
 /// so a binary path containing whitespace, a `%` specifier, or a newline lands
@@ -394,7 +392,7 @@ mod tests {
         let binary = Utf8Path::new("/usr/local/bin/patina");
         let unit = render_unit(binary);
 
-        // REQ-001: the unit must declare on-failure restart, the
+        // the unit must declare on-failure restart, the
         // default.target install hook, and an ExecStart pointing at the
         // canonical binary invoked with `watch --foreground`.
         assert!(unit.contains("Restart=on-failure"));
@@ -444,7 +442,7 @@ mod tests {
     #[test]
     fn bus_reachable_is_false_only_when_the_bus_connect_fails() {
         // The connect-failure message means there is no user manager to drive:
-        // route to the unsupported `--foreground` fallback (DEC-010).
+        // route to the unsupported `--foreground` fallback.
         assert!(!bus_reachable(
             "Failed to connect to bus: No such file or directory"
         ));
@@ -486,7 +484,7 @@ ExecMainExitTimestamp=Sat 2026-05-31 12:00:00 UTC
     #[test]
     fn parse_systemctl_show_treats_inactive_state_as_stopped() {
         // An installed-but-stopped unit reports running = false and surfaces
-        // the recorded last exit code (REQ-003 status shape).
+        // the recorded last exit code.
         let dump = "\
 ActiveState=inactive
 ExecMainStatus=2
@@ -513,7 +511,7 @@ ExecMainExitTimestamp=Sat 2026-05-31 11:00:00 UTC
     fn write_unit_writes_a_valid_unit_to_the_target_path() {
         // `write_unit` is pure filesystem work against a path argument, so a
         // tempdir-scoped write exercises the directory creation and content
-        // without systemctl. CHK-002's unit-file-exists assertion is gated by
+        // without systemctl. The unit-file-exists assertion is gated by
         // the same render the CLI install path uses.
         let tmp = tempfile::tempdir().expect("tempdir");
         let unit = Utf8PathBuf::from_path_buf(tmp.path().join("user").join(UNIT_NAME))

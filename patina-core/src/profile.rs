@@ -1,4 +1,4 @@
-//! Active-profile resolution (REQ-008).
+//! Active-profile resolution.
 //!
 //! The engine resolves a single profile name by composing four sources
 //! in priority order from highest to lowest:
@@ -25,7 +25,7 @@
 //! `[[auto_match]]` `when` predicates are evaluated by the shared
 //! `MiniJinja` [`Engine`] — the same evaluator
 //! `[[file]]` / `[[directory]]` / `[[hook]]` `when` predicates and
-//! `*.tmpl` bodies use (REQ-004 / DEC-006). One grammar, one
+//! `*.tmpl` bodies use. One grammar, one
 //! strict-undefined behavior, one place to reason about predicates. The
 //! full `MiniJinja` expression grammar is available: equality, inequality
 //! (`!=`), `and` / `or`, and expressions over the `patina.*` built-in
@@ -35,11 +35,11 @@
 //! Profile resolution runs *before* the user variable layers (CLI,
 //! per-machine, per-profile, per-module, repo-shared) are assembled, so
 //! the predicate is evaluated against a built-ins-only
-//! [`Resolver`] (DEC-006). A predicate that
+//! [`Resolver`]. A predicate that
 //! accesses a variable absent from that context — including a
 //! user-defined variable, or `patina.profile` (which is precisely what
 //! this resolution computes and so cannot be read here) — is a typed
-//! [`ProfileError::Predicate`] naming the offending variable (DEC-010),
+//! [`ProfileError::Predicate`] naming the offending variable,
 //! not a silent non-match. The undefined-access error and the
 //! short-circuit carve-out (a variable on a not-taken `and` / `or`
 //! branch is never accessed and does not error) fall out of routing
@@ -138,7 +138,7 @@ pub enum ProfileError {
     /// Evaluating an `[[auto_match]]` rule's `when` predicate through the
     /// shared `MiniJinja` engine failed — a syntax error, a type error,
     /// or (most commonly) a reference to a variable undefined in the
-    /// built-ins-only context profile resolution runs against (DEC-010).
+    /// built-ins-only context profile resolution runs against.
     /// The wrapped [`TemplateError`](crate::template::TemplateError)
     /// names the offending variable.
     #[error("[[auto_match]] when predicate `{predicate}` failed to evaluate")]
@@ -152,7 +152,7 @@ pub enum ProfileError {
     },
 }
 
-/// Resolve the active profile by walking the four REQ-008 sources.
+/// Resolve the active profile by walking the four sources.
 ///
 /// Each source is consulted in priority order; the first that produces
 /// a non-empty profile name wins. Sources are wired through arguments
@@ -174,9 +174,9 @@ pub enum ProfileError {
 /// * `builtins` — built-in variable context (`patina.os`, `patina.hostname`, …)
 ///   the predicate evaluates against. Profile resolution runs before the user
 ///   variable layers are assembled, so the predicate sees a built-ins-only
-///   [`Resolver`] (DEC-006).
+///   [`Resolver`].
 /// * `engine` — the shared `MiniJinja` [`Engine`] that evaluates every `when`
-///   site (DEC-006).
+///   site.
 ///
 /// # Errors
 ///
@@ -186,7 +186,7 @@ pub enum ProfileError {
 /// notably when it accesses a variable undefined in the built-ins-only
 /// context (a misspelled built-in, a user-defined variable, or
 /// `patina.profile`), which is a typed error naming the variable rather
-/// than a silent non-match (DEC-010). When predicates evaluate cleanly
+/// than a silent non-match. When predicates evaluate cleanly
 /// to `false`, the function continues to the next rule and ultimately to
 /// the fallback.
 ///
@@ -252,7 +252,7 @@ pub fn resolve(
     // 3. Auto-match rules. Each `when` is evaluated through the shared
     // engine against a built-ins-only resolver: profile resolution runs
     // before the user variable layers are assembled, so no active-profile
-    // and no user layers are in scope (DEC-006). A `Resolver` with no
+    // and no user layers are in scope. A `Resolver` with no
     // layers pushed exposes exactly the built-ins.
     let resolver = Resolver::new(builtins.clone());
     for rule in auto_match_rules {
@@ -462,8 +462,8 @@ mod tests {
 
     /// The shared engine accepts the wider grammar the removed narrow
     /// evaluator rejected: an `!=` predicate over a defined built-in
-    /// selects its profile rather than erroring (REQ-004 parity-plus-
-    /// wider-grammar; replaces `predicate_rejects_unsupported_shape`).
+    /// selects its profile rather than erroring (parity-plus-wider-grammar;
+    /// replaces `predicate_rejects_unsupported_shape`).
     #[test]
     fn auto_match_inequality_predicate_now_selects() {
         let dir = TempDir::new().expect("tempdir");
@@ -507,7 +507,7 @@ mod tests {
     /// A `when` that accesses `patina.profile` — unresolved during profile
     /// resolution because it is precisely what this pass computes — is a
     /// typed [`ProfileError::Predicate`] naming the variable, not a silent
-    /// non-match (DEC-010; replaces the narrow evaluator's reject tests
+    /// non-match (replaces the narrow evaluator's reject tests
     /// and `missing_builtin_compares_as_empty_string`).
     #[test]
     fn auto_match_referencing_patina_profile_errors() {
@@ -525,7 +525,7 @@ mod tests {
             .expect_err("patina.profile is undefined during profile resolution");
         // It is a typed predicate failure over the offending rule, and the
         // wrapped engine error names the undefined variable so the user can
-        // fix the source (CHK-021 / DEC-010).
+        // fix the source.
         assert!(
             matches!(&err, ProfileError::Predicate { predicate, .. } if predicate == "patina.profile == 'work'"),
             "expected ProfileError::Predicate over the offending rule, got {err:?}"

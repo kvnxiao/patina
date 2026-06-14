@@ -1,5 +1,4 @@
-//! Layered variable resolution with the reserved `patina.*` namespace
-//! (REQ-007).
+//! Layered variable resolution with the reserved `patina.*` namespace.
 //!
 //! The engine resolves a variable name by walking six layers in priority
 //! order from highest to lowest:
@@ -24,7 +23,7 @@
 //! per-profile / per-module / repo-shared layers are pushed in.
 //!
 //! Strict-undefined semantics for missing keys *inside templates* belong
-//! to `MiniJinja` (REQ-009 / T-008); this module returns `None` from
+//! to `MiniJinja`; this module returns `None` from
 //! [`Resolver::get`] when a name is unset.
 
 pub mod builtins;
@@ -43,7 +42,7 @@ pub const RESERVED_PREFIX: &str = "patina.";
 pub enum VariableError {
     /// A user-set key collides with the reserved `patina.*` namespace.
     /// The Display contains the offending key and the substring
-    /// `reserved` (REQ-007 done-when).
+    /// `reserved`.
     #[error("variable key `{key}` is reserved: the `patina.*` namespace is owned by built-ins")]
     ReservedKey {
         /// The offending key.
@@ -111,7 +110,7 @@ pub fn parse_cli_override(raw: &str) -> Result<(String, String), VariableError> 
 ///
 /// `[variables]` tables are TOML, so values may technically be any TOML
 /// scalar. v1 narrows the contract to strings — the template engine
-/// (T-008) coerces what it renders, and richer value types can be added
+/// coerces what it renders, and richer value types can be added
 /// later without changing this resolver's shape.
 type Layer = BTreeMap<String, String>;
 
@@ -119,7 +118,7 @@ type Layer = BTreeMap<String, String>;
 ///
 /// Construct via [`Resolver::new`], populate the user layers with the
 /// `with_*` builders, and resolve with [`Resolver::get`]. Layer order is
-/// fixed and matches REQ-007: CLI > per-machine > per-profile >
+/// fixed and matches the precedence: CLI > per-machine > per-profile >
 /// per-module > repo-shared > built-ins.
 ///
 /// Built-ins are owned by the [`Builtins`] field; user keys collide-check
@@ -237,7 +236,7 @@ impl Resolver {
     ///
     /// Wired this way so the resolver does not depend on profile
     /// resolution being complete before construction; until this is
-    /// called, `patina.profile` is undefined (REQ-004 / DEC-010).
+    /// called, `patina.profile` is undefined.
     pub fn with_profile(mut self, profile: impl Into<String>) -> Self {
         self.builtins.profile = Some(profile.into());
         self
@@ -246,7 +245,7 @@ impl Resolver {
     /// Resolve a variable name against the six layers.
     ///
     /// Returns `None` when the name is unset at every layer. Templates
-    /// turn that into a strict-undefined error (REQ-009 / T-008); this
+    /// turn that into a strict-undefined error; this
     /// resolver is intentionally schema-free at the lookup boundary.
     #[must_use = "ignoring the resolved value defeats the lookup"]
     pub fn get(&self, key: &str) -> Option<String> {

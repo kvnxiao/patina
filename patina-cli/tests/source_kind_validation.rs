@@ -1,4 +1,4 @@
-//! REQ-002 / REQ-009 (SPEC-0004): a managed entry's declared kind is
+//! A managed entry's declared kind is
 //! validated against its source's on-disk kind at plan time, before the
 //! advisory lock, the journal flush, or any mutation.
 //!
@@ -7,14 +7,14 @@
 //! and asserts that:
 //!
 //! - a `[[file]]` pointing at a directory source exits 1, names the source and
-//!   `[[directory]]`, and writes no journal artifact (CHK-004);
+//!   `[[directory]]`, and writes no journal artifact;
 //! - a `[[directory]]` pointing at a file source directs the author to
-//!   `[[file]]` (CHK-005);
+//!   `[[file]]`;
 //! - a `when`-true entry whose source is absent exits 1 with a missing-source
-//!   error and no journal artifact (CHK-018);
+//!   error and no journal artifact;
 //! - a `when`-false entry whose source is absent and wrong-shaped on this OS
 //!   exits 0 with no kind / missing-source error, because step (3) never runs
-//!   on a gated-off entry (CHK-022).
+//!   on a gated-off entry.
 
 mod common;
 
@@ -32,7 +32,7 @@ fn current_os_family() -> &'static str {
 
 /// Assert that the apply wrote no `*.plan` or `*.COMMIT` journal file for the
 /// run — the plan-time-failure guarantee that a mismatched entry mutates
-/// nothing (REQ-002). The journal directory is `<state>/patina/journal`; it
+/// nothing. The journal directory is `<state>/patina/journal`; it
 /// may not exist at all on a plan-phase failure, which is itself proof that
 /// nothing was flushed.
 fn assert_no_journal_artifacts(f: &Fixture) {
@@ -60,7 +60,7 @@ fn assert_no_journal_artifacts(f: &Fixture) {
 
 #[test]
 fn file_entry_with_directory_source_fails_and_directs_to_directory_table() {
-    // CHK-004: a `[[file]]` whose source is a directory exits 1, stderr names
+    // A `[[file]]` whose source is a directory exits 1, stderr names
     // the source (`confdir`) and the `[[directory]]` table, and no journal
     // plan/COMMIT is written.
     let f = Fixture::new();
@@ -96,7 +96,7 @@ fn file_entry_with_directory_source_fails_and_directs_to_directory_table() {
 
 #[test]
 fn directory_entry_with_file_source_fails_and_directs_to_file_table() {
-    // CHK-005: a `[[directory]]` whose source is a regular file exits 1 and
+    // A `[[directory]]` whose source is a regular file exits 1 and
     // stderr directs the author to the `[[file]]` table.
     let f = Fixture::new();
     let module = f.module(
@@ -123,7 +123,7 @@ fn directory_entry_with_file_source_fails_and_directs_to_file_table() {
 
 #[test]
 fn when_true_entry_with_absent_source_fails_as_source_not_found() {
-    // CHK-018: a `[[file]]` with `source = "ghost"` and no `when` (so it is
+    // A `[[file]]` with `source = "ghost"` and no `when` (so it is
     // not gated off) whose source is absent exits 1, stderr names `ghost` as
     // a missing source, and no journal plan/COMMIT is written.
     let f = Fixture::new();
@@ -155,10 +155,10 @@ fn when_true_entry_with_absent_source_fails_as_source_not_found() {
 
 #[test]
 fn when_false_entry_with_absent_wrong_kind_source_is_not_validated() {
-    // CHK-022: a `[[directory]]` entry gated off on this OS
+    // A `[[directory]]` entry gated off on this OS
     // (`when = "patina.os == 'definitely-not-this-os'"`) with an absent
     // source exits 0 with no missing-source or kind error — step (3) never
-    // runs on a `when`-false entry (REQ-009 ordering).
+    // runs on a `when`-false entry (the ordering guarantee).
     let f = Fixture::new();
     f.module(
         "wm",

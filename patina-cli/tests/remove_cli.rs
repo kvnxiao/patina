@@ -3,7 +3,7 @@
     reason = "integration tests use .expect() on fixture setup and assertions; allow-expect-in-tests covers #[cfg(test)] modules but not the top level of a tests/*.rs integration crate."
 )]
 
-//! Integration coverage for `patina remove` (REQ-003, REQ-009, REQ-010).
+//! Integration coverage for `patina remove`.
 //!
 //! Each test spawns the real `patina` binary against an isolated tempdir
 //! repo + state + home (via the shared [`common::Fixture`]). The fixture
@@ -48,7 +48,7 @@ fn applied_symlink_fixture() -> Fixture {
     fx
 }
 
-/// CHK-005: `patina remove ~/.zshrc --yes` replaces the symlink with a
+/// `patina remove ~/.zshrc --yes` replaces the symlink with a
 /// regular file holding the last-applied content, removes the `[[file]]`
 /// entry, leaves the repository source unchanged, and a subsequent
 /// `patina status --json` no longer lists the target.
@@ -116,7 +116,7 @@ fn remove_replaces_target_drops_entry_and_status_omits_it() {
     );
 }
 
-/// CHK-006: `patina remove ~/.zshrc --purge --yes` deletes the target from
+/// `patina remove ~/.zshrc --purge --yes` deletes the target from
 /// disk entirely, removes the `[[file]]` entry, and leaves the repository
 /// source unchanged.
 #[test]
@@ -154,7 +154,7 @@ fn remove_purge_deletes_target_and_drops_entry() {
     );
 }
 
-/// REQ-003: removing a path that is not currently managed exits 1, names the
+/// Removing a path that is not currently managed exits 1, names the
 /// path and the three discovery sources, and mutates nothing.
 #[test]
 fn remove_unmanaged_path_exits_1() {
@@ -190,7 +190,7 @@ fn remove_unmanaged_path_exits_1() {
     );
 }
 
-/// REQ-010: `remove --json --yes` emits a single deterministic JSON document
+/// `remove --json --yes` emits a single deterministic JSON document
 /// on stdout naming the removed target and the purge flag.
 #[test]
 fn remove_json_emits_document() {

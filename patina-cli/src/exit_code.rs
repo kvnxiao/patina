@@ -1,4 +1,4 @@
-//! The CLI's formalized process exit codes (REQ-022).
+//! The CLI's formalized process exit codes.
 //!
 //! Every terminal CLI state maps to exactly one of these codes. The
 //! contract is enforced in one place: subcommands return an [`ExitCode`]
@@ -22,7 +22,7 @@
 use patina_core::EngineError;
 use patina_core::LockError;
 
-/// A terminal CLI outcome and its required process exit code (REQ-022).
+/// A terminal CLI outcome and its required process exit code.
 ///
 /// The `#[repr(i32)]` and pinned discriminants make the numeric contract
 /// part of the type: [`ExitCode::code`] returns the discriminant, and the
@@ -44,8 +44,8 @@ pub enum ExitCode {
     /// `4` — the exclusive advisory lock could not be acquired within the
     /// configured timeout (`apply` / `rollback`).
     LockTimeout = 4,
-    /// `5` — the user declined the interactive confirmation prompt (or, once
-    /// SPEC-0002 lands, refused an elevation request).
+    /// `5` — the user declined the interactive confirmation prompt (or
+    /// refused an elevation request).
     UserDeclined = 5,
 }
 
@@ -56,7 +56,7 @@ impl ExitCode {
         self as i32
     }
 
-    /// Map an [`EngineError`] to the exit code REQ-022 assigns it.
+    /// Map an [`EngineError`] to the exit code it is assigned.
     ///
     /// Only the exclusive-lock timeout earns a dedicated code (`4`); every
     /// other engine failure is a generic error (`1`). The hook-driven codes

@@ -3,15 +3,15 @@
     reason = "integration tests use .expect() on fixture setup; the lint's allow-expect-in-tests covers #[cfg(test)] modules but not the helper functions in tests/*.rs integration crates."
 )]
 
-//! Integration tests for path canonicalization (REQ-010, T-009).
+//! Integration tests for path canonicalization.
 //!
 //! Exercises the public `paths::canonicalize` / `paths::expand_tilde`
 //! helpers and the discovery-layer wiring: a repository root resolved
 //! through a relative `PATINA_REPO` must come back canonical and
-//! absolute. CHK-021's full `patina apply --yes --json` surface lands
-//! in T-016; the library-level property proved here is that the
+//! absolute. The full `patina apply --yes --json` surface lands
+//! later; the library-level property proved here is that the
 //! `repo_root` value that surface will report is already canonical and
-//! absolute (no `.` / `..` segments) at the point T-009 produces it.
+//! absolute (no `.` / `..` segments) at the point it is produced.
 
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
@@ -56,7 +56,7 @@ fn existing_path_resolves_absolute_with_no_dot_segments() {
 
 #[test]
 fn nonexistent_target_under_missing_grandparent_does_not_error() {
-    // REQ-010 behavior: a target path whose parent directory does not
+    // A target path whose parent directory does not
     // yet exist canonicalizes lexically rather than erroring. Here the
     // entire `cfg/foo/` chain is absent.
     let (_td, dir) = utf8_tempdir();
@@ -69,7 +69,7 @@ fn nonexistent_target_under_missing_grandparent_does_not_error() {
 
 #[test]
 fn nonexistent_leaf_under_existing_parent_resolves_through_parent_symlinks() {
-    // REQ-010 / CHK-023 shape: when the parent exists (even as a
+    // When the parent exists (even as a
     // symlink), the leaf resolves through the parent's canonical form.
     // Symlink creation is skipped on platforms where it is unavailable
     // without elevation (Windows without Developer Mode); the
@@ -113,17 +113,17 @@ fn expand_tilde_then_canonicalize_yields_home_relative_absolute() {
 
 #[test]
 fn relative_repo_resolves_to_canonical_absolute_root() {
-    // CHK-021 (library-level): given a CWD `T` and a repository at
+    // At the library level, given a CWD `T` and a repository at
     // `T/dot`, a relative `PATINA_REPO=./dot` resolves to the canonical
     // absolute `T/dot` with no `.` / `..` segments. This is the value
-    // the T-016 `--json` surface will report as `repo_root`.
+    // the `--json` surface will report as `repo_root`.
     let (_td, work) = utf8_tempdir();
     let repo = work.join("dot");
     fs_err::create_dir_all(repo.as_std_path()).expect("create repo dir");
     write_root_manifest(&repo);
 
     // `PATINA_REPO` validation joins the raw value as-is; pass the
-    // relative form the SPEC scenario uses. `validate_root` checks the
+    // relative form this test uses. `validate_root` checks the
     // directory and manifest relative to the process CWD, so feed the
     // absolute repo here (the seam takes the value verbatim) and assert
     // the canonical, dot-free result. The relative-resolution property

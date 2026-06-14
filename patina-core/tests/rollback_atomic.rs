@@ -4,8 +4,7 @@
     reason = "integration tests use .expect()/panic! on fixtures; allow-expect-in-tests covers #[cfg(test)] modules but not the helper functions in tests/*.rs integration crates."
 )]
 
-//! Per-`[[file]]`-entry atomic rollback coverage (REQ-019, CHK-049's
-//! atomicity scenario).
+//! Per-`[[file]]`-entry atomic rollback coverage.
 //!
 //! A multi-target `[[file]]` entry reverts as a unit: when restoring one
 //! target fails, every target the entry already reverted is rolled forward
@@ -15,7 +14,7 @@
 //! The failure is injected without privileges: the second target's parent
 //! directory is replaced by a *regular file*, so the restore's
 //! `create_dir_all(parent)` fails with a deterministic, cross-platform IO
-//! error — the harness's stand-in for the SPEC's "permission error".
+//! error — the harness's stand-in for a "permission error".
 
 use camino::Utf8Path;
 use camino::Utf8PathBuf;

@@ -3,22 +3,19 @@
     reason = "integration tests use .expect() on fixture setup; allow-expect-in-tests covers #[cfg(test)] modules but not the helper functions in tests/*.rs integration crates."
 )]
 
-//! Integration coverage for the plan journal (T-010 / REQ-011, REQ-012).
+//! Integration coverage for the plan journal.
 //!
-//! The end-to-end `patina apply --yes` surface the SPEC scenarios name
-//! cannot run yet: the `apply` subcommand, the executor loop, and the
-//! mutation steps land in later tasks (T-014, T-016). These tests drive
-//! the `patina_core::journal` module directly — the layer T-010 owns —
-//! and prove the load-bearing properties those scenarios depend on:
+//! These tests drive the `patina_core::journal` module directly and prove
+//! the load-bearing properties those scenarios depend on:
 //!
 //! - the single up-front plan fsync paired with a directory fsync, with no
-//!   per-operation progress fsync (CHK-023 fsync shape);
+//!   per-operation progress fsync (fsync shape);
 //! - a flushed plan is durable before the first mutation, with no COMMIT
-//!   sentinel until the run commits (CHK-022 crash-window state);
+//!   sentinel until the run commits (crash-window state);
 //! - a newer-version plan is refused with a typed error naming both versions
-//!   (task-body version-envelope scenario);
+//!   (version-envelope scenario);
 //! - committing deletes the plan and progress files, leaving only the COMMIT
-//!   sentinel (task-body cleanup scenario).
+//!   sentinel (cleanup scenario).
 
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
@@ -113,7 +110,7 @@ fn three_op_plan() -> Plan {
     ])
 }
 
-// CHK-023: a three-operation apply records exactly one fsync on the plan
+// A three-operation apply records exactly one fsync on the plan
 // file, one on the journal parent directory, one on the COMMIT sentinel,
 // and zero per-operation fsyncs on the progress file.
 #[test]
@@ -170,7 +167,7 @@ fn three_op_apply_fsyncs_plan_dir_commit_but_never_progress() {
     );
 }
 
-// CHK-022: immediately after `flush_plan_and_fsync` returns and before
+// Immediately after `flush_plan_and_fsync` returns and before
 // the first mutation, the journal dir holds exactly one `<ts>.plan` file
 // and no COMMIT sentinel. (The progress file exists but may be empty.)
 #[test]
@@ -218,7 +215,7 @@ fn after_flush_plan_exists_with_no_commit_sentinel() {
     );
 }
 
-// Task-body version-envelope scenario: a plan whose envelope u16 is
+// Version-envelope scenario: a plan whose envelope u16 is
 // u16::MAX is refused on a binary compiled for major version 1, with a
 // typed error naming both versions.
 #[test]
@@ -261,7 +258,7 @@ fn newer_major_version_is_refused_with_both_versions_named() {
     );
 }
 
-// Task-body cleanup scenario: after a successful commit, the prior run's
+// Cleanup scenario: after a successful commit, the prior run's
 // .plan and .progress are gone and only the COMMIT sentinel remains. A
 // subsequent flush adds new plan files alongside the surviving sentinel.
 #[test]
@@ -310,7 +307,7 @@ fn commit_deletes_plan_and_progress_leaving_only_commit_sentinel() {
     drop(next);
 }
 
-// REQ-011 <done-when>: the encoded plan is byte-identical for the same
+// The encoded plan is byte-identical for the same
 // operations (the timestamp lives only in the filename, not the body).
 #[test]
 fn same_plan_encodes_to_identical_bytes() {

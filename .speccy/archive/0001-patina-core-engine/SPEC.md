@@ -5,6 +5,7 @@ title: Patina core engine — transactional apply with apply/status/rollback CLI
 status: implemented
 created: 2026-05-25
 supersedes: []
+archived_at: 2026-06-14
 ---
 
 # SPEC-0001: Patina core engine — transactional apply with apply/status/rollback CLI

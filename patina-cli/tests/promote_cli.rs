@@ -7,7 +7,7 @@
     reason = "integration tests panic! on unexpected fixture/record shapes; allow-*-in-tests covers #[cfg(test)] modules but not the helper functions in tests/*.rs integration crates."
 )]
 
-//! Integration coverage for `patina promote` (REQ-004, REQ-009, REQ-010).
+//! Integration coverage for `patina promote`.
 //!
 //! Each test spawns the real `patina` binary against an isolated tempdir
 //! repo + state + home (via the shared [`common::Fixture`]). A fixture first
@@ -60,7 +60,7 @@ fn applied_copy_fixture() -> Fixture {
     fx
 }
 
-/// CHK-007: promoting an externally-edited copy-mode target copies the new
+/// Promoting an externally-edited copy-mode target copies the new
 /// bytes back into the repository source, the latest journal record's expected
 /// hash for the target equals the blake3 hash of the new bytes, and a
 /// subsequent `patina status` reports the target CLEAN.
@@ -131,7 +131,7 @@ fn promote_copy_target_rewrites_source_and_rejournals() {
     );
 }
 
-/// CHK-008: promoting a template-rendered target mutates nothing, names the
+/// Promoting a template-rendered target mutates nothing, names the
 /// `.tmpl` source and the word `template` on stderr, and exits 1.
 #[test]
 fn promote_template_target_refuses() {
@@ -174,7 +174,7 @@ fn promote_template_target_refuses() {
     );
 }
 
-/// REQ-004: promoting a symbolic-link target mutates nothing, names the target
+/// Promoting a symbolic-link target mutates nothing, names the target
 /// and explains symlink targets share content with their source, and exits 1.
 #[test]
 fn promote_symlink_target_refuses() {
@@ -225,7 +225,7 @@ fn promote_symlink_target_refuses() {
     );
 }
 
-/// REQ-004: promoting a path that is not managed exits 1 and mutates nothing.
+/// Promoting a path that is not managed exits 1 and mutates nothing.
 #[test]
 fn promote_unmanaged_path_exits_1() {
     let fx = applied_copy_fixture();
@@ -251,7 +251,7 @@ fn promote_unmanaged_path_exits_1() {
     );
 }
 
-/// REQ-010: `promote --json --yes` emits a single deterministic JSON document
+/// `promote --json --yes` emits a single deterministic JSON document
 /// on stdout naming the promoted target and its repository source.
 #[test]
 fn promote_json_emits_document() {

@@ -3,7 +3,7 @@
     reason = "the root_manifest_with helper is a free fn at the integration-crate root, not inside a #[cfg(test)] module, so allow-expect-in-tests does not cover it; fixture setup panicking on failure is the intended test behaviour."
 )]
 
-//! REQ-005 (SPEC-0004): apply planning populates the repo-shared and
+//! Apply planning populates the repo-shared and
 //! active-profile variable layers.
 //!
 //! Each test drives `PATINA_REPO=<tempdir> patina apply --yes` over a
@@ -27,7 +27,7 @@ fn root_manifest_with(f: &Fixture, trailing: &str) {
 
 #[test]
 fn root_variable_renders_into_module_template() {
-    // CHK-010: a variable declared only in the root `[variables]` table
+    // A variable declared only in the root `[variables]` table
     // resolves inside a module's `.tmpl` template.
     let f = Fixture::new();
     root_manifest_with(&f, "[variables]\neditor = \"nvim\"\n");
@@ -54,7 +54,7 @@ fn root_variable_renders_into_module_template() {
 
 #[test]
 fn active_profile_variable_shadows_repo_shared() {
-    // CHK-011: with profile `work` active, a key present in both the root
+    // With profile `work` active, a key present in both the root
     // `[variables]` table and `[profiles.work.variables]` resolves to the
     // profile's value (per-profile shadows repo-shared).
     let f = Fixture::new();

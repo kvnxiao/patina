@@ -1,12 +1,12 @@
-//! The watcher's re-apply handler (SPEC-0003 REQ-006 / REQ-008 / DEC-007).
+//! The watcher's re-apply handler.
 //!
 //! On a debounced source-edit batch, the watcher re-runs the engine apply under
 //! [`LockPolicy::NonBlocking`](crate::LockPolicy): the engine self-acquires the
 //! exclusive advisory lock with a single non-blocking attempt and, on
 //! contention, returns
 //! [`LockError::Contended`] having mutated
-//! nothing — not even orphan recovery (SPEC-0001 resolves the lock before
-//! recovery, per the 2026-05-30 amendment). The watcher therefore must **not**
+//! nothing — not even orphan recovery (the lock is resolved before
+//! recovery). The watcher therefore must **not**
 //! pre-acquire the lock and then call apply: doing so would self-contend
 //! against its own guard. It lets the engine acquire under `NonBlocking` and
 //! treats a contention error as "the CLI (or another holder) owns the lock
@@ -14,16 +14,16 @@
 //! next FS event re-arms the debounce.
 //!
 //! A successful re-apply emits an info `re_apply` event carrying the
-//! REQ-009 metric fields (`re_apply_id`, `re_apply_duration_ms`,
-//! `re_apply_files_changed`), written to the T-006 log stack. Its journal
-//! `<ts>` is keyed by the T-002 hoisted
+//! metric fields (`re_apply_id`, `re_apply_duration_ms`,
+//! `re_apply_files_changed`), written to the log stack. Its journal
+//! `<ts>` is keyed by the hoisted
 //! [`current_timestamp`], exactly as `patina apply`
 //! keys its own.
 //!
 //! Re-applying unchanged source is a no-op at the filesystem level (the engine
 //! re-materializes byte-identical targets), so a self-triggered re-apply that
 //! produces an identical journal record does not loop: the journal-rescan path
-//! (T-008's select-loop) re-reads the same record and recomputes the same
+//! (the select-loop) re-reads the same record and recomputes the same
 //! subscription set.
 
 use crate::ApplyRequest;
@@ -56,8 +56,7 @@ pub enum ReapplyOutcome {
     Failed,
 }
 
-/// Drive one watcher re-apply cycle under [`LockPolicy::NonBlocking`]
-/// (REQ-006 / REQ-008).
+/// Drive one watcher re-apply cycle under [`LockPolicy::NonBlocking`].
 ///
 /// Plans the apply from the process-resolved repository and state directory
 /// (the watcher inherits the same `PATINA_REPO` / state-dir resolution the CLI
@@ -69,7 +68,7 @@ pub enum ReapplyOutcome {
 ///   [`ReapplyOutcome::Applied`].
 /// - On [`LockError::Contended`] it emits a debug `lock_contention_skip` event
 ///   (`skip_reason = "lock_held"`) and returns [`ReapplyOutcome::Skipped`],
-///   having mutated nothing (REQ-008).
+///   having mutated nothing.
 /// - On any other engine error it emits a warn `re_apply_failed` event and
 ///   returns [`ReapplyOutcome::Failed`]; a failed re-apply never crashes the
 ///   watcher.
@@ -103,7 +102,7 @@ pub async fn run_reapply() -> ReapplyOutcome {
         }
         Err(EngineError::Lock(LockError::Contended { .. })) => {
             // The CLI (or another holder) owns the exclusive lock. The engine
-            // returned before any mutation (REQ-008 / SPEC-0001 REQ-030): no
+            // returned before any mutation: no
             // plan, COMMIT, backup, or orphan recovery. Skip this cycle; the
             // next FS event re-arms the debounce.
             tracing::debug!(

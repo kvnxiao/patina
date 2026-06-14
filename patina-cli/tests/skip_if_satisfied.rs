@@ -3,36 +3,35 @@
     reason = "integration tests use .expect() on fixtures and asserted output; allow-expect-in-tests covers #[cfg(test)] modules but not the helper functions in tests/*.rs integration crates."
 )]
 
-//! Skip-if-satisfied execute behaviour (SPEC-0005, T-005 + T-006).
+//! Skip-if-satisfied execute behaviour.
 //!
-//! ## Per-entry skip (T-005, REQ-003 / REQ-004; CHK-006 / CHK-007)
+//! ## Per-entry skip
 //!
 //! A re-apply over a partially-drifted repo must leave the already-satisfied
 //! (`Unchanged`) entry completely untouched — same inode/mtime, no backup
-//! entry — while mutating the drifted entry and backing up its prior bytes
-//! (CHK-006). The skipped entry must still be recorded in the commit so
-//! `patina status` reports it `Clean` and a later reap never removes it
-//! (CHK-007).
+//! entry — while mutating the drifted entry and backing up its prior bytes.
+//! The skipped entry must still be recorded in the commit so
+//! `patina status` reports it `Clean` and a later reap never removes it.
 //!
-//! ## Full-no-op short-circuit (T-006, REQ-007 / REQ-009; CHK-011 / CHK-013)
+//! ## Full-no-op short-circuit
 //!
 //! When *every* entry is `Unchanged` and there is nothing to reap, the whole
 //! apply is a full no-op: it writes no new journal record and creates no new
-//! backup cycle, leaving the prior commit authoritative (CHK-011, REQ-007),
+//! backup cycle, leaving the prior commit authoritative,
 //! and it skips the diff-and-prompt confirmation entirely — presenting no
-//! prompt and reading no stdin (CHK-013, REQ-009). The interactive prompt-skip
+//! prompt and reading no stdin. The interactive prompt-skip
 //! itself is unit-tested in `patina-cli/src/cmd/apply.rs` (the subprocess
 //! fixture here pins stdin to a non-TTY); this suite covers the no-write
 //! property over the real engine.
 //!
-//! ## Rollback fidelity for a mixed commit (T-008, REQ-006; CHK-010)
+//! ## Rollback fidelity for a mixed commit
 //!
 //! A committed apply records one disposition per target. `patina rollback`
 //! must honour those dispositions: an `Unchanged` target (which took no
 //! backup) is left byte-for-byte in place, a `Create` target is deleted, and
 //! an `Update` target is restored to its pre-apply bytes from the backup.
 //!
-//! ## `--json` per-entry `state` (T-010, REQ-011 / REQ-012; CHK-015 / CHK-016)
+//! ## `--json` per-entry `state`
 //!
 //! Each `--json` plan entry carries a `state` field equal to the target's
 //! classified disposition label (`create` / `update` / `unchanged`), and a
@@ -85,7 +84,7 @@ fn collect_names(dir: &Utf8Path, names: &mut Vec<String>) {
 /// The sorted basenames of the immediate entries under `dir` (files and
 /// subdirectories), or an empty vector when `dir` does not exist. Used to
 /// snapshot the journal and backups directories across a re-apply so a no-op
-/// run can be shown to add nothing (REQ-007).
+/// run can be shown to add nothing.
 fn entry_names(dir: &Utf8Path) -> Vec<String> {
     let Ok(entries) = fs_err::read_dir(dir.as_std_path()) else {
         return Vec::new();
@@ -156,7 +155,7 @@ fn engine_canonical(target: &Utf8Path) -> Utf8PathBuf {
 }
 
 #[test]
-fn fully_satisfied_reapply_writes_no_new_journal_or_backup(/* CHK-011, REQ-007 */) {
+fn fully_satisfied_reapply_writes_no_new_journal_or_backup() {
     // After a converging first apply, a second apply over the unchanged source
     // is a full no-op: it must add no new `*.plan` / `*.COMMIT` to the journal
     // directory, must not rewrite the existing `<ts>.COMMIT`, and must create
@@ -218,7 +217,7 @@ target = "~/.rc"
     );
 
     // The journal directory gained no `*.plan` / `*.COMMIT` entry, and the
-    // backups directory gained no new cycle (REQ-007). Comparing the full
+    // backups directory gained no new cycle. Comparing the full
     // entry set — not just counts — also catches a stray `.progress` file.
     // (Necessary but, on its own, collision-blind; the identity asserts below
     // are what make removing the feature turn this test red.)
@@ -255,7 +254,7 @@ target = "~/.rc"
 }
 
 #[test]
-fn fully_satisfied_apply_without_yes_skips_prompt_and_reports_up_to_date(/* CHK-013, REQ-009 */) {
+fn fully_satisfied_apply_without_yes_skips_prompt_and_reports_up_to_date() {
     // A fully-satisfied repo applied WITHOUT `--yes` must short-circuit before
     // the diff-and-prompt branch: it prints the deterministic up-to-date line
     // and completes exit 0 without reading stdin and without rendering a diff.
@@ -305,7 +304,7 @@ mode = "copy"
 }
 
 #[test]
-fn unchanged_entry_is_not_rewritten_or_backed_up_while_drift_is(/* CHK-006 */) {
+fn unchanged_entry_is_not_rewritten_or_backed_up_while_drift_is() {
     // Two `copy` entries. After the first apply both targets match their
     // source. We then drift exactly one (`b`) and re-apply: `a` must be left
     // byte-for-byte with its original mtime and contribute no backup entry,
@@ -353,7 +352,7 @@ mode = "copy"
     );
 
     // The Unchanged entry's mtime is preserved: it was neither removed nor
-    // rewritten (REQ-003).
+    // rewritten.
     assert_eq!(
         mtime(&a_out),
         a_mtime_before,
@@ -373,7 +372,7 @@ mode = "copy"
     );
 
     // The second run's backup cycle holds the drifted target's prior bytes but
-    // no entry for the Unchanged target (REQ-003).
+    // no entry for the Unchanged target.
     let backups_root = f.state_root().join("backups");
     let cycle = latest_backup_cycle(&backups_root).expect("a backup cycle for the Update");
     let names = file_names_under(&cycle);
@@ -405,7 +404,7 @@ mode = "copy"
 
 #[test]
 fn copy_tree_re_apply_restores_drift_and_backs_up_the_tree_as_a_unit() {
-    // DEC-007 tree path through the real engine: a `copy-tree` with three
+    // Tree path through the real engine: a `copy-tree` with three
     // leaves, one drifted out of band, re-applies to restore the drifted leaf.
     // The whole target directory is backed up as a unit (today's
     // `backup_before_overwrite(<dir>)` model), so every leaf's prior bytes —
@@ -462,7 +461,7 @@ mode = "copy"
 }
 
 #[test]
-fn rollback_leaves_unchanged_deletes_create_and_restores_update(/* CHK-010, REQ-006 */) {
+fn rollback_leaves_unchanged_deletes_create_and_restores_update() {
     // One committed apply produces all three dispositions in a single commit,
     // then `patina rollback` must honour each:
     //   - `unchanged`: the target already matched its source before the apply, so
@@ -555,7 +554,7 @@ mode = "copy"
 }
 
 #[test]
-fn unchanged_entry_is_recorded_clean_and_survives_reap(/* CHK-007 */) {
+fn unchanged_entry_is_recorded_clean_and_survives_reap() {
     // After a re-apply where one entry is Update and another stays Unchanged,
     // `patina status` must report the Unchanged entry's target `Clean` and
     // present in the output, and a subsequent apply must not reap it.
@@ -650,12 +649,12 @@ fn state_for(rows: &[serde_json::Value], basename: &str) -> String {
 }
 
 #[test]
-fn json_plan_entries_carry_their_disposition_state(/* CHK-015, REQ-011 */) {
+fn json_plan_entries_carry_their_disposition_state() {
     // A mixed plan producing one Create, one Update, and one Unchanged target.
     // Each `--json` plan entry must carry a `state` equal to its classified
     // disposition (`create` / `update` / `unchanged`), and a second run over
     // the same live state must be byte-identical (the deterministic-stdout
-    // contract, REQ-012).
+    // contract).
     let f = Fixture::new();
     let m = f.module(
         "m",
@@ -716,7 +715,7 @@ mode = "copy"
     );
 
     // The plan is now fully satisfied; a second --json apply over the unchanged
-    // state must be byte-identical (REQ-011/REQ-012 determinism). We compare a
+    // state must be byte-identical (determinism). We compare a
     // re-run against the satisfied state to itself rather than against the
     // mixed first run, since the first run mutated the filesystem.
     let satisfied = f.apply(&["--json", "--yes"]);
@@ -733,7 +732,7 @@ mode = "copy"
 }
 
 #[test]
-fn fully_satisfied_json_emits_standard_envelope_all_unchanged(/* CHK-016, REQ-012 */) {
+fn fully_satisfied_json_emits_standard_envelope_all_unchanged() {
     // A fully-satisfied repo applied with `--json` must emit the STANDARD
     // envelope shape (same top-level keys as a changing apply), not a reduced
     // or special-cased document. Its plan array lists every managed entry with

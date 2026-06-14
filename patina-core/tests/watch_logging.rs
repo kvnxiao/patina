@@ -4,9 +4,9 @@
 )]
 
 //! Integration tests for the watcher's `<state>/patina/logs/` directory and
-//! its rotating-log stack (SPEC-0003 REQ-009 / T-006).
+//! its rotating-log stack.
 //!
-//! These tests pin two contracts at the public-API boundary: SPEC-0001's
+//! These tests pin two contracts at the public-API boundary:
 //! `state_dir::resolve_with_env` creates `journal/` and `backups/` but NOT
 //! `logs/`, and `watch::logging::build_file_appender` lazily creates `logs/`
 //! and writes a daily-rotating log file into it.

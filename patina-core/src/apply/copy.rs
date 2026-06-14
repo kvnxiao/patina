@@ -1,5 +1,4 @@
-//! Byte-copy executors: single-file [`Copy`] and recursive [`CopyTree`]
-//! (REQ-005).
+//! Byte-copy executors: single-file [`Copy`] and recursive [`CopyTree`].
 //!
 //! [`Copy`](crate::config::FileMode::Copy) writes a byte-for-byte copy of
 //! the source file at each target.
@@ -47,7 +46,7 @@ pub(super) fn copy_file(
 /// mirror the source directory tree to each target, one record per
 /// copied file.
 ///
-/// `write` selects which leaves are (re)written (REQ-003 / DEC-007): on a
+/// `write` selects which leaves are (re)written: on a
 /// fresh or fully-drifted tree the engine passes [`LeafWrite::All`] and every
 /// leaf is copied as before; on a partially-drifted tree it passes
 /// [`LeafWrite::Only`] with the plan-time `Update`/`Create` leaves so the
@@ -167,7 +166,7 @@ mod tests {
 
     #[test]
     fn copy_tree_only_writes_selected_leaves() {
-        // REQ-003 / DEC-007 partial tree write: with a `LeafWrite::Only` set
+        // Partial tree write: with a `LeafWrite::Only` set
         // naming one of two leaves, only that leaf is copied and only that
         // leaf yields a completion record. The unselected leaf is not written.
         let (_td, dir) = utf8_tempdir();

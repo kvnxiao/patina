@@ -1,12 +1,11 @@
-//! The watcher's drift-notification ledger at `<state>/patina/drift.cache`
-//! (REQ-007).
+//! The watcher's drift-notification ledger at `<state>/patina/drift.cache`.
 //!
 //! When the watcher detects that a managed non-symlink target's bytes
 //! diverge from the journal-recorded `blake3` hash, it records the
-//! divergence here. The cache backs the per-target notification rate limit
-//! (DEC-004), the `patina debug drift-cache` decode surface, and the
+//! divergence here. The cache backs the per-target notification rate limit,
+//! the `patina debug drift-cache` decode surface, and the
 //! watcher's own metrics. It is deliberately **never** read by
-//! `patina status`: status derives DRIFTED from SPEC-0001 REQ-018's own
+//! `patina status`: status derives DRIFTED from its own
 //! live re-hash, so a file edited and then reverted reports CLEAN even
 //! while this cache still holds the intervening edit.
 //!
@@ -67,12 +66,12 @@ pub struct DriftEntry {
     pub target: Utf8PathBuf,
     /// 32-byte `blake3` hash the journal recorded for this target — the
     /// bytes Patina materialized. Directly comparable to the journal's
-    /// recorded hash (REQ-029).
+    /// recorded hash.
     pub expected_hash: [u8; 32],
     /// 32-byte `blake3` hash of the target's bytes when drift was detected.
     pub actual_hash: [u8; 32],
     /// Unix timestamp (seconds) when the watcher detected the divergence.
-    /// Internal: it backs the per-target rate limit (DEC-004) and the
+    /// Internal: it backs the per-target rate limit and the
     /// human-rendered detection time in `patina debug drift-cache`, and is
     /// not otherwise surfaced to users.
     pub detected_at_unix: i64,
@@ -200,7 +199,7 @@ pub enum DriftCacheError {
 impl From<crate::version_envelope::EnvelopeError> for DriftCacheError {
     /// Map the shared envelope codec's failure arms onto the drift cache's
     /// own error vocabulary, mirroring the journal's mapping so the public
-    /// error type does not leak `EnvelopeError` (REQ-007).
+    /// error type does not leak `EnvelopeError`.
     fn from(err: crate::version_envelope::EnvelopeError) -> Self {
         match err {
             crate::version_envelope::EnvelopeError::Truncated { got, need } => {
@@ -220,8 +219,7 @@ const TEMP_SUFFIX: &str = ".tmp";
 /// Write `cache` to `path` atomically: encode to bytes, write them to a
 /// sibling `<path>.tmp`, then rename it over `path`. A concurrent reader
 /// (e.g. `patina debug drift-cache`) therefore observes either the previous
-/// complete cache or the new complete cache, never a half-written file
-/// (REQ-007 `<done-when>`).
+/// complete cache or the new complete cache, never a half-written file.
 ///
 /// The rename is the atomic point: POSIX `rename(2)` and Windows
 /// `MoveFileEx` both replace the destination as a single operation, so the

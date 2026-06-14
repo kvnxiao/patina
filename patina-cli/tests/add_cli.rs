@@ -3,7 +3,7 @@
     reason = "integration tests use .expect() on fixture setup and assertions; allow-expect-in-tests covers #[cfg(test)] modules but not the top level of a tests/*.rs integration crate."
 )]
 
-//! Integration coverage for `patina add` (REQ-002, REQ-009, REQ-010).
+//! Integration coverage for `patina add`.
 //!
 //! Each test spawns the real `patina` binary against an isolated tempdir
 //! repo + state + home (via the shared [`common::Fixture`]). Because the
@@ -26,7 +26,7 @@ use std::sync::Once;
 use std::time::Duration;
 use std::time::Instant;
 
-/// CHK-003: `patina add ~/.zshrc --module zsh --symlink --yes` moves the
+/// `patina add ~/.zshrc --module zsh --symlink --yes` moves the
 /// dotfile into `<repo>/zsh/zshrc`, writes a `[[file]]` entry, and leaves
 /// the original target as a regular file with the original bytes (apply has
 /// not run).
@@ -87,19 +87,19 @@ fn add_moves_file_writes_entry_and_leaves_target() {
     );
 }
 
-/// CHK-004: given the post-state of CHK-003 (the file staged into the repo
+/// Given the post-state of the prior add (the file staged into the repo
 /// and the `[[file]]` entry written, target still a regular file), running
 /// `patina apply --yes` materializes the target as a symbolic link whose
 /// readlink destination is the canonical path of `<repo>/zsh/zshrc`. This is
-/// REQ-002's convergence half: it proves `add` wrote a correct, *applyable*
-/// entry, which CHK-003 (manifest text + not-yet-a-symlink) cannot.
+/// the convergence half: it proves `add` wrote a correct, *applyable*
+/// entry, which the manifest text + not-yet-a-symlink check cannot.
 #[test]
 fn add_then_apply_materializes_target_as_symlink() {
     let fx = Fixture::new();
     let zshrc = fx.home.join(".zshrc");
     fs_err::write(zshrc.as_std_path(), "foo").expect("seed ~/.zshrc");
 
-    // Post-state of CHK-003: stage the file and write the entry.
+    // Post-state of the prior add: stage the file and write the entry.
     let add = fx.run(
         &["add", "~/.zshrc", "--module", "zsh", "--symlink", "--yes"],
         &[],
@@ -134,7 +134,7 @@ fn add_then_apply_materializes_target_as_symlink() {
     );
 }
 
-/// REQ-002 behaviour: two mode flags produce a clap usage error (exit 2)
+/// Two mode flags produce a clap usage error (exit 2)
 /// and stderr names the conflicting flags.
 #[test]
 fn add_two_mode_flags_is_a_usage_error() {
@@ -155,7 +155,7 @@ fn add_two_mode_flags_is_a_usage_error() {
     );
 }
 
-/// REQ-002: in a non-TTY shell without `--module`, `add` exits 1 and names
+/// In a non-TTY shell without `--module`, `add` exits 1 and names
 /// the missing `--module` flag.
 #[test]
 fn add_non_tty_without_module_exits_1() {
@@ -179,7 +179,7 @@ fn add_non_tty_without_module_exits_1() {
     );
 }
 
-/// REQ-002: a path that is already managed exits 1 and names the owning
+/// A path that is already managed exits 1 and names the owning
 /// module.
 #[test]
 fn add_already_managed_path_exits_1() {
@@ -207,7 +207,7 @@ fn add_already_managed_path_exits_1() {
     assert!(zshrc.is_file(), "~/.zshrc must be untouched on refusal");
 }
 
-/// REQ-010: `add --json --yes` emits a single deterministic JSON document
+/// `add --json --yes` emits a single deterministic JSON document
 /// on stdout naming the added target, module, and mode; stderr carries no
 /// prose.
 #[test]
@@ -251,7 +251,7 @@ fn add_json_emits_deterministic_document() {
     );
 }
 
-/// CHK-016 / REQ-009: a process holding the engine's exclusive lock blocks a
+/// A process holding the engine's exclusive lock blocks a
 /// concurrent `patina add` until it is released; `add` then completes
 /// successfully.
 ///

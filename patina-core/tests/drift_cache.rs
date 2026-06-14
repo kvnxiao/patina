@@ -1,5 +1,5 @@
-//! Integration coverage for the drift-cache format (SPEC-0003 T-004,
-//! REQ-007): round-trip through the atomic write, newer-major refusal,
+//! Integration coverage for the drift-cache format: round-trip through the
+//! atomic write, newer-major refusal,
 //! independence from the journal's major version, and the rename-based
 //! write guarantee — all against the crate's public API surface.
 
@@ -69,7 +69,7 @@ fn newer_major_load_is_refused_naming_both_versions() {
 
 #[test]
 fn drift_cache_major_is_independent_of_the_journal_major() {
-    // The two formats version separately (REQ-007): a regression that made
+    // The two formats version separately: a regression that made
     // the drift cache validate against the journal's major would break the
     // moment the two diverge. This pins that a cache encoded at the
     // drift-cache major carries that major and decodes against it,

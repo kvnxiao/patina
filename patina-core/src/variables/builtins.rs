@@ -10,7 +10,7 @@
 //! undefined: profile resolution itself evaluates `[[auto_match]]`
 //! predicates *before* the profile exists, so a rule referencing
 //! `patina.profile` accesses an undefined variable and errors rather
-//! than silently matching the empty string (REQ-004 / DEC-010).
+//! than silently matching the empty string.
 //!
 //! The dynamic `patina.env.*` map is **not** snapshotted: each
 //! `patina.env.FOO` lookup reads `std::env::var("FOO")` at lookup time
@@ -182,7 +182,7 @@ mod tests {
         let builtins = Builtins::current();
         // Unresolved until `Resolver::with_profile` sets it, so a
         // `patina.profile` lookup is undefined (returns `None`) rather
-        // than a defined empty string (REQ-004 / DEC-010).
+        // than a defined empty string.
         assert!(builtins.profile.is_none());
         assert!(builtins.get("patina.profile").is_none());
     }

@@ -1,4 +1,4 @@
-//! Integration scenarios for REQ-007 / T-006: layered variable
+//! Integration scenarios for layered variable
 //! resolution and the reserved `patina.*` namespace.
 //!
 //! These tests exercise the public surface of `patina_core::variables`
@@ -10,7 +10,7 @@ use patina_core::VariableError;
 use patina_core::config::ConfigParseError;
 use patina_core::config::parse_module_config_str;
 
-/// CHK-015 — CLI override shadows per-module and repo-shared layers.
+/// CLI override shadows per-module and repo-shared layers.
 #[test]
 fn cli_override_shadows_module_and_repo_for_email_lookup() {
     let resolver = Resolver::new(Builtins::for_tests())
@@ -24,7 +24,7 @@ fn cli_override_shadows_module_and_repo_for_email_lookup() {
     assert_eq!(resolver.get("email").as_deref(), Some("cli@example.com"));
 }
 
-/// CHK-016 — `[variables]` declaring `patina.foo = "bar"` fails parse
+/// `[variables]` declaring `patina.foo = "bar"` fails parse
 /// with a typed error whose Display names the key and contains the
 /// substring `reserved`.
 #[test]
@@ -53,7 +53,7 @@ fn parsing_a_patina_toml_with_reserved_variable_key_fails() {
     );
 }
 
-/// REQ-007 done-when — CLI `-v patina.os=foo` is rejected.
+/// CLI `-v patina.os=foo` is rejected.
 #[test]
 fn cli_override_of_reserved_key_is_rejected() {
     let err = Resolver::new(Builtins::for_tests())
@@ -65,7 +65,7 @@ fn cli_override_of_reserved_key_is_rejected() {
     assert!(display.contains("reserved"));
 }
 
-/// CHK-040 / REQ-007 done-when — `patina.env.FOO` resolves to the value
+/// `patina.env.FOO` resolves to the value
 /// of `FOO` in the current process environment. Tests forbid mutating
 /// `std::env` under `unsafe_code = "forbid"`, so we exercise the path
 /// via `PATH`, which is reliably set on every host that runs the
@@ -82,7 +82,7 @@ fn patina_env_lookup_reads_process_environment() {
 }
 
 /// `patina.env.FOO` returns `None` when `FOO` is unset; downstream
-/// strict-undefined handling lives in `MiniJinja` (T-008 / REQ-009).
+/// strict-undefined handling lives in `MiniJinja`.
 #[test]
 fn patina_env_unset_variable_resolves_to_none() {
     let resolver = Resolver::new(Builtins::current());
@@ -93,7 +93,7 @@ fn patina_env_unset_variable_resolves_to_none() {
     );
 }
 
-/// REQ-007 done-when — `patina.os` resolves to one of the three v1
+/// `patina.os` resolves to one of the three v1
 /// platform strings on the supported hosts.
 #[test]
 fn patina_os_is_one_of_the_v1_platform_strings() {
@@ -114,9 +114,9 @@ fn patina_os_is_one_of_the_v1_platform_strings() {
     }
 }
 
-/// Profile injection is lazy: T-007 wires the resolved profile in via
+/// Profile injection is lazy: the resolved profile is wired in via
 /// [`Resolver::with_profile`] without forcing this task to depend on
-/// T-007's wiring being complete.
+/// that wiring being complete.
 #[test]
 fn profile_injection_round_trips() {
     let resolver = Resolver::new(Builtins::for_tests()).with_profile("desktop");

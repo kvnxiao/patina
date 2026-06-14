@@ -1,6 +1,6 @@
-//! Golden-output coverage for the human diff body (REQ-010, CHK-014).
+//! Golden-output coverage for the human diff body.
 //!
-//! REQ-010: in a partial apply the rendered diff emits a per-entry block only
+//! In a partial apply the rendered diff emits a per-entry block only
 //! for `Create` / `Update` targets; `Unchanged` targets produce no block and
 //! are reported by exactly one deterministic summary count line.
 //!
@@ -19,7 +19,7 @@ mod common;
 use common::Fixture;
 use common::code;
 
-/// CHK-014: a plan with one Update target and three Unchanged targets renders
+/// A plan with one Update target and three Unchanged targets renders
 /// exactly one per-entry block (the Update) plus one summary line stating three
 /// unchanged.
 #[test]
@@ -27,7 +27,7 @@ fn partial_apply_diff_omits_unchanged_bodies_and_summarizes_the_count() {
     let f = Fixture::new();
     // Four `copy` entries. After the first apply all four targets match their
     // source bytes. We then drift exactly one (`b_out`) so the next plan
-    // classifies `b` as Update and the other three as Unchanged — the CHK-014
+    // classifies `b` as Update and the other three as Unchanged — the
     // shape of one Update + three Unchanged.
     let m = f.module(
         "m",

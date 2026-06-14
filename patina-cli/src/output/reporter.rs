@@ -1,10 +1,10 @@
 //! The `output::Reporter` abstraction: the only sanctioned site for
-//! user-facing output in `patina-cli` (REQ-017, project AGENTS rule).
+//! user-facing output in `patina-cli`.
 //!
 //! Every byte the CLI prints for the user — the rendered diff, the JSON
 //! envelope, prompt text, and warnings — funnels through a [`Reporter`].
 //! Logs (via `tracing`) are a separate channel and never go here. Routing
-//! all output through one trait is what lets T-021 assert the
+//! all output through one trait is what lets a test assert the
 //! deterministic-stdout property over a single seam, and lets these
 //! command tests capture output without spawning a subprocess.
 //!
@@ -18,7 +18,7 @@
 use std::io::Write;
 
 /// User-facing output sink. Diff and JSON go to the "out" stream; prompt
-/// text and warnings go to the "err" stream, matching REQ-017's split
+/// text and warnings go to the "err" stream, matching the documented split
 /// (diff on stdout, prompt on stderr).
 pub trait Reporter {
     /// Emit the rendered diff (human mode) to the out stream.

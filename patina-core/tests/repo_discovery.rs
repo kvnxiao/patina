@@ -3,7 +3,7 @@
     reason = "integration tests use .expect() on fixture setup; the lint's allow-expect-in-tests covers #[cfg(test)] modules but not the helper functions in tests/*.rs integration crates."
 )]
 
-//! Integration tests for repository-root resolution (REQ-003).
+//! Integration tests for repository-root resolution.
 //!
 //! Tests use the `resolve_repository_root_with` seam so they can
 //! inject env-var, CWD, and persisted-default values explicitly
@@ -43,7 +43,7 @@ fn utf8_tempdir() -> (TempDir, Utf8PathBuf) {
 
 #[test]
 fn env_var_resolves_repository_root() {
-    // CHK-005: PATINA_REPO points at a valid root; the engine resolves
+    // PATINA_REPO points at a valid root; the engine resolves
     // it regardless of CWD.
     let (_td, repo) = utf8_tempdir();
     write_root_manifest(&repo);
@@ -57,7 +57,7 @@ fn env_var_resolves_repository_root() {
 
 #[test]
 fn walk_up_finds_root_from_subdirectory() {
-    // CHK-006: PATINA_REPO unset; walk up from T/zsh/ finds T/patina.toml.
+    // PATINA_REPO unset; walk up from T/zsh/ finds T/patina.toml.
     let (_td, repo) = utf8_tempdir();
     write_root_manifest(&repo);
     let sub = repo.join("zsh");
@@ -69,7 +69,7 @@ fn walk_up_finds_root_from_subdirectory() {
 
 #[test]
 fn all_sources_failing_names_each_source() {
-    // CHK-007: env unset, CWD outside any repo, no persisted default →
+    // env unset, CWD outside any repo, no persisted default →
     // error message names PATINA_REPO, walk-up, and persisted default.
     let (_td, empty_cwd) = utf8_tempdir();
 
@@ -128,7 +128,7 @@ fn persisted_default_is_consulted_when_other_sources_fail() {
 
 #[test]
 fn write_persisted_default_round_trips_through_read_path() {
-    // T-002 scenario 1 (REQ-001): writing the pointer under state dir
+    // Writing the pointer under state dir
     // `S` makes the file exist, its trimmed contents equal the
     // canonical repo path `R`, `persisted_default_present(S)` is true,
     // and the existing read path resolves the persisted default
@@ -160,7 +160,7 @@ fn write_persisted_default_round_trips_through_read_path() {
 
 #[test]
 fn persisted_default_present_is_false_without_pointer() {
-    // T-002 scenario 2: a state dir with no `default_repo` file
+    // A state dir with no `default_repo` file
     // reports the pointer as absent.
     let (_state_td, state_dir) = utf8_tempdir();
     assert!(

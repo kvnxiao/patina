@@ -7,8 +7,8 @@
 //! [`ErrorKind::UndefinedError`](minijinja::ErrorKind) (on emit/coercion)
 //! or an undefined *value* (as a `when`-expression result). Either way the
 //! `MiniJinja` error carries only the generic message `"undefined value"`
-//! — it does **not** name the variable that was missing. REQ-009 requires
-//! the typed engine error's `Display` to name the offending variable
+//! — it does **not** name the variable that was missing. The typed
+//! engine error's `Display` must name the offending variable
 //! (`user_email`, `missing_var`, …).
 //!
 //! To recover the name we make the template context a dynamic
@@ -65,7 +65,7 @@ struct PatinaBuiltins {
 }
 
 /// The dynamic `patina.env` map. Each `patina.env.FOO` lookup reads the
-/// process environment at access time (REQ-007); a miss is tracked as an
+/// process environment at access time; a miss is tracked as an
 /// undefined named `patina.env.FOO`.
 #[derive(Debug)]
 struct PatinaEnv {
@@ -90,8 +90,7 @@ impl UndefinedTracker {
     }
 
     /// The recorded undefined names in sorted order. Sorted so the
-    /// reported message is deterministic regardless of access order
-    /// (REQ-021 determinism).
+    /// reported message is deterministic regardless of access order.
     pub(crate) fn names(&self) -> Vec<String> {
         self.names.iter().cloned().collect()
     }

@@ -1,16 +1,16 @@
 //! Windows-only one-time UAC elevation launch for the Developer Mode flow
-//! (REQ-007, write side).
+//! (write side).
 //!
 //! This module is compiled only under `#[cfg(windows)]`. It is the launch
-//! side of REQ-007: when [`super::decide_symlink_gate`] reports that
+//! side: when [`super::decide_symlink_gate`] reports that
 //! elevation is required, the CLI drives the one-time UAC flow by calling
 //! [`launch_elevate_helper`], which locates the bundled `patina-elevate.exe`
 //! beside the running `patina.exe`, launches it with the `runas` verb via
 //! `ShellExecuteEx` (the OS renders the UAC consent UI), then re-reads the
 //! Developer Mode registry flag to learn the outcome.
 //!
-//! Per DEC-002 the helper is a standalone crate with no `patina-core`
-//! dependency; we invoke it purely as a sibling executable. Per DEC-008 the
+//! The helper is a standalone crate with no `patina-core`
+//! dependency; we invoke it purely as a sibling executable. The
 //! engine never renders the UAC *prompt* — that is the CLI's job — but the
 //! `ShellExecuteEx` launch and the post-launch flag re-read are an engine
 //! capability and live here.
@@ -33,7 +33,7 @@ const HELPER_SUBCOMMAND: &str = "enable-developer-mode";
 
 /// How the one-time UAC elevation attempt settled.
 ///
-/// The CLI maps these onto its control flow (REQ-007): [`EnabledNow`] lets
+/// The CLI maps these onto its control flow: [`EnabledNow`] lets
 /// the apply proceed; [`Declined`] is the exit-5 user-declined path; and
 /// [`RanButStillDisabled`] is the typed exit-1 error naming the registry
 /// path.
@@ -60,7 +60,7 @@ pub enum ElevationOutcome {
 /// executable, launch it elevated via `ShellExecuteEx` with the `runas`
 /// verb, and re-read the Developer Mode flag to determine the outcome.
 ///
-/// The main `patina.exe` process never runs elevated (REQ-007): only the
+/// The main `patina.exe` process never runs elevated: only the
 /// helper is launched elevated, via the OS consent UI. A user who dismisses
 /// the UAC dialog yields [`ElevationOutcome::Declined`]
 /// (`ERROR_CANCELLED`).
@@ -85,7 +85,7 @@ pub fn launch_elevate_helper() -> Result<ElevationOutcome, WindowsError> {
     match winsafe::ShellExecuteEx(&info) {
         Ok(()) => Ok(reread_outcome()),
         // The user clicked "No" on the UAC dialog: not an error, the
-        // canonical declined path (REQ-007 → exit 5).
+        // canonical declined path (→ exit 5).
         Err(err) if err == co::ERROR::CANCELLED => Ok(ElevationOutcome::Declined),
         Err(err) => Err(WindowsError::WinApi {
             call: "ShellExecuteEx",

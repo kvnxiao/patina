@@ -1,5 +1,5 @@
 //! The `enable-developer-mode` action: flip the Developer Mode registry
-//! switch to `1` (REQ-008).
+//! switch to `1`.
 //!
 //! The real registry write is `#[cfg(windows)]`-gated. On any other host
 //! the action returns [`DevModeError::NotWindows`] without touching the
@@ -8,11 +8,11 @@
 //! arm resolves to a clean error path on Linux/macOS rather than failing
 //! to compile).
 //!
-//! ## Duplicated constants (DEC-002)
+//! ## Duplicated constants
 //!
 //! The registry key path and value name below are copied verbatim from
-//! `patina-core::windows::registry` *on purpose*. DEC-002 forbids this
-//! helper from depending on `patina-core`, so the constants cannot be
+//! `patina-core::windows::registry` *on purpose*. This helper must not
+//! depend on `patina-core`, so the constants cannot be
 //! shared across the crate boundary; the duplication is the deliberate
 //! price of the minimal trust surface. Keep the two sites in sync by hand
 //! if the Developer Mode key ever moves (it is a stable Windows ABI, so
@@ -30,7 +30,7 @@ pub enum DevModeError {
 
     /// A Windows registry call failed. `call` names the failing API,
     /// `symbol` names the Win32 error constant (e.g. `ERROR_ACCESS_DENIED`
-    /// when the helper was launched without elevation — REQ-008's
+    /// when the helper was launched without elevation — the
     /// non-elevated exit-1 path), and `source` carries the OS error with
     /// its formatted message.
     #[cfg(windows)]
@@ -97,7 +97,7 @@ impl std::error::Error for DevModeError {
 pub fn enable_developer_mode() -> Result<(), DevModeError> {
     use winsafe::co;
 
-    // DEC-002: duplicated verbatim from `patina-core::windows::registry`.
+    // Duplicated verbatim from `patina-core::windows::registry`.
     const DEV_MODE_KEY: &str = r"SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock";
     const DEV_MODE_VALUE: &str = "AllowDevelopmentWithoutDevLicense";
 
@@ -117,7 +117,7 @@ pub fn enable_developer_mode() -> Result<(), DevModeError> {
 
 /// Map a failing winsafe registry call to a [`DevModeError::Registry`].
 ///
-/// `ERROR_ACCESS_DENIED` (the non-elevated case REQ-008 calls out) is named
+/// `ERROR_ACCESS_DENIED` (the non-elevated case) is named
 /// symbolically; every other failure carries the numeric Win32 code so the
 /// "or the specific HRESULT observed" branch of the requirement is covered.
 /// The `source` keeps winsafe's `Display`, which formats the OS message.

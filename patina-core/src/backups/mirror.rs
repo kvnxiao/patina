@@ -1,5 +1,5 @@
 //! Backup-on-overwrite: stash the original bytes of a pre-existing target
-//! before the executor overwrites it (REQ-014).
+//! before the executor overwrites it.
 
 use super::BackupError;
 use crate::journal::mirror_backup_path;
@@ -15,8 +15,8 @@ use camino::Utf8Path;
 /// - **`Ok(true)`** — the target pre-existed and its bytes were copied to the
 ///   backup tree. The caller may now safely overwrite the target.
 /// - **`Ok(false)`** — the target did not exist, so there was nothing to back
-///   up (REQ-014: a freshly created target produces no backup entry). The
-///   caller proceeds to create the target.
+///   up (a freshly created target produces no backup entry). The caller
+///   proceeds to create the target.
 ///
 /// Existence is probed with `symlink_metadata`, so a pre-existing symlink
 /// at the target counts as present. The stash itself is kind-preserving via
@@ -27,7 +27,7 @@ use camino::Utf8Path;
 /// copy.
 ///
 /// This writes only under `backups_dir`; it never touches the dotfiles
-/// repository (REQ-014).
+/// repository.
 ///
 /// # Errors
 ///

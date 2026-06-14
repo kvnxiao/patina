@@ -43,8 +43,8 @@ tracing-appender = { workspace = true }
 tracing-subscriber = { workspace = true }
 whoami = { workspace = true }
 
-# REQ-007 Developer Mode / elevation reads + the one-time UAC launch, and
-# the SPEC-0003 REQ-001 watcher Scheduled Task. Windows-only so non-Windows
+# Developer Mode / elevation reads + the one-time UAC launch, and
+# the watcher Scheduled Task. Windows-only so non-Windows
 # builds never resolve `winsafe` into the graph. On top of the workspace
 # `advapi` + `kernel` (registry + token reads), this crate also needs
 # `shell` for `ShellExecuteEx` (the `runas` launch of `patina-elevate.exe`)

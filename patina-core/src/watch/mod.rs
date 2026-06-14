@@ -1,4 +1,4 @@
-//! The filesystem watcher subsystem (SPEC-0003).
+//! The filesystem watcher subsystem.
 //!
 //! The watcher reapplies on source changes and surfaces files modified
 //! outside Patina. The subsystem is built from several pieces:
@@ -6,20 +6,19 @@
 //! - the drift-cache format — the watcher's notification ledger at
 //!   `<state>/patina/drift.cache` — via the [`drift_cache`] submodule;
 //! - the structured-log sink — the daily-rotating `<state>/patina/logs/` stack
-//!   the watcher writes its metrics into (REQ-009) — via the [`logging`]
-//!   submodule;
+//!   the watcher writes its metrics into — via the [`logging`] submodule;
 //! - the pure mapping from a committed journal record to the watcher's FS
-//!   subscription set (REQ-005) — via the [`subscriptions`] submodule;
-//! - the 500ms debounce wrapper and the OS-thread→async bridge (REQ-006 /
-//!   DEC-011) — via the [`debounce`] submodule;
-//! - the `NonBlocking` re-apply handler driven on a source edit (REQ-006 /
-//!   REQ-008) — via the [`reapply`] submodule;
-//! - the drift-detection handler driven on a content-target edit (REQ-007 /
-//!   DEC-004 / DEC-008 / DEC-013) — via the [`drift`] submodule;
-//! - the foreground watcher loop itself ([`run_foreground`], REQ-004 /
-//!   REQ-006), which classifies each debounced batch and dispatches it;
-//! - the per-OS background-service abstraction and lifecycle backends (REQ-001
-//!   / REQ-003) — via the [`service`] submodule.
+//!   subscription set — via the [`subscriptions`] submodule;
+//! - the 500ms debounce wrapper and the OS-thread→async bridge — via the
+//!   [`debounce`] submodule;
+//! - the `NonBlocking` re-apply handler driven on a source edit — via the
+//!   [`reapply`] submodule;
+//! - the drift-detection handler driven on a content-target edit — via the
+//!   [`drift`] submodule;
+//! - the foreground watcher loop itself ([`run_foreground`]), which classifies
+//!   each debounced batch and dispatches it;
+//! - the per-OS background-service abstraction and lifecycle backends — via the
+//!   [`service`] submodule.
 //!
 //! The foreground watcher is the end-to-end engine the per-OS service
 //! ([`service`]) supervises.
@@ -44,10 +43,10 @@ use tracing_subscriber::layer::SubscriberExt;
 
 /// The TOML table the watcher would read a debounce override from if the knob
 /// existed. In v1.0 it does not: a `debounce_ms` key here is rejected with a
-/// typed warning (REQ-006 / DEC-002).
+/// typed warning.
 const WATCHER_TABLE: &str = "watcher";
 
-/// The rejected (forward-compatible) debounce-override key (REQ-006 / DEC-002).
+/// The rejected (forward-compatible) debounce-override key.
 const DEBOUNCE_MS_KEY: &str = "debounce_ms";
 
 /// Errors returned by the foreground watcher.
@@ -80,8 +79,7 @@ pub enum WatchError {
 }
 
 /// Inspect a root `patina.toml` for the forward-compatible-but-rejected
-/// `[watcher] debounce_ms` key and return a typed warning when it is present
-/// (REQ-006 / DEC-002).
+/// `[watcher] debounce_ms` key and return a typed warning when it is present.
 ///
 /// The 500ms debounce is hardcoded in v1.0 ([`debounce::DEBOUNCE`]); a
 /// `debounce_ms` override is parsed, warned about, and otherwise ignored, so a
@@ -115,8 +113,7 @@ pub fn watcher_config_warning(manifest_text: &str) -> Option<String> {
     }
 }
 
-/// Run the foreground watcher loop inline until `shutdown` resolves
-/// (REQ-004 / REQ-006 / DEC-011).
+/// Run the foreground watcher loop inline until `shutdown` resolves.
 ///
 /// The watcher: resolves the per-machine state directory, initializes the
 /// structured-log stack (a rotating file layer plus a stderr layer), reads the
@@ -127,13 +124,13 @@ pub fn watcher_config_warning(manifest_text: &str) -> Option<String> {
 /// logs a `shutdown` event, drops the debouncer (releasing every FS
 /// subscription), and returns `Ok(())`.
 ///
-/// Each received batch is classified and dispatched (REQ-005 / REQ-006): a
+/// Each received batch is classified and dispatched: a
 /// journal-directory event re-reads the latest commit and re-arms the debouncer
 /// over the recomputed subscription set ([`reapply`] is *not* invoked); a
 /// source-path event drives a `NonBlocking` re-apply
 /// ([`reapply::run_reapply`]); a content-target-only event is left for the
-/// drift handler (T-010). The foreground process does **not** acquire the
-/// exclusive advisory lock (REQ-004); the engine takes the per-re-apply lock
+/// drift handler. The foreground process does **not** acquire the
+/// exclusive advisory lock; the engine takes the per-re-apply lock
 /// under `NonBlocking` inside [`reapply::run_reapply`].
 ///
 /// When no apply has ever committed, the subscription set is just the
@@ -143,8 +140,8 @@ pub fn watcher_config_warning(manifest_text: &str) -> Option<String> {
 /// # Arguments
 ///
 /// * `shutdown` - a future that resolves when the watcher should stop. The CLI
-///   passes a `ctrl_c` + SIGTERM signal future (DEC-011); tests pass a
-///   controllable future.
+///   passes a `ctrl_c` + SIGTERM signal future; tests pass a controllable
+///   future.
 ///
 /// # Errors
 ///
@@ -172,7 +169,7 @@ where
 {
     let appender = logging::build_file_appender(state)?;
     // A structured file layer over the rotating log appender plus a
-    // human-readable stderr layer (REQ-004: the foreground watcher logs to
+    // human-readable stderr layer (the foreground watcher logs to
     // stderr at info level). Both disable ANSI coloring so the stderr output is
     // deterministic and substring-matchable by the test harness, and the whole
     // subscriber is gated by the `RUST_LOG` env filter (default `info`).
@@ -189,8 +186,7 @@ where
 
     let journal_dir = state.join("journal");
 
-    // Subscriber-routing decision (resolves the T-008 round-1 correctness vs
-    // architecture tension; binding on T-009/T-010):
+    // Subscriber-routing decision:
     //
     // The watcher's subscriber is attached to the run future via
     // `WithSubscriber::with_subscriber`, NOT installed thread-locally with
@@ -207,10 +203,11 @@ where
     // the run is awaited inline in the `#[tokio::main]` (`rt-multi-thread`)
     // `block_on` root future, which is driven on the calling thread and is
     // never work-stolen (only `tokio::spawn`ed tasks migrate across workers),
-    // so a thread-local default would *happen* to stay valid. But T-009/T-010
-    // add `tokio::spawn`ed re-apply / drift handlers; a thread-local default
-    // does not propagate into spawned tasks at all, so their post-await
-    // emissions would silently fall through to the global no-op subscriber and
+    // so a thread-local default would *happen* to stay valid. But the
+    // `tokio::spawn`ed re-apply / drift handlers add spawned tasks; a
+    // thread-local default does not propagate into spawned tasks at all, so
+    // their post-await emissions would silently fall through to the global
+    // no-op subscriber and
     // be dropped. `with_subscriber` removes that hazard structurally: spawned
     // children can carry the same dispatcher forward with
     // `.with_current_subscriber()`. There is no global install, so a second
@@ -256,7 +253,7 @@ where
                                 paths = batch.paths.len(),
                                 "watch_event"
                             );
-                            // Classify the coalesced batch (T-009), journal
+                            // Classify the coalesced batch, journal
                             // first so the watcher's own writes never re-trigger
                             // a re-apply:
                             //
@@ -264,16 +261,16 @@ where
                             //   new `.plan`/`.COMMIT` from some apply (the
                             //   watcher's own re-apply, or a parallel CLI run):
                             //   re-read the latest commit and recompute the watch
-                            //   set, re-arming the debouncer (REQ-005 rescan). It
+                            //   set, re-arming the debouncer (rescan). It
                             //   does NOT re-apply, so a re-apply's own journal
                             //   write cannot drive an unbounded loop.
                             // - Otherwise, a batch touching a repository **source**
                             //   path is a source edit: drive a `NonBlocking`
-                            //   re-apply (REQ-006 / REQ-008).
+                            //   re-apply.
                             // - Otherwise the batch touched only content-target
                             //   paths — a re-apply's own target rewrite or an
-                            //   external edit. That is drift detection's concern
-                            //   (REQ-007), NOT a re-apply: a content-target event
+                            //   external edit. That is drift detection's concern,
+                            //   NOT a re-apply: a content-target event
                             //   re-hashes the live bytes and notifies on
                             //   divergence, and must not re-apply (re-applying
                             //   would rewrite the target and re-trigger itself).
@@ -289,7 +286,7 @@ where
                                 let _outcome = reapply::run_reapply().await;
                             } else {
                                 // A content-target-only batch: re-hash the
-                                // touched targets and notify on drift (REQ-007).
+                                // touched targets and notify on drift.
                                 let now_unix = jiff::Timestamp::now().as_second();
                                 let _outcomes = drift::handle_target_events(
                                     &watch_set.content_targets,
@@ -307,7 +304,7 @@ where
             }
         }
 
-        // Dropping the debouncer releases every FS subscription (REQ-004).
+        // Dropping the debouncer releases every FS subscription.
         drop(debouncer);
         Ok(())
     }
@@ -316,7 +313,7 @@ where
 }
 
 /// The `RUST_LOG` env filter, defaulting to `info` when unset, so the
-/// foreground watcher logs at info level by default (REQ-004) and a harness can
+/// foreground watcher logs at info level by default and a harness can
 /// scope it with `RUST_LOG=patina_core=info`.
 fn env_filter() -> tracing_subscriber::EnvFilter {
     tracing_subscriber::EnvFilter::try_from_default_env()
@@ -326,7 +323,7 @@ fn env_filter() -> tracing_subscriber::EnvFilter {
 /// Whether a debounced batch is a journal-directory event — a new
 /// `.plan`/`.COMMIT` written under `<state>/patina/journal/` by some apply
 /// (the watcher's own re-apply, or a parallel CLI invocation). Such a batch
-/// triggers a subscription rescan rather than a re-apply (REQ-005), so the
+/// triggers a subscription rescan rather than a re-apply, so the
 /// watcher's own journal writes cannot drive an unbounded re-apply loop.
 ///
 /// A batch counts as a journal event when any touched path is a journal
@@ -357,15 +354,15 @@ fn is_journal_sentinel(path: &Utf8Path) -> bool {
 }
 
 /// Whether a debounced batch touched a repository **source** path — the only
-/// kind of event that drives a re-apply (REQ-006). Content-target events route
-/// to drift detection (T-010), not re-apply, so a re-apply's own target rewrite
+/// kind of event that drives a re-apply. Content-target events route
+/// to drift detection, not re-apply, so a re-apply's own target rewrite
 /// does not re-trigger itself.
 fn source_event(batch: &debounce::EventBatch, sources: &[Utf8PathBuf]) -> bool {
     batch.paths.iter().any(|path| sources.contains(path))
 }
 
 /// Re-read the latest committed apply and recompute the watcher's subscription
-/// set, re-arming a fresh debouncer over it (REQ-005 / CHK-017).
+/// set, re-arming a fresh debouncer over it.
 ///
 /// Logs a `journal_rescan` event naming the `.COMMIT` file(s) the triggering
 /// batch touched and the recomputed subscription count. On success it returns
@@ -381,7 +378,7 @@ fn rescan(
     batch: &debounce::EventBatch,
 ) -> Option<(debounce::Debouncer, subscriptions::WatchSet, String)> {
     // Name the COMMIT file(s) the batch touched so a log reader can join the
-    // rescan to the apply that triggered it (CHK-017). The `.COMMIT` suffix is
+    // rescan to the apply that triggered it. The `.COMMIT` suffix is
     // the journal's commit sentinel; a `.plan` arrives first but the COMMIT is
     // the durable record the rescan reads.
     let commits: Vec<&str> = batch
@@ -530,7 +527,7 @@ mod tests {
     async fn run_foreground_in_returns_ok_when_shutdown_fires_with_no_commit() {
         // No apply has committed, so the subscription set is just the journal
         // dir. An immediately-ready shutdown future drives the loop straight to
-        // the shutdown arm and a clean Ok return (REQ-004).
+        // the shutdown arm and a clean Ok return.
         let tmp = tempfile::tempdir().expect("tempdir");
         let state =
             Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).expect("temp path is utf-8");

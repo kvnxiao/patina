@@ -1,12 +1,12 @@
 //! Symbolic-link executors: per-file [`Symlink`], atomic [`SymlinkDir`],
-//! and per-leaf [`SymlinkTree`] (REQ-005, REQ-006).
+//! and per-leaf [`SymlinkTree`].
 //!
 //! [`Symlink`](crate::config::FileMode::Symlink) links a single source
 //! file to each target; when the source is a directory it walks the tree
 //! and creates one symlink per file at the mirrored target path (the
-//! default mode's per-file walk — the SPEC reserves atomic directory
-//! symlinks for an explicit [`SymlinkDir`]). [`SymlinkDir`] creates one
-//! symbolic link per target pointing at the source directory, never
+//! default mode's per-file walk — atomic directory
+//! symlinks are reserved for an explicit [`SymlinkDir`]). [`SymlinkDir`]
+//! creates one symbolic link per target pointing at the source directory, never
 //! walking into it. [`SymlinkTree`](crate::config::FileMode::SymlinkTree)
 //! walks a directory source and links each leaf file at the mirrored
 //! target path, leaving the intermediate target directories real.
@@ -68,8 +68,7 @@ pub(super) fn per_file_symlink(
 
 /// Per-leaf [`SymlinkTree`](crate::config::FileMode::SymlinkTree) executor:
 /// walk the directory source and create one symbolic link per leaf file at
-/// the mirrored target path, leaving intermediate target directories real
-/// (REQ-006 / DEC-005).
+/// the mirrored target path, leaving intermediate target directories real.
 ///
 /// The source must be a directory; a non-directory source is rejected with
 /// [`ExecutorError::NotADirectory`], the same way [`dir_symlink`] rejects a
@@ -83,7 +82,7 @@ pub(super) fn per_file_symlink(
 /// [`CompletionRecord`] is returned per materialized leaf, in walk order
 /// within each target.
 ///
-/// `write` selects which leaves are (re)linked (REQ-003 / DEC-007): on a
+/// `write` selects which leaves are (re)linked: on a
 /// fresh or fully-drifted tree the engine passes [`LeafWrite::All`] and every
 /// leaf is linked as before; on a partially-drifted tree it passes
 /// [`LeafWrite::Only`] with the plan-time `Update`/`Create` leaves so a clean
@@ -218,7 +217,7 @@ enum LinkKind {
 /// typed [`ExecutorError::WindowsSymlinkPermission`].
 ///
 /// The OS primitive runs through [`with_sharing_violation_retry`] so the
-/// forward-apply symlink write honours REQ-010's retry policy on Windows
+/// forward-apply symlink write honours the retry policy on Windows
 /// (symlink creation is one of the "all file writes" the requirement names).
 /// Off Windows the wrapper is a pass-through. The retry only fires on
 /// `ERROR_SHARING_VIOLATION` (Win32 32), so it never masks the
@@ -361,7 +360,7 @@ mod tests {
 
     #[test]
     fn pre_existing_regular_file_target_is_replaced_by_link() {
-        // CHK-033 apply leg: a target that already exists as a regular file
+        // Apply leg: a target that already exists as a regular file
         // is cleared before linking (the engine has already backed it up), so
         // `create_symlink` does not fail with EEXIST / os-183.
         let (_td, dir) = utf8_tempdir();
@@ -395,7 +394,7 @@ mod tests {
 
     #[test]
     fn tree_symlink_links_each_leaf_and_keeps_intermediate_dirs_real() {
-        // CHK-012 executor leg: a directory source with `a.conf` and
+        // Executor leg: a directory source with `a.conf` and
         // `sub/b.conf` yields one symlink per leaf at the mirrored target
         // path, and the intermediate target directories are real, not links.
         let (_td, dir) = utf8_tempdir();
@@ -429,7 +428,7 @@ mod tests {
 
     #[test]
     fn tree_symlink_only_links_selected_leaves() {
-        // REQ-003 / DEC-007 partial tree write: with a `LeafWrite::Only` set
+        // Partial tree write: with a `LeafWrite::Only` set
         // naming one of two leaves, only that leaf is linked and only that
         // leaf yields a completion record. The unselected leaf is not touched.
         let (_td, dir) = utf8_tempdir();
@@ -462,7 +461,7 @@ mod tests {
 
     #[test]
     fn tree_symlink_skips_empty_source_subdirectories() {
-        // REQ-006: an empty source subdirectory produces neither a target
+        // An empty source subdirectory produces neither a target
         // directory nor a link.
         let (_td, dir) = utf8_tempdir();
         let src_dir = dir.join("d");
@@ -482,7 +481,7 @@ mod tests {
 
     #[test]
     fn tree_symlink_replaces_pre_existing_regular_file_leaf() {
-        // CHK-013 executor leg: a leaf-target path that already holds a
+        // Executor leg: a leaf-target path that already holds a
         // regular file is cleared (the engine has already backed it up) and
         // replaced by the link, so `create_symlink` does not fail with
         // EEXIST / os-183.
@@ -532,7 +531,7 @@ mod tests {
 
     #[test]
     fn tree_symlink_re_apply_over_unchanged_source_is_a_noop() {
-        // REQ-006 idempotency: a second materialize over the same source and
+        // Idempotency: a second materialize over the same source and
         // target re-creates the identical links without error (the
         // pre-existing link at each leaf is cleared and re-linked).
         let (_td, dir) = utf8_tempdir();

@@ -3,8 +3,8 @@
     reason = "integration tests use .expect() on fixture setup and assertions; allow-expect-in-tests covers #[cfg(test)] modules but not the top level of a tests/*.rs integration crate."
 )]
 
-//! Integration coverage for `patina add`'s source-kind-aware table routing
-//! (REQ-008): a file source writes a `[[file]]` entry, a directory source
+//! Integration coverage for `patina add`'s source-kind-aware table routing:
+//! a file source writes a `[[file]]` entry, a directory source
 //! writes a `[[directory]]` entry, and the mode flags are kind-checked.
 //!
 //! Each test spawns the real `patina` binary against an isolated tempdir
@@ -28,7 +28,7 @@ fn manifest_value(fx: &Fixture, module: &str) -> toml::Value {
     toml::from_str(&body).expect("module manifest parses")
 }
 
-/// CHK-016: `patina add F --module m` on a regular file writes a `[[file]]`
+/// `patina add F --module m` on a regular file writes a `[[file]]`
 /// table-array entry and no `[[directory]]` entry.
 #[test]
 fn add_file_writes_file_table_and_no_directory_table() {
@@ -63,7 +63,7 @@ fn add_file_writes_file_table_and_no_directory_table() {
     );
 }
 
-/// CHK-017: `patina add D --module m --symlink-tree` on a directory writes a
+/// `patina add D --module m --symlink-tree` on a directory writes a
 /// `[[directory]]` entry with `mode = "symlink-tree"` and no `[[file]]`.
 #[test]
 fn add_directory_symlink_tree_writes_directory_table_with_mode() {
@@ -119,7 +119,7 @@ fn add_directory_symlink_tree_writes_directory_table_with_mode() {
     );
 }
 
-/// REQ-008: a `[[directory]]` entry written by `add` is applyable — a
+/// A `[[directory]]` entry written by `add` is applyable — a
 /// follow-up `patina apply` materializes the symlink-tree leaves, proving
 /// `add` wrote a correct directory entry (not just correct manifest text).
 #[test]
@@ -151,7 +151,7 @@ fn add_directory_then_apply_materializes_leaf_symlinks() {
     );
 }
 
-/// REQ-008: `--symlink-tree` on a regular file source is rejected with a
+/// `--symlink-tree` on a regular file source is rejected with a
 /// typed error naming the flag and the file source kind; no entry is written.
 #[test]
 fn add_symlink_tree_on_a_file_is_rejected() {
@@ -183,7 +183,7 @@ fn add_symlink_tree_on_a_file_is_rejected() {
     );
 }
 
-/// REQ-008: `--template` on a directory source is rejected with a typed
+/// `--template` on a directory source is rejected with a typed
 /// error naming the flag and the directory source kind.
 #[test]
 fn add_template_on_a_directory_is_rejected() {
@@ -203,7 +203,7 @@ fn add_template_on_a_directory_is_rejected() {
     );
 }
 
-/// REQ-008: `--copy` on a directory source writes a `[[directory]]` entry
+/// `--copy` on a directory source writes a `[[directory]]` entry
 /// with `mode = "copy"` (a recursive copy), never a `[[file]]`.
 #[test]
 fn add_copy_on_a_directory_writes_directory_copy() {

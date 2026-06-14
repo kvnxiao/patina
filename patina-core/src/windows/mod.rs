@@ -1,19 +1,18 @@
 //! Windows Developer Mode detection and the symlink-elevation gate
-//! decision (REQ-007, read side).
+//! decision (read side).
 //!
-//! REQ-007 requires that, on Windows, an apply whose plan contains any
+//! On Windows, an apply whose plan contains any
 //! `symlink` / `symlink-dir` operation only proceeds when the host can
 //! create symbolic links without elevation — which on Windows means
 //! Developer Mode is enabled (the `AllowDevelopmentWithoutDevLicense`
 //! registry flag is `1`), or the invoking process is already elevated.
 //!
-//! Per DEC-008 the engine crate owns the *capability* — the IO-free
+//! The engine crate owns the *capability* — the IO-free
 //! reads of the registry flag, the process-token elevation check, and
 //! the OS-build query — while the *orchestration* (the UAC prompt, the
 //! decline → exit-5 path, re-driving `execute_plan`) lives in
 //! `patina-cli`. This module is therefore the read side only: it exposes
-//! the typed queries plus the pure gate-decision function. The elevation
-//! launch and the engine gate wiring land in T-009.
+//! the typed queries plus the pure gate-decision function.
 //!
 //! Everything here compiles on every platform. The Windows-specific
 //! registry and token reads live in the `registry` submodule behind
@@ -49,7 +48,7 @@ pub mod elevate;
 
 /// The fully-qualified registry path of the Developer Mode switch, named in
 /// user-facing errors when a post-elevation re-read still shows the flag
-/// off (REQ-007). Spelled here as a single `&'static str` so the engine and
+/// off. Spelled here as a single `&'static str` so the engine and
 /// CLI surface the identical path on every platform (the value is
 /// documentation-only off Windows).
 pub const DEV_MODE_REGISTRY_PATH: &str = r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock\AllowDevelopmentWithoutDevLicense";
@@ -76,8 +75,8 @@ pub enum DevModeStatus {
 /// These only ever arise on Windows; on other platforms the entry points
 /// return a fixed value and never produce a [`WindowsError`]. The variant
 /// carries the failing Win32 call's name so the CLI can surface an
-/// actionable message (REQ-007 names the registry path on a post-helper
-/// re-read failure).
+/// actionable message naming the registry path on a post-helper
+/// re-read failure.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum WindowsError {
@@ -168,7 +167,7 @@ pub fn windows_build_supports_dev_mode() -> bool {
 /// Whether `path` is a Windows UNC path (begins with `\\`).
 ///
 /// A pure prefix check defined on every platform so `doctor`'s UNC
-/// finding (REQ-006) is unit-testable on the macOS/Linux CI. UNC paths
+/// finding is unit-testable on the macOS/Linux CI. UNC paths
 /// cannot host symbolic links, so the finding warns regardless of the
 /// host the check runs on.
 ///
@@ -191,7 +190,7 @@ pub fn is_unc_path(path: &Utf8Path) -> bool {
 ///
 /// This is the predicate that gates the whole Developer Mode flow: only a
 /// plan that creates symbolic links can require Developer Mode, so a plan
-/// of pure copies / renders never prompts (REQ-007 done-when).
+/// of pure copies / renders never prompts.
 #[must_use = "the symlink predicate gates the Developer Mode flow"]
 pub fn plan_has_symlink_op(plan: &ResolvedPlan) -> bool {
     plan.operations
@@ -201,7 +200,7 @@ pub fn plan_has_symlink_op(plan: &ResolvedPlan) -> bool {
 
 /// The host-state inputs the symlink-elevation gate decision needs.
 ///
-/// Abstracting these two reads behind a trait lets T-009's gate logic be
+/// Abstracting these two reads behind a trait lets the gate logic be
 /// unit-tested on Linux against a fake probe, with no real registry or
 /// process token in the loop. The production implementation
 /// ([`HostDevModeProbe`]) wires the trait to [`dev_mode_status`] and
@@ -230,9 +229,9 @@ impl DevModeProbe for HostDevModeProbe {
 
 /// The outcome of the symlink-elevation gate decision.
 ///
-/// T-009 maps these variants to the CLI orchestration: `Proceed` runs the
+/// The CLI maps these variants to its orchestration: `Proceed` runs the
 /// apply unchanged; `ProceedElevatedWarning` runs it but emits the
-/// "avoid running Patina elevated" warning (REQ-007 done-when);
+/// "avoid running Patina elevated" warning;
 /// `RequireElevation` drives the UAC prompt and, on decline, exits 5.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GateDecision {
@@ -255,7 +254,7 @@ pub enum GateDecision {
 /// filesystem or the registry directly, so it is fully unit-testable
 /// against a fake [`DevModeProbe`] on any platform.
 ///
-/// The rules (REQ-007):
+/// The rules:
 ///
 /// - A plan with no symbolic link operation always [`Proceed`]s — there is
 ///   nothing that needs Developer Mode.
@@ -301,7 +300,7 @@ mod tests {
     use camino::Utf8PathBuf;
 
     /// A fake probe so the gate decision is testable with no real
-    /// registry or process token (the T-009 logic exercises this seam).
+    /// registry or process token (the gate logic exercises this seam).
     struct FakeProbe {
         status: DevModeStatus,
         elevated: bool,
@@ -349,7 +348,7 @@ mod tests {
 
     #[test]
     fn non_windows_status_is_not_windows_and_unelevated() {
-        // Task scenario 1: on a non-Windows host the reads return
+        // On a non-Windows host the reads return
         // NotWindows / false and no registry access happens (the
         // #[cfg(not(windows))] arms never call into `registry`).
         #[cfg(not(windows))]
@@ -362,7 +361,6 @@ mod tests {
 
     #[test]
     fn unc_prefix_check_distinguishes_unc_from_posix() {
-        // Task scenario 2.
         assert!(is_unc_path(Utf8Path::new(r"\\fileserver\share\dotfiles")));
         assert!(!is_unc_path(Utf8Path::new("/home/user/dot")));
         // A single leading backslash is a drive-relative path, not UNC.
@@ -387,8 +385,7 @@ mod tests {
 
     #[test]
     fn gate_disabled_not_elevated_requires_elevation() {
-        // Task scenario 3, first half: Disabled + not-elevated + one
-        // symlink op ⇒ elevation required.
+        // Disabled + not-elevated + one symlink op ⇒ elevation required.
         let probe = FakeProbe {
             status: DevModeStatus::Disabled,
             elevated: false,
@@ -399,7 +396,7 @@ mod tests {
 
     #[test]
     fn gate_enabled_proceeds() {
-        // Task scenario 3, second half: same plan, Enabled ⇒ proceed.
+        // Same plan, Enabled ⇒ proceed.
         let probe = FakeProbe {
             status: DevModeStatus::Enabled,
             elevated: false,
@@ -421,7 +418,7 @@ mod tests {
     #[test]
     fn gate_no_symlink_op_proceeds_regardless_of_status() {
         // A copy-only plan never prompts even when Developer Mode is off
-        // and the process is unelevated (REQ-007 done-when).
+        // and the process is unelevated.
         let probe = FakeProbe {
             status: DevModeStatus::Disabled,
             elevated: false,

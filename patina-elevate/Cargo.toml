@@ -12,7 +12,7 @@ readme.workspace = true
 keywords = ["dotfiles", "windows", "elevation"]
 categories = ["command-line-utilities", "os::windows-apis"]
 
-# DEC-003 / CHK-015: gate the bin behind a `windows` feature that is only
+# Gate the bin behind a `windows` feature that is only
 # enabled on Windows targets (see the `[target.'cfg(windows)'.dependencies]`
 # block below, which activates it). Cargo silently skips a `[[bin]]` whose
 # `required-features` are not enabled, so a non-Windows
@@ -22,34 +22,34 @@ name = "patina-elevate"
 required-features = ["windows"]
 
 [features]
-# Gates the bin via `required-features` above (DEC-003 / CHK-015). OFF by
+# Gates the bin via `required-features` above. OFF by
 # default, so a plain `cargo build --release` produces no `patina-elevate`
 # artifact on macOS/Linux — Cargo silently skips a bin whose required feature
 # is off (proven by `tests/artifact_absence.rs`). Windows release packaging
 # turns it on with `--features windows`; the crate's own test harness does the
-# same to exercise the binary cross-platform. DEC-003 accepts this explicit
-# build flag as the "small build-config wart" it trades for the dropped
+# same to exercise the binary cross-platform. This explicit
+# build flag is the "small build-config wart" it trades for the dropped
 # artifact. The feature carries no deps of its own: `winsafe` is pulled in
 # unconditionally on Windows targets (the target table below), so the cfg gate
 # and the feature gate coincide there.
 windows = []
 
 [dependencies]
-# DEC-002: no `patina-core` / `patina-cli` dependency — the helper keeps the
+# no `patina-core` / `patina-cli` dependency — the helper keeps the
 # smallest possible trust surface so UAC has the least to audit.
 clap = { workspace = true }
 
 # `winsafe` carries the registry-write API: the write
 # (`AppModelUnlock\AllowDevelopmentWithoutDevLicense`) lives in its `advapi`
 # feature, with `kernel` for the base handle types. `taskschd` is deliberately
-# NOT enabled — that surface belongs to SPEC-0003. The dependency only exists on
-# Windows targets so a non-Windows build never resolves it into the graph.
+# NOT enabled here. The dependency only exists on Windows targets so a
+# non-Windows build never resolves it into the graph.
 [target.'cfg(windows)'.dependencies]
 winsafe = { workspace = true }
 
 [dev-dependencies]
 # `artifact_absence.rs` drives a real `cargo build --release` and parses its
-# `--message-format=json` output to prove the bin-gating (CHK-015).
+# `--message-format=json` output to prove the bin-gating.
 serde_json = { workspace = true }
 tempfile = { workspace = true }
 

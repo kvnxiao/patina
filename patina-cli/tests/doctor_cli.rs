@@ -3,12 +3,11 @@
     reason = "integration tests use .expect() on fixture setup and assertions; allow-expect-in-tests covers #[cfg(test)] modules but not the top level of a tests/*.rs integration crate."
 )]
 
-//! Integration coverage for `patina doctor` (REQ-005, REQ-006, REQ-009,
-//! REQ-010).
+//! Integration coverage for `patina doctor`.
 //!
 //! Each test spawns the real `patina` binary against an isolated tempdir
 //! repo + state + home (via the shared [`common::Fixture`]). The read-only
-//! path (no `--fix`) and the `--fix` remediation path (REQ-006) are both
+//! path (no `--fix`) and the `--fix` remediation path are both
 //! covered here. The binary's stdin is not a TTY: the read-only path never
 //! prompts, and `--fix` is driven with `--yes` (which auto-accepts) or run
 //! without `--yes` to exercise the non-TTY refusal.
@@ -25,7 +24,7 @@ fn stdout(out: &std::process::Output) -> String {
     String::from_utf8(out.stdout.clone()).expect("stdout is utf8")
 }
 
-/// Task scenario 1 (DOC-NO-DEFAULT-REPO): a tempdir state directory with no
+/// A tempdir state directory with no
 /// `default_repo` and a valid repository yields a `findings` entry with
 /// `code = DOC-NO-DEFAULT-REPO`, `level = info`, and the process exits 0.
 #[test]
@@ -56,7 +55,7 @@ fn missing_default_repo_reports_info_finding_and_exits_zero() {
     );
 }
 
-/// Task scenario 2 / CHK-018 (REQ-010): two `doctor --json` runs against the
+/// Two `doctor --json` runs against the
 /// same unchanged state produce byte-identical stdout.
 #[test]
 fn doctor_json_is_byte_identical_across_runs() {
@@ -67,11 +66,11 @@ fn doctor_json_is_byte_identical_across_runs() {
     assert_eq!(code(&second), 0, "second run exits 0");
     assert_eq!(
         first.stdout, second.stdout,
-        "two doctor --json runs against unchanged state must be byte-identical (CHK-018)"
+        "two doctor --json runs against unchanged state must be byte-identical"
     );
 }
 
-/// REQ-010: doctor routes its findings to stderr, never to stdout, in human
+/// Doctor routes its findings to stderr, never to stdout, in human
 /// (non-`--json`) mode — stdout stays clean for piping.
 #[test]
 fn human_mode_keeps_findings_off_stdout() {
@@ -90,7 +89,7 @@ fn human_mode_keeps_findings_off_stdout() {
     );
 }
 
-/// Task scenario 1 (REQ-006, DOC-NO-DEFAULT-REPO remediation): on a clean
+/// The DOC-NO-DEFAULT-REPO remediation: on a clean
 /// state directory with no `default_repo` and a CWD that is a valid Patina
 /// repository, `patina doctor --fix --yes` writes the `default_repo` pointer
 /// holding the CWD's canonical absolute path and exits 0.
@@ -118,7 +117,7 @@ fn fix_yes_writes_default_repo_from_cwd_and_exits_zero() {
     );
 }
 
-/// Task scenario 2 (REQ-006): a non-TTY `patina doctor --fix` without `--yes`
+/// A non-TTY `patina doctor --fix` without `--yes`
 /// exits 1 and names the missing `--yes` flag on stderr (no per-finding prompt
 /// is possible without a TTY). The subprocess stdin is not a TTY, so this is
 /// the real non-interactive path.
@@ -147,7 +146,7 @@ fn fix_without_yes_in_non_tty_exits_one_naming_yes() {
     );
 }
 
-/// CHK-011 (REQ-006): on a Windows host with Developer Mode OFF and a
+/// On a Windows host with Developer Mode OFF and a
 /// symlink-declaring repository, `patina doctor --fix` (auto-accepting the
 /// first prompt) drives the UAC elevation flow, leaving the Developer Mode
 /// registry value at 1, and exits 0. Gated to Windows and `#[ignore]` because
@@ -187,7 +186,7 @@ fn windows_fix_enables_dev_mode_and_exits_zero() {
 }
 
 /// The DOC-WIN-UNC finding rests on the cross-platform [`is_unc_path`]
-/// predicate (T-007). Assert the predicate the finding depends on
+/// predicate. Assert the predicate the finding depends on
 /// distinguishes a UNC repository path from a POSIX one, so the finding's
 /// trigger is exercised on the macOS/Linux CI where a real UNC mount is
 /// unavailable.
@@ -203,7 +202,7 @@ fn unc_predicate_distinguishes_unc_from_posix_repo_paths() {
     );
 }
 
-/// CHK-010 (REQ-005): on a Windows test host with Developer Mode OFF and a
+/// On a Windows test host with Developer Mode OFF and a
 /// repository declaring at least one `mode = "symlink"` entry, `doctor --json`
 /// emits a `DOC-WIN-DEVMODE` warning whose message names Developer Mode and
 /// the registry path. Gated to Windows and `#[ignore]` because it depends on

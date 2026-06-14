@@ -1,13 +1,12 @@
-//! Per-target classification into CLEAN / DRIFTED / MISSING / ORPHANED
-//! (REQ-018).
+//! Per-target classification into CLEAN / DRIFTED / MISSING / ORPHANED.
 //!
 //! [`classify`] is the pure decision function: given the recorded
 //! expectation for one target and whether the *current* repository plan
 //! still manages that target, it reads the live filesystem and returns the
 //! [`TargetState`]. Keeping it free of IO orchestration lets the status
 //! module ([`super`]) own the journal read and the current-plan
-//! computation while this function owns the four-way comparison the SPEC's
-//! `<done-when>` enumerates.
+//! computation while this function owns the four-way comparison of
+//! CLEAN / DRIFTED / MISSING / ORPHANED.
 
 use crate::journal::ExpectedTarget;
 use crate::journal::content_hash;
@@ -29,7 +28,7 @@ pub enum TargetState {
 
 impl TargetState {
     /// The lower-case word for this state in human and JSON output. The
-    /// label is part of the status surface (REQ-018's `files[].state` and
+    /// label is part of the status surface (the `files[].state` field and
     /// the human rows), so it is defined once here.
     #[must_use = "the label is the value emitted in status output"]
     pub fn label(self) -> &'static str {
@@ -53,7 +52,7 @@ impl TargetState {
 ///
 /// When the target is still managed, the comparison is the expectation's:
 /// a symlink must still point at the recorded link target; a content file
-/// must still `blake3`-hash to the recorded value (REQ-029).
+/// must still `blake3`-hash to the recorded value.
 #[must_use = "the classification is the per-target status result"]
 pub fn classify(expected: &ExpectedTarget, still_managed: bool) -> TargetState {
     let target = Utf8Path::new(expected.target());
@@ -93,7 +92,7 @@ pub fn classify(expected: &ExpectedTarget, still_managed: bool) -> TargetState {
 /// This is the single definition of "a symlink matches": both `status`
 /// (CLEAN vs DRIFTED) and the plan-time skip-if-satisfied classifier
 /// (`Unchanged` vs `Update`) read through it, so the two never disagree on
-/// what counts as a match (REQ-001).
+/// what counts as a match.
 ///
 /// The comparison is on the verbatim-stripped (`simplified_str`) form
 /// because the recorded/desired link target and the on-disk link may differ
@@ -110,8 +109,8 @@ pub(crate) fn symlink_matches(target: &Utf8Path, desired: &str) -> bool {
 ///
 /// This is the single definition of "content matches": `status` and the
 /// plan-time classifier both read through it (copy/copy-tree and template
-/// targets), so "Unchanged" coincides exactly with status's "Clean"
-/// (REQ-001). An unreadable target (absent, a directory, a dangling link)
+/// targets), so "Unchanged" coincides exactly with status's "Clean".
+/// An unreadable target (absent, a directory, a dangling link)
 /// is not a match.
 #[must_use = "the comparison result drives the Clean/Unchanged classification"]
 pub(crate) fn content_matches(target: &Utf8Path, desired: &[u8; 32]) -> bool {
