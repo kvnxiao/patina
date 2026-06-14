@@ -21,7 +21,7 @@ terminal, the `/loop` skill, or a future orchestrator).
 
 ## When to use
 
-- With a selector (`/speccy-work SPEC-NNNN/T-003`):
+- With a selector (`/speccy-work SPEC-NNNN/T-NNN`):
   when the next task to implement is already known — e.g., a retry
   after `/speccy-review` flipped a task back to
   `state="pending"`.
@@ -54,7 +54,32 @@ incremented round).
 
 ## Steps
 
-**Entry precondition (SPEC-0045 REQ-002, extended by SPEC-0047 REQ-002 / REQ-003):** before any Task dispatch, (i) resolve the target task per step 1, then open the per-task context read with a single `speccy context SPEC-NNNN/T-NNN --json` call (the bundle carries the task entry, its covering requirements and scenarios, the latest-round journal blocks inline with prior rounds as an attributes-only index, the sibling index, the file paths, and a suggested merge-base diff command); (ii) apply the retry-shape rule summarized at step 2 (canonical statement at `.claude/speccy-references/retry-shape.md`) against the bundle's journal section rather than a separate file read, (iii) run `git status --porcelain`. **First-attempt shape** with non-empty stdout exits the skill (surface dirty paths on stderr); empty stdout proceeds with the first-attempt branch (today's SPEC-0045/REQ-002 behaviour). **Retry shape** proceeds with the retry branch regardless of stdout — the dirty paths are the prior pass's WIP that the retry implementer amends in place; no dirty-paths surface is written. If `speccy next --json` then returns `next_action.kind == "reconcile"`, dispatch the reconcile pass per the **Reconcile policy** below rather than the normal implementer flow.
+**Entry precondition.** Before any Task dispatch: resolve the target task
+(step 1), then open its context bundle with a single `speccy context
+SPEC-NNNN/T-NNN --json` call. The bundle carries the task entry, its covering
+requirements and scenarios, the latest-round journal blocks (prior rounds as an
+attributes-only index), the sibling index, the file paths, and a suggested
+merge-base diff command — so the retry-shape classification (step 2) reads the
+bundle's journal section rather than a separate file read. Then apply the
+clean-tree gate:
+
+**Clean-tree gate.** With the target task resolved and its shape classified by
+the retry-shape rule, run `git status --porcelain` and branch:
+
+- **First-attempt shape + non-empty stdout** → stop without dispatching the
+  implementer and surface the dirty paths on stderr. The gate keeps a turn from
+  starting on top of unrelated working-tree changes.
+- **First-attempt shape + empty stdout** → proceed.
+- **Retry shape** → proceed regardless of stdout. The dirty paths are the prior
+  pass's WIP that the retry implementer amends in place; no dirty-paths surface
+  is written.
+
+An orchestrator runs this gate before spawning the worker; the worker re-runs it
+defensively at its own entry.
+
+
+If `speccy next --json` then reports `next_action.kind == "reconcile"`, dispatch
+the reconcile pass (below) rather than the normal implementer flow.
 
 **Reconcile policy.** When `speccy next --json` (in either per-spec
 or workspace form) returns `next_action.kind == "reconcile"`, iterate
@@ -89,7 +114,7 @@ construction (autonomous / rollback-biased / idempotent).
      that no implementable tasks remain. Otherwise, construct
      the disambiguated `<spec>/<task>` form from the JSON's `spec_id`
      and `next_action.task_id` fields (the bare task ID is
-     ambiguous across specs — every spec has its own `T-001`).
+     ambiguous across specs — every spec has its own `T-NNN`).
 
      Exit-code-stop contract: once SPEC-NNNN is resolved, any
      subsequent per-spec query (`speccy next SPEC-NNNN --json`) that
@@ -98,7 +123,7 @@ construction (autonomous / rollback-biased / idempotent).
      code is 0.
 
 
-2. Apply the REQ-001 retry-shape rule summarized immediately below
+2. Apply the retry-shape rule summarized immediately below
    against the journal section of the bundle returned by the
    `speccy context` call in step 1 (no separate journal-file read).
    The rule inspects only that journal content — it makes no further
@@ -117,10 +142,11 @@ statement, read-only scope, worked examples, and the
 3. Branch on the rule result.
 
    **First-attempt branch.** Proceed with the recipe below
-   (steps 4–10) unchanged: flip state to `in-progress`, read
-   scenarios, run the bounded reuse survey, implement from scratch,
-   self-review, run the hygiene gate, flip to `in-review`, append the
-   round-1 `<implementer>` block via `speccy journal append`.
+   (steps 4–11) unchanged: flip state to `in-progress`, read
+   scenarios, load the memory ledger slice, run the bounded reuse
+   survey, implement from scratch, self-review, run the hygiene gate,
+   flip to `in-review`, append the round-1 `<implementer>` block via
+   `speccy journal append`.
 
    **Retry branch.** Enter retry mode:
 
@@ -143,11 +169,10 @@ statement, read-only scope, worked examples, and the
    - Flip state to `in-progress` via `speccy task transition
      SPEC-NNNN/T-NNN --to in-progress` and continue through the same
      hygiene gate and `speccy task transition … --to in-review` flip
-     the first-attempt branch uses (the SPEC-0045/REQ-001 hygiene gate
-     runs unchanged). Never edit the `state` attribute in TASKS.md
-     directly.
+     the first-attempt branch uses (the hygiene gate runs unchanged).
+     Never edit the `state` attribute in TASKS.md directly.
    - Append the next `<implementer>` block via `speccy journal
-     append` (step 9); the CLI derives and stamps the incremented
+     append` (step 10); the CLI derives and stamps the incremented
      round. The retry-mode `Completed` field describes the amend
      (what changed this round in response to the blockers), not a
      restatement of the cumulative task work.
@@ -171,7 +196,19 @@ statement, read-only scope, worked examples, and the
    blocks. No separate entry read of SPEC.md, TASKS.md, or `speccy
    check` is needed here.
 
-6. Bounded reuse survey. Before writing any code, survey the
+6. Load the memory ledger slice.
+
+   **Memory ledger.** Before the bounded reuse survey and any code write, read
+`.speccy/MEMORY.md` when it is present and load the entries whose **trigger**
+matches the current task's area, then act on each one's **corrective rule** —
+mirroring the journal bundle's "load the relevant slice, drill in on demand"
+shape. A missing or malformed ledger is a silent no-op: proceed with no error
+and no comment about memory. The ship-time retro authors these entries in a
+four-part shape; the canonical memory-ledger reference it writes against holds
+the full shape and the authoring discipline.
+
+
+7. Bounded reuse survey. Before writing any code, survey the
    task-relevant area and classify the code you are about to add into
    reuse-as-is / extend / write-fresh, so reuse is a design input
    rather than a post-hoc cleanup. Scope the survey to the task's
@@ -220,13 +257,13 @@ and for each thing you decide to add, place it in one tier:
   per-symbol accounting even when the full area-map is not re-run.
 
 
-7. Implement the task. Write tests first, then code. Run the
+8. Implement the task. Write tests first, then code. Run the
    project's own test command (`cargo test`, `pnpm test`, etc.)
    locally. Use `speccy check SPEC-NNNN/T-NNN` to re-read the
    scenarios being satisfied (it renders them, it does not run
    them).
 
-8. Self-review before handoff. Immediately after implementation and
+9. Self-review before handoff. Immediately after implementation and
    **before** the exit transition's `in-review` flip, re-read your
    own diff through the reviewers' lens and fix what you find in
    place. This is the cheap place to catch drift: a fix here is a
@@ -265,6 +302,18 @@ diff you already have open — is far cheaper than a bounce-and-respawn.
   add or touch must describe what the code actually does. Stale or
   aspirational prose that no longer matches the behaviour is drift.
 
+- **No provenance or doc-pointer meta-annotation.** Production code,
+  tests, and comments must not cite, as the reason a line exists, a Speccy
+  id (SPEC/REQ/CHK/DEC/task — `// per REQ-NNN`, `//! Tests for SPEC-NNNN
+  T-NNN`) or a governance/design doc (`(Core principle 2)`, `per
+  AGENTS.md`, `see docs/ARCHITECTURE.md`, a rule-file pointer). Both
+  reference something outside the code that means nothing once it stands
+  alone — drift the moment it lands. Requirement→evidence traceability
+  lives in the journal `Evidence:` field and CHK roll-call, not the source
+  tree. Keep the reasoning a comment carries; drop the bare id or doc
+  pointer. Naming an artifact the code operates on (`SPEC.md`, a
+  `.speccy/…` path) is data, not meta-annotation — that stays.
+
 - **No false complexity.** Do not add abstraction, indirection, or
   configurability the change does not require. In particular, do not
   split a function into pieces that push the file past its own
@@ -284,7 +333,7 @@ diff you already have open — is far cheaper than a bounce-and-respawn.
     silencer.
 
 
-9. Exit transition. **Hygiene gate (REQ-001):** before flipping `state` from `in-progress` to `in-review`, run the four standard hygiene gates in sequence — `cargo test --workspace`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, `cargo +nightly fmt --all --check`, `cargo deny check`. Any non-zero exit refuses the flip and keeps the task at `in-progress`; on all zeros, proceed with the flip and record one line per gate naming its exit code in the appended `<implementer>` block's `Hygiene checks` field. When the implementation is done, flip the task's
+10. Exit transition. **Hygiene gate.** Before flipping `state` from `in-progress` to `in-review`, run the four standard hygiene gates in sequence — `cargo test --workspace`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, `cargo +nightly fmt --all --check`, `cargo deny check`. Any non-zero exit refuses the flip and keeps the task at `in-progress`; on all zeros, proceed with the flip and record one line per gate naming its exit code in the appended `<implementer>` block's `Hygiene checks` field. When the implementation is done, flip the task's
    `state` from `in-progress` to `in-review` through the transition
    command — never by editing the `state` attribute in TASKS.md
    directly:
@@ -362,7 +411,7 @@ inherited environment variable.
    never lands and no re-read is needed; confirm `speccy next --json`
    reports no consistency drift.
 
-10. Exit. Do not continue to the next task. If the caller wants
+11. Exit. Do not continue to the next task. If the caller wants
    another task, the caller invokes this skill again.
 
 After exit, the next reasonable step depends on TASKS.md state: if

@@ -32,7 +32,7 @@ edit a `state` attribute in TASKS.md with file-editing tools.
 | `kind` | `severity` | Action |
 |---|---|---|
 | `commit_without_state` | `auto_fixable` | `speccy task transition SPEC-NNNN/T-NNN --to completed`. |
-| `state_completed_no_commit` (dirty tree, `details.working_tree_dirty == true`) | `blocking` | Run `git add -A` followed by `git commit` using the REQ-004 message format (title `[SPEC-NNNN/T-NNN]: <task title>`; body extracted from the latest `<implementer>` block's `Completed` field in `journal/T-NNN.md`; `Co-Authored-By` trailer per host). |
+| `state_completed_no_commit` (dirty tree, `details.working_tree_dirty == true`) | `blocking` | Run `git add -A` followed by `git commit` using the standard commit message format (title `[SPEC-NNNN/T-NNN]: <task title>`; body extracted from the latest `<implementer>` block's `Completed` field in `journal/T-NNN.md`; `Co-Authored-By` trailer per host). |
 | `state_completed_no_commit` (clean tree, `details.working_tree_dirty == false`) | `blocking` | `speccy task transition SPEC-NNNN/T-NNN --to in-review` to roll the task back. Journal file is preserved intact as evidence for the next reviewer round. |
 | `state_in_progress_orphaned` | `blocking` | Run `git restore .` and `git clean -fd` to discard the partial implementer work, then `speccy task transition SPEC-NNNN/T-NNN --to pending`. The orchestrator's per-task retry budget will redo the work. |
 | `state_in_progress_clean` (`details.working_tree_dirty == false`) | `blocking` | `speccy task transition SPEC-NNNN/T-NNN --to pending` to roll the task back. No git mutation — the tree is already clean, so there is no partial work to discard. The orchestrator's per-task retry budget will redo the work. |

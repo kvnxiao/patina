@@ -1,6 +1,6 @@
 ---
 name: speccy-plan
-description: 'Draft a new Speccy SPEC from the `AGENTS.md` product north star. Use when the user wants to "write a spec", "draft a SPEC", "spec out X", or "plan a new feature with speccy". Requires: `.speccy/` and `AGENTS.md`. If `.speccy/` is absent → prefer speccy-init. Do NOT trigger on fuzzy asks lacking concrete scope — prefer speccy-brainstorm first to atomize the ask.'
+description: 'Draft a new Speccy SPEC from the `AGENTS.md` product north star. Use when the user wants to "write a spec", "draft a SPEC", "spec out X", or "plan a new feature with speccy". Requires: `.speccy/` and `AGENTS.md`. If `.speccy/` is absent → prefer speccy-bootstrap. Do NOT trigger on fuzzy asks lacking concrete scope — prefer speccy-brainstorm first to atomize the ask.'
 ---
 
 # /speccy-plan
@@ -42,6 +42,13 @@ is already agreed.
    existing mission folder (`.speccy/specs/[focus]/NNNN-slug/`).
    Do not invent a new mission folder for a single spec.
 
+   Then read the backlog as candidate input. When `.speccy/BACKLOG.md`
+   is present, read it and surface its entries as candidate slices for
+   the spec being framed — a deferred candidate may be exactly the slice
+   to draft now. Absence is normal and silent: a missing file is not an
+   error, proceed without comment. If this spec promotes a backlog
+   candidate, note which entry so step 5 can strike it.
+
 2. Write SPEC.md following the PRD template.
 
    When the slice touches existing code, invoke the `plan-explorer`
@@ -62,10 +69,104 @@ is already agreed.
    bullet list (when cohesive grouping serves the SPEC better). Agent
    discretion; neither choice is surfaced as a self-review issue.
 
+   **Record a future-spec candidate, if one was cut.** When framing
+   this spec deliberately cuts a piece of scope worth its OWN later
+   spec, append a candidate with provenance `SPEC-NNNN, plan`, per the
+   reference below.
+
+## Backlog ledger entry shape
+
+The repo's future-spec register lives at `.speccy/BACKLOG.md` — a user-owned,
+git-tracked file, sibling to `MEMORY.md` and distinct from it. `speccy init`,
+`speccy init --force`, and reeject never create, enumerate, or overwrite it, so
+learned content survives speccy CLI updates. Its **absence is normal and
+silent**: a missing or malformed file produces no `speccy verify` error or
+warning, and the CLI never reads it. The backlog is a flat, unordered list of
+candidate specs — ideas worth their own SPEC later, not deferrals within a spec
+already in flight.
+
+### When to append a candidate
+
+A producing phase appends an entry here only when it deliberately cuts a piece
+of scope worth its OWN later spec — "not this spec, but its own SPEC later."
+Self-create the file with the header below (copied verbatim) on first append,
+then record the cut in the four-field shape below.
+
+Distinguish the two kinds of cut. A future-spec candidate goes here. A cut that
+is merely out of the current spec's scope is a spec-local Non-goal — it belongs
+in that SPEC's `## Non-goals`, not the backlog.
+
+### The file header
+
+When the file self-creates on first append, the producing skill copies in this
+preamble verbatim so the lifecycle stays legible to the next reader:
+
+```markdown
+# Speccy backlog — future-spec candidates
+
+> User-owned, git-tracked, never created or overwritten by `speccy init`,
+> `speccy init --force`, or reeject. Absence is normal and silent; the CLI
+> never reads this file. Distinct from `MEMORY.md` (durable loop conventions)
+> and from spec-local deferred surfaces (`## Non-goals`, deferred decisions,
+> deferred coverage): each entry below should become its OWN spec. Promotion
+> retires an entry by deletion. See
+> `resources/modules/references/backlog-ledger.md` for the entry shape.
+```
+
+### The four-field entry shape
+
+Every entry carries the same four fields, one line per field:
+
+- **Title** — the prospective spec named in a phrase.
+- **What & why** — what the spec would deliver plus the value it carries: the
+  case for building it.
+- **Deferred-because** — why it is not being built now: out of the current
+  slice, needs infrastructure that does not exist yet, or blocked on some
+  named prerequisite.
+- **Provenance** — the originating spec and phase that surfaced the candidate,
+  e.g. `SPEC-NNNN, ship` or `SPEC-NNNN, plan`, or `manual` for a hand-added
+  entry.
+
+### Authoring discipline
+
+- **Terse.** One phrase per field. The backlog is a working list scanned at
+  plan time, not a design document; a candidate that needs a paragraph to
+  justify wants its own brainstorm, not a longer backlog line.
+
+- **Provenance must resolve to a real spec and phase**, never a fabricated one
+  — or `manual` when added by hand. Honest provenance is what lets a reader
+  trace a candidate back to the moment it surfaced.
+
+- **Promotion strikes the entry by deletion.** When a candidate becomes its own
+  SPEC, delete its line; the promotion trail lives in git history and the new
+  SPEC's own provenance. The backlog reads as current candidates only, never a
+  tombstone field.
+
+- **Many entries from one spec's loop is a focus smell.** The per-spec add rate
+  is itself feedback: a single spec spawning a long tail of backlog entries
+  signals the slice was drawn too wide or the work kept discovering adjacent
+  scope. This is a signal to weigh, not an enforced threshold — nothing gates
+  on it.
+
+### Worked example
+
+The placeholders below are illustrative — substitute your own values.
+
+```markdown
+- Title: Cross-repo spec linking.
+- What & why: let a SPEC in one repo reference requirements in another so a
+  shared contract has one source of truth; removes the copy-paste drift between
+  the two repos that share the protocol.
+- Deferred-because: needs a cross-repo resolution surface that does not exist
+  yet — out of the current single-repo slice.
+- Provenance: SPEC-0042, ship.
+```
+
+
 3. **Self-review pass.** Run this pass exactly once after writing
    SPEC.md. Do not re-check after applying fixes.
 
-   <!-- Shared self-review core for plan + amend; supersedes SPEC-0034 DEC-001 (lists stabilized → extracted). Brainstorm's pre-check is intentionally separate. -->
+   <!-- Shared self-review core, included by the plan and amend skills. -->
 
    **Mechanical/semantic split.** Mechanical issues are
    string-matchable from the SPEC.md text: `TBD`/`TODO` strings,
@@ -123,7 +224,15 @@ is already agreed.
    signals an over-scoped session — 26 open questions is a scope smell,
    not a format limitation.
 
-5. Branch-guard, then commit `SPEC.md` alone. After the self-review
+5. Strike a promoted backlog candidate, if this spec promoted one.
+   When the spec just drafted IS a backlog candidate promoted into its
+   own SPEC (noted at step 1), delete that entry from
+   `.speccy/BACKLOG.md` outright. No struck-through line, no "promoted
+   to SPEC-NNNN" residue — git history and the new SPEC's own provenance
+   are the trail, and the backlog stays a live list of current
+   candidates only. If no candidate was promoted, skip this step.
+
+6. Branch-guard, then commit `SPEC.md` alone. After the self-review
    pass completes, commit the just-written `SPEC.md` so a
    `/speccy-plan` run-then-stop leaves `SPEC.md` already
    committed. The commit covers only the spec's `SPEC.md` —
@@ -242,15 +351,34 @@ never on the reuse path.
    Then run the shared commit recipe, supplying its two
    behaviour-varying parameters as follows:
 
-   - **Staging breadth: narrow `git add <spec-dir>/SPEC.md`.** Stage
-     exactly the spec's `SPEC.md` and nothing else. Do not use
-     `git add -A` or `git add .`.
+   - **Staging breadth: narrow `git add <spec-dir>/SPEC.md`, plus
+     `.speccy/BACKLOG.md` when it is dirty.** Stage the spec's
+     `SPEC.md`, and the backlog file too when this loop touched it —
+     a step-2 append, a step-5 strike, or an entry the preceding
+     `/speccy-brainstorm` appended and left for this
+     commit to sweep up — under the existence guard below. Stage
+     nothing else. Do not use `git add -A` or `git add .`.
    - **Title and body.**
      - **Title:** `[SPEC-NNNN]: create spec` with `SPEC-NNNN`
        substituted for the resolved spec id.
      - **Body:** the trimmed value of the `title:` field from SPEC.md's
        YAML frontmatter (the one-line title slug, not the full document
        heading).
+
+## Staging the inherited backlog
+
+Stage `.speccy/BACKLOG.md` whenever it exists, so a candidate this loop touched
+— one this skill appended or struck, or one a preceding brainstorm session
+appended and left dirty — rides into this commit rather than persisting as an
+uncommitted working-tree change. Guard the add on the file's existence:
+`git add` on an unchanged path is a no-op, and the guard also catches a
+first-append `.speccy/BACKLOG.md` that is still untracked, which `git diff`
+would miss:
+
+```bash
+test -f .speccy/BACKLOG.md && git add .speccy/BACKLOG.md
+```
+
 
    With those two parameters fixed, run the shared recipe — it defines
    the no-git short-circuit, the unified stage-then-`git diff --cached
@@ -359,7 +487,10 @@ fallback string
 `Co-Authored-By: Speccy Skill Pack <noreply@anthropic.com>`.
 
 
-6. Suggest the next step: `/speccy-decompose SPEC-NNNN` to
-   decompose into `TASKS.md`.
+## Exit
 
-This recipe does not loop.
+`SPEC.md` is written, self-reviewed once, and committed alone on a feature
+branch — `TASKS.md` is `/speccy-decompose`'s commit, not this
+skill's, so the new-spec path lands two commits (one per skill). Single pass,
+no loop. Next step: `/speccy-decompose SPEC-NNNN` to decompose
+into `TASKS.md`.

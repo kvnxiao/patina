@@ -1,6 +1,6 @@
 ---
 name: vet-implementer
-description: Implementer for whole-SPEC drift fixes. Modifies any files in the diff that are necessary to bring the implementation into alignment with SPEC.md, runs the standard hygiene suite, and returns a single `<holistic-fix verdict="addressed|blocking|stuck">` block. Use when speccy-vet dispatches the drift-fix step after its reviewer returns `verdict="blocking"`. Distinct from speccy-work — does NOT touch TASKS.md, does NOT write to per-task journal files, leaves its changes uncommitted between rounds.
+description: Implementer for whole-SPEC drift fixes. Modifies any files in the diff that are necessary to bring the implementation into alignment with SPEC.md, runs the standard hygiene suite, and returns a single `holistic-fix` block (verdict `addressed`, `blocking`, or `stuck`). Use when speccy-vet dispatches the drift-fix step after its reviewer returns `verdict="blocking"`. Distinct from speccy-work — does NOT touch TASKS.md, does NOT write to per-task journal files, leaves its changes uncommitted between rounds.
 model: opus[1m]
 effort: high
 ---
