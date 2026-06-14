@@ -15,8 +15,8 @@ Decomposes the SPEC into an ordered, single-agent-sized task list in
 
 - Initial: after `/speccy-plan` lands a fresh SPEC.
 - Amendment: after `/speccy-amend SPEC-NNNN` edited an existing SPEC and
-  the tasks may now be stale (the CLI surfaces a `TSK-003` lint when
-  it detects hash drift).
+  the tasks may now be stale (the CLI surfaces a spec-hash-mismatch
+  lint when it detects hash drift).
 
 ## Steps
 
@@ -59,7 +59,7 @@ Decomposes the SPEC into an ordered, single-agent-sized task list in
    - No `<tasks spec="...">` wrapper element. Tasks are a flat sequence
      of `<task>` elements at the top level of the document.
    - Multiple requirements in `covers=` are separated by single ASCII
-     spaces — `covers="REQ-001 REQ-002"` — never by commas.
+     spaces — `covers="REQ-NNN REQ-NNN"` — never by commas.
    - Seed `spec_hash_at_generation` and `generated_at` with the
      `bootstrap-pending` sentinel; step 3 fills them in. Do not invoke
      `speccy lock` before TASKS.md exists on disk — it errors when the
@@ -75,9 +75,9 @@ Decomposes the SPEC into an ordered, single-agent-sized task list in
    `speccy lock` requires TASKS.md to already exist.
 
 4. Branch-guard, then commit `TASKS.md` alone. This closes the
-   bootstrap-commit gap that would otherwise trip the SPEC-0045/REQ-002
-   strict clean-tree gate when `/speccy-orchestrate
-   SPEC-NNNN` is invoked on a freshly decomposed SPEC. The commit runs
+   bootstrap-commit gap that would otherwise trip the strict clean-tree
+   gate when `/speccy-orchestrate SPEC-NNNN` is invoked
+   on a freshly decomposed SPEC. The commit runs
    after `speccy lock`. It commits only the spec's `TASKS.md` —
    `SPEC.md` is committed by `/speccy-plan`, not here, so
    the new-spec path lands two separate commits (one per skill). The
@@ -317,7 +317,11 @@ fallback string
 `Co-Authored-By: Speccy Skill Pack <noreply@anthropic.com>`.
 
 
-5. Suggest the next step: `/speccy-work SPEC-NNNN` to start the
-   implementation loop.
+## Exit
 
-This recipe does not loop.
+`TASKS.md` is written, locked (the two `bootstrap-pending` placeholders are now
+the SPEC sha256 + UTC timestamp), and committed alone on a feature branch.
+Single pass, no loop. Next step:
+`/speccy-orchestrate SPEC-NNNN` to drive the implementation +
+review loop end-to-end, or `/speccy-work SPEC-NNNN` for one task
+at a time.

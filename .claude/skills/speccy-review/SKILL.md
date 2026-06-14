@@ -1,6 +1,6 @@
 ---
 name: speccy-review
-description: 'Review one Speccy task per invocation and exit, running one round of adversarial multi-persona review. With an optional `SPEC-NNNN/T-NNN` selector, the session reviews that task; without it, the skill resolves the next reviewable task via `speccy next --json`. Five personas (business, tests, security, style, correctness) fan out in parallel and either pass the task to `completed` or flip it back to `pending` with a `<blockers>` block appended to the per-task journal file. Use when the user says "review T-003" or "review the next task". Requires: a task in `state="in-review"`. If no in-review task and work remains → prefer speccy-work. If all tasks `completed` → prefer speccy-ship. Do NOT trigger on generic "review this PR" or "review my code" asks — this skill runs Speccy task-state review only.'
+description: 'Review one Speccy task per invocation and exit, running one round of adversarial multi-persona review. With an optional `SPEC-NNNN/T-NNN` selector, the session reviews that task; without it, the skill resolves the next reviewable task via `speccy next --json`. Five personas (business, tests, security, style, correctness) fan out in parallel and either pass the task to `completed` or flip it back to `pending` with a `blockers` block appended to the per-task journal file. Use when the user says "review T-003" or "review the next task". Requires: a task in `state="in-review"`. If no in-review task and work remains → prefer speccy-work. If all tasks `completed` → prefer speccy-ship. Do NOT trigger on generic "review this PR" or "review my code" asks — this skill runs Speccy task-state review only.'
 ---
 
 # /speccy-review
@@ -37,7 +37,7 @@ its `review` dispatch.
 
 ## When to use
 
-- With a selector (`/speccy-review SPEC-NNNN/T-003`):
+- With a selector (`/speccy-review SPEC-NNNN/T-NNN`):
   when the task to review is already known.
 - Without an argument: when picking up wherever `TASKS.md` left off.
   The session reviews one task and exits.
@@ -47,7 +47,7 @@ flipped there by `/speccy-work`).
 
 ## Steps
 
-**Entry precondition (REQ-007, REQ-008):** before resolving the target task, query `speccy next --json` (per-spec form when a selector was passed, workspace form otherwise). If the returned envelope's `next_action.kind == "reconcile"`, dispatch the reconcile pass per the **Reconcile policy** below instead of running the normal review flow. Re-query after the pass; resume normal dispatch only when `consistency.status == "ok"`.
+**Entry precondition.** Before resolving the target task, query `speccy next --json` (per-spec form when a selector was passed, workspace form otherwise). If the returned envelope's `next_action.kind == "reconcile"`, dispatch the reconcile pass per the **Reconcile policy** below instead of running the normal review flow. Re-query after the pass; resume normal dispatch only when `consistency.status == "ok"`.
 
 **Reconcile policy.** When `speccy next --json` (in either per-spec
 or workspace form) returns `next_action.kind == "reconcile"`, iterate
@@ -82,7 +82,7 @@ construction (autonomous / rollback-biased / idempotent).
      that no reviewable tasks remain. Otherwise, construct
      the disambiguated `<spec>/<task>` form from the JSON's `spec_id`
      and `next_action.task_id` fields (the bare task ID is
-     ambiguous across specs — every spec has its own `T-001`).
+     ambiguous across specs — every spec has its own `T-NNN`).
 
      Exit-code-stop contract: once SPEC-NNNN is resolved, any
      subsequent per-spec query (`speccy next SPEC-NNNN --json`) that
@@ -123,7 +123,7 @@ The prompt for each spawn is:
 >
 > The working tree may be dirty: the implementer leaves changes
 > uncommitted on purpose, and the orchestrator (not the implementer)
-> owns the single atomic commit on review pass per REQ-003/REQ-004.
+> owns the single atomic commit on review pass.
 > On retry rounds the dirty tree is the prior pass's WIP that the
 > retry implementer amended in place per the retry-shape contract.
 > Do not flag uncommitted state, commit timing, or "changes not
@@ -203,7 +203,7 @@ speccy journal show SPEC-NNNN/T-NNN --json --verdict blocking --round latest
 ```
 
 The `<blockers>` **body is orchestrator-authored semantic judgment**
-(DEC-001 non-goal: the CLI never synthesizes blocker prose). Compose
+(non-goal: the CLI never synthesizes blocker prose). Compose
 the body from the blocking reviews you just read back, then append it
 with the body on stdin:
 
@@ -231,7 +231,7 @@ show`, `journal append`, `task transition` — for the review-induced
 journal and state writes; it never edits TASKS.md or the journal file
 with file-editing tools.
 
-### Atomic commit on review pass (REQ-003, REQ-004)
+### Atomic commit on review pass
 
 When every spawned reviewer returned `verdict="pass"` and the
 `speccy task transition … --to completed` flip has run (the reviewer
@@ -245,9 +245,8 @@ Supply the recipe's two behaviour-varying parameters as follows:
 
 - **Staging breadth: `git add -A`.** Stage everything in the working
   tree. Do not stage selectively — `git add -A` is sound under the
-  clean-tree precondition (REQ-002) that fires at the start of work
-  dispatch, which guarantees every dirty path at commit time is
-  task-scoped.
+  clean-tree precondition that fires at the start of work dispatch,
+  which guarantees every dirty path at commit time is task-scoped.
 - **Title and body.**
   - **Title:** `[SPEC-NNNN/T-NNN]: <task title>` — `<task title>` is
     read verbatim from the `<task>` element's `## ` heading in
@@ -379,9 +378,10 @@ Commits land on whatever HEAD is.
 Do not pick up another `in-review` task. If the caller wants
 another task reviewed, the caller invokes this skill again.
 
-After exit, the next reasonable step depends on TASKS.md state:
-if any task is `state="pending"` (a retry), suggest
-`/speccy-work SPEC-NNNN`. If any remain
-`state="in-review"`, suggest
-`/speccy-review SPEC-NNNN` again. If all tasks are
-`state="completed"`, suggest `/speccy-vet SPEC-NNNN`.
+After exit, the recommended path is
+`/speccy-orchestrate SPEC-NNNN`, which dispatches the
+right next step automatically. To drive it by hand, the step depends on
+TASKS.md state: `state="pending"` (a retry) →
+`/speccy-work SPEC-NNNN`; any still `state="in-review"` →
+`/speccy-review SPEC-NNNN` again; all `state="completed"`
+→ `/speccy-vet SPEC-NNNN`.

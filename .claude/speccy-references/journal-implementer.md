@@ -1,9 +1,9 @@
 # Worked-instance reference: per-task journal `<implementer>` block
 
-This file shows the canonical shape of
-an `<implementer>` block inside a per-task journal file. The example
-continues the SPEC-NNNN widget-render-timeout scenario from `spec.md` /
-`tasks.md` in this directory.
+Canonical shape of an `<implementer>` block inside a per-task journal file,
+continuing the `SPEC-0042` widget-render-timeout worked instance from `spec.md`
+/ `tasks.md` in this directory. Illustrative example — substitute your own ids
+and values.
 
 A real journal file lives at
 `.speccy/specs/NNNN-slug/journal/T-NNN.md` (sibling of `SPEC.md` and
@@ -27,11 +27,14 @@ text and `--model`.
 
 The first append on a task creates the file with YAML frontmatter
 declaring exactly three fields (CLI-written), then the
-`<implementer>` block beneath.
+`<implementer>` block beneath. This worked instance is `T-001`, which
+covers `REQ-001` and `REQ-002`; it lands over two rounds (a round-1
+off-by-one caught in review, then a round-2 fix — see "Subsequent
+rounds" below).
 
 ```markdown
 ---
-spec: SPEC-NNNN
+spec: SPEC-0042
 task: T-001
 generated_at: 2026-05-21T19:45:00Z
 ---
@@ -40,56 +43,55 @@ generated_at: 2026-05-21T19:45:00Z
 - Reuse survey: Mapped the task area (covered REQ-001 / REQ-002,
   suggested files `widget-cli/src/args.rs` and
   `widget-core/src/render.rs`, and their immediate neighbours).
-  Decisions: reuse-as-is — the existing `clap` range-value-parser
-  helper `widget-cli::args::bounded_u32` validates the new
-  `--timeout-ms` bound, so no new parser. Extend — added the
-  `TimedOut` variant to the existing `widget_core::render::RenderError`
-  enum rather than introducing a parallel error type. Write-fresh —
-  the per-iteration elapsed-budget poll; searched `widget-core` for an
-  existing deadline/budget helper and found none. No new top-level
-  symbol beyond the `RenderError::TimedOut` variant and the
-  `timeout_ms` field.
+  Decisions: reuse-as-is — the CLI's existing `clap::value_parser!`
+  wiring for other numeric flags is the pattern the new `--timeout-ms`
+  parser follows. Extend — added the `TimedOut` variant to the existing
+  `widget_core::render::RenderError` enum rather than introducing a
+  parallel error type. Write-fresh — the range bound on the value
+  parser and the per-iteration elapsed-budget poll; searched
+  `widget-core` for an existing deadline/budget helper and found none.
+  No new top-level symbol beyond the `RenderError::TimedOut` variant and
+  the `timeout_ms` field.
 - Completed: Landed `--timeout-ms <N>` on `widget render` end-to-end.
   Added `timeout_ms: u32` to the `clap`-derived `RenderArgs` struct
-  in `widget-cli/src/args.rs` with a range value parser bounded
-  `1..=600000` and `default_value = "30000"`. Threaded the value
-  into `widget-core::render::Renderer` as a `Duration` budget field;
-  the render loop polls `Instant::elapsed` once per iteration and
-  returns the new `RenderError::TimedOut { budget_ms }` variant on
-  overshoot. CLI maps that variant to `std::process::exit(124)`
-  after writing the deterministic stderr line
-  `widget render: aborted after <budget_ms>ms (timeout reached)`.
-  Unit tests cover the range parser (rejects 0 / 600001, accepts 1
-  / 30000 / 600000); a new integration test
-  `widget-cli/tests/timeout.rs` drives the binary against
-  `fixtures/cycle.gv` with `--timeout-ms 500` and asserts exit 124,
-  the stderr line, and wall-clock elapsed in `500..=600ms`.
+  in `widget-cli/src/args.rs` with a range value parser rejecting
+  values outside the 1–600000 bound and `default_value = "30000"`.
+  Threaded the value into `widget-core::render::Renderer` as a
+  `Duration` budget field; the render loop polls `Instant::elapsed`
+  once per iteration and returns the new `RenderError::TimedOut
+  { budget_ms }` variant on overshoot. CLI maps that variant to
+  `std::process::exit(124)` after writing the deterministic stderr line
+  `widget render: aborted after <budget_ms>ms (timeout reached)` (the
+  configured budget, not measured elapsed, per DEC-002). Unit tests
+  cover the range parser (rejects 0 / 600001, accepts 1 / 30000); a new
+  integration test `widget-cli/tests/timeout.rs` drives the binary
+  against `fixtures/cycle.gv` with `--timeout-ms 500` and asserts exit
+  124, the stderr line, and wall-clock elapsed in `500..=600ms`.
 
 - Undone: T-002 (help-text and README documentation) is left for a
   separate implementer turn per its `<task>` element in TASKS.md.
-  Nothing from T-001's scope is deferred.
+  Nothing from T-002's scope is deferred.
 
 - Hygiene checks: `cargo test --workspace` exited 0 with 142 tests
   passing including the new `range_parser_rejects_zero`,
-  `range_parser_accepts_boundaries`, and
-  `cycle_fixture_times_out_at_500ms` cases. `cargo clippy
-  --workspace --all-targets --all-features -- -D warnings` exited 0
-  with zero new warnings introduced. `cargo +nightly fmt --all
-  --check` exited 0. `cargo deny check` exited 0 (no new
-  dependencies added — `Duration` and `Instant` are `std`).
+  `range_parser_rejects_600001`, and `cycle_fixture_times_out_at_500ms`
+  cases. `cargo clippy --workspace --all-targets --all-features -- -D
+  warnings` exited 0 with zero new warnings introduced. `cargo
+  +nightly fmt --all --check` exited 0. `cargo deny check` exited 0
+  (no new dependencies added — `Duration` and `Instant` are `std`).
 
 - Evidence: red-then-green paper trail at
-  `.speccy/specs/NNNN-widget-render-timeout/evidence/T-001.md`.
+  `.speccy/specs/0042-widget-render-timeout/evidence/T-001.md`.
   Roll call for the four CHKs under REQ-001 / REQ-002:
   - CHK-001 (range-parser rejection): demonstrated → evidence
-    Scenario 2 covers `--timeout-ms 0` exiting 2 with the
+    Scenario 1 covers `--timeout-ms 0` exiting 2 with the
     SPEC-mandated stderr message.
   - CHK-002 (default 30000ms when flag omitted): hygiene → existing
     `render_timeout_observed` unit test in `widget-core` runs under
     `cargo test --workspace` and reads the effective value via the
     `--print-config` debug flag.
   - CHK-003 (cycle fixture aborts at budget): demonstrated →
-    evidence Scenario 1 captures the pre-edit 60s hang versus the
+    evidence Scenario 2 captures the pre-edit 60s hang versus the
     post-edit 511ms exit-124 run with the expected stderr line.
   - CHK-004 (trivial fixture under budget): demonstrated → evidence
     Scenario 3 confirms the happy path exits 0 with no
@@ -193,3 +195,41 @@ contents (it does not modify earlier blocks), stamps the next
 monotonic `round`, and leaves the original `generated_at` frontmatter
 timestamp untouched. The agent supplies only the new body and
 `--model`.
+
+In this worked instance, round-1 review blocked on an off-by-one: the
+value parser used an exclusive `.range(1..600000)`, which rejected the
+inclusive maximum 600000 that REQ-001's done-when requires accepted
+(see `journal-blockers.md`). The round-1 unit tests checked 0 / 600001
+rejection and 1 / 30000 acceptance but never the 600000 boundary, so
+the gap slipped past a green hygiene gate and into review. The round-2
+block records the delta, not a fresh survey:
+
+```markdown
+<implementer date="2026-05-21T21:30:00Z" model="claude-opus-4-8[1m]/low" round="2">
+- Reuse survey: unchanged — no new top-level symbol; the blocker is a
+  range-bound off-by-one, not a reuse decision.
+- Completed: Addressed the round-1 blocker. Changed the value parser's
+  range from the exclusive `.range(1..600000)` to the inclusive
+  `.range(1..=600000)` so the documented upper bound 600000 is accepted
+  rather than rejected. Added the `range_parser_accepts_600000`
+  regression unit test the round-1 suite omitted. No other behaviour
+  changed; the exit-124 abort path and the DEC-002 budget-value stderr
+  line are untouched.
+- Undone: unchanged — T-002 docs still deferred to its own turn.
+- Hygiene checks: `cargo test --workspace` exited 0 with 143 tests
+  passing (the new `range_parser_accepts_600000` is the +1). `cargo
+  clippy …`, `cargo +nightly fmt --all --check`, and `cargo deny
+  check` each exited 0.
+- Evidence: roll call unchanged from round 1 — CHK-001 / CHK-003 /
+  CHK-004 demonstrated, CHK-002 hygiene. The off-by-one was an
+  untested boundary (no CHK pinned 600000); `range_parser_accepts_600000`
+  closes that gap under the hygiene suite.
+- Discovered issues: none new this round.
+- Procedural compliance: round-2 entry lands in `journal/T-001.md`;
+  the CLI stamps `round="2"`. `state` flips `in-progress` → `in-review`
+  for the second review fan-out.
+</implementer>
+```
+
+Reviewers fanning out a second time write `round="2"` `<review>` blocks
+(see `journal-review.md`); the same monotonic-no-skip rule applies.

@@ -1,6 +1,6 @@
 ---
 name: vet-simplifier
-description: Phase 2 simplifier sub-agent for speccy-vet. Scans the cumulative SPEC-NNNN working-tree diff for behavior-preserving simplification candidates and (in apply mode) carries the changes through the project's standard hygiene suite. Use when speccy-vet dispatches its Phase 2 polish pass after Phase 1 cleared drift; returns a single `<simplifier-scan>` or `<simplifier-apply>` block.
+description: Phase 2 simplifier sub-agent for speccy-vet. Scans the cumulative SPEC-NNNN working-tree diff for behavior-preserving simplification candidates and (in apply mode) carries the changes through the project's standard hygiene suite. Use when speccy-vet dispatches its Phase 2 polish pass after Phase 1 cleared drift; returns a single `simplifier-scan` or `simplifier-apply` block.
 model: opus[1m]
 effort: medium
 ---
