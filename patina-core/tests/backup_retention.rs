@@ -3,18 +3,15 @@
     reason = "integration tests use .expect() on fixture setup; allow-expect-in-tests covers #[cfg(test)] modules but not the helper functions in tests/*.rs integration crates."
 )]
 
-//! Integration coverage for count-based backup retention (T-012 / REQ-015).
+//! Integration coverage for count-based backup retention.
 //!
-//! The end-to-end `patina apply --yes` surface CHK-026 names cannot run
-//! yet: the `apply` subcommand and the commit→GC sequencing in the
-//! executor land in later tasks (T-014, T-016). These tests drive the
-//! `patina_core::backups::gc_retain` entry point directly — the layer
-//! T-012 owns — by staging the on-disk backup tree the SPEC scenarios
-//! describe and asserting retention converges to the REQ-015 shape. Each
-//! test maps to one REQ-015 `<done-when>` / `<behavior>` bullet:
+//! These tests drive the `patina_core::backups::gc_retain` entry point
+//! directly by staging the on-disk backup tree they cover and asserting
+//! retention converges to the expected shape. Each test maps to one
+//! retention bullet:
 //!
-//! - CHK-026: 15 historical cycles + a successful apply prune down to exactly
-//!   10, keeping the newest.
+//! - 15 historical cycles + a successful apply prune down to exactly 10,
+//!   keeping the newest.
 //! - "a failed apply triggers no GC": a caller that never commits never calls
 //!   `gc_retain`, so its historical cycles plus the partial attempt all
 //!   survive.
@@ -77,7 +74,7 @@ impl Scene {
 
 #[test]
 fn a_successful_apply_prunes_to_exactly_ten_keeping_the_newest() {
-    // CHK-026: 15 timestamped subdirectories; after the just-completed
+    // 15 timestamped subdirectories; after the just-completed
     // apply's GC, exactly 10 remain — the 10 most recent — and the 5 oldest
     // are gone.
     let scene = Scene::new();
@@ -100,7 +97,7 @@ fn a_successful_apply_prunes_to_exactly_ten_keeping_the_newest() {
 
 #[test]
 fn a_failed_apply_leaves_historical_backups_untouched() {
-    // REQ-015 behavior: an apply that fails before COMMIT never runs GC.
+    // An apply that fails before COMMIT never runs GC.
     // We model that by *not* calling gc_retain — the failed attempt's
     // caller short-circuits — and assert the three historical cycles plus
     // the partial attempt directory all survive.

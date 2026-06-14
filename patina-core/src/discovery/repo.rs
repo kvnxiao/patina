@@ -1,4 +1,4 @@
-//! Repository root resolution (REQ-003).
+//! Repository root resolution.
 //!
 //! Resolves the dotfiles repository root through three sources in
 //! priority order: the `PATINA_REPO` environment variable, an upward
@@ -6,7 +6,7 @@
 //! path stored under the per-machine state directory.
 //!
 //! When all three sources fail, [`RepoDiscoveryError::AllSourcesFailed`]
-//! is returned, naming each source attempt so T-020 can map it to
+//! is returned, naming each source attempt so the CLI can map it to
 //! exit code 1 with a stderr message containing the substrings
 //! `PATINA_REPO`, `walk-up`, and `persisted default`.
 
@@ -30,7 +30,7 @@ pub const PERSISTED_DEFAULT_FILENAME: &str = "default_repo";
 #[non_exhaustive]
 pub enum RepoDiscoveryError {
     /// All three resolution sources failed. The Display impl names each
-    /// source so the CLI's stderr renderer can satisfy CHK-007 without
+    /// source so the CLI's stderr renderer can render it without
     /// reformatting.
     #[error(
         "could not resolve a Patina repository root.\n\
@@ -67,7 +67,7 @@ pub enum RepoDiscoveryError {
     CwdUnavailable(#[source] std::io::Error),
 
     /// Canonicalizing the resolved repository root failed. Routes
-    /// through the [`crate::paths::canonicalize`] helper (REQ-010),
+    /// through the [`crate::paths::canonicalize`] helper,
     /// which canonicalizes existing paths through the filesystem and
     /// falls back to a lexical absolute form for paths that do not yet
     /// exist.
@@ -189,8 +189,8 @@ pub fn default_repo_pointer_path(state_dir: &Utf8Path) -> Utf8PathBuf {
 /// Report whether the persisted default-repo pointer exists under
 /// `state_dir`.
 ///
-/// Backs `doctor`'s missing-pointer finding (REQ-005, an info-level
-/// note suggesting `patina init`; `--fix` remediation in REQ-006): a
+/// Backs `doctor`'s missing-pointer finding (an info-level
+/// note suggesting `patina init`; `--fix` remediation): a
 /// plain existence check on [`default_repo_pointer_path`], no read or
 /// validation.
 ///

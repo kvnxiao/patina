@@ -3,7 +3,7 @@
     reason = "integration tests use .expect() on fixtures and asserted output; allow-expect-in-tests covers #[cfg(test)] modules but not the helper functions in tests/*.rs integration crates."
 )]
 
-//! REQ-006 (SPEC-0004): a `[[directory]]` entry with `mode = "symlink-tree"`
+//! A `[[directory]]` entry with `mode = "symlink-tree"`
 //! walks its source directory and creates one symbolic link per leaf file at
 //! the mirrored target path, leaving the intermediate target directories
 //! real.
@@ -13,10 +13,9 @@
 //! asserts that:
 //!
 //! - nested leaves materialize as symlinks while their intermediate target
-//!   directories stay real (CHK-012);
+//!   directories stay real;
 //! - a pre-existing regular file at a leaf target is backed up — provable via
-//!   `patina rollback` restoring its prior bytes — and replaced by the link
-//!   (CHK-013);
+//!   `patina rollback` restoring its prior bytes — and replaced by the link;
 //! - an empty source subdirectory produces no target directory;
 //! - a re-apply over unchanged source is a no-op for the entry (idempotent).
 
@@ -55,7 +54,7 @@ fn assert_real_dir(path: &Utf8Path) {
 
 #[test]
 fn symlink_tree_links_each_leaf_and_keeps_intermediate_dirs_real() {
-    // CHK-012: a `symlink-tree` entry whose source contains `a.conf` and
+    // A `symlink-tree` entry whose source contains `a.conf` and
     // `sub/b.conf` makes `~/d/a.conf` and `~/d/sub/b.conf` symbolic links
     // resolving to the source files, while `~/d` and `~/d/sub` are real
     // directories.
@@ -96,7 +95,7 @@ fn symlink_tree_links_each_leaf_and_keeps_intermediate_dirs_real() {
 
 #[test]
 fn symlink_tree_backs_up_pre_existing_leaf_and_replaces_it_with_a_link() {
-    // CHK-013: a leaf target `~/d/a.conf` that already holds a regular file is
+    // A leaf target `~/d/a.conf` that already holds a regular file is
     // afterward a symbolic link to the source. The prior bytes were recorded
     // in a backup — proven by `patina rollback` restoring the original file.
     let f = Fixture::new();
@@ -158,7 +157,7 @@ fn symlink_tree_backs_up_pre_existing_leaf_and_replaces_it_with_a_link() {
 
 #[test]
 fn symlink_tree_skips_empty_source_subdirectory() {
-    // REQ-006: an empty source subdirectory produces neither a target
+    // An empty source subdirectory produces neither a target
     // directory nor a link.
     let f = Fixture::new();
     let module = f.module(
@@ -190,7 +189,7 @@ fn symlink_tree_skips_empty_source_subdirectory() {
 
 #[test]
 fn symlink_tree_re_apply_over_unchanged_source_is_a_noop() {
-    // REQ-006 idempotency: a second `patina apply` over unchanged source
+    // Idempotency: a second `patina apply` over unchanged source
     // succeeds and leaves the leaf links pointing at the source.
     let f = Fixture::new();
     let module = f.module(

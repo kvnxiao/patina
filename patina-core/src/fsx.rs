@@ -1,7 +1,7 @@
 //! Kind-preserving filesystem helpers shared by the apply, backup,
 //! crash-recovery, and rollback paths.
 //!
-//! The backup/restore contract (REQ-014, REQ-019) requires that stashing a
+//! The backup/restore contract requires that stashing a
 //! pre-existing target and later restoring it round-trips the target's
 //! *kind*: a symbolic link must come back a symbolic link, a directory a
 //! directory, a regular file a regular file. A plain `fs::copy` cannot do
@@ -95,8 +95,8 @@ fn remove_symlink(path: &Utf8Path, file_type: std::fs::FileType) -> std::io::Res
 ///
 /// This is the primitive both directions of the backup contract use:
 /// `clone_entry(target, backup)` to stash a pre-existing target before an
-/// overwrite (REQ-014), and `clone_entry(backup, target)` to restore it
-/// during crash recovery or rollback (REQ-013 / REQ-019). Using one
+/// overwrite, and `clone_entry(backup, target)` to restore it
+/// during crash recovery or rollback. Using one
 /// function for both guarantees a symlink backed up is a symlink restored,
 /// and a pre-existing directory target is captured rather than aborting the
 /// apply.

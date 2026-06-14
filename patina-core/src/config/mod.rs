@@ -1,20 +1,19 @@
 //! TOML schema parsing for the `[[file]]`, `[[directory]]`, and
-//! `[[hook]]` table arrays declared inside a module's `patina.toml`
-//! (REQ-001 / SPEC-0001 REQ-006).
+//! `[[hook]]` table arrays declared inside a module's `patina.toml`.
 //!
 //! This module owns parsing and validation only — the resulting
 //! [`ModuleConfig`] is consumed by later subsystems:
 //!
 //! - File mode executors read [`ManagedEntry`] / [`FileMode`].
 //! - Hook execution reads [`HookEntry`] / [`HookEvent`].
-//! - The variable resolver (T-006) consumes the raw `[variables]` table
-//!   preserved here so it does not need a second TOML pass.
+//! - The variable resolver consumes the raw `[variables]` table preserved here
+//!   so it does not need a second TOML pass.
 //!
 //! `[variables]` is intentionally captured as a raw `toml::Value::Table`
-//! (boxed to keep the [`ModuleConfig`] enum size bounded). This task
+//! (boxed to keep the [`ModuleConfig`] enum size bounded). This module
 //! does not validate variable keys against the reserved `patina.*`
-//! namespace — that is T-006's job. Capturing the raw table here is the
-//! handoff.
+//! namespace — that is the resolver's job. Capturing the raw table here
+//! is the handoff.
 
 pub mod file_entry;
 pub mod hook_entry;
@@ -44,18 +43,18 @@ pub use writer::scaffold_root_manifest;
 
 /// Parsed and validated contents of a module's `patina.toml`.
 ///
-/// Carries the two table arrays defined by REQ-005 / REQ-006 plus the
-/// raw `[variables]` table preserved for T-006's resolver to ingest.
+/// Carries the two table arrays plus the raw `[variables]` table
+/// preserved for the resolver to ingest.
 #[derive(Debug, Clone, Default)]
 pub struct ModuleConfig {
     /// Validated `[[file]]`-kind entries in declaration order.
     pub files: Vec<ManagedEntry>,
     /// Validated `[[directory]]`-kind entries in declaration order.
-    /// Consumed by the plan loop in T-002; this task only parses them.
+    /// Consumed by the plan loop; this module only parses them.
     pub directories: Vec<ManagedEntry>,
     /// Validated `[[hook]]` entries in declaration order.
     pub hooks: Vec<HookEntry>,
-    /// Raw `[variables]` table for T-006 to consume. `None` when
+    /// Raw `[variables]` table for the resolver to consume. `None` when
     /// the module declares no `[variables]` table.
     pub variables: Option<toml::value::Table>,
 }
@@ -84,16 +83,16 @@ pub enum ConfigParseError {
         source: Box<toml::de::Error>,
     },
 
-    /// A `[[file]]` entry violated REQ-005's parse-time rules.
+    /// A `[[file]]` entry violated the parse-time rules.
     #[error(transparent)]
     FileEntry(#[from] file_entry::FileEntryError),
 
-    /// A `[[hook]]` entry violated REQ-006's parse-time rules.
+    /// A `[[hook]]` entry violated the parse-time rules.
     #[error(transparent)]
     HookEntry(#[from] hook_entry::HookEntryError),
 
     /// A `[variables]` table declared a key inside the reserved
-    /// `patina.*` namespace (REQ-007).
+    /// `patina.*` namespace.
     #[error(transparent)]
     Variable(#[from] crate::variables::VariableError),
 }
@@ -105,9 +104,9 @@ pub enum ConfigParseError {
 ///
 /// Returns [`ConfigParseError::Io`] on IO failure, [`ConfigParseError::Toml`]
 /// on a malformed TOML document, a `FileEntry` / `HookEntry`
-/// variant when one of the table-array rules in REQ-005 / REQ-006 is
-/// violated, and [`ConfigParseError::Variable`] when a `[variables]`
-/// key falls inside the reserved `patina.*` namespace (REQ-007).
+/// variant when one of the table-array rules is violated, and
+/// [`ConfigParseError::Variable`] when a `[variables]` key falls inside
+/// the reserved `patina.*` namespace.
 pub fn parse_module_config(path: &Utf8Path) -> Result<ModuleConfig, ConfigParseError> {
     let text =
         fs_err::read_to_string(path.as_std_path()).map_err(|source| ConfigParseError::Io {
@@ -124,9 +123,8 @@ pub fn parse_module_config(path: &Utf8Path) -> Result<ModuleConfig, ConfigParseE
 ///
 /// Returns [`ConfigParseError::Toml`] on a malformed TOML document, a
 /// `FileEntry` / `HookEntry` variant when one of the table-array rules
-/// in REQ-005 / REQ-006 is violated, and [`ConfigParseError::Variable`]
-/// when a `[variables]` key falls inside the reserved `patina.*`
-/// namespace (REQ-007).
+/// is violated, and [`ConfigParseError::Variable`] when a `[variables]`
+/// key falls inside the reserved `patina.*` namespace.
 pub fn parse_module_config_str(text: &str) -> Result<ModuleConfig, ConfigParseError> {
     let raw: RawModule = toml::from_str(text).map_err(|source| ConfigParseError::Toml {
         path: Utf8PathBuf::from("<memory>"),
@@ -163,7 +161,7 @@ pub fn parse_module_config_str(text: &str) -> Result<ModuleConfig, ConfigParseEr
 /// Raw TOML projection of a module manifest. The `[[file]]`,
 /// `[[directory]]`, and `[[hook]]` table arrays are captured as their raw
 /// forms; the `from_raw_*` constructors on [`ManagedEntry`] /
-/// [`HookEntry`] apply REQ-001 / SPEC-0001 REQ-006's validation rules.
+/// [`HookEntry`] apply the validation rules.
 #[derive(Debug, Default, Deserialize)]
 struct RawModule {
     /// Repository-root marker; preserved so the de-serializer accepts
@@ -172,7 +170,7 @@ struct RawModule {
     #[serde(default, rename = "patina")]
     _patina: Option<toml::Value>,
 
-    /// Per-module `[variables]` table, preserved verbatim for T-006.
+    /// Per-module `[variables]` table, preserved verbatim for the resolver.
     #[serde(default)]
     variables: Option<toml::value::Table>,
 

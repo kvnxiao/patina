@@ -1,4 +1,4 @@
-//! Cross-process test harness for the advisory lock (T-013 / REQ-023).
+//! Cross-process test harness for the advisory lock.
 //!
 //! The `lock_concurrency` integration test spawns this example as a child
 //! process to exercise behaviours that only manifest across real OS
@@ -31,7 +31,7 @@
 //! On a clean acquisition the helper prints the acquire and release
 //! timestamps as `ACQUIRED <nanos>` / `RELEASED <nanos>` on stdout and
 //! exits 0. On a timeout it prints `TIMEOUT exclusive`/`shared` on stderr
-//! and exits with a non-zero code the test maps to the SPEC's
+//! and exits with a non-zero code the test maps to the
 //! exit-code-4 contract. Any other failure prints `ERROR <msg>` and exits
 //! 2.
 
@@ -44,7 +44,7 @@ use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
 /// Exit code the helper uses on a lock timeout. The integration test
-/// asserts on this; the real CLI's exit-code-4 mapping is T-020's job.
+/// asserts on this; the real CLI's exit-code-4 mapping is handled elsewhere.
 const EXIT_TIMEOUT: i32 = 4;
 /// Exit code for any non-timeout failure (bad args, I/O error).
 const EXIT_ERROR: i32 = 2;
@@ -148,11 +148,11 @@ fn run(args: &Args) -> Result<(), Failure> {
     })?;
     // This test-harness example talks to its parent test process over stdout /
     // stderr; it is not user-facing CLI output and has no `output::Reporter` to
-    // route through, so the workspace-wide `disallowed-macros` ban (REQ-026) is
+    // route through, so the workspace-wide `disallowed-macros` ban is
     // scoped-out here.
     #[expect(
         clippy::disallowed_macros,
-        reason = "test-harness IPC over stdout, not user-facing CLI output (REQ-026)"
+        reason = "test-harness IPC over stdout, not user-facing CLI output"
     )]
     {
         println!("ACQUIRED {acquired}");
@@ -168,7 +168,7 @@ fn run(args: &Args) -> Result<(), Failure> {
     let released = nanos_now();
     #[expect(
         clippy::disallowed_macros,
-        reason = "test-harness IPC over stdout, not user-facing CLI output (REQ-026)"
+        reason = "test-harness IPC over stdout, not user-facing CLI output"
     )]
     {
         println!("RELEASED {released}");
@@ -182,7 +182,7 @@ fn main() {
     if let Err(failure) = result {
         #[expect(
             clippy::disallowed_macros,
-            reason = "test-harness IPC over stderr, not user-facing CLI output (REQ-026)"
+            reason = "test-harness IPC over stderr, not user-facing CLI output"
         )]
         {
             eprintln!("{}", failure.message);

@@ -1,5 +1,4 @@
-//! How a planned target relates to the live filesystem at plan time
-//! (REQ-001, REQ-013).
+//! How a planned target relates to the live filesystem at plan time.
 //!
 //! A [`Disposition`] is the three-way classification every managed target
 //! resolves to: it is being **created** for the first time, **updated**

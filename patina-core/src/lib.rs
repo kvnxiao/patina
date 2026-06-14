@@ -6,10 +6,6 @@
 //! [`Result<_, EngineError>`](EngineError); the CLI wraps that into
 //! `anyhow::Result` at the call site (per the project rule that
 //! `anyhow` lives only in the binary).
-//!
-//! T-001 lands the async signatures and the [`EngineError`] enum.
-//! Subsystem wiring (discovery, journal, executors, hooks, lock, …)
-//! lands in subsequent tasks.
 
 pub mod apply;
 pub mod backups;
@@ -193,14 +189,12 @@ pub struct ApplyOptions {
     pub timestamp: String,
 }
 
-/// Options accepted by [`status`](fn@crate::status). Subsequent tasks extend
-/// this with the resolved repository root and output-format toggle.
+/// Options accepted by [`status`](fn@crate::status).
 #[derive(Debug, Default, Clone)]
 #[non_exhaustive]
 pub struct StatusOptions {}
 
-/// Options accepted by [`rollback`](fn@crate::rollback). Subsequent tasks
-/// extend this with the journal timestamp selector and confirmation toggles.
+/// Options accepted by [`rollback`](fn@crate::rollback).
 #[derive(Debug, Default, Clone)]
 #[non_exhaustive]
 pub struct RollbackOptions {}
@@ -220,7 +214,7 @@ pub async fn apply(options: ApplyOptions) -> Result<ApplyResult, EngineError> {
 
 /// Report drift between the resolved dotfiles repository and the current
 /// filesystem state, classifying every managed target as CLEAN / DRIFTED /
-/// MISSING / ORPHANED against the last committed apply (REQ-018).
+/// MISSING / ORPHANED against the last committed apply.
 ///
 /// # Errors
 ///
@@ -230,7 +224,7 @@ pub async fn apply(options: ApplyOptions) -> Result<ApplyResult, EngineError> {
 /// [`StatusReport`], not an error.
 #[expect(
     clippy::unused_async,
-    reason = "REQ-002 mandates an async signature; the status read itself is synchronous."
+    reason = "An async signature is required; the status read itself is synchronous."
 )]
 pub async fn status(_options: StatusOptions) -> Result<StatusReport, EngineError> {
     let targets = current_plan_targets()?;
@@ -238,7 +232,7 @@ pub async fn status(_options: StatusOptions) -> Result<StatusReport, EngineError
 }
 
 /// Roll back the most recent committed apply to its pre-apply filesystem
-/// state using the journaled backups (REQ-019).
+/// state using the journaled backups.
 ///
 /// Delegates to [`run_rollback`], which takes the exclusive lock, finds the
 /// most recent committed-and-not-rolled-back apply, reverts each `[[file]]`
@@ -252,7 +246,7 @@ pub async fn status(_options: StatusOptions) -> Result<StatusReport, EngineError
 /// filesystem / lock / record-decode operation fails.
 #[expect(
     clippy::unused_async,
-    reason = "REQ-002 mandates an async signature; the rollback itself is synchronous filesystem work."
+    reason = "An async signature is required; the rollback itself is synchronous filesystem work."
 )]
 pub async fn rollback(_options: RollbackOptions) -> Result<(), EngineError> {
     run_rollback()

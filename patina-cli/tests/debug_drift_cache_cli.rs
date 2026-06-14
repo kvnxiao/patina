@@ -3,8 +3,7 @@
     reason = "integration tests use .expect() on fixtures; allow-expect-in-tests covers #[cfg(test)] modules but not the helper functions in tests/*.rs integration crates."
 )]
 
-//! Integration tests for the `patina debug drift-cache <path>` CLI surface
-//! (REQ-007, CHK-018).
+//! Integration tests for the `patina debug drift-cache <path>` CLI surface.
 //!
 //! The subcommand decodes a binary `drift.cache` file and renders it. These
 //! tests write a cache file directly through the public `DriftCache::encode`
@@ -40,7 +39,7 @@ fn code(output: &Output) -> i32 {
 
 #[test]
 fn decodes_a_drift_cache_and_prints_version_timestamp_path_and_hashes() {
-    // CHK-018: a populated drift cache renders with `version:`, the bound
+    // A populated drift cache renders with `version:`, the bound
     // journal timestamp, the target path, and both hash values; exit 0.
     let temp = TempDir::new().expect("tempdir");
     let dir = Utf8Path::from_path(temp.path()).expect("utf8 tempdir");
@@ -80,7 +79,7 @@ fn decodes_a_drift_cache_and_prints_version_timestamp_path_and_hashes() {
 
 #[test]
 fn missing_path_exits_one_and_names_the_path_on_stderr() {
-    // REQ-007 task scenario: a non-existent path -> exit 1, path on stderr.
+    // A non-existent path -> exit 1, path on stderr.
     let out = invoke(&["debug", "drift-cache", "/nonexistent/drift.cache"]);
     assert_eq!(code(&out), 1, "missing path must exit 1");
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -92,7 +91,7 @@ fn missing_path_exits_one_and_names_the_path_on_stderr() {
 
 #[test]
 fn newer_version_envelope_exits_one_and_names_both_versions() {
-    // REQ-007 task scenario: a cache whose envelope major is u16::MAX is
+    // A cache whose envelope major is u16::MAX is
     // refused by a binary whose supported drift-cache major is 1 -> exit 1,
     // both versions plus the word "version" on stderr.
     let temp = TempDir::new().expect("tempdir");

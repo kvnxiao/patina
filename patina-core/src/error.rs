@@ -6,7 +6,7 @@
 //! profile, template, path, journal, backup, lock, executor, hook,
 //! rollback). Each wraps its subsystem's typed error via `#[from]`, so `?`
 //! threads a subsystem failure up to the async entry points without
-//! `todo!()` / `panic!()` (forbidden by REQ-024). The `non_exhaustive`
+//! `todo!()` / `panic!()` (forbidden). The `non_exhaustive`
 //! attribute keeps downstream `match` arms forward compatible.
 
 use camino::Utf8PathBuf;
@@ -21,85 +21,81 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum EngineError {
-    /// Repository-root resolution failed (REQ-003).
+    /// Repository-root resolution failed.
     #[error(transparent)]
     RepoDiscovery(#[from] crate::discovery::RepoDiscoveryError),
 
-    /// Module enumeration failed (REQ-004).
+    /// Module enumeration failed.
     #[error(transparent)]
     ModuleDiscovery(#[from] crate::discovery::ModuleDiscoveryError),
 
-    /// `[[file]]` / `[[hook]]` schema parse failed (REQ-005 / REQ-006).
+    /// `[[file]]` / `[[hook]]` schema parse failed.
     #[error(transparent)]
     ConfigParse(#[from] crate::config::ConfigParseError),
 
-    /// Writing or editing a `patina.toml` manifest failed (SPEC-0002
-    /// REQ-002 / REQ-003).
+    /// Writing or editing a `patina.toml` manifest failed.
     #[error(transparent)]
     ConfigWrite(#[from] crate::config::ConfigWriteError),
 
     /// Parsing the root manifest's repo-shared `[variables]` or
-    /// `[profiles.<name>.variables]` tables failed (REQ-005).
+    /// `[profiles.<name>.variables]` tables failed.
     #[error(transparent)]
     RootConfig(#[from] crate::config::RootConfigError),
 
-    /// Per-machine state directory resolution failed (REQ-016).
+    /// Per-machine state directory resolution failed.
     #[error(transparent)]
     StateDir(#[from] crate::state_dir::StateDirError),
 
-    /// Variable layer ingestion or CLI override parsing failed (REQ-007).
+    /// Variable layer ingestion or CLI override parsing failed.
     #[error(transparent)]
     Variable(#[from] crate::variables::VariableError),
 
-    /// Active-profile resolution failed (REQ-008).
+    /// Active-profile resolution failed.
     #[error(transparent)]
     Profile(#[from] crate::profile::ProfileError),
 
     /// Template rendering or `when` predicate evaluation failed under
-    /// strict-undefined semantics (REQ-009).
+    /// strict-undefined semantics.
     #[error(transparent)]
     Template(#[from] crate::template::TemplateError),
 
-    /// Path canonicalization failed (REQ-010).
+    /// Path canonicalization failed.
     #[error(transparent)]
     Path(#[from] crate::paths::PathError),
 
-    /// Plan-journal write, read, or version check failed (REQ-011 /
-    /// REQ-012).
+    /// Plan-journal write, read, or version check failed.
     #[error(transparent)]
     Journal(#[from] crate::journal::JournalError),
 
-    /// Pre-overwrite backup or retention GC failed (REQ-014 / REQ-015).
+    /// Pre-overwrite backup or retention GC failed.
     #[error(transparent)]
     Backup(#[from] crate::backups::BackupError),
 
-    /// Advisory file-lock acquisition timed out or failed (REQ-023).
+    /// Advisory file-lock acquisition timed out or failed.
     #[error(transparent)]
     Lock(#[from] crate::lock::LockError),
 
-    /// A file-mode executor failed to materialize a source at a target
-    /// (REQ-005).
+    /// A file-mode executor failed to materialize a source at a target.
     #[error(transparent)]
     Executor(#[from] crate::apply::ExecutorError),
 
     /// Plan-time classification of a target into Create / Update / Unchanged
-    /// failed because a copy/copy-tree source could not be read to hash it
-    /// (SPEC-0005 REQ-001). Raised during planning, before any mutation.
+    /// failed because a copy/copy-tree source could not be read to hash it.
+    /// Raised during planning, before any mutation.
     #[error(transparent)]
     Classify(#[from] crate::apply::ClassifyError),
 
-    /// Hook shell resolution, `when` evaluation, or execution failed
-    /// (REQ-006).
+    /// Hook shell resolution, `when` evaluation, or execution failed.
     #[error(transparent)]
     Hook(#[from] crate::apply::HookError),
 
-    /// `patina rollback` failed to reverse a prior apply (REQ-019).
+    /// `patina rollback` failed to reverse a prior apply.
     #[error(transparent)]
     Rollback(#[from] crate::rollback::RollbackError),
 
     /// On Windows, the plan creates symbolic links but Developer Mode is
     /// disabled and the process is not elevated, so the engine refused to
-    /// mutate the filesystem (SPEC-0002 REQ-007). This is the engine-side
+    /// mutate the filesystem. This is the engine-side
     /// backstop: the CLI normally drives the one-time UAC elevation flow
     /// *before* calling `execute`, so this variant only surfaces when the
     /// gate is reached without that orchestration. The message names
@@ -114,9 +110,9 @@ pub enum EngineError {
 
     /// A managed entry's declared kind does not match the kind of its
     /// source on disk: a `[[file]]` entry whose source is a directory, or a
-    /// `[[directory]]` entry whose source is a file (SPEC-0004 REQ-002 /
-    /// DEC-008). Raised at plan time — after the entry survives `when`-gating
-    /// and its source is canonicalized, but before the advisory lock, the
+    /// `[[directory]]` entry whose source is a file. Raised at plan time —
+    /// after the entry survives `when`-gating and its source is
+    /// canonicalized, but before the advisory lock, the
     /// journal flush, or any mutation — so a mismatched entry mutates
     /// nothing. The message names the offending source path and directs the
     /// author to the table the source kind actually belongs under. The
@@ -139,7 +135,7 @@ pub enum EngineError {
     },
 
     /// A managed entry survived `when`-gating but its source does not exist
-    /// on disk (SPEC-0004 REQ-002 / DEC-008). Raised at plan time — before
+    /// on disk. Raised at plan time — before
     /// the advisory lock, the journal flush, or any mutation — rather than
     /// surfacing later from the executor. Because `paths::canonicalize`
     /// falls back to lexical resolution for a non-existent path, a missing

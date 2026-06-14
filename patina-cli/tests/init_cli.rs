@@ -3,7 +3,7 @@
     reason = "integration tests use .expect() on fixture setup and assertions; allow-expect-in-tests covers #[cfg(test)] modules but not the top level of a tests/*.rs integration crate."
 )]
 
-//! Integration coverage for `patina init` (REQ-001, REQ-010).
+//! Integration coverage for `patina init`.
 //!
 //! Each test spawns the real `patina` binary against an isolated tempdir
 //! repo + state + home (via the shared [`common::Fixture`]). `init` targets
@@ -15,7 +15,7 @@ mod common;
 use common::Fixture;
 use common::code;
 
-/// CHK-001: `patina init T` in an empty directory scaffolds the root
+/// `patina init T` in an empty directory scaffolds the root
 /// manifest, persists the canonical pointer, prints the next-step hint, and
 /// exits 0.
 #[test]
@@ -60,7 +60,7 @@ fn init_scaffolds_manifest_pointer_and_hint() {
     );
 }
 
-/// CHK-002: `patina init T` against a directory that already contains a
+/// `patina init T` against a directory that already contains a
 /// `patina.toml` leaves the file byte-identical, names it on stderr with
 /// `already exists`, and exits 1.
 #[test]
@@ -100,7 +100,7 @@ fn init_refuses_when_manifest_exists() {
     );
 }
 
-/// CHK-017: a successful `init T --json` and a refused one differ ("diff
+/// A successful `init T --json` and a refused one differ ("diff
 /// produces non-empty output"), while each invocation is itself deterministic.
 /// The first run succeeds (out1); the second fails because `T/patina.toml` now
 /// exists (out2); the two documents differ; and a third run (out3) byte-matches
@@ -151,7 +151,7 @@ fn init_json_success_and_failure_diverge_then_failure_is_byte_stable() {
     );
 }
 
-/// REQ-010 success schema: a successful `init --json` emits a single
+/// Success schema: a successful `init --json` emits a single
 /// deterministic JSON document on stdout whose `initialized` and
 /// `default_repo` fields carry the canonical target and pointer paths and
 /// nothing non-deterministic (no `created_at` timestamp).

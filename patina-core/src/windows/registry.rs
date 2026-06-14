@@ -1,5 +1,5 @@
 //! Windows-only registry and process-token reads backing the Developer
-//! Mode capability (REQ-007, read side).
+//! Mode capability (read side).
 //!
 //! This module is compiled only under `#[cfg(windows)]`; the
 //! cross-platform façade in the parent module routes here on Windows and
@@ -16,8 +16,8 @@
 //!   registry string rather than `GetVersionEx`, which under-reports the build
 //!   for unmanifested processes.
 //!
-//! The registry key path and value name are held as constants here. Per
-//! DEC-002 the standalone `patina-elevate` helper crate duplicates these
+//! The registry key path and value name are held as constants here. The
+//! standalone `patina-elevate` helper crate duplicates these
 //! constants deliberately — it must not depend on `patina-core` — so they
 //! are intentionally not shared across a crate boundary.
 

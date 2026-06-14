@@ -1,10 +1,10 @@
-//! Integration scenarios for REQ-009 / T-008: the single strict-undefined
+//! Integration scenarios for the single strict-undefined
 //! `MiniJinja` environment shared between `.tmpl` rendering and `when`
 //! predicate evaluation.
 //!
 //! These tests exercise the public surface of `patina_core::template`.
-//! The end-to-end `patina apply --yes` exit-code-1 surface (CHK-019) is
-//! wired by the apply pipeline (T-014 / T-016); here we prove the
+//! The end-to-end `patina apply --yes` exit-code-1 surface is
+//! wired by the apply pipeline; here we prove the
 //! plan-computation-level behaviour those layers depend on: an undefined
 //! reference in a template body or a `when` predicate produces a typed
 //! error whose `Display` names the offending variable.
@@ -18,10 +18,10 @@ fn resolver() -> Resolver {
     Resolver::new(Builtins::for_tests())
 }
 
-/// CHK-019 (plan-computation level) — a `gitconfig.tmpl` body referencing
+/// At the plan-computation level, a `gitconfig.tmpl` body referencing
 /// `{{ user_email }}` with no `user_email` in any layer fails with a typed
 /// error naming the variable. The CLI maps this to exit 1 with the name on
-/// stderr once the apply pipeline lands.
+/// stderr.
 #[test]
 fn template_with_undefined_variable_fails_naming_it() {
     let body = "[user]\nemail = {{ user_email }}";
@@ -38,12 +38,12 @@ fn template_with_undefined_variable_fails_naming_it() {
     );
 }
 
-/// CHK-020 — a `when` expression `patina.os == 'macos' and missing_var`
+/// A `when` expression `patina.os == 'macos' and missing_var`
 /// with no `missing_var` in context produces a typed error whose Display
 /// contains `missing_var`.
 ///
 /// `and` short-circuits, so the undefined operand is only reached when the
-/// left side is true. To exercise CHK-020's undefined path on any test
+/// left side is true. To exercise the undefined path on any test
 /// host, the left operand is pinned to the host's own `patina.os` value so
 /// the predicate always reaches `missing_var`.
 #[test]
@@ -64,7 +64,7 @@ fn when_predicate_with_undefined_variable_fails_naming_it() {
     );
 }
 
-/// REQ-009 done-when companion to CHK-020 — a bare undefined `when`
+/// A bare undefined `when`
 /// predicate (no short-circuit guard) is reported as an undefined-variable
 /// error rather than silently treated as `false`. This guards the
 /// `coerce_when_result` undefined-result path directly.
@@ -79,7 +79,7 @@ fn bare_undefined_when_predicate_is_an_error_not_false() {
     );
 }
 
-/// REQ-009 done-when — the Jinja2-inherited `{% else %}` carve-out: an
+/// The Jinja2-inherited `{% else %}` carve-out: an
 /// undefined reference reached only through the untaken branch renders the
 /// fallback without firing strict-undefined.
 #[test]
@@ -91,7 +91,7 @@ fn else_block_undefined_renders_fallback_without_error() {
     assert_eq!(out, "fallback");
 }
 
-/// REQ-009 done-when — the same `MiniJinja` environment instance backs
+/// The same `MiniJinja` environment instance backs
 /// both `.tmpl` rendering and `when` evaluation. Cloning the engine shares
 /// the single `Arc<Environment>`; both call paths use that one instance.
 #[test]
@@ -121,7 +121,7 @@ fn render_and_when_share_one_environment_instance() {
 }
 
 /// A defined user variable renders through under strict-undefined — the
-/// happy path the executor (T-014) relies on.
+/// happy path the executor relies on.
 #[test]
 fn defined_variable_renders_through() {
     let resolver = resolver()

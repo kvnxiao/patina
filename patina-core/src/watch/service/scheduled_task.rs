@@ -1,5 +1,4 @@
-//! The Windows per-user Scheduled Task service backend (SPEC-0003 REQ-001 /
-//! REQ-003).
+//! The Windows per-user Scheduled Task service backend.
 //!
 //! `install` registers a per-user Scheduled Task named `Patina Watcher` with a
 //! logon trigger, `RunLevel = Limited` (non-elevated), and an action pointing
@@ -8,8 +7,7 @@
 //! `schtasks /create /sc onlogon` drives. `start` runs the task, `stop` ends
 //! it, `restart` is stop-then-start, `uninstall` deletes it; `status` queries
 //! the registered task for liveness, last-run time, and last-exit code, and
-//! recovers the watcher's log counters from the rotated structured log
-//! (DEC-012).
+//! recovers the watcher's log counters from the rotated structured log.
 //!
 //! None of these paths require admin: the task is registered in the current
 //! user's folder (`\`) with `TASK_LOGON_INTERACTIVE_TOKEN` and a
@@ -21,7 +19,7 @@
 //! The task definition is built as Task Scheduler 2.0 registration XML
 //! (`render_task_xml`) and handed to `ITaskService` via `put_XmlText` +
 //! `RegisterTaskDefinition`. Building the descriptor as a pure string mirrors
-//! the `launchd` plist and `systemd` unit siblings and lets CHK-003's
+//! the `launchd` plist and `systemd` unit siblings and lets the
 //! trigger / run-level assertions be unit-tested as a string property on any
 //! platform, with no live Task Scheduler in the loop.
 
@@ -47,7 +45,7 @@ pub const TASK_NAME: &str = "Patina Watcher";
 /// watcher's log counters from `<state_dir>/logs/`.
 #[derive(Debug, Clone)]
 pub struct ScheduledTaskBackend {
-    /// The resolved per-machine state root, for log-counter recovery (DEC-012).
+    /// The resolved per-machine state root, for log-counter recovery.
     state_dir: Utf8PathBuf,
 }
 
@@ -174,7 +172,7 @@ fn task_exists() -> Result<bool, ServiceError> {
 }
 
 /// Register the `Patina Watcher` task from its definition XML in the current
-/// user's folder (REQ-001).
+/// user's folder.
 fn register_task(xml: &str) -> Result<(), ServiceError> {
     let (_guard, service) = connect_service()?;
     let folder = service
@@ -285,8 +283,7 @@ struct TaskReadout {
 }
 
 /// Map a registered task's `(get_State, get_LastTaskResult, get_LastRunTime)`
-/// triple to the liveness / last-fired / last-exit-code status fields
-/// (REQ-003, CHK-006).
+/// triple to the liveness / last-fired / last-exit-code status fields.
 ///
 /// This is the pure value-mapping half of [`query_task_status`], extracted —
 /// mirroring the launchd / systemd siblings' `parse_launchctl_print` /
@@ -295,7 +292,7 @@ struct TaskReadout {
 ///
 /// - `state == RUNNING` is the liveness test; every other state is stopped.
 /// - `result == SCHED_S_TASK_HAS_NOT_RUN` (the never-run sentinel) maps the
-///   exit code to `None`; any other value is the recorded code (CHK-006).
+///   exit code to `None`; any other value is the recorded code.
 /// - `date == 0.0` (the epoch sentinel a never-run task reports) maps the
 ///   last-fired time to `None` rather than rendering a meaningless 1899-12-30
 ///   timestamp.
@@ -364,8 +361,7 @@ fn schtasks(args: &[&str]) -> Result<std::process::Output, ServiceError> {
 
 /// Render the Task Scheduler 2.0 registration XML for the watcher task: an
 /// `OnLogon` trigger, a least-privilege (`RunLevel = Limited`) principal, and
-/// an `Exec` action of the canonical `binary` plus `watch --foreground`
-/// (REQ-001 / CHK-003).
+/// an `Exec` action of the canonical `binary` plus `watch --foreground`.
 ///
 /// Each path / argument is XML-escaped through [`xml_escape`] so a binary path
 /// containing `&`, `<`, `>`, `"`, or `'` produces a well-formed document,
@@ -435,7 +431,7 @@ mod tests {
         let binary = Utf8Path::new(r"C:\Users\dev\bin\patina.exe");
         let xml = render_task_xml(binary);
 
-        // CHK-003: a logon trigger, a non-elevated (least-privilege) run level,
+        // a logon trigger, a non-elevated (least-privilege) run level,
         // and an Exec action pointing at the canonical binary plus the
         // foreground tokens.
         assert!(
@@ -520,7 +516,7 @@ mod tests {
     #[test]
     fn map_task_status_reports_running_for_the_running_state() {
         // RUNNING liveness with a recorded last run: running, and the recorded
-        // exit code / timestamp surface (REQ-003 status shape).
+        // exit code / timestamp surface.
         let readout = map_task_status(co::TASK_STATE::RUNNING, 0, 45_000.5);
         assert!(
             readout.running,
@@ -545,14 +541,14 @@ mod tests {
 
     #[test]
     fn map_task_status_reports_none_exit_code_when_never_run() {
-        // CHK-006: a task that has never run reports the SCHED_S_TASK_HAS_NOT_RUN
+        // a task that has never run reports the SCHED_S_TASK_HAS_NOT_RUN
         // sentinel result and the epoch (0.0) last-run time; both map to None so
         // a freshly-installed task surfaces no exit code and no last-fired time.
         let readout = map_task_status(co::TASK_STATE::READY, SCHED_S_TASK_HAS_NOT_RUN, 0.0);
         assert!(!readout.running);
         assert_eq!(
             readout.last_exit_code, None,
-            "the never-run sentinel must map the exit code to None (CHK-006)"
+            "the never-run sentinel must map the exit code to None"
         );
         assert_eq!(
             readout.last_fired_at, None,

@@ -11,8 +11,8 @@
     reason = "single-target fixtures read most clearly as a `&[target.clone()]` slice literal alongside the multi-target `&[t1, t2]` cases they sit beside."
 )]
 
-//! Integration coverage for the five file-mode executors (REQ-005,
-//! T-014). Each test drives the public [`materialize`] entry point against
+//! Integration coverage for the five file-mode executors. Each test drives
+//! the public [`materialize`] entry point against
 //! a real tempdir fixture and asserts the materialized filesystem object
 //! matches the mode's contract: symlink readlink targets, byte content for
 //! copies, rendered output for templates.
@@ -34,7 +34,7 @@ fn utf8_tempdir() -> (TempDir, Utf8PathBuf) {
     (td, canonical)
 }
 
-/// Read a link's target and canonicalize it. The CHK contract is
+/// Read a link's target and canonicalize it. The contract is
 /// "readlink target equals the canonical source"; canonicalizing both
 /// sides makes the assertion independent of the platform's readlink
 /// representation (Windows returns the verbatim `\\?\` form).
@@ -54,7 +54,7 @@ fn resolver() -> Resolver {
     Resolver::new(Builtins::for_tests())
 }
 
-/// CHK-010 / CHK-041: a file source with `mode = "symlink"` (and the
+/// A file source with `mode = "symlink"` (and the
 /// default mode) materializes the target as a symlink whose readlink
 /// target equals the canonical source path.
 #[test]
@@ -81,7 +81,7 @@ fn symlink_mode_links_to_canonical_source() {
     ));
 }
 
-/// REQ-005 done-when: a directory source under `symlink` mode produces one
+/// A directory source under `symlink` mode produces one
 /// symlink per file at the mirrored target path (no atomic dir symlink).
 #[test]
 fn symlink_mode_directory_source_walks_per_file() {
@@ -119,7 +119,7 @@ fn symlink_mode_directory_source_walks_per_file() {
     );
 }
 
-/// REQ-005 behavior: `symlink-dir` materializes a single directory symlink
+/// `symlink-dir` materializes a single directory symlink
 /// at the target and does not walk into the source.
 #[test]
 fn symlink_dir_mode_creates_single_atomic_link() {
@@ -148,7 +148,7 @@ fn symlink_dir_mode_creates_single_atomic_link() {
     );
 }
 
-/// CHK-043 (single-target slice): `copy` mode materializes a regular file
+/// At the single-target slice, `copy` mode materializes a regular file
 /// whose byte content equals the source.
 #[test]
 fn copy_mode_writes_byte_identical_file() {
@@ -177,7 +177,7 @@ fn copy_mode_writes_byte_identical_file() {
     );
 }
 
-/// REQ-005 done-when: `copy-tree` materializes a directory tree of regular
+/// `copy-tree` materializes a directory tree of regular
 /// files mirroring the source.
 #[test]
 fn copy_tree_mode_mirrors_directory() {
@@ -205,8 +205,8 @@ fn copy_tree_mode_mirrors_directory() {
     );
 }
 
-/// CHK-011: a `.tmpl` *source* renders through `MiniJinja` and materializes at
-/// the declared suffix-less target as a regular file. Per REQ-005 the target
+/// A `.tmpl` *source* renders through `MiniJinja` and materializes at
+/// the declared suffix-less target as a regular file. The target
 /// is declared without a `.tmpl` suffix (`source = "gitconfig.tmpl"`,
 /// `target = "~/.gitconfig"`); the executor writes to it verbatim.
 #[test]

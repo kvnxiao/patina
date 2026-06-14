@@ -1,5 +1,5 @@
 //! Computing the watcher's FS subscription set from a committed journal
-//! record (REQ-005).
+//! record.
 //!
 //! The watcher never watches the repository tree recursively. It reads the
 //! most recent committed journal record (the `<ts>.COMMIT` written by the
@@ -12,15 +12,15 @@
 //!   Patina owns and must re-hash on change;
 //! - the per-machine state directory's `journal/` subdirectory itself, so a new
 //!   `.plan` / `.COMMIT` from any apply re-triggers a journal rescan (the
-//!   journal-rescan subscription, REQ-005 `<done-when>`).
+//!   journal-rescan subscription).
 //!
-//! Symlink **target** paths are deliberately *not* subscribed (DEC-008):
+//! Symlink **target** paths are deliberately *not* subscribed:
 //! modifying a symlinked target is modifying its source, which is already
 //! watched via the source path above. Only the source side of a symlink
 //! entry appears in the set.
 //!
 //! This module is the pure mapping from record to path set — it does no
-//! `notify` wiring. The foreground watcher (T-008) hands the computed set to
+//! `notify` wiring. The foreground watcher hands the computed set to
 //! the debouncer.
 //!
 //! [`read_latest_commit`]: crate::read_latest_commit
@@ -32,8 +32,8 @@ use camino::Utf8PathBuf;
 
 /// One content (copy- or template-mode) target the watcher hashes for drift:
 /// the canonical target path plus the `blake3` hash the journal recorded for
-/// it (REQ-007 / REQ-029). An FS event on [`ContentTarget::target`] drives the
-/// drift handler (T-010), which re-hashes the live bytes and compares to
+/// it. An FS event on [`ContentTarget::target`] drives the
+/// drift handler, which re-hashes the live bytes and compares to
 /// [`ContentTarget::expected_hash`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContentTarget {
@@ -45,21 +45,21 @@ pub struct ContentTarget {
 
 /// The watcher's subscription set, partitioned by what an FS event on each
 /// path means so the foreground loop can route a debounced batch without
-/// re-deriving the record (T-009 / T-010).
+/// re-deriving the record.
 ///
 /// - `watched` is the flat path list handed to the debouncer (every source,
 ///   every content-target, and the journal directory) — identical to what
 ///   [`compute_subscriptions`] returns.
 /// - `sources` is the subset of `watched` that are repository **source** paths:
-///   an FS event on one of these is a source edit and drives a re-apply
-///   (REQ-006). Content-target events do **not** re-apply — they feed drift
-///   detection (T-010) — so routing on `sources` is what stops a re-apply's own
-///   content-target rewrite from re-triggering itself in an unbounded loop.
+///   an FS event on one of these is a source edit and drives a re-apply.
+///   Content-target events do **not** re-apply — they feed drift detection — so
+///   routing on `sources` is what stops a re-apply's own content-target rewrite
+///   from re-triggering itself in an unbounded loop.
 /// - `content_targets` is the subset of `watched` that are content-target paths
 ///   paired with their journal-recorded hash: an FS event on one of these feeds
 ///   the drift handler ([`crate::watch::drift::handle_target_events`]), which
 ///   re-hashes the live bytes and notifies on divergence. A symlink target is
-///   never present (DEC-008): a symlink cannot drift because it resolves to the
+///   never present: a symlink cannot drift because it resolves to the
 ///   already-watched source.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WatchSet {
@@ -76,7 +76,7 @@ pub struct WatchSet {
 /// `watched` is exactly [`compute_subscriptions`]'s output (so the debouncer
 /// behaviour is unchanged); `sources` additionally captures which of those
 /// paths are repository source paths, so the foreground loop can tell a source
-/// edit (re-apply) from a content-target edit (drift, T-010) and a
+/// edit (re-apply) from a content-target edit (drift) and a
 /// journal-directory event (rescan).
 ///
 /// # Arguments
@@ -94,7 +94,7 @@ pub fn compute_watch_set(record: &ApplyRecord, state_dir: &Utf8Path) -> WatchSet
             sources.push(source);
         }
         // Only content targets are hashed for drift; a symlink target is
-        // covered by its source and is never separately watched (DEC-008).
+        // covered by its source and is never separately watched.
         if let ExpectedTarget::Content { target, hash, .. } = target {
             let target = Utf8PathBuf::from(target);
             if !content_targets.iter().any(|c| c.target == target) {
@@ -120,11 +120,11 @@ pub fn compute_watch_set(record: &ApplyRecord, state_dir: &Utf8Path) -> WatchSet
 /// source path appears (and, for a content target, the target path follows),
 /// then the `<state>/patina/journal/` directory is appended last. Duplicate
 /// paths — e.g. two entries sharing one source — collapse to their first
-/// occurrence. Symlink target paths never appear (DEC-008).
+/// occurrence. Symlink target paths never appear.
 ///
 /// The computed set is emitted as a `tracing` info event
 /// (`watch_subscriptions`, target `patina_core`) carrying the entry count and
-/// the tab-joined paths so the foreground watcher (T-008) and CHK-009 can
+/// the tab-joined paths so the foreground watcher can
 /// inspect it from the log.
 ///
 /// # Arguments
@@ -170,14 +170,14 @@ pub fn compute_subscriptions(record: &ApplyRecord, state_dir: &Utf8Path) -> Vec<
     for target in &record.targets {
         push_unique(Utf8PathBuf::from(target.source()), &mut subscriptions);
         // Only content (copy / rendered-template) targets are watched on the
-        // target side; a symlink target is covered by its source (DEC-008).
+        // target side; a symlink target is covered by its source.
         if let ExpectedTarget::Content { target, .. } = target {
             push_unique(Utf8PathBuf::from(target), &mut subscriptions);
         }
     }
 
     // The journal-rescan subscription: a new `.plan`/`.COMMIT` here re-reads
-    // the latest commit and recomputes this set (REQ-005 `<done-when>`).
+    // the latest commit and recomputes this set.
     push_unique(state_dir.join("journal"), &mut subscriptions);
 
     tracing::info!(
@@ -223,7 +223,7 @@ mod tests {
         }
     }
 
-    /// CHK-009: two symlink targets and one content target yield exactly the
+    /// Two symlink targets and one content target yield exactly the
     /// three source paths, the one content target path, and the journal
     /// directory — five entries — and contain neither symlink target path.
     #[test]
@@ -249,7 +249,7 @@ mod tests {
                 Utf8PathBuf::from("/state/patina/journal"),
             ]
         );
-        // Neither symlink target path is present (DEC-008).
+        // Neither symlink target path is present.
         assert!(!subs.contains(&Utf8PathBuf::from("/home/u/.vimrc")));
         assert!(!subs.contains(&Utf8PathBuf::from("/home/u/.zshrc")));
     }
@@ -322,7 +322,7 @@ mod tests {
     /// `watched` list (unchanged) and the `sources` whose events drive a
     /// re-apply. A content target's own path is watched but is NOT a source, so
     /// it does not appear in `sources` — that is what keeps a re-apply's own
-    /// target rewrite from re-triggering itself (T-009 loop prevention).
+    /// target rewrite from re-triggering itself (loop prevention).
     #[test]
     fn watch_set_separates_sources_from_content_targets() {
         let record = ApplyRecord::new(
@@ -360,7 +360,7 @@ mod tests {
         );
         // The content target is captured with its journal-recorded hash so the
         // drift handler can compare without re-deriving the record. The symlink
-        // target contributes no content target (DEC-008).
+        // target contributes no content target.
         assert_eq!(
             set.content_targets,
             vec![ContentTarget {

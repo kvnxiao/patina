@@ -1,4 +1,4 @@
-//! `patina rollback` command logic (REQ-019).
+//! `patina rollback` command logic.
 //!
 //! Reverses the most recent committed apply to its pre-apply filesystem
 //! state. The engine semantics (lock, journal scan, per-entry atomic
@@ -15,8 +15,8 @@
 //! | No prior apply / per-entry atomic abort         | 1    |
 //! | User declined the prompt                        | 5    |
 //!
-//! A `NoPriorApply` or `RollbackPartial` is a typed engine error the SPEC
-//! requires to exit 1 with the message on stderr; every other engine error
+//! A `NoPriorApply` or `RollbackPartial` is a typed engine error that
+//! exits 1 with the message on stderr; every other engine error
 //! (lock timeout, IO) propagates as an `anyhow` error from `run`.
 
 use crate::cli::RollbackArgs;

@@ -3,7 +3,7 @@
 //! Parses the clap-derived command surface ([`cli`]) and dispatches to a
 //! subcommand in [`cmd`]. User-facing output is routed exclusively through
 //! the [`output::reporter::Reporter`] layer; logs go through `tracing`.
-//! The process exit code is owned by the subcommand (REQ-022's exit-code
+//! The process exit code is owned by the subcommand (the exit-code
 //! contract). Each command returns an `anyhow::Result<i32>`: an `Ok(code)`
 //! is a terminal state under the command's own control, an `Err` is an
 //! engine failure. Both funnel through [`cli::resolve_exit_code`], the

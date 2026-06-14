@@ -12,9 +12,9 @@
     )
 )]
 
-//! Integration tests for `patina watch --foreground` (SPEC-0003 REQ-004 /
-//! REQ-006; CHK-008, CHK-009 surface, and the `[watcher] debounce_ms`
-//! forward-compatible warning).
+//! Integration tests for `patina watch --foreground`, covering signal
+//! handling and the `[watcher] debounce_ms`
+//! forward-compatible warning.
 //!
 //! The foreground watcher is a long-running process, so these tests cannot use
 //! the shared [`Fixture::run`] helper (which blocks on `Output` to completion).
@@ -35,8 +35,8 @@ use std::process::Command;
 
 /// `patina watch` without `--foreground` reports the not-yet-wired service
 /// install and, when the root manifest declares the ignored `[watcher]
-/// debounce_ms` key, surfaces the forward-compatible warning (REQ-006 /
-/// DEC-002). This path runs to completion, so the blocking `Fixture::run`
+/// debounce_ms` key, surfaces the forward-compatible warning. This path runs
+/// to completion, so the blocking `Fixture::run`
 /// helper is fine.
 #[test]
 fn debounce_ms_key_in_root_manifest_warns() {
@@ -213,7 +213,7 @@ mod foreground {
 
     #[test]
     fn sigint_shuts_down_cleanly_and_exits_zero() {
-        // CHK-008: a running foreground watcher, SIGINT -> exit 0 within 1s and
+        // A running foreground watcher, SIGINT -> exit 0 within 1s and
         // stderr contains `shutdown`.
         let f = applied_fixture();
         let mut watcher = Watcher::spawn(&f);
@@ -244,7 +244,7 @@ mod foreground {
 
     #[test]
     fn sigterm_follows_the_same_clean_exit_path_as_sigint() {
-        // REQ-004: SIGTERM produces the same clean-exit path as SIGINT (exit 0,
+        // SIGTERM produces the same clean-exit path as SIGINT (exit 0,
         // `shutdown` logged).
         let f = applied_fixture();
         let mut watcher = Watcher::spawn(&f);
@@ -273,9 +273,9 @@ mod foreground {
 
     #[test]
     fn logs_its_subscription_set_on_startup() {
-        // CHK-009 surface (REQ-005 / T-008): the foreground watcher logs its
+        // The foreground watcher logs its
         // computed subscription set, naming the watched source path, so a
-        // harness can inspect it from stderr. The mutating re-apply is T-009.
+        // harness can inspect it from stderr.
         let f = applied_fixture();
         let watcher = Watcher::spawn(&f);
 
@@ -336,7 +336,7 @@ mod foreground {
 
     #[test]
     fn five_touches_within_the_debounce_window_coalesce_to_one_reapply() {
-        // CHK-010: a burst of writes to a watched source must coalesce into
+        // A burst of writes to a watched source must coalesce into
         // exactly one `re_apply` event (the 500ms debounce window swallows the
         // burst).
         //
@@ -386,7 +386,7 @@ mod foreground {
         assert_eq!(
             reapplies,
             1,
-            "the five-touch burst must coalesce into exactly one re_apply (CHK-010); stderr: {}",
+            "the five-touch burst must coalesce into exactly one re_apply; stderr: {}",
             watcher.stderr_snapshot()
         );
 
@@ -397,7 +397,7 @@ mod foreground {
 
     #[test]
     fn a_parallel_cli_apply_triggers_a_journal_rescan() {
-        // CHK-017: a parallel `patina apply --yes` writes a new `.plan`/`.COMMIT`
+        // A parallel `patina apply --yes` writes a new `.plan`/`.COMMIT`
         // under the watched journal dir; the watcher logs a `journal_rescan`
         // event and does not enter an unbounded re-apply loop.
         let f = applied_copy_fixture();
@@ -409,11 +409,11 @@ mod foreground {
             watcher.stderr_snapshot()
         );
 
-        // CHK-017 models an external `patina apply` that COMMITS new state
+        // This scenario models an external `patina apply` that COMMITS new state
         // while the watcher runs: the watcher must detect the new journal
-        // record under the watched journal dir (REQ-005) and rescan. Since
-        // SPEC-0005 an unchanged re-apply is a full no-op that writes no
-        // journal (REQ-007), so the parallel apply must change committed state
+        // record under the watched journal dir and rescan. Since
+        // an unchanged re-apply is a full no-op that writes no
+        // journal, the parallel apply must change committed state
         // to produce the `.COMMIT` this scenario is about — an idempotent
         // re-apply correctly produces neither a journal nor a rescan.
         //
@@ -434,7 +434,7 @@ mod foreground {
 
         assert!(
             watcher.wait_for_stderr("journal_rescan", Duration::from_secs(5)),
-            "the watcher must rescan on the CLI's new journal (CHK-017); stderr: {}",
+            "the watcher must rescan on the CLI's new journal; stderr: {}",
             watcher.stderr_snapshot()
         );
 
@@ -472,16 +472,16 @@ mod foreground {
 
     #[test]
     fn an_external_target_edit_logs_drift_and_populates_the_cache() {
-        // CHK-011 / CHK-012 (the platform-independent, deterministic slice):
+        // The platform-independent, deterministic slice:
         // a running watcher over an applied copy-mode `~/.gitconfig`, when the
         // target is overwritten with bytes that hash differently, logs a `drift`
         // event, records the divergence in `<state>/drift.cache` with the
         // recorded and observed hashes, and `patina status` then reports the
         // target DRIFTED from its own live re-hash.
         //
-        // The notification *count* (CHK-011's "exactly one") is asserted
+        // The notification *count* (the "exactly one") is asserted
         // deterministically by the `patina-core` drift unit tests against the
-        // capture sink (DEC-013): the CLI binary always uses the real
+        // capture sink: the CLI binary always uses the real
         // `notify-rust` sink, which a headless CI runner cannot capture, so the
         // count is not assertable here. This test owns the observable on-disk
         // and status side-effects instead.
@@ -511,7 +511,7 @@ mod foreground {
             watcher.stderr_snapshot()
         );
 
-        // The drift cache records the divergence (CHK-011 on-disk surface).
+        // The drift cache records the divergence (the on-disk surface).
         let cache_populated = {
             let deadline = Instant::now() + Duration::from_secs(3);
             loop {
@@ -539,8 +539,8 @@ mod foreground {
             watcher.stderr_snapshot()
         );
 
-        // CHK-012: `patina status --json` reports the target DRIFTED — derived
-        // from SPEC-0001 REQ-018's live re-hash, independent of the cache.
+        // `patina status --json` reports the target DRIFTED — derived
+        // from the live re-hash, independent of the cache.
         let status = f.run(&["status", "--json"], &[]);
         assert_eq!(
             code(&status),
@@ -552,7 +552,7 @@ mod foreground {
         let doc: serde_json::Value =
             serde_json::from_str(stdout.trim()).expect("status --json emits one JSON document");
         // The `files` array contains an entry whose path names `.gitconfig`
-        // with `state = "drifted"` (CHK-012).
+        // with `state = "drifted"`.
         let drifted_gitconfig = doc
             .get("files")
             .and_then(serde_json::Value::as_array)
@@ -567,7 +567,7 @@ mod foreground {
             drifted_gitconfig,
             "status JSON must report .gitconfig as drifted from its own live re-hash; got: {stdout}"
         );
-        // The aggregate `drifted` counter is at least 1 (CHK-012).
+        // The aggregate `drifted` counter is at least 1.
         let drifted_count = doc.get("drifted").and_then(serde_json::Value::as_u64);
         assert!(
             drifted_count.is_some_and(|n| n >= 1),
@@ -581,10 +581,10 @@ mod foreground {
 
     #[test]
     fn a_watcher_reapply_commits_exactly_one_new_journal_record() {
-        // REQ-006 / CHK-013 surface: a single watched-source edit drives exactly
+        // A single watched-source edit drives exactly
         // one watcher re-apply, which commits exactly one new journal record on
         // top of the fixture's initial apply (two COMMITs total). This is the
-        // deterministic, single-process slice of CHK-013's two-committed-plans
+        // deterministic, single-process slice of the two-committed-plans
         // contract; the full concurrent-CLI race is exercised by the engine's
         // `NonBlocking` unit tests.
         let f = applied_copy_fixture();

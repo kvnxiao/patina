@@ -1,5 +1,4 @@
-//! Plan-time classification of one resolved leaf into a [`Disposition`]
-//! (REQ-001).
+//! Plan-time classification of one resolved leaf into a [`Disposition`].
 //!
 //! Given a resolved leaf `(mode, source, target, rendered-bytes?)`, the
 //! classifier reads the live target state and decides whether applying
@@ -12,7 +11,7 @@
 //! [`symlink_matches`](crate::status::classify::symlink_matches) and
 //! [`content_matches`](crate::status::classify::content_matches) seams, so
 //! "Unchanged" coincides exactly with status's "Clean" with no third
-//! definition of "matches" (REQ-001).
+//! definition of "matches".
 
 use crate::config::FileMode;
 use crate::journal::Disposition;
@@ -30,7 +29,7 @@ use camino::Utf8Path;
 /// `.tmpl` source once and hands the bytes here so a clean re-apply does not
 /// render twice within this function.
 ///
-/// Per DEC-007 this classifies a single leaf; tree modes
+/// This classifies a single leaf; tree modes
 /// ([`CopyTree`](FileMode::CopyTree), [`SymlinkTree`](FileMode::SymlinkTree))
 /// are classified one leaf at a time by the caller, passing the per-leaf
 /// `source`/`target`.
@@ -90,7 +89,7 @@ pub(crate) fn classify_leaf(
     })
 }
 
-/// A failure classifying a leaf at plan time (SPEC-0005 REQ-001).
+/// A failure classifying a leaf at plan time.
 ///
 /// Surfaced through
 /// [`EngineError::Classify`](crate::error::EngineError::Classify) from the plan
@@ -346,7 +345,7 @@ mod tests {
     fn state_status_calls_clean_classifies_unchanged_symlink() {
         // Drive both `status::classify` and the plan-time classifier on the
         // exact same live symlink state and assert they agree: Clean <=>
-        // Unchanged, with no second definition of "matches" (REQ-001).
+        // Unchanged, with no second definition of "matches".
         let (_td, dir) = utf8_tempdir();
         let source = dir.join("src");
         fs_err::write(&source, b"payload").expect("write source");

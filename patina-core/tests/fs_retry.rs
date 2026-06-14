@@ -18,13 +18,13 @@
 )]
 
 //! Integration coverage for the Windows `ERROR_SHARING_VIOLATION`
-//! retry-with-backoff wrapper (REQ-010, T-003).
+//! retry-with-backoff wrapper.
 //!
 //! The wrapper's retry path is Windows-only and exercises a `FILE_SHARE_NONE`
-//! hold that has no portable equivalent, so CHK-015 (retry-then-succeed) and
+//! hold that has no portable equivalent, so the retry-then-succeed and
 //! the 10s-hold re-raise scenario cannot run deterministically on this
-//! macOS/Linux dev host. This file covers the cross-platform contract
-//! (CHK-016): on a non-Windows host an ordinary write failure surfaces on the
+//! macOS/Linux dev host. This file covers the cross-platform contract:
+//! on a non-Windows host an ordinary write failure surfaces on the
 //! first attempt with no `fs_write_retry` `tracing` event emitted. The
 //! contract is asserted at two of the three engine write sites the wrapper
 //! guards — the byte-copy site and the forward-apply symlink site — so a
@@ -111,12 +111,12 @@ impl Subscriber for RecordingSubscriber {
     fn exit(&self, _span: &span::Id) {}
 }
 
-/// CHK-016: on a non-Windows host an ordinary write failure surfaces on the
+/// On a non-Windows host an ordinary write failure surfaces on the
 /// first attempt and the `tracing` log contains no `fs_write_retry` event.
 ///
 /// We make the parent directory non-writable so the byte-copy write fails
 /// with the OS's normal permission error — the closest portable analogue to
-/// the Windows `FILE_SHARE_NONE` scenario the CHK describes. The retry
+/// the Windows `FILE_SHARE_NONE` scenario. The retry
 /// wrapper is a pass-through off Windows, so the error must surface
 /// immediately and no `fs_write_retry` event may be recorded.
 #[cfg(unix)]
@@ -173,11 +173,11 @@ fn non_windows_write_failure_surfaces_without_retry_event() {
     );
 }
 
-/// CHK-016 at the forward-apply symlink site: a symlink whose creation fails
+/// At the forward-apply symlink site: a symlink whose creation fails
 /// with an ordinary I/O error surfaces on the first attempt with no
 /// `fs_write_retry` event off Windows.
 ///
-/// REQ-010 names symlink creation as one of the "all file writes" the retry
+/// Symlink creation is one of the "all file writes" the retry
 /// policy guards. The forward-apply symlink executor
 /// (`apply::symlink::create_symlink`) routes its OS primitive through
 /// `with_sharing_violation_retry`; this test pins that wiring by driving a

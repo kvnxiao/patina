@@ -5,6 +5,7 @@ title: Conditional entries, the file/directory schema split, recurse symlinks, a
 status: implemented
 created: 2026-06-01
 supersedes: []
+archived_at: 2026-06-14
 ---
 
 # SPEC-0004: Conditional entries, the file/directory schema split, recurse symlinks, and complete variable layering

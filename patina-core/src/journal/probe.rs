@@ -1,22 +1,21 @@
-//! Filesystem probing and backup-path mirroring for crash recovery
-//! (REQ-013).
+//! Filesystem probing and backup-path mirroring for crash recovery.
 //!
-//! Recovery never trusts the advisory progress cursor (T-010, REQ-012);
+//! Recovery never trusts the advisory progress cursor;
 //! it asks the real filesystem what state each planned target is in and
 //! consults the per-apply backup directory to decide how to reverse the
 //! operation. This module owns those two pure-ish helpers:
 //!
 //! - [`mirror_backup_path`] computes where the backup of a given target lives
 //!   under `<backups>/<ts>/`. The mapping mirrors the target's absolute path
-//!   beneath the timestamped backup root, matching the layout REQ-014 (T-012)
+//!   beneath the timestamped backup root, matching the layout the backup writer
 //!   writes. Recovery is the first reader of that layout, so the mapping is
-//!   defined here and T-012 reuses it.
+//!   defined here and the backup writer reuses it.
 //! - [`classify_target`] reads the target path and reports whether it currently
 //!   **exists** (as any kind of entry, including a symlink) or is **absent**.
 //!   Recovery pairs that with backup presence to choose between restoring
 //!   original bytes and deleting a fresh creation.
 //!
-//! The probe is deliberately coarse. REQ-013's done-when only requires
+//! The probe is deliberately coarse. Recovery only requires
 //! that completed operations be reversed to the pre-apply state using
 //! backups and inverse ops; it does not require distinguishing a
 //! half-written copy from a fully-written one, because the reversal is
@@ -71,7 +70,7 @@ pub fn operation_target(op: &PlannedOperation) -> &str {
 /// the platform's path prefix (the leading `/` on Unix, the `C:\` drive
 /// prefix on Windows) is folded into ordinary path components so the
 /// backup tree can hold targets from any volume without collision. This
-/// is the inverse map T-012's backup writer applies before an overwrite,
+/// is the inverse map the backup writer applies before an overwrite,
 /// and the map recovery applies to find the original bytes.
 ///
 /// # Examples

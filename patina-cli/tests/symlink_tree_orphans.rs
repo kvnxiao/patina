@@ -4,7 +4,7 @@
     reason = "integration tests use .expect()/panic! on fixtures and asserted output; allow-*-in-tests covers #[cfg(test)] modules but not the helper functions in tests/*.rs integration crates."
 )]
 
-//! REQ-007 / REQ-003 (SPEC-0004): the status managed-set is `when`-aware and
+//! The status managed-set is `when`-aware and
 //! expands `symlink-tree` entries per leaf, so a dropped target is classified
 //! ORPHANED and reaped on the next apply.
 //!
@@ -12,13 +12,11 @@
 //! repository (deletes a `symlink-tree` source leaf, or flips a `[[file]]`
 //! entry's `when` to false), then asserts:
 //!
-//! - `patina status` classifies the now-unmanaged target ORPHANED (CHK-014, the
-//!   `when`-flip leg of CHK-019);
+//! - `patina status` classifies the now-unmanaged target ORPHANED;
 //! - the next `patina apply --yes` removes the orphan leaf link while its
-//!   surviving sibling leaf and the intermediate directory stay in place
-//!   (CHK-015);
+//!   surviving sibling leaf and the intermediate directory stay in place;
 //! - a reaped `[[file]]` target's prior bytes were backed up — provable by
-//!   finding the original bytes in the reaping run's backup tree (CHK-019).
+//!   finding the original bytes in the reaping run's backup tree.
 
 mod common;
 
@@ -70,7 +68,7 @@ fn state_for(doc: &serde_json::Value, suffix: &str) -> String {
 
 #[test]
 fn deleted_symlink_tree_source_leaf_is_reported_orphaned() {
-    // CHK-014: an applied `symlink-tree` whose source contained `sub/b.conf`,
+    // An applied `symlink-tree` whose source contained `sub/b.conf`,
     // with that source leaf then deleted, makes `patina status` classify
     // `~/d/sub/b.conf` as orphaned — the managed set walks the *live* source
     // and the deleted leaf is no longer in it.
@@ -111,7 +109,7 @@ fn deleted_symlink_tree_source_leaf_is_reported_orphaned() {
 
 #[test]
 fn next_apply_reaps_orphan_leaf_and_keeps_sibling_and_directory() {
-    // CHK-015: with the same deleted-source-leaf state, `patina apply --yes`
+    // With the same deleted-source-leaf state, `patina apply --yes`
     // removes `~/d/sub/b.conf`, leaves `~/d/sub` as a real directory, and
     // leaves the surviving `~/d/a.conf` a symbolic link.
     let f = Fixture::new();
@@ -154,7 +152,7 @@ fn next_apply_reaps_orphan_leaf_and_keeps_sibling_and_directory() {
         fs_err::symlink_metadata(leaf_b.as_std_path()).is_err(),
         "the orphaned leaf link `~/d/sub/b.conf` must be removed"
     );
-    // The intermediate directory is never removed (DEC-005), even though it
+    // The intermediate directory is never removed, even though it
     // is now empty.
     let sub_meta =
         fs_err::symlink_metadata(d.join("sub").as_std_path()).expect("stat intermediate dir");
@@ -172,7 +170,7 @@ fn next_apply_reaps_orphan_leaf_and_keeps_sibling_and_directory() {
 
 #[test]
 fn when_flipped_to_false_orphans_then_reaps_target_with_backup() {
-    // CHK-019: a `[[file]]` entry with a true `when` whose target was
+    // A `[[file]]` entry with a true `when` whose target was
     // materialized, then its `when` edited to a predicate false on this host,
     // is classified orphaned by `patina status`, and the next
     // `patina apply --yes` removes the target after recording its prior bytes
@@ -200,7 +198,7 @@ fn when_flipped_to_false_orphans_then_reaps_target_with_backup() {
     );
 
     // Flip the entry's `when` to a predicate false on this host by rewriting
-    // the module manifest (a user-repo edit, not a locked-SPEC edit).
+    // the module manifest (a user-repo edit).
     let manifest_false = "[[file]]\nsource = \"gitconfig\"\ntarget = \"~/.gitconfig\"\nmode = \"copy\"\n\
          when = \"patina.os == 'definitely-not-this-os'\"\n";
     fs_err::write(module.join("patina.toml"), manifest_false).expect("rewrite manifest");

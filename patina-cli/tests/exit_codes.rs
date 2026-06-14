@@ -3,8 +3,7 @@
     reason = "integration tests use .expect() on fixture setup; allow-expect-in-tests covers #[cfg(test)] modules but not the helper functions in tests/*.rs integration crates."
 )]
 
-//! Integration tests for the formalized CLI exit-code contract (REQ-022,
-//! CHK-036).
+//! Integration tests for the formalized CLI exit-code contract.
 //!
 //! Each test builds a self-contained tempdir dotfiles repository, points
 //! `PATINA_REPO` at it, and isolates the per-machine state directory under
@@ -47,7 +46,7 @@ fn hook_module(f: &Fixture, event: &str, command: &str) {
 
 #[test]
 fn pre_apply_hook_failure_exits_2() {
-    // CHK-036: a `pre_apply` hook with `command = "false"` and the default
+    // A `pre_apply` hook with `command = "false"` and the default
     // `must_succeed = true` aborts before any file operation, exit code 2.
     let f = Fixture::new();
     hook_module(&f, "pre_apply", "false");

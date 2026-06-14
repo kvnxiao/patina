@@ -1,4 +1,4 @@
-//! User-facing output layer (REQ-017).
+//! User-facing output layer.
 //!
 //! [`reporter`] owns the [`Reporter`](reporter::Reporter) trait — the
 //! single sanctioned print site — and [`diff`] renders the embedded

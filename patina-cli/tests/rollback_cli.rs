@@ -3,8 +3,7 @@
     reason = "integration tests use .expect() on fixtures and asserted output; allow-expect-in-tests covers #[cfg(test)] modules but not the helper functions in tests/*.rs integration crates."
 )]
 
-//! Integration tests for the `patina rollback` CLI surface (REQ-019,
-//! CHK-033 / CHK-049).
+//! Integration tests for the `patina rollback` CLI surface.
 //!
 //! Each test builds a self-contained tempdir dotfiles repository, applies
 //! it (`patina apply --yes`), then runs `patina rollback --yes` and asserts
@@ -139,7 +138,7 @@ fn assert_applied(out: &Output) {
 
 #[test]
 fn rollback_deletes_a_symlink_target_and_writes_the_sentinel() {
-    // CHK-033 (fresh-creation leg): a ~/.zshrc materialized as a symlink with
+    // Fresh-creation leg: a ~/.zshrc materialized as a symlink with
     // no pre-existing file, rolled back, is removed (the link had no backup)
     // and a ROLLED_BACK sentinel is written. The pre-existing-regular-file →
     // symlink → restore-to-regular-file leg is exercised end-to-end by
@@ -183,7 +182,7 @@ fn rollback_deletes_a_symlink_target_and_writes_the_sentinel() {
 
 #[test]
 fn rollback_restores_a_regular_file_replaced_by_a_symlink() {
-    // CHK-033 (literal scenario, REQ-019): a pre-existing ~/.zshrc with
+    // A pre-existing ~/.zshrc with
     // content "original" is replaced by apply with a symlink (the symlink
     // executor backs up then clears the pre-existing file before linking);
     // `rollback --yes` restores it to a regular file with content "original"
@@ -258,7 +257,7 @@ fn rollback_deletes_a_freshly_created_target() {
 
 #[test]
 fn rollback_with_no_prior_apply_exits_one_and_names_no_prior_apply() {
-    // CHK / REQ-019: no apply has committed -> exit 1, stderr names
+    // No apply has committed -> exit 1, stderr names
     // "no prior apply found".
     let f = Fixture::new();
     f.module(
@@ -277,7 +276,7 @@ fn rollback_with_no_prior_apply_exits_one_and_names_no_prior_apply() {
 
 #[test]
 fn multi_target_copy_entry_rolls_back_to_pre_apply_state() {
-    // CHK-049: a [[file]] copy entry with two targets — one pre-existing
+    // A [[file]] copy entry with two targets — one pre-existing
     // (~/.claude/agent.toml = "old"), one fresh (~/.codex/agent.toml) — is
     // rolled back so the pre-existing target is restored to "old" and the
     // fresh one is deleted, with a ROLLED_BACK sentinel written.

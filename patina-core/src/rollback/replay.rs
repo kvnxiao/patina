@@ -1,9 +1,9 @@
-//! Per-`[[file]]`-entry atomic inverse-operation replay (REQ-019).
+//! Per-`[[file]]`-entry atomic inverse-operation replay.
 //!
 //! [`replay_entry`] reverts every target of one `[[file]]` entry to its
 //! pre-apply state as an atomic unit. The inverse-operation rule mirrors
 //! crash recovery and has three outcomes, in evaluation order: a target the
-//! apply recorded as `Unchanged` (REQ-006) is left in place — filtered out of
+//! apply recorded as `Unchanged` is left in place — filtered out of
 //! the snapshot/roll-forward set before either branch below is reached, since
 //! the apply touched neither its bytes nor its backup; a target with a backup
 //! is restored from it (the apply overwrote a pre-existing file); a target
@@ -16,7 +16,7 @@
 //! backup root. It then reverts the targets in order. If any revert fails,
 //! every target reverted so far is rolled forward from its snapshot to the
 //! post-apply state it had on entry, so the whole `[[file]]` entry is left
-//! exactly as the last apply left it — no partial restore (REQ-019). The
+//! exactly as the last apply left it — no partial restore. The
 //! staging directory is removed on both the success and failure paths.
 
 use super::RollbackError;
@@ -26,14 +26,14 @@ use camino::Utf8Path;
 use camino::Utf8PathBuf;
 
 /// One commit-recorded target to revert: its canonical absolute path paired
-/// with the disposition the apply classified it as (REQ-006). The
+/// with the disposition the apply classified it as. The
 /// disposition decides whether the target is reverted at all — an
 /// [`Disposition::Unchanged`] target is left in place.
 #[derive(Debug, Clone, Copy)]
 pub struct RevertTarget<'a> {
     /// Canonical absolute target path the entry materialized.
     pub target: &'a str,
-    /// How the apply classified this target (REQ-002). `Unchanged` targets
+    /// How the apply classified this target. `Unchanged` targets
     /// were neither written nor backed up, so rollback leaves them alone.
     pub disposition: Disposition,
 }
@@ -47,13 +47,13 @@ pub struct RevertTarget<'a> {
 /// canonical absolute target paths the entry materialized, in apply order,
 /// each paired with the disposition the apply classified it as.
 ///
-/// A target the apply recorded as [`Disposition::Unchanged`] is left in place
-/// (REQ-006): the apply skipped both its write and its backup, so its live
+/// A target the apply recorded as [`Disposition::Unchanged`] is left in place:
+/// the apply skipped both its write and its backup, so its live
 /// state already *is* the pre-apply state and there is nothing to reverse.
 /// Such a target is excluded from the snapshot/roll-forward set entirely, so
 /// the atomic region covers only the `Create`/`Update` targets that rollback
 /// actually mutates. For a tree leaf the `Update` restore reads the
-/// whole-tree backup at the leaf's mirror path (DEC-007).
+/// whole-tree backup at the leaf's mirror path.
 ///
 /// # Errors
 ///
@@ -357,7 +357,7 @@ mod tests {
 
     #[test]
     fn unchanged_target_is_left_in_place() {
-        // REQ-006: a commit-recorded Unchanged target took no backup, so its
+        // A commit-recorded Unchanged target took no backup, so its
         // live bytes already are the pre-apply bytes. Rollback must leave it
         // byte-for-byte untouched rather than (with no backup) deleting it as
         // a fresh creation.

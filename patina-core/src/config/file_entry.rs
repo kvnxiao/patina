@@ -1,4 +1,4 @@
-//! Kind-typed `[[file]]` / `[[directory]]` table-array schema (REQ-001).
+//! Kind-typed `[[file]]` / `[[directory]]` table-array schema.
 //!
 //! Managed entries are declared under two kind-typed table-arrays. A
 //! `[[file]]` describes a file source and accepts `mode = "symlink"` (the
@@ -9,7 +9,7 @@
 //! `mode = "copy"` (a recursive directory copy). The collapsed mode names
 //! mean "symlink/copy this thing" in both tables; the table supplies the
 //! file/dir context, so the prior `symlink-dir` / `copy-tree` strings no
-//! longer exist as accepted input (DEC-001 / DEC-002).
+//! longer exist as accepted input.
 //!
 //! Both tables resolve to the same [`ManagedEntry`] carrying its
 //! [`EntryKind`], its resolved executor [`FileMode`], a `source`, a
@@ -17,10 +17,10 @@
 //! per-table `from_raw_*` constructors are the only way to build a
 //! [`ManagedEntry`], and each validates that table's accepted-mode
 //! allowlist before resolving to a [`FileMode`] — so a source-kind enum
-//! can never pair with an illegal mode (DEC-001's "illegal states
+//! can never pair with an illegal mode (the "illegal states
 //! unrepresentable" bar). The parse-time rules surface as typed
-//! [`FileEntryError`] variants whose `Display` impls satisfy the substring
-//! contracts in the SPEC's CHKs and task scenarios.
+//! [`FileEntryError`] variants whose `Display` impls satisfy the
+//! substring contracts the tests assert.
 
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
@@ -43,8 +43,8 @@ pub enum FileMode {
     /// `symlink`, the default; the prior `symlink-dir` behavior).
     SymlinkDir,
     /// One symbolic link per leaf file of a directory source (a
-    /// `[[directory]]` `symlink-tree`). The per-leaf executor lands in
-    /// T-007; this task only resolves the mode.
+    /// `[[directory]]` `symlink-tree`). The per-leaf executor lands
+    /// later; this module only resolves the mode.
     SymlinkTree,
     /// Byte-for-byte copy of a single file (a `[[file]]` `copy`).
     Copy,
@@ -60,8 +60,8 @@ pub enum FileMode {
 /// `[[directory]]`.
 ///
 /// The kind is carried on the resolved [`ManagedEntry`] so the plan-time
-/// source existence-and-kind check (REQ-002, landing in T-006) can
-/// validate the on-disk source against the table it was declared under.
+/// source existence-and-kind check can validate the on-disk source
+/// against the table it was declared under.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EntryKind {
     /// Declared under a `[[file]]` table-array.
@@ -89,9 +89,9 @@ pub struct ManagedEntry {
     /// single-target entries become a one-element vec internally so
     /// downstream consumers do not need to special-case the shape.
     pub targets: Vec<Utf8PathBuf>,
-    /// Optional `when` predicate as raw expression source. Evaluation
-    /// through `MiniJinja` lands in T-005; this task only parses and
-    /// carries it (mirrors [`HookEntry.when`](super::HookEntry::when)).
+    /// Optional `when` predicate as raw expression source. This module
+    /// only parses and carries it, and does not evaluate it through
+    /// `MiniJinja` (mirrors [`HookEntry.when`](super::HookEntry::when)).
     pub when: Option<String>,
 }
 
@@ -100,18 +100,18 @@ pub struct ManagedEntry {
 /// [`ManagedEntry`].
 pub type FileEntry = ManagedEntry;
 
-/// Parse-time failures from REQ-001's `[[file]]` / `[[directory]]`
+/// Parse-time failures from the `[[file]]` / `[[directory]]`
 /// table-array rules.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum FileEntryError {
     /// Both `target` and `targets` were declared on the same entry.
-    /// REQ-001 mandates exactly one.
+    /// Exactly one must be set.
     #[error("entry declares both `target` and `targets`; exactly one must be set")]
     TargetAndTargets,
 
-    /// Neither `target` nor `targets` was declared. REQ-001 requires
-    /// exactly one.
+    /// Neither `target` nor `targets` was declared. Exactly one must
+    /// be set.
     #[error("entry is missing both `target` and `targets`; exactly one must be set")]
     TargetMissing,
 
@@ -120,7 +120,7 @@ pub enum FileEntryError {
     TargetsEmpty,
 
     /// A `[[file]]` `mode` was set to a value outside the accepted
-    /// allowlist. The accepted `[[file]]` modes are listed so the CHK-003
+    /// allowlist. The accepted `[[file]]` modes are listed so the
     /// substring contract holds.
     #[error(
         "[[file]] entry declares unsupported mode `{value}`; the accepted `[[file]]` modes are `symlink`, `copy`"
@@ -132,7 +132,7 @@ pub enum FileEntryError {
 
     /// A `[[directory]]` `mode` was set to a value outside the accepted
     /// allowlist. The accepted `[[directory]]` modes are listed so the
-    /// REQ-001 done-when substring contract holds.
+    /// substring contract holds.
     #[error(
         "[[directory]] entry declares unsupported mode `{value}`; the accepted `[[directory]]` modes are `symlink`, `symlink-tree`, `copy`"
     )]
@@ -154,7 +154,7 @@ pub enum FileEntryError {
     },
 
     /// A `[[directory]]` source carried the `.tmpl` suffix. Template
-    /// render is file-only (REQ-001).
+    /// render is file-only.
     #[error(
         "[[directory]] entry source `{source_path}` has the `.tmpl` suffix; template render is file-only and not valid for a `[[directory]]`"
     )]
@@ -166,7 +166,7 @@ pub enum FileEntryError {
 
 impl ManagedEntry {
     /// Build a `[[file]]`-kind [`ManagedEntry`] from a raw deserialized
-    /// [`RawEntry`], applying REQ-001's `[[file]]` parse-time rules.
+    /// [`RawEntry`], applying the `[[file]]` parse-time rules.
     pub(super) fn from_raw_file(raw: RawEntry) -> Result<Self, FileEntryError> {
         let RawEntry {
             source,
@@ -214,7 +214,7 @@ impl ManagedEntry {
     }
 
     /// Build a `[[directory]]`-kind [`ManagedEntry`] from a raw
-    /// deserialized [`RawEntry`], applying REQ-001's `[[directory]]`
+    /// deserialized [`RawEntry`], applying the `[[directory]]`
     /// parse-time rules.
     pub(super) fn from_raw_directory(raw: RawEntry) -> Result<Self, FileEntryError> {
         let RawEntry {
@@ -256,7 +256,7 @@ impl ManagedEntry {
     }
 }
 
-/// Apply REQ-001's exactly-one-of `target` / `targets` rule and the
+/// Apply the exactly-one-of `target` / `targets` rule and the
 /// non-empty-`targets` rule, shared by both tables.
 fn resolve_targets(
     target: Option<Utf8PathBuf>,

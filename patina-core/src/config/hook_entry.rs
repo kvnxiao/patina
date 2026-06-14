@@ -1,4 +1,4 @@
-//! `[[hook]]` table-array schema (REQ-006).
+//! `[[hook]]` table-array schema.
 //!
 //! Each `[[hook]]` entry resolves to a [`HookEntry`] carrying an
 //! [`HookEvent`], a shell command, an optional explicit shell, an
@@ -6,7 +6,7 @@
 //! defaults to `true` when omitted. Parse-time validation rejects the
 //! `on_change` / `on_drift` legacy event names with a typed error that
 //! names the offending value and the two accepted event names so the
-//! CHK-013 substring contract holds.
+//! substring contract holds.
 
 use serde::Deserialize;
 
@@ -27,23 +27,23 @@ pub struct HookEntry {
     /// Shell command to execute.
     pub command: String,
     /// Optional explicit shell (e.g. `"bash"`, `"pwsh"`). Stored
-    /// verbatim — the shell-on-PATH check is deferred to T-015.
+    /// verbatim; this layer does not check it against `PATH`.
     pub shell: Option<String>,
-    /// Optional `when` predicate as raw expression source. Parsing
-    /// / evaluation through `MiniJinja` is deferred to T-008.
+    /// Optional `when` predicate as raw expression source. This layer does
+    /// not parse or evaluate it through `MiniJinja`.
     pub when: Option<String>,
     /// If `true`, a non-zero exit from the hook aborts the apply.
-    /// Defaults to `true` when the field is omitted (REQ-006 rule 2).
+    /// Defaults to `true` when the field is omitted.
     pub must_succeed: bool,
 }
 
-/// Parse-time failures from REQ-006's `[[hook]]` table-array rules.
+/// Parse-time failures from the `[[hook]]` table-array rules.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum HookEntryError {
     /// `event` was set to a value outside the accepted pair. The two
-    /// accepted values are listed in the message so the CHK-013
-    /// substring contract holds.
+    /// accepted values are listed in the message so the substring
+    /// contract holds.
     #[error(
         "[[hook]] entry declares unsupported event `{value}`; the accepted values are `pre_apply` and `post_apply`"
     )]
@@ -55,7 +55,7 @@ pub enum HookEntryError {
 
 impl HookEntry {
     /// Build a [`HookEntry`] from a raw deserialized [`RawHookEntry`],
-    /// applying REQ-006's parse-time rules.
+    /// applying the parse-time rules.
     pub(super) fn from_raw(raw: RawHookEntry) -> Result<Self, HookEntryError> {
         let RawHookEntry {
             event,

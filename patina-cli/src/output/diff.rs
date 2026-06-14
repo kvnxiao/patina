@@ -1,4 +1,4 @@
-//! Embedded diff rendering with the `similar` crate (REQ-017).
+//! Embedded diff rendering with the `similar` crate.
 //!
 //! The diff is computed from the [`ResolvedPlan`] produced by the engine:
 //! for each operation we compare the target's current on-disk content (or
@@ -9,7 +9,7 @@
 //! Output is deterministic: operations render in plan order, and the
 //! rendered string carries no timestamps, PIDs, or absolute state-dir
 //! paths (only the repo-relative-ish source and the target the user
-//! declared). T-021 builds its byte-identical-stdout property on this.
+//! declared). The byte-identical-stdout property is built on this.
 
 use camino::Utf8Path;
 use patina_core::Disposition;
@@ -37,10 +37,10 @@ pub fn render(resolved: &ResolvedPlan) -> Result<String, String> {
     let engine = TemplateEngine::new();
     let vars = &resolved.resolver;
 
-    // REQ-010 / DEC-003: only `Create` and `Update` targets render a
+    // Only `Create` and `Update` targets render a
     // per-entry block; `Unchanged` targets are summarized by a single count
-    // line below. For tree modes the count is over materialized leaves
-    // (DEC-007): a drifted tree renders blocks for its drifted leaves and
+    // line below. For tree modes the count is over materialized leaves:
+    // a drifted tree renders blocks for its drifted leaves and
     // contributes its clean leaves to `unchanged`.
     let mut unchanged = 0usize;
     for op in &resolved.operations {
@@ -68,8 +68,8 @@ pub fn render(resolved: &ResolvedPlan) -> Result<String, String> {
         }
     }
 
-    // Exactly one deterministic summary line for the Unchanged count
-    // (REQ-010). Omitted when nothing is unchanged so a fully-changing plan's
+    // Exactly one deterministic summary line for the Unchanged count.
+    // Omitted when nothing is unchanged so a fully-changing plan's
     // body is unchanged from prior behaviour.
     if unchanged > 0 {
         let noun = if unchanged == 1 { "entry" } else { "entries" };

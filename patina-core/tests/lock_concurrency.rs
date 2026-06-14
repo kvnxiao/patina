@@ -3,31 +3,27 @@
     reason = "integration tests use .expect() on fixture setup; allow-expect-in-tests covers #[cfg(test)] modules but not the helper functions in tests/*.rs integration crates."
 )]
 
-//! Cross-process integration coverage for the advisory lock (T-013 /
-//! REQ-023, scenario CHK-037).
+//! Cross-process integration coverage for the advisory lock.
 //!
 //! These tests exercise behaviours that only manifest across real OS
 //! processes and that an in-process unit test in `src/lock.rs` cannot
 //! reproduce:
 //!
-//! - **Exclusive serialization (CHK-037).** Two processes that both want the
-//!   exclusive lock run sequentially — the second's acquire/release window
-//!   starts only after the first's window ends. Each process drops a
-//!   `<nanos>.plan` marker, so the union numbers exactly two and the timestamp
-//!   windows are non-overlapping.
+//! - **Exclusive serialization.** Two processes that both want the exclusive
+//!   lock run sequentially — the second's acquire/release window starts only
+//!   after the first's window ends. Each process drops a `<nanos>.plan` marker,
+//!   so the union numbers exactly two and the timestamp windows are
+//!   non-overlapping.
 //! - **Exclusive timeout maps to exit code 4.** A process blocked on a held
-//!   exclusive lock past its (test-parameterised) cap exits with the code the
-//!   SPEC reserves for lock timeout and prints a `TIMEOUT` message to stderr.
+//!   exclusive lock past its (test-parameterised) cap exits with the code
+//!   reserved for lock timeout and prints a `TIMEOUT` message to stderr.
 //! - **OS release on abnormal death.** A process that aborts while holding the
 //!   lock leaves the lock free; the next acquirer gets in cleanly. This is the
 //!   invariant that justifies relying on `Drop` / the OS rather than an
 //!   explicit unlock.
 //!
-//! The end-to-end `patina apply --yes` / `patina status` surface the SPEC
-//! scenario names cannot run yet — the CLI subcommands, executor loop,
-//! and exit-code mapping land in T-014 / T-020. These tests drive the
-//! `patina_core::lock` primitive directly through the `lock_helper`
-//! example process, which is the layer T-013 owns.
+//! These tests drive the `patina_core::lock` primitive directly through the
+//! `lock_helper` example process.
 
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
@@ -195,7 +191,7 @@ fn wait_for_acquired(child: &mut Child) {
 
 #[test]
 fn two_exclusive_applies_do_not_interleave() {
-    // CHK-037: two processes contend for the exclusive lock; their
+    // Two processes contend for the exclusive lock; their
     // acquire/release windows must be disjoint and exactly two `.plan`
     // markers must result.
     ensure_helper_built();
@@ -204,8 +200,7 @@ fn two_exclusive_applies_do_not_interleave() {
 
     // Each holds the lock for 300ms; both wait up to 5s to acquire, so the
     // loser blocks on the winner rather than timing out. Started as close
-    // together as two spawns allow (well within the 100ms window the SPEC
-    // describes).
+    // together as two spawns allow (well within the 100ms window).
     let a = spawn(&helper, &state.dir, "exclusive", 300, 5_000, false);
     let b = spawn(&helper, &state.dir, "exclusive", 300, 5_000, false);
 
@@ -253,7 +248,7 @@ fn two_exclusive_applies_do_not_interleave() {
 fn blocked_exclusive_exits_with_lock_timeout_code() {
     // A second exclusive acquirer whose cap expires while the first still
     // holds the lock exits with the reserved lock-timeout code and names
-    // the timeout on stderr. The 60s SPEC cap is parameterised down to
+    // the timeout on stderr. The 60s cap is parameterised down to
     // 200ms so the test runs fast.
     ensure_helper_built();
     let helper = helper_path();

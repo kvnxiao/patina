@@ -3,15 +3,15 @@
     reason = "integration tests use .expect() on fixture setup; the lint's allow-expect-in-tests covers #[cfg(test)] modules but not the helper functions in tests/*.rs integration crates."
 )]
 
-//! Integration coverage for REQ-008 active-profile resolution.
+//! Integration coverage for active-profile resolution.
 //!
-//! CHK-017 and CHK-018 are end-to-end scenarios described in terms of
+//! The end-to-end scenarios are described in terms of
 //! `patina apply --yes --json` JSON output, but the clap-derived CLI
-//! surface and the `apply` plan computation don't land until T-016 /
-//! T-009 respectively. T-007's contract is the engine's resolution
+//! surface and the `apply` plan computation don't land yet. The engine's
+//! contract is the resolution
 //! function and the auto-match parse path — these tests exercise that
 //! contract directly so the per-source priority order, the shared-engine
-//! `when` evaluation (REQ-004), and the root-`patina.toml` parser cannot
+//! `when` evaluation, and the root-`patina.toml` parser cannot
 //! regress before the CLI is wired in.
 
 use camino::Utf8PathBuf;
@@ -32,7 +32,7 @@ fn root_manifest_path(dir: &TempDir) -> Utf8PathBuf {
     Utf8PathBuf::from_path_buf(dir.path().join("patina.toml")).expect("tempdir path is utf-8")
 }
 
-/// CHK-017: With `PATINA_PROFILE=work`, no `[[auto_match]]` rules, and
+/// With `PATINA_PROFILE=work`, no `[[auto_match]]` rules, and
 /// no persisted choice, the resolved profile is `work`.
 #[test]
 fn env_var_resolves_to_work_when_no_other_sources_match() {
@@ -57,14 +57,14 @@ fn env_var_resolves_to_work_when_no_other_sources_match() {
     assert_eq!(resolution.source, ProfileSource::Env);
 }
 
-/// CHK-018: With `PATINA_PROFILE` unset, no persisted choice, and a
+/// With `PATINA_PROFILE` unset, no persisted choice, and a
 /// root `patina.toml` declaring
 /// `[[auto_match]] when = "patina.hostname == 'CHK-host'"
 /// profile = "desktop"` against a host whose hostname is `CHK-host`,
 /// the resolved profile is `desktop`.
 ///
 /// The harness pins `Builtins::hostname` to `CHK-host` directly (the
-/// public field is mutable; see the T-006 note that `Builtins::current`
+/// public field is mutable; `Builtins::current`
 /// reads `$HOSTNAME` from the process environment, which is not
 /// reliably exported on Unix). This isolates the test from the host's
 /// real hostname.

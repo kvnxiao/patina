@@ -1,5 +1,5 @@
 //! The fallback service backend for hosts with no implemented supervisor
-//! integration yet (SPEC-0003 REQ-001 / DEC-010).
+//! integration yet.
 //!
 //! The [`super::current`] factory returns this stub on any host whose concrete
 //! backend has not landed. Its lifecycle methods all return
@@ -14,7 +14,7 @@ use super::ServiceBackend;
 use super::ServiceError;
 use super::ServiceStatus;
 
-/// The no-supervisor fallback backend (DEC-010).
+/// The no-supervisor fallback backend.
 #[derive(Debug, Clone, Copy)]
 pub struct UnsupportedBackend;
 
@@ -82,7 +82,7 @@ mod tests {
 
     #[test]
     fn unsupported_error_message_points_at_foreground() {
-        // DEC-010: the message must direct the user to the foreground escape
+        // the message must direct the user to the foreground escape
         // hatch so the not-yet-supported path is actionable.
         let message = ServiceError::Unsupported.to_string();
         assert!(

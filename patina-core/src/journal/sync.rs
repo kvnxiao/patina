@@ -3,16 +3,16 @@
 //! [`Syncer`] names the two `fsync`-family operations the journal needs:
 //! flushing a file's contents to stable storage and flushing a
 //! directory's entries. Production code uses [`OsSyncer`], which calls
-//! through to `File::sync_all`. The crash-recovery suite (T-011)
+//! through to `File::sync_all`. The crash-recovery suite
 //! substitutes a recording fake that counts calls per path so it can
-//! assert the REQ-012 invariant: exactly one fsync each on the plan
+//! assert the invariant: exactly one fsync each on the plan
 //! file, the journal directory, and the commit sentinel, and zero on the
 //! progress cursor.
 
 use camino::Utf8Path;
 
 /// Abstraction over the journal's durability syscalls so tests can count
-/// `fsync` calls without touching real hardware (REQ-012 `<behavior>`).
+/// `fsync` calls without touching real hardware.
 ///
 /// Implementors must make a returned `Ok(())` mean the bytes (or
 /// directory entries) are durable on stable storage.

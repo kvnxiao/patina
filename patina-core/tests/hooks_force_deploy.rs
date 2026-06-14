@@ -3,15 +3,14 @@
     reason = "integration tests use .expect() on fixture setup; allow-expect-in-tests covers #[cfg(test)] modules but not the helper functions in tests/*.rs integration crates."
 )]
 
-//! Integration coverage for the `--force-deploy` hook override (REQ-006,
-//! T-015).
+//! Integration coverage for the `--force-deploy` hook override.
 //!
 //! `--force-deploy` ([`ForceDeploy::Yes`]) overrides every hook in the
 //! invocation to behave as `must_succeed = false`, so a non-zero exit can
 //! only ever degrade to a warning — a `post_apply` failure under
 //! force-deploy classifies [`HookOutcome::Warned`], never
-//! [`HookOutcome::Failed`], so the orchestrator (T-018) fires no rollback
-//! and the CLI (T-016) exits 0. These tests also prove the hook command
+//! [`HookOutcome::Failed`], so the orchestrator fires no rollback
+//! and the CLI exits 0. These tests also prove the hook command
 //! genuinely executes under force-deploy (its filesystem side effect lands)
 //! rather than being skipped.
 
@@ -88,7 +87,7 @@ async fn force_deploy_downgrades_post_apply_failure_to_warning() {
 async fn same_hook_without_force_deploy_classifies_failed() {
     // The contrast case for the scenario: the identical fixture without
     // `--force-deploy` keeps `must_succeed = true`, so the post_apply
-    // failure classifies `Failed` (the T-018 rollback / exit-3 trigger).
+    // failure classifies `Failed` (the rollback / exit-3 trigger).
     let (_td, dir) = utf8_tempdir();
     let marker = dir.join("hook-ran.marker");
     let entry = HookEntry {
