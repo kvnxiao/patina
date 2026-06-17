@@ -8,21 +8,16 @@ description: 'Drive the Speccy implementation + review loop for one SPEC end-to-
 Thin composition layer over the Speccy single-task primitives.
 Queries `speccy next SPEC-NNNN --json`, dispatches each step to one or more
 sub-agents, and re-queries until the SPEC is ready to ship. This
-skill itself holds the outer dispatch loop, the per-task retry
-counter, and (for review and ship steps) the multi-persona /
-multi-round fan-out — all leaf work happens in sub-agent contexts
-that exit when done.
+skill owns the outer loop, per-task retry counter, review
+consolidation, and vet dispatch. Leaf work happens in sub-agent
+contexts that exit when done.
 
-**Why fan-outs run inline in this skill's session.**
+**Inline fan-outs.**
 Sub-agents cannot spawn sub-agents, so the fan-out runs inline in the
 top-level session.
-The fan-outs in `speccy-review` (five reviewer personas) and
-`speccy-vet` (reviewer + implementer + simplifier across up to three
-rounds) cannot be delegated to a wrapper sub-agent — it would fail to
-spawn its leaves. This orchestrator therefore follows those two skill
-bodies **inline in its own session** and spawns the leaf sub-agents
-directly; only `speccy-work` (which never fans out) is delegated.
-Later sections reference this as "Why fan-outs run inline".
+`speccy-review` and `speccy-vet` therefore run inline in this
+session and spawn their leaf sub-agents directly; `speccy-work` and
+`speccy-ship` are delegated single sub-agents.
 
 ## When to use
 
@@ -47,48 +42,22 @@ and is always confirmed by the user). Do not invoke this skill for ad-hoc "imple
 The `SPEC-NNNN` argument is required. If missing, ask the user
 which spec to drive and exit without looping.
 
-## Lifecycle (outer loop + inline fan-outs)
+## Dispatch Table
 
-```
-outer:    speccy-orchestrate dispatch loop  ← this skill's session
-            └── on `next_action.kind`:
-                  ├── work   → spawn ONE speccy-work sub-agent
-                  ├── review → fan out reviewer-* sub-agents
-                  │             in parallel from this session
-                  │             (each self-appends its <review> via
-                  │              `speccy journal append`; orchestrator
-                  │              flips state via `speccy task transition`)
-                  ├── vet    → run the speccy-vet skill body inline
-                  │             in this session, spawning
-                  │             vet-reviewer / vet-implementer /
-                  │             vet-simplifier leaf sub-agents directly
-                  │             (drift-fix loop bounded to 3 rounds,
-                  │              then one simplifier polish pass)
-                  └── ship   → ask the user, then spawn a
-                                speccy-ship sub-agent on confirm
-inner-1:  per-task retry — same task_id flipping pending after review
-            (bounded here in the orchestrator: 5 rounds, then stop)
-inner-2:  holistic drift fix — described in speccy-vet, run inline
-            here (bounded: 3 rounds, then fail)
-inner-3:  simplifier polish — described in speccy-vet, run inline
-            here (no loop: one scan + one apply with hygiene gate)
-```
+| `next_action.kind` | Dispatch | Stop / continuation |
+|---|---|---|
+| `work` | Spawn one `speccy-work` sub-agent for `task_id`. | Re-query after it returns. |
+| `review` | Run the `speccy-review` fan-out inline. | Re-query after state flip and optional commit. |
+| `vet` | Run the `speccy-vet` phases inline. | Re-query on pass; stop on fail. |
+| `ship` | Ask the user, then spawn `speccy-ship` on confirm. | Stop either way after the answer. |
+| `decompose` | Do not dispatch. | Tell the user to run `/speccy-decompose`. |
+| other / missing | Do not dispatch. | Report the observed `next_action`. |
 
-The orchestrator owns the outer loop, the counters, and the review
-consolidation / snapshot management; only the leaf work lives in
-spawned sub-agents. All lifecycle writes the orchestrator performs go
-through the CLI verbs (`task transition`, `journal append`, `journal
-show`); it never edits TASKS.md `state` attributes or journal files
-with file-editing tools.
-
-## Context discipline
-
-`speccy-work` is delegated to one sub-agent; `speccy-review` and
-`speccy-vet` run inline (per "Why fan-outs run inline" above), with
-this orchestrator spawning their leaf sub-agents directly. Each leaf
-sub-agent returns one short verdict block — only those final messages,
-not the per-persona reasoning, flow back into the orchestrator's
-context.
+All writes this orchestrator performs go through CLI verbs (`task
+transition`, `journal append`, `journal show`); it never edits TASKS.md
+state attributes or journal files with file-editing tools. Leaf
+sub-agents return one short verdict block — their internal reasoning
+stays in their context and in the journals.
 
 Sub-agent final messages are **status hints, not state**. The
 orchestrator always re-queries `speccy next SPEC-NNNN --json` after a
@@ -227,7 +196,7 @@ the host-native dispatch metadata.
 ## Review dispatch
 
 Run the `speccy-review` fan-out **inline in this orchestrator
-session** (see "Why fan-outs run inline" above). The fan-out
+session** (see "Inline fan-outs" above). The fan-out
 grammar lives canonically in the `/speccy-review`
 skill body; this site carries only a pointer summary so the two
 invocation paths stay in sync without duplicating the grammar.
@@ -253,7 +222,7 @@ the task flipped back to `pending` (this is what feeds the
 ## Vet dispatch
 
 Run the `speccy-vet` skill body **inline in this orchestrator
-session** (see "Why fan-outs run inline" above). The vet-phases grammar
+session** (see "Inline fan-outs" above). The vet-phases grammar
 lives canonically in the `/speccy-vet` skill body
 (which includes the `modules/skills/partials/vet-phases.md`
 partial); this site carries only a pointer summary so the two
