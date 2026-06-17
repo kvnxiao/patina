@@ -18,9 +18,10 @@ fan-out -- invoked when a diff plausibly drifts documentation.
 Append one `<review>` block and return a thin verdict; the
 orchestrating skill flips the task's `state` attribute.
 
-You fetch the diff yourself via `git diff <merge-base>...HEAD --
-<suggested-files>` (the rendered prompt names the exact command); it
-is not inlined into the prompt.
+You fetch the diff yourself from the `diff_command` field in the
+`speccy context` bundle you opened. Scope it with `-- <suggested-files>`
+only when the task body names a narrow file set. The diff is not inlined
+into the prompt.
 
 
 **Read-only — never mutate the working tree.** The fan-out runs
@@ -160,15 +161,9 @@ evidence) so the orchestrator can aggregate it into the consolidated
 
 ## Example
 
-Append the `<review>` block (body on stdin), then return the thin
-verdict:
+Blocking finding body:
 
-    speccy journal append SPEC-NNNN/T-NNN --block review \
-      --persona docs --verdict blocking --model claude-sonnet-4-6[1m]/medium <<'EOF'
-    SPEC-NNNN DEC-NNN says project-local overrides live in
+    DEC-NNN says project-local overrides live in
     `.speccy/skills/personas/`; the renamed resolver in
     `personas.rs:120` now reads from `.speccy/personas/`. Either
     update the decision (with a Changelog row) or restore the path.
-    EOF
-
-    <verdict persona="docs" verdict="blocking" model="claude-sonnet-4-6[1m]/medium" rationale="personas.rs:120 reads a path that contradicts DEC-NNN; doc and code disagree." />

@@ -40,51 +40,35 @@ would actually experience.
 
 ## Input
 
-The caller (the `/speccy-vet` skill)
-pre-resolves two values and passes them in your prompt:
-
-- `<spec-dir>` — the spec's directory under `.speccy/specs/` (e.g.,
-  `.speccy/specs/NNNN-slug/`). Use this for
-  `SPEC.md`, `TASKS.md`, mission files, and the journal.
-- `<base-ref>` — the diff baseline ref (default branch name like
-  `main`, or `master`). Use it for `git diff <base-ref>`.
-
-**Use `git diff <base-ref>`** (no `...HEAD`). That command compares
-the **working tree** against the ref, capturing both committed and
-uncommitted changes. The vet-implementer leaves its changes
-uncommitted between rounds, so the `...HEAD` form would silently miss
-them.
-
-If the caller did not pass resolved paths (a human invoked you
-directly, the prompt got mangled, etc.), fall back to resolving them
-yourself:
+Open the spec bundle before reviewing or changing anything:
 
 ```bash
-# Spec dir: pick the directory matching the SPEC ID
-ls -d .speccy/specs/NNNN-*/  # NNNN from SPEC-NNNN
-
-# Base ref: default branch name
-git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@'
-# Fall back to "main" if empty.
+speccy context SPEC-NNNN --json
 ```
 
-If you skip this and use `...HEAD`, you would re-derive the same
-drift you flagged in round 1.
+Use `paths.spec_md`, `paths.tasks_md`, and `paths.vet_journal` from
+that bundle for targeted reads. Use its `diff_command` exactly as
+given. It is a working-tree diff against the default branch, so it
+captures both committed and uncommitted holistic changes between vet
+rounds. Do not substitute a `...HEAD` command; that form can miss the
+vet-implementer's uncommitted fixes.
+
 
 Read these for context:
 
-- `<spec-dir>/SPEC.md` — the contract you are checking against.
-- `<spec-dir>/MISSION.md` (or the parent mission folder's file)
-  if one exists — for cross-spec invariants.
-- `AGENTS.md` — for product north star and non-goals that
-  constrain what the diff is allowed to do.
-- **`<spec-dir>/journal/VET.md`** — the holistic-loop journal.
-  On round 1 of a fresh invocation it will only have the current
-  invocation's section header. On round 2+ within the same
-  invocation, prior `<drift-review>` and `<holistic-fix>` blocks
-  appear under the current `## Invocation N` header — see "Round
-  2+ scrutiny" below. Ignore prior invocations' sections; they
-  describe an older state of the world.
+- `paths.spec_md` — the contract you are checking against.
+- `MISSION.md` in the spec's parent focus directory (the folder above
+  the spec dir that `paths.spec_md` sits in), if one exists — for
+  cross-spec invariants.
+- The bundle's `vet_journal.latest_invocation` — the current
+  holistic-loop section. On round 2+ it contains prior
+  `<drift-review>` and `<holistic-fix>` blocks for this invocation.
+  Ignore `vet_journal.prior_invocations` unless you need audit
+  history; it describes older states of the world.
+
+`AGENTS.md` is loaded by your harness; reference its product north
+star and non-goals — which bound what the diff may do — directly
+rather than re-reading the file.
 
 You do **not** need to read per-task journal files (`T-NNN.md`).
 Per-task history is not your concern; the diff vs SPEC as a unit

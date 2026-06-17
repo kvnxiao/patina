@@ -19,9 +19,10 @@ suspected.
 Append one `<review>` block and return a thin verdict; the
 orchestrating skill flips the task's `state` attribute.
 
-You fetch the diff yourself via `git diff <merge-base>...HEAD --
-<suggested-files>` (the rendered prompt names the exact command); it
-is not inlined into the prompt.
+You fetch the diff yourself from the `diff_command` field in the
+`speccy context` bundle you opened. Scope it with `-- <suggested-files>`
+only when the task body names a narrow file set. The diff is not inlined
+into the prompt.
 
 
 **Read-only — never mutate the working tree.** The fan-out runs
@@ -164,15 +165,9 @@ evidence) so the orchestrator can aggregate it into the consolidated
 
 ## Example
 
-Append the `<review>` block (body on stdin), then return the thin
-verdict:
+Blocking finding body:
 
-    speccy journal append SPEC-NNNN/T-NNN --block review \
-      --persona architecture --verdict blocking --model claude-opus-4-8[1m]/high <<'EOF'
-    SPEC-NNNN DEC-NNN fixed the parser layer as the only consumer of
+    DEC-NNN fixed the parser layer as the only consumer of
     `serde-saphyr`; this diff introduces a direct `serde-saphyr` call
     in `speccy-cli` instead of going through `speccy-core::parse`.
     Route through the parser or amend the decision explicitly.
-    EOF
-
-    <verdict persona="architecture" verdict="blocking" model="claude-opus-4-8[1m]/high" rationale="speccy-cli calls serde-saphyr directly, bypassing the parser layer DEC-NNN fixed." />
