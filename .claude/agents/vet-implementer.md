@@ -29,40 +29,24 @@ important:
 
 ## Input
 
-The caller (the `/speccy-vet` skill)
-pre-resolves two values and passes them in your prompt:
-
-- `<spec-dir>` — the spec's directory under `.speccy/specs/`. Use
-  for `SPEC.md`, `TASKS.md`, mission files.
-- `<base-ref>` — the diff baseline ref. Use for
-  `git diff <base-ref>`.
-
 The caller's prompt also includes a `<drift-review verdict="blocking">`
 block listing the drift findings. Read it carefully, then orient
-yourself in the existing implementation:
+yourself in the existing implementation with the context bundle's
+`diff_command`.
+
+Open the spec bundle before reviewing or changing anything:
 
 ```bash
-git diff <base-ref>
+speccy context SPEC-NNNN --json
 ```
 
-**Use `git diff <base-ref>`** (no `...HEAD`). That command compares
-the **working tree** against the ref, capturing both committed and
-uncommitted changes. The vet-implementer leaves its changes
-uncommitted between rounds, so the `...HEAD` form would silently miss
-them.
+Use `paths.spec_md`, `paths.tasks_md`, and `paths.vet_journal` from
+that bundle for targeted reads. Use its `diff_command` exactly as
+given. It is a working-tree diff against the default branch, so it
+captures both committed and uncommitted holistic changes between vet
+rounds. Do not substitute a `...HEAD` command; that form can miss the
+vet-implementer's uncommitted fixes.
 
-If the caller did not pass resolved paths (a human invoked you
-directly, the prompt got mangled, etc.), fall back to resolving them
-yourself:
-
-```bash
-# Spec dir: pick the directory matching the SPEC ID
-ls -d .speccy/specs/NNNN-*/  # NNNN from SPEC-NNNN
-
-# Base ref: default branch name
-git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@'
-# Fall back to "main" if empty.
-```
 
 **Leave your own changes uncommitted too** — the next round's
 reviewer reads the same command and picks up everything in the

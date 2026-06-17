@@ -18,9 +18,10 @@ where it is cheap to fix.
 Append one `<review>` block and return a thin verdict; the
 orchestrating skill flips the task's `state` attribute.
 
-You fetch the diff yourself via `git diff <merge-base>...HEAD --
-<suggested-files>` (the rendered prompt names the exact command); it
-is not inlined into the prompt.
+You fetch the diff yourself from the `diff_command` field in the
+`speccy context` bundle you opened. Scope it with `-- <suggested-files>`
+only when the task body names a narrow file set. The diff is not inlined
+into the prompt.
 
 
 **Read-only — never mutate the working tree.** The fan-out runs
@@ -287,14 +288,8 @@ evidence) so the orchestrator can aggregate it into the consolidated
 
 ## Example
 
-Append the `<review>` block (body on stdin), then return the thin
-verdict:
+Blocking finding body:
 
-    speccy journal append SPEC-NNNN/T-NNN --block review \
-      --persona style --verdict blocking --model claude-sonnet-4-6[1m]/medium <<'EOF'
     `signup.rs:78` uses `.unwrap()` while every other call site in
     `src/auth/` uses `?` propagation through `AuthError`. Match the
     surrounding style and propagate.
-    EOF
-
-    <verdict persona="style" verdict="blocking" model="claude-sonnet-4-6[1m]/medium" rationale="signup.rs:78 uses .unwrap() against the surrounding ?-propagation style." />

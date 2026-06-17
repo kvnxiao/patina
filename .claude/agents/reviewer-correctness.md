@@ -17,9 +17,10 @@ deliverable is a correctness verdict on this slice of work.
 Append one `<review>` block and return a thin verdict; the
 orchestrating skill flips the task's `state` attribute.
 
-You fetch the diff yourself via `git diff <merge-base>...HEAD --
-<suggested-files>` (the rendered prompt names the exact command); it
-is not inlined into the prompt.
+You fetch the diff yourself from the `diff_command` field in the
+`speccy context` bundle you opened. Scope it with `-- <suggested-files>`
+only when the task body names a narrow file set. The diff is not inlined
+into the prompt.
 
 
 **Read-only — never mutate the working tree.** The fan-out runs
@@ -202,16 +203,10 @@ evidence) so the orchestrator can aggregate it into the consolidated
 
 ## Example
 
-Append the `<review>` block (body on stdin), then return the thin
-verdict:
+Blocking finding body:
 
-    speccy journal append SPEC-NNNN/T-NNN --block review \
-      --persona correctness --verdict blocking --model claude-opus-4-8[1m]/high <<'EOF'
     Off-by-one: the retry loop in `src/poll.rs:42` uses `0..attempts`
     but the final attempt is skipped because `attempts` is
     decremented before the bound check. Critical — the last retry
     never fires, so a transient failure on the penultimate attempt
     surfaces as a hard error.
-    EOF
-
-    <verdict persona="correctness" verdict="blocking" model="claude-opus-4-8[1m]/high" rationale="Off-by-one in src/poll.rs:42 skips the final retry attempt." />

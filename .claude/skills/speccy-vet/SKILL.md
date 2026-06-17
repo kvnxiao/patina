@@ -71,7 +71,7 @@ anything**. Per Speccy's atomic-landing convention,
 uncommitted changes from the loop (per-task journal updates,
 holistic changes, SPEC.md status flip, REPORT.md) into one commit
 at PR time. VET.md, being under
-`.speccy/specs/<spec-dir>/journal/`, ships alongside the per-task
+`.speccy/specs/NNNN-slug/journal/`, ships alongside the per-task
 journal files.
 
 If a human invokes this skill directly (outside the orchestrator),
@@ -81,8 +81,8 @@ can decide whether to commit, revert, or continue editing.
 ## Holistic journal
 
 This skill maintains a single per-SPEC journal file at
-`<spec-dir>/journal/VET.md` (`<spec-dir>` is resolved in
-Phase 0 below). The journal is the **persistent state** of the
+the `paths.vet_journal` file resolved in Phase 0 below. The journal is
+the **persistent state** of the
 holistic loop:
 
 1. **Round-to-round communication** — round N's reviewer reads it
@@ -126,46 +126,30 @@ than the per-task implementer retry budget.
 
 ### Phase 0 — bootstrap
 
-Resolve the two values that sub-agent prompts need. The CLI owns
-VET.md's frontmatter and invocation sectioning, so this phase no
-longer hand-bootstraps the file or hand-writes an `## Invocation N`
-heading — the first `speccy journal append` for this invocation does
-both for you (it creates the file with frontmatter on first ever
-append, and opens `## Invocation N+1` automatically when the file is
-absent or its last section is gate-terminated).
+Open the spec-scoped context bundle that every vet phase uses. The CLI owns
+VET.md's frontmatter and invocation sectioning, so this phase does not
+hand-bootstrap the file or write an `## Invocation N` heading — the first
+`speccy journal append` for this invocation does both.
 
-1. **Spec directory.** Run:
+1. **Spec context.** Run:
 
    ```bash
-   speccy next SPEC-NNNN --json
+   speccy context SPEC-NNNN --json
    ```
 
-   The `spec_md_path` field (e.g.,
-   `.speccy/specs/NNNN-slug/SPEC.md`) gives the absolute path to
-   `SPEC.md`; strip the trailing `/SPEC.md` to get `<spec-dir>`
-   (e.g., `.speccy/specs/NNNN-slug/`). If the command exits
-   non-zero, the SPEC has reached a terminal state — surface the
-   stderr line and return `fail`. Only parse the JSON envelope
-   when exit code is 0. If the spec is unknown, return `fail`
-   immediately.
+   If the command exits non-zero, surface the stderr line and return
+   `fail`. If `non_completed_tasks` is non-empty, return `fail` with
+   the listed task ids and states — this is a pre-ship gate, not a
+   mid-loop check.
 
-   Also verify every task in this spec is at `state="completed"`
-   (read `<spec-dir>/TASKS.md`). If any task is `pending`,
-   `in-progress`, or `in-review`, return `fail` — this is a
-   pre-ship gate, not a mid-loop check.
-
-2. **Diff baseline ref.** Run:
-
-   ```bash
-   git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@'
-   ```
-
-   Use the output as `<base-ref>`. If empty (no remote, detached
-   HEAD), fall back to `main`. Sub-agent prompts will pass this in
-   for `git diff <base-ref>` — that command compares the **working
-   tree** against the ref, including uncommitted changes, which is
-   essential because the drift-implementer leaves changes
-   uncommitted between rounds.
+   Keep these fields in the running session:
+   - `paths.spec_md`, `paths.tasks_md`, `paths.vet_journal` for
+     targeted reads and status messages.
+   - `diff_command` for every vet leaf prompt; it is the
+     working-tree diff command and includes uncommitted holistic
+     changes.
+   - `vet_journal.latest_invocation` / `prior_invocations` for
+     round context and audit history.
 
 The invocation number `N` for this run is whatever the CLI assigns
 on the first append — you do not pick it or write the heading. After
@@ -187,33 +171,15 @@ CLI's per-file lock serializes those appends and stamps `date`,
 transcribes a sub-agent's block and never edits VET.md with
 file-editing tools.
 
-**Protect the journal from rollback.** The sub-agents append to
-VET.md *during their own runs*, so a block is already on disk before
-the running session reaches its keep-vs-revert decision. Because
-VET.md lives in the working tree, a naive `git restore .` /
-`git stash pop` would revert those appends and erase the audit trail.
-The journal is the durable record of *what the loop did* and must
-survive any rollback. Two git facts drive the mechanism below:
-
-- `git restore -- ':!…/journal/'` and `git clean -fd -e '…/journal/'`
-  **do** honour the journal exclusion, leaving VET.md on disk.
-- `git stash push --include-untracked` does **not** honour a pathspec
-  exclusion for the untracked journal file — it sweeps VET.md into the
-  stash regardless. A later `git stash pop` would then restore that
-  stale copy over the live journal and clobber blocks appended since
-  the snapshot.
-
-So: snapshot with a plain `--include-untracked` stash; restore code
-with the tracked-only checkout below; **never `git stash pop`.** The
-journal is always dirty at vet time, so the push always creates a
-stash and `stash@{0}` reliably names *our* snapshot.
+**Protect the journal from rollback.** Sub-agents append VET blocks
+before the caller decides whether to keep or revert their code
+changes. Snapshot code with `git stash push --include-untracked`, but
+never `git stash pop`; rollback must leave Speccy's journal directories
+untouched. Rationale:
+`.claude/skills/speccy-vet/references/vet-journal-safe-rollback.md`.
 
 This is the **journal-safe revert sequence**. Every rollback in
-Phases 1 and 2 runs these four commands verbatim — the restore and
-clean undo sub-agent edits to tracked files and remove files it
-added, the tracked-only checkout restores pre-sub-agent code from
-the snapshot, and the drop discards it; all four exclude the journal
-directory:
+Phases 1 and 2 runs these four commands verbatim:
 
 ```bash
 # Revert code to the pre-sub-agent snapshot; never touch the journal.
@@ -225,24 +191,20 @@ git stash drop
 
 1. **Spawn the drift reviewer sub-agent.** Prompt:
 
-   > Holistic drift review for `SPEC-NNNN`, invocation `N`, round
-   > `R`.
+   > Holistic drift review for `SPEC-NNNN`, round `R`.
    >
-   > Resolved paths:
-   > - Spec directory: `<spec-dir>` (use this for `SPEC.md`,
-   >   `TASKS.md`, mission file if any, and the journal at
-   >   `<spec-dir>/journal/VET.md`).
-   > - Diff baseline: `<base-ref>` (run `git diff <base-ref>` —
-   >   that captures the working tree including uncommitted
-   >   changes, which the implementer leaves between rounds).
+   > Run `speccy context SPEC-NNNN --json`. Use
+   > `paths.spec_md`, `paths.tasks_md`, `paths.vet_journal`,
+   > `vet_journal.latest_invocation`, and `diff_command` from that
+   > bundle.
    >
    > Follow the focus, round-2+ scrutiny, and verdict-return
    > contract in your agent file. Append your `<drift-review>` block
    > to VET.md via `speccy journal append` and return a single thin
    > `<verdict>` element as your final message.
 
-   Substitute `SPEC-NNNN`, `N`, `R`, `<spec-dir>`, and `<base-ref>`
-   with the resolved values. The sub-agent appends its own
+   Substitute `SPEC-NNNN` and `R` with the resolved values. The
+   sub-agent appends its own
    `<drift-review>` block; do not transcribe it. Read the thin
    `<verdict>` it returns to decide the next step.
 
@@ -280,15 +242,12 @@ git stash drop
 
    b. **Spawn the drift-implementer sub-agent.** Prompt:
 
-      > Holistic drift fix for `SPEC-NNNN`, invocation `N`, round
-      > `R`.
+      > Holistic drift fix for `SPEC-NNNN`, round `R`.
       >
-      > Resolved paths:
-      > - Spec directory: `<spec-dir>`.
-      > - Diff baseline: `<base-ref>` (use `git diff <base-ref>`
-      >   to see the existing implementation; leave your changes
-      >   uncommitted — the next reviewer reads the same command
-      >   and will pick them up).
+      > Run `speccy context SPEC-NNNN --json`. Use its
+      > `diff_command` to see the existing implementation; leave
+      > your changes uncommitted — the next reviewer reads the same
+      > command and will pick them up.
       >
       > The running session will revert your code changes if you
       > return `verdict="stuck"`. Do not manage rollback yourself.
@@ -353,9 +312,10 @@ the return block.
 1. **Spawn the simplifier scan sub-agent.** Prompt:
 
    > Identify simplification candidates in the diff for
-   > `SPEC-NNNN`. Run `git diff <base-ref>` to see all changes
-   > (working tree included). **Report only — do NOT modify
-   > files.** Skip anything that would change behavior, weaken
+   > `SPEC-NNNN`. Run `speccy context SPEC-NNNN --json` and use
+   > its `diff_command` to see all changes (working tree included).
+   > **Report only — do NOT modify files.** Skip anything that
+   > would change behavior, weaken
    > invariants, or trip project conventions in `AGENTS.md` and
    > project-local rule files.
    >
@@ -441,7 +401,7 @@ the return block.
 **Every** exit path — Phase 0 integrity failures, Phase 1
 round-budget exhaustion, Phase 1 `stuck` reverts, Phase 2
 completion (pass or revert), and the success path — appends
-exactly one `<gate>` block to `<spec-dir>/journal/VET.md` via
+exactly one `<gate>` block to `paths.vet_journal` via
 `speccy journal append --block gate`, **before** surfacing the
 verdict to the caller. This is the running session's own write (the
 gate is not authored by a sub-agent), and it goes through the CLI

@@ -22,9 +22,10 @@ primary worry.
 Append one `<review>` block and return a thin verdict; the
 orchestrating skill flips the task's `state` attribute.
 
-You fetch the diff yourself via `git diff <merge-base>...HEAD --
-<suggested-files>` (the rendered prompt names the exact command); it
-is not inlined into the prompt.
+You fetch the diff yourself from the `diff_command` field in the
+`speccy context` bundle you opened. Scope it with `-- <suggested-files>`
+only when the task body names a narrow file set. The diff is not inlined
+into the prompt.
 
 
 **Read-only — never mutate the working tree.** The fan-out runs
@@ -252,16 +253,10 @@ evidence) so the orchestrator can aggregate it into the consolidated
 
 ## Example
 
-Append the `<review>` block (body on stdin), then return the thin
-verdict:
+Blocking finding body:
 
-    speccy journal append SPEC-NNNN/T-NNN --block review \
-      --persona tests --verdict blocking --model claude-sonnet-4-6[1m]/medium <<'EOF'
     `signup.spec.ts:34` asserts `mockHash.toHaveBeenCalled()` but
     never invokes the real `hashPassword` function -- the test passes
     even if `hashPassword` is `(_) => "plaintext"`. Replace the mock
     with the real implementation and assert the persisted column is a
     hash.
-    EOF
-
-    <verdict persona="tests" verdict="blocking" model="claude-sonnet-4-6[1m]/medium" rationale="signup.spec.ts:34 asserts a mock call, not real hashPassword behaviour." />

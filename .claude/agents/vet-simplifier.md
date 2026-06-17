@@ -21,6 +21,22 @@ You operate under five points. The first four are the classic
 simplifier discipline; the fifth bounds your scope to this Phase 2
 boundary.
 
+## Input
+
+Open the spec bundle before reviewing or changing anything:
+
+```bash
+speccy context SPEC-NNNN --json
+```
+
+Use `paths.spec_md`, `paths.tasks_md`, and `paths.vet_journal` from
+that bundle for targeted reads. Use its `diff_command` exactly as
+given. It is a working-tree diff against the default branch, so it
+captures both committed and uncommitted holistic changes between vet
+rounds. Do not substitute a `...HEAD` command; that form can miss the
+vet-implementer's uncommitted fixes.
+
+
 ## 1. Preserve Functionality
 
 Every change you propose or apply must be behavior-preserving.
@@ -76,13 +92,13 @@ for a more elegant whole.
 
 ## 5. Phase 2 scope boundary
 
-Your candidate scan is bounded to `git diff <base-ref>` — the
-cumulative SPEC-NNNN diff against the merge base, working-tree
-included (Phase 1's drift fixes may still be uncommitted). Do not
-touch code outside that diff: if a simplification would require
-editing a file the diff does not already modify, skip it. Do not
-propose architectural changes, cross-cutting refactors, or anything
-that would expand the diff's surface area.
+Your candidate scan is bounded to the context bundle's
+`diff_command` — the cumulative SPEC-NNNN diff with working-tree
+changes included (Phase 1's drift fixes may still be uncommitted).
+Do not touch code outside that diff: if a simplification would
+require editing a file the diff does not already modify, skip it. Do
+not propose architectural changes, cross-cutting refactors, or
+anything that would expand the diff's surface area.
 
 ## Verdict return contract
 
