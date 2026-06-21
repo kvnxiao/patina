@@ -59,12 +59,12 @@ construction (autonomous / rollback-biased / idempotent).
 
 
 **Hygiene gate.** After the implementer turn, before flipping `state` from
-`in-progress` to `in-review`, run the four standard gates: `cargo test
---workspace`; `cargo clippy --workspace --all-targets --all-features -- -D
-warnings`; `cargo +nightly fmt --all --check`; `cargo deny check`. Any non-zero
-exit refuses the flip and keeps the task at `in-progress`; on all zeros, the
-appended `<implementer>` block's `Hygiene checks` field records one line per
-gate with its exit code.
+`in-progress` to `in-review`, run the project's hygiene gates as defined in its
+`AGENTS.md` (`## Standard hygiene` or the project-equivalent) — the gates and
+their count are whatever that project declares; Speccy prescribes no fixed set.
+Any non-zero exit refuses the flip and keeps the task at `in-progress`; on all
+zeros, the appended `<implementer>` block's `Hygiene checks` field records one
+line per gate with its exit code.
 
 ## Exit
 

@@ -113,13 +113,11 @@ the timeout machinery stays silent on the happy path.
 
 Backs CHK-002 (`--timeout-ms` defaults to 30000 when omitted, read back via the
 `--print-config` debug flag), proved by the `render_timeout_observed` unit test
-in the standard suite. All four standard gates exited 0 after the diff landed:
+in the project's hygiene suite. Every gate the project's `AGENTS.md` declares
+exited 0 after the diff landed; record each one and its observed result. For a
+project whose `AGENTS.md` declares a test gate and a lint gate:
 
 ```
-$ cargo test --workspace
-test result: ok. 142 passed; 0 failed; 0 ignored
-$ cargo clippy --workspace --all-targets --all-features -- -D warnings
-(no warnings)
-$ cargo +nightly fmt --all --check
-$ cargo deny check
+$ <test>   142 passed; 0 failed; 0 ignored
+$ <lint>   no warnings
 ```

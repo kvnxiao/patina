@@ -357,8 +357,7 @@ the return block.
 
       > Apply the simplification candidates listed below.
       > Preserve all functionality. After applying, run the
-      > standard hygiene suite per `AGENTS.md` (the project's
-      > four standard hygiene gates).
+      > project's hygiene gates as defined in its `AGENTS.md`.
       >
       > **If any hygiene step fails, do NOT attempt to revert
       > yourself.** Return `verdict="blocking"` with a one-line

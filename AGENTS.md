@@ -104,8 +104,24 @@ General Rust style rules live under `.claude/rules/rust/` and are **authoritativ
 - **CLI output:** human-readable by default with color where appropriate, JSON when `--json` is set. Use the `output::Reporter` abstraction (introduced in Phase 10), not direct prints. Logging via `tracing` macros (see Hard rules above for the prohibition on `println!`).
 - **Tests:** integration tests use `tempfile::TempDir` for repo fixtures. Snapshot tests use `insta`. Property-based tests use `proptest`.
 - **Public API:** every public function has a doc comment with at least one example. `cargo doc --no-deps` must build clean.
-- **Local quality gate — `just check`:** run `just check` (= `just lint` + `just test`) before a task is marked done, reviewed, vetted, or shipped — not ad-hoc `cargo`. The `pre-push` hook runs it once activated (`core.hooksPath .githooks`). `just lint` mirrors CI's gates in order (fmt, clippy, docs, deny); the **docs** gate (`cargo doc -D warnings`) is the one checklists most often drop. A green local `just check` is necessary, not sufficient — CI also runs the per-OS test behaviour matrix, macOS-native clippy, the MSRV (1.95) build, and coverage; watch PR checks after pushing. See the `justfile` header for cross-compile mechanics and one-time `rustup target add` setup.
+- **Local quality gate — `just check`:** the single hygiene gate; run it before a task is marked done, reviewed, vetted, or shipped — not ad-hoc `cargo`. See `## Standard hygiene` below for what it runs and the CI caveats.
 - **Diagrams in docs:** prefer Mermaid (` ```mermaid ` fenced blocks) over ASCII when either works — it renders on GitHub and diffs cleanly per-node. Keep ASCII only for what Mermaid can't express: directory trees with inline comments, exact-byte layouts, terminal output.
+
+---
+
+## Standard hygiene
+
+The project's hygiene gate is **`just check`** (= `just lint` + `just test`; the `pre-push` hook runs it once activated via `core.hooksPath .githooks`). Speccy's implementer, vet, and ship skills read this section to decide what to run before a task flips to `in-review` and what to list in the PR test plan: one gate, one checklist row — `just check`.
+
+`just check` runs CI's quality gates locally, stopping at the first failure, in this order:
+
+1. **fmt** — `cargo +nightly fmt --all --check` (`just lint-fmt`; needs the nightly toolchain + rustfmt).
+2. **clippy** — `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings` (`just lint-clippy` cross-lints each OS target locally; CI lints each OS natively).
+3. **docs** — `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features` (`just lint-docs`). The gate checklists most often drop.
+4. **deny** — `cargo deny check` (`just lint-deny`; license / advisory / bans / sources policy; needs `cargo-deny`).
+5. **test** — `cargo test --workspace --locked` (`just test`).
+
+A green local `just check` is necessary, not sufficient: CI additionally runs the per-OS test-behaviour matrix, macOS-native clippy, the MSRV (1.95) build, and coverage — watch PR checks after pushing. See the `justfile` header for cross-compile mechanics and one-time `rustup target add` setup. `speccy verify` is a separate Speccy proof-shape gate, listed on its own PR row, not part of `just check`.
 
 ---
 

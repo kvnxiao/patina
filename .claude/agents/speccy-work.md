@@ -258,7 +258,7 @@ and for each thing you decide to add, place it in one tier:
 
 
 8. Implement the task. Write tests first, then code. Run the
-   project's own test command (`cargo test`, `pnpm test`, etc.)
+   project's own test command (whatever its `AGENTS.md` defines)
    locally. Use `speccy check SPEC-NNNN/T-NNN` to re-read the
    scenarios being satisfied (it renders them, it does not run
    them).
@@ -333,7 +333,7 @@ diff you already have open — is far cheaper than a bounce-and-respawn.
     silencer.
 
 
-10. Exit transition. **Hygiene gate.** Before flipping `state` from `in-progress` to `in-review`, run the four standard hygiene gates in sequence — `cargo test --workspace`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, `cargo +nightly fmt --all --check`, `cargo deny check`. Any non-zero exit refuses the flip and keeps the task at `in-progress`; on all zeros, proceed with the flip and record one line per gate naming its exit code in the appended `<implementer>` block's `Hygiene checks` field. When the implementation is done, flip the task's
+10. Exit transition. **Hygiene gate.** Before flipping `state` from `in-progress` to `in-review`, run the project's hygiene gates as defined in its `AGENTS.md` (`## Standard hygiene` or the project-equivalent — the gates and their count are whatever that project declares). Any non-zero exit refuses the flip and keeps the task at `in-progress`; on all zeros, proceed with the flip and record one line per gate naming its exit code in the appended `<implementer>` block's `Hygiene checks` field. When the implementation is done, flip the task's
    `state` from `in-progress` to `in-review` through the transition
    command — never by editing the `state` attribute in TASKS.md
    directly:

@@ -38,11 +38,12 @@ shape is unchanged from the pre-template recipe.
 
 ## Body template
 
-The template has three placeholders, written as angle-bracket
-tokens (`<spec-dir>`, `<summary>`, `<coverage-rows>`) so they do
-not collide with MiniJinja's double-brace expression syntax. Fill
-each one per `## Filling the placeholders` below and write the
-result to a scratch file passed to `gh pr create --body-file`:
+The template's fill-in placeholders are written as angle-bracket
+tokens (`<spec-dir>`, `<summary>`, `<coverage-rows>`,
+`<test-plan-rows>`) so they do not collide with MiniJinja's
+double-brace expression syntax. Fill each one per `## Filling the
+placeholders` below and write the result to a scratch file passed to
+`gh pr create --body-file`:
 
 ```markdown
 ## Summary
@@ -57,10 +58,7 @@ result to a scratch file passed to `gh pr create --body-file`:
 
 ## Test plan
 
-- [x] `cargo test --workspace`
-- [x] `cargo clippy --workspace --all-targets --all-features -- -D warnings`
-- [x] `cargo +nightly fmt --all --check`
-- [x] `cargo deny check`
+<test-plan-rows>
 - [x] `speccy verify`
 
 ## Reference docs
@@ -193,6 +191,26 @@ REQ-003 landed clean):
 | REQ-003 | satisfied | CHK-005, CHK-006 | 0 |
 ```
 
+### `<test-plan-rows>`
+
+One pre-checked checklist row per hygiene gate the project's
+`AGENTS.md` declares (its `## Standard hygiene` section or the
+project-equivalent), in the order listed there. The gates and their
+count are whatever the project defines — Speccy prescribes no fixed
+set, so do not assume a lint, format, or dependency-audit gate exists
+unless that `AGENTS.md` lists one. The template's fixed
+`- [x] \`speccy verify\`` row follows the filled rows. Rows are
+pre-checked because the ship recipe halts before `gh pr create` if any
+gate failed, so a PR reaching this step has cleared them all.
+
+Example fill for a project whose `AGENTS.md` declares a test gate and
+a lint gate:
+
+```markdown
+- [x] <test>
+- [x] <lint>
+```
+
 ## Anti-patterns
 
 - **No raw-XML paste.** Do not use `gh pr create --body "$(cat ...
@@ -208,11 +226,12 @@ REQ-003 landed clean):
   not clickable on GitHub — rendering the paths that way defeats the
   section's purpose. Copy the template's link syntax verbatim and
   only substitute the `<spec-dir>` placeholder.
-- **No edits to the Test plan checklist.** The five items are
-  fixed: the four `AGENTS.md` "## Standard hygiene" gates plus
-  `speccy verify`. They are pre-checked because the ship recipe
-  halts before `gh pr create` if any gate failed — a PR reaching
-  this step necessarily cleared all five.
+- **No invented Test plan rows.** Emit exactly one pre-checked row
+  per hygiene gate the project's `AGENTS.md` declares, followed by the
+  template's fixed `speccy verify` row — no more, no fewer. They are
+  pre-checked because the ship recipe halts before `gh pr create` if
+  any gate failed, so a PR reaching this step necessarily cleared
+  every row.
 - **No dropping the footer.** The `🤖 Generated with [Claude Code]`
   attribution line closes the body. Codex hosts swap the link
   target for the Codex CLI equivalent; no host omits the footer.

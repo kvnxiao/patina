@@ -7,46 +7,32 @@ description: 'Seed the Speccy conventions into the project AGENTS.md once `specc
 
 Seeds the Speccy conventions into the project's root `AGENTS.md` — the
 `## Product north star` (freeze-on-first-write) and the always-upserted
-`## Speccy conventions` section — and runs `speccy init` to refresh the
-scaffolded `.speccy/` workspace and the `.claude/skills/` skill pack.
-The workspace already exists by the time this skill runs: a prior
-`speccy init` is what ejected this skill pack in the first place. The
-`AGENTS.md` seeding is the part that needs an agent.
+`## Speccy conventions` section. The `.speccy/` workspace and the
+`.claude/skills/` skill pack
+already exist by the time this skill runs: a prior `speccy init` is what
+scaffolded them and ejected this skill pack. This skill does the
+`AGENTS.md` seeding only — it does not run `speccy init` itself, and it
+never blocks waiting to re-run it.
 
 ## When to use
 
-Run once per project, right after the first `speccy init`. Re-run after
-upgrading `speccy` to refresh both the shipped skill files **and** the
-`## Speccy conventions` section, so your agents pick up newly shipped
-skills and refined rules. The `## Product north star` section is written
-once and then left alone; the conventions section is always re-upserted
-from the canonical template. `speccy init` only ever touches files it
-ships; user-authored skill files in `.claude/skills/` are left alone.
+Run once per project, right after the first `speccy init`. After
+upgrading `speccy` and re-running `speccy init --force` (the CLI command
+that refreshes the shipped skill files), re-run this skill to re-upsert
+the `## Speccy conventions` section so your agents pick up refined rules.
+The `## Product north star` section is written once and then left alone;
+the conventions section is always re-upserted from the canonical
+template.
 
 ## Steps
 
-1. **Scaffold the workspace.** Run the CLI:
-
-   ```bash
-   speccy init
-   ```
-
-   If `.speccy/` already exists, ask the user whether to pass
-   `--force` to refresh shipped files in place. Re-run as needed.
-
-2. **Read the plan summary.** The CLI prints every file it will
-   `create` or `overwrite`, then writes them. There is no
-   "preserve" category: Speccy never plans writes against
-   user-authored files in the host skill directory — they are
-   simply not enumerated.
-
-3. **Inspect `AGENTS.md` at the repo root and decide per-section.**
+1. **Inspect `AGENTS.md` at the repo root and decide per-section.**
    `/speccy-bootstrap` seeds two independent sections — `## Product north
    star` and `## Speccy conventions` — per the AGENTS.md state matrix:
    north-star (present / absent) × conventions (present / absent),
    four cells.
 
-   - **North star — absent.** Run the Q&A flow (step 4) and write
+   - **North star — absent.** Run the Q&A flow (step 2) and write
      the `## Product north star` section. Equivalent headings like
      `## Mission`, `## Product`, or `## Vision` count as present —
      do not duplicate.
@@ -55,8 +41,8 @@ ships; user-authored skill files in `.claude/skills/` are left alone.
      without modification (freeze-on-first-write — the section
      carries user-authored prose that must not be stomped on
      re-run).
-   - **Conventions — absent.** Append the canonical body (step 5).
-   - **Conventions — present.** Replace the body verbatim (step 5).
+   - **Conventions — absent.** Append the canonical body (step 3).
+   - **Conventions — present.** Replace the body verbatim (step 3).
 
    **Missing-file path.** When `AGENTS.md` is missing entirely
    (first init, or the user deleted it between invocations),
@@ -67,12 +53,12 @@ ships; user-authored skill files in `.claude/skills/` are left alone.
 
    The two seeding decisions are independent: the state of one
    section does not bias the treatment of the other. In particular,
-   the conventions upsert (step 5) runs on every invocation
+   the conventions upsert (step 3) runs on every invocation
    regardless of whether the north-star Q&A ran or was skipped.
    Never overwrite `## Product north star` content; the conventions
    section is the only section the skill replaces in place.
 
-4. **North-star adaptive flow (states A and B — north-star absent).**
+2. **North-star adaptive flow (north-star absent).**
    Drive the `## Product north star` section as a brainstorm-style
    adaptive iteration over its five subsections in template order:
    opening prose (the project description and motivation paragraph),
@@ -126,7 +112,7 @@ ships; user-authored skill files in `.claude/skills/` are left alone.
    iteration. Constraints should reference the project's existing
    `## Core principles` / `## Standard hygiene` if present.
 
-5. **Upsert the `## Speccy conventions` section.** After the
+3. **Upsert the `## Speccy conventions` section.** After the
    north-star step completes (whether the Q&A ran or was skipped),
    perform a deterministic upsert on the `## Speccy conventions`
    section using the heading boundary as the delimiter:
@@ -192,15 +178,15 @@ and passes when intact — informational by design, not a blocker.
    or add project-specific bullets — project-specific additions
    belong in a sibling section per the preamble line.
 
-6. **Report.** Tell the user what was scaffolded, what was added
-   to `AGENTS.md` (if anything), and the final counts (`N
-   created, N overwritten`).
+4. **Report.** Tell the user which `AGENTS.md` sections were
+   written or refreshed: the north star (written fresh, or
+   confirmed-existing and left untouched) and the conventions
+   section (appended or replaced in place).
 
-7. **Suggest the next step.** `/speccy-plan` to draft the first
+5. **Suggest the next step.** `/speccy-plan` to draft the first
    SPEC slice from the now-populated north star.
 
-This recipe does not loop. The bootstrap runs once; subsequent
-re-runs of `speccy init --force` only refresh the
-shipped skill files and re-upsert the `## Speccy conventions`
-section. The `## Product north star` section is never overwritten
-once written.
+This recipe does not loop. The bootstrap runs once; on re-run (after a
+`speccy init --force` refresh of the shipped skill files) it only
+re-upserts the `## Speccy conventions` section. The `## Product north
+star` section is never overwritten once written.

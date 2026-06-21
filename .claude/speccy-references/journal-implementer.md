@@ -72,13 +72,12 @@ generated_at: 2026-05-21T19:45:00Z
   separate implementer turn per its `<task>` element in TASKS.md.
   Nothing from T-002's scope is deferred.
 
-- Hygiene checks: `cargo test --workspace` exited 0 with 142 tests
+- Hygiene checks: the project's test gate exited 0 with 142 tests
   passing including the new `range_parser_rejects_zero`,
   `range_parser_rejects_600001`, and `cycle_fixture_times_out_at_500ms`
-  cases. `cargo clippy --workspace --all-targets --all-features -- -D
-  warnings` exited 0 with zero new warnings introduced. `cargo
-  +nightly fmt --all --check` exited 0. `cargo deny check` exited 0
-  (no new dependencies added — `Duration` and `Instant` are `std`).
+  cases. The remaining gates the project's `AGENTS.md` declares (here, a
+  lint gate and a format check) each exited 0 with zero new warnings
+  introduced.
 
 - Evidence: red-then-green paper trail at
   `.speccy/specs/0042-widget-render-timeout/evidence/T-001.md`.
@@ -88,7 +87,7 @@ generated_at: 2026-05-21T19:45:00Z
     SPEC-mandated stderr message.
   - CHK-002 (default 30000ms when flag omitted): hygiene → existing
     `render_timeout_observed` unit test in `widget-core` runs under
-    `cargo test --workspace` and reads the effective value via the
+    the project's test gate and reads the effective value via the
     `--print-config` debug flag.
   - CHK-003 (cycle fixture aborts at budget): demonstrated →
     evidence Scenario 2 captures the pre-edit 60s hang versus the
@@ -160,18 +159,18 @@ this order, each as a bullet line prefixed by `- <Field>:`.
   (files touched, behaviours observed). Past tense.
 - **Undone**: what is deliberately deferred and why; what is left
   for the next turn or a follow-up task.
-- **Hygiene checks**: the project's four standard hygiene gates
-  (or the project-equivalent set) and their observed exit codes;
-  any other commands the implementer ran for verification.
+- **Hygiene checks**: the project's hygiene gates as defined in its
+  `AGENTS.md` and their observed exit codes; any other commands the
+  implementer ran for verification.
 - **Evidence**: pointer to the per-task `evidence/T-NNN.md` paper
   trail, then an explicit roll call accounting for every
   `CHK-NNN` under the task's covered REQs. Each CHK is labelled
   with how it is proved:
   - `demonstrated`: a red-then-green scenario in the evidence file
     proves it; cite the scenario heading.
-  - `hygiene`: a project test in the standard hygiene suite (e.g.,
-    `cargo test`, `pnpm test`) covers it; cite the test name or
-    file path so a reviewer can re-run the same scope.
+  - `hygiene`: a project test in the project's hygiene suite covers
+    it; cite the test name or file path so a reviewer can re-run the
+    same scope.
   - `judgment-only`: no scriptable demonstration is possible (e.g.,
     "error message is clear to a user", "naming reads well in
     context"); reviewer-business or reviewer-style judges it on
@@ -216,10 +215,9 @@ block records the delta, not a fresh survey:
   changed; the exit-124 abort path and the DEC-002 budget-value stderr
   line are untouched.
 - Undone: unchanged — T-002 docs still deferred to its own turn.
-- Hygiene checks: `cargo test --workspace` exited 0 with 143 tests
-  passing (the new `range_parser_accepts_600000` is the +1). `cargo
-  clippy …`, `cargo +nightly fmt --all --check`, and `cargo deny
-  check` each exited 0.
+- Hygiene checks: the project's test gate exited 0 with 143 tests
+  passing (the new `range_parser_accepts_600000` is the +1). The
+  project's remaining hygiene gates each exited 0.
 - Evidence: roll call unchanged from round 1 — CHK-001 / CHK-003 /
   CHK-004 demonstrated, CHK-002 hygiene. The off-by-one was an
   untested boundary (no CHK pinned 600000); `range_parser_accepts_600000`
