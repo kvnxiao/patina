@@ -1,5 +1,7 @@
 # patina
 
+[![codecov](https://codecov.io/gh/kvnxiao/patina/branch/main/graph/badge.svg)](https://codecov.io/gh/kvnxiao/patina/tree/main)
+
 Your dotfiles, oxidized to perfection.
 
 `patina` is a symlink-first, multi-destination, layered dotfile manager
