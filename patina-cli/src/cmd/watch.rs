@@ -26,6 +26,7 @@ use anyhow::Result;
 use patina_core::LifecycleResult;
 use patina_core::LockKind;
 use patina_core::SHARED_TIMEOUT;
+use patina_core::ServiceBackend;
 use patina_core::ServiceError;
 use patina_core::ServiceStatus;
 use patina_core::acquire_lock;
@@ -101,6 +102,28 @@ fn run_lifecycle(command: &WatchCommand, json: bool, reporter: &mut impl Reporte
     let _guard = acquire_lock(&lock_path, LockKind::Exclusive, exclusive_timeout())
         .context("failed to acquire the exclusive lock for the watch lifecycle action")?;
 
+    Ok(dispatch_lifecycle(
+        backend.as_ref(),
+        command,
+        json,
+        reporter,
+    ))
+}
+
+/// Dispatch a mutating lifecycle subcommand to its backend method and render
+/// the outcome, returning the process exit code.
+///
+/// Split from [`run_lifecycle`] — which owns state-directory resolution and
+/// lock acquisition — so the command→method routing is unit-testable against a
+/// fake [`ServiceBackend`] with no real supervisor or lock. `status` is handled
+/// by [`run_lifecycle`] before this is reached (it takes the shared lock and
+/// returns early); the defensive `Status` arm here maps to a no-op.
+fn dispatch_lifecycle(
+    backend: &dyn ServiceBackend,
+    command: &WatchCommand,
+    json: bool,
+    reporter: &mut impl Reporter,
+) -> i32 {
     let result = match command {
         WatchCommand::Install => backend.install(),
         WatchCommand::Uninstall { .. } => backend.uninstall(),
@@ -111,7 +134,7 @@ fn run_lifecycle(command: &WatchCommand, json: bool, reporter: &mut impl Reporte
         // never reaches this mutating branch; treat it as a no-op result.
         WatchCommand::Status => Ok(LifecycleResult::NotInstalled),
     };
-    Ok(render_lifecycle(result, json, reporter))
+    render_lifecycle(result, json, reporter)
 }
 
 /// Render a lifecycle action's outcome and return the process exit code.
@@ -275,6 +298,123 @@ async fn shutdown_signal() {
 mod tests {
     use super::*;
     use crate::output::reporter::BufferReporter;
+
+    /// An in-memory [`ServiceBackend`] fake. Each mutating method returns its
+    /// natural [`LifecycleResult`], so the rendered `result` label reveals
+    /// which method the dispatch routed to — a miswired match arm surfaces
+    /// the wrong label. It performs no supervisor or filesystem I/O, so it
+    /// runs on every CI OS where the real per-OS backends cannot.
+    struct FakeBackend;
+
+    impl ServiceBackend for FakeBackend {
+        fn install(&self) -> std::result::Result<LifecycleResult, ServiceError> {
+            Ok(LifecycleResult::Installed)
+        }
+        fn uninstall(&self) -> std::result::Result<LifecycleResult, ServiceError> {
+            Ok(LifecycleResult::Uninstalled)
+        }
+        fn start(&self) -> std::result::Result<LifecycleResult, ServiceError> {
+            Ok(LifecycleResult::Started)
+        }
+        fn stop(&self) -> std::result::Result<LifecycleResult, ServiceError> {
+            Ok(LifecycleResult::Stopped)
+        }
+        fn restart(&self) -> std::result::Result<LifecycleResult, ServiceError> {
+            Ok(LifecycleResult::Restarted)
+        }
+        fn status(&self) -> std::result::Result<ServiceStatus, ServiceError> {
+            Ok(ServiceStatus {
+                installed: true,
+                running: true,
+                last_fired_at: None,
+                last_exit_code: None,
+                subscriptions_count: None,
+                re_applies_since_start: None,
+            })
+        }
+    }
+
+    /// A [`ServiceBackend`] whose every mutating action reports the service is
+    /// not installed — the no-op path a lifecycle command hits before
+    /// `install`.
+    struct NotInstalledBackend;
+
+    impl ServiceBackend for NotInstalledBackend {
+        fn install(&self) -> std::result::Result<LifecycleResult, ServiceError> {
+            Ok(LifecycleResult::NotInstalled)
+        }
+        fn uninstall(&self) -> std::result::Result<LifecycleResult, ServiceError> {
+            Ok(LifecycleResult::NotInstalled)
+        }
+        fn start(&self) -> std::result::Result<LifecycleResult, ServiceError> {
+            Ok(LifecycleResult::NotInstalled)
+        }
+        fn stop(&self) -> std::result::Result<LifecycleResult, ServiceError> {
+            Ok(LifecycleResult::NotInstalled)
+        }
+        fn restart(&self) -> std::result::Result<LifecycleResult, ServiceError> {
+            Ok(LifecycleResult::NotInstalled)
+        }
+        fn status(&self) -> std::result::Result<ServiceStatus, ServiceError> {
+            Ok(ServiceStatus {
+                installed: false,
+                running: false,
+                last_fired_at: None,
+                last_exit_code: None,
+                subscriptions_count: None,
+                re_applies_since_start: None,
+            })
+        }
+    }
+
+    #[test]
+    fn dispatch_routes_each_subcommand_to_its_backend_method() {
+        // The rendered `result` label reflects which backend method the dispatch
+        // invoked, so a miswired match arm (e.g. Restart calling stop) surfaces
+        // the wrong label and fails here. `status` dispatches separately (it
+        // takes the shared lock), so it is not part of this mutating path.
+        let cases = [
+            (WatchCommand::Install, "installed"),
+            (WatchCommand::Uninstall { yes: true }, "uninstalled"),
+            (WatchCommand::Start, "started"),
+            (WatchCommand::Stop, "stopped"),
+            (WatchCommand::Restart, "restarted"),
+        ];
+        for (command, expected_label) in cases {
+            let mut reporter = BufferReporter::new();
+            let code = dispatch_lifecycle(&FakeBackend, &command, true, &mut reporter);
+            assert_eq!(code, ExitCode::Success.code(), "{command:?} must exit 0");
+            let doc: serde_json::Value =
+                serde_json::from_str(reporter.out.trim()).expect("one JSON doc on stdout");
+            assert_eq!(
+                doc.get("result"),
+                Some(&serde_json::json!(expected_label)),
+                "{command:?} must route to the method whose result renders as {expected_label}"
+            );
+        }
+    }
+
+    #[test]
+    fn dispatch_on_a_not_installed_service_warns_and_exits_one() {
+        // A lifecycle action against a not-installed service is a no-op: the
+        // dispatch surfaces the "service not installed" message and exits 1
+        // rather than reporting a spurious success.
+        let mut reporter = BufferReporter::new();
+        let code = dispatch_lifecycle(
+            &NotInstalledBackend,
+            &WatchCommand::Start,
+            false,
+            &mut reporter,
+        );
+        assert_eq!(code, ExitCode::Generic.code());
+        assert!(
+            reporter
+                .err
+                .contains("service not installed; run `patina watch install` first"),
+            "stderr must carry the not-installed message, got: {}",
+            reporter.err
+        );
+    }
 
     #[test]
     fn status_envelope_carries_the_six_fields_with_null_for_absent_counters() {
