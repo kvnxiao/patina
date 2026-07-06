@@ -280,6 +280,19 @@ mod tests {
     }
 
     #[test]
+    fn read_for_diff_reports_an_unreadable_path_as_opaque() {
+        // A present path that cannot be read as bytes (a directory) is neither
+        // absent nor text; it renders as the opaque "unreadable" placeholder
+        // rather than a misleading empty diff.
+        let (_td, dir) = tempdir();
+        let subdir = dir.join("subdir");
+        fs_err::create_dir_all(&subdir).expect("mkdir subdir");
+        let content = read_for_diff(&subdir);
+        assert_eq!(content.as_text(), None, "a directory is not line-diffable");
+        assert_eq!(content.describe(), "(unreadable)");
+    }
+
+    #[test]
     fn content_diff_renders_a_binary_target_as_a_placeholder_not_an_empty_diff() {
         let (_td, dir) = tempdir();
         let target = dir.join("target");
@@ -303,6 +316,35 @@ mod tests {
         assert!(
             !out.contains("new text"),
             "a binary target must not be line-diffed as if empty, got:\n{out}"
+        );
+    }
+
+    #[test]
+    fn content_diff_marks_deletions_equals_and_unterminated_lines() {
+        // Exercise all three change tags plus the no-trailing-newline branch:
+        // "same" is Equal, "old" is Delete, "new" is Insert, and the final
+        // "tail" (no trailing newline) forces the appended newline.
+        let mut out = String::new();
+        let current = DiffContent::Text("same\nold\ntail".to_owned());
+        let new = DiffContent::Text("same\nnew\ntail".to_owned());
+        content_diff(&mut out, "copy", Utf8Path::new("/t"), &current, &new);
+
+        assert!(
+            out.contains("    same\n"),
+            "unchanged line marked Equal, got:\n{out}"
+        );
+        assert!(
+            out.contains("  - old\n"),
+            "removed line marked Delete, got:\n{out}"
+        );
+        assert!(
+            out.contains("  + new\n"),
+            "added line marked Insert, got:\n{out}"
+        );
+        // The unterminated "tail" line is emitted with an appended newline.
+        assert!(
+            out.ends_with("    tail\n"),
+            "unterminated line gets a newline, got:\n{out}"
         );
     }
 
