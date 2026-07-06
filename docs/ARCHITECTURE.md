@@ -136,7 +136,12 @@ sequenceDiagram
 
 Crash safety is the engine's headline guarantee: a `kill -9` mid-apply
 leaves the filesystem in either the pre-apply or post-apply state,
-never an intermediate one.
+never an intermediate one. This holds for process termination, where
+the page cache survives. Backups are copied but not `fsync`ed before an
+overwrite, so power loss or a kernel panic mid-apply can leave an
+overwrite durable while its backup is not — a genuinely intermediate
+state. Full power-loss durability (atomic temp+rename target writes plus
+`fsync` of backups and parent directories) is a post-1.0 hardening item.
 
 On the next run, recovery reads the journal envelope, then probes the
 filesystem to determine how far the interrupted apply got and converges
@@ -153,8 +158,9 @@ deterministically:
 
 `patina rollback` reverses the last successful apply by reading the
 journal and restoring the recorded pre-apply bytes; afterwards the
-filesystem matches the pre-apply state byte-for-byte, modulo files the
-user touched outside Patina. `patina status` reports drift between the
+filesystem matches the pre-apply state in content and entry kind (file,
+symlink, or directory), modulo mode/timestamp bits and files the user
+touched outside Patina. `patina status` reports drift between the
 declared end-state and the live filesystem. The per-machine state
 directory that holds journal, backups, lock, and drift cache uses
 OS-appropriate locations and must not live on a cloud-sync mount — see

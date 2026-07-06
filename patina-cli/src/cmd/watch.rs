@@ -26,6 +26,7 @@ use anyhow::Result;
 use patina_core::LifecycleResult;
 use patina_core::LockKind;
 use patina_core::SHARED_TIMEOUT;
+use patina_core::ServiceBackend;
 use patina_core::ServiceError;
 use patina_core::ServiceStatus;
 use patina_core::acquire_lock;
@@ -101,6 +102,28 @@ fn run_lifecycle(command: &WatchCommand, json: bool, reporter: &mut impl Reporte
     let _guard = acquire_lock(&lock_path, LockKind::Exclusive, exclusive_timeout())
         .context("failed to acquire the exclusive lock for the watch lifecycle action")?;
 
+    Ok(dispatch_lifecycle(
+        backend.as_ref(),
+        command,
+        json,
+        reporter,
+    ))
+}
+
+/// Dispatch a mutating lifecycle subcommand to its backend method and render
+/// the outcome, returning the process exit code.
+///
+/// Split from [`run_lifecycle`] — which owns state-directory resolution and
+/// lock acquisition — so the command→method routing is unit-testable against a
+/// fake [`ServiceBackend`] with no real supervisor or lock. `status` is handled
+/// by [`run_lifecycle`] before this is reached (it takes the shared lock and
+/// returns early); the defensive `Status` arm here maps to a no-op.
+fn dispatch_lifecycle(
+    backend: &dyn ServiceBackend,
+    command: &WatchCommand,
+    json: bool,
+    reporter: &mut impl Reporter,
+) -> i32 {
     let result = match command {
         WatchCommand::Install => backend.install(),
         WatchCommand::Uninstall { .. } => backend.uninstall(),
@@ -111,7 +134,7 @@ fn run_lifecycle(command: &WatchCommand, json: bool, reporter: &mut impl Reporte
         // never reaches this mutating branch; treat it as a no-op result.
         WatchCommand::Status => Ok(LifecycleResult::NotInstalled),
     };
-    Ok(render_lifecycle(result, json, reporter))
+    render_lifecycle(result, json, reporter)
 }
 
 /// Render a lifecycle action's outcome and return the process exit code.
@@ -275,6 +298,150 @@ async fn shutdown_signal() {
 mod tests {
     use super::*;
     use crate::output::reporter::BufferReporter;
+    use std::cell::RefCell;
+
+    /// An in-memory [`ServiceBackend`] fake that records which method the
+    /// dispatch called and returns a configured [`LifecycleResult`] from every
+    /// mutating action. Recording the call proves routing without depending on
+    /// the rendered label; the configured result drives the not-installed path.
+    /// It performs no supervisor or filesystem I/O, so it runs on every CI OS
+    /// where the real per-OS backends cannot.
+    struct RecordingBackend {
+        calls: RefCell<Vec<&'static str>>,
+        result: LifecycleResult,
+    }
+
+    impl RecordingBackend {
+        fn new(result: LifecycleResult) -> Self {
+            Self {
+                calls: RefCell::new(Vec::new()),
+                result,
+            }
+        }
+
+        fn record(&self, method: &'static str) -> LifecycleResult {
+            self.calls.borrow_mut().push(method);
+            self.result
+        }
+    }
+
+    impl ServiceBackend for RecordingBackend {
+        fn install(&self) -> std::result::Result<LifecycleResult, ServiceError> {
+            Ok(self.record("install"))
+        }
+        fn uninstall(&self) -> std::result::Result<LifecycleResult, ServiceError> {
+            Ok(self.record("uninstall"))
+        }
+        fn start(&self) -> std::result::Result<LifecycleResult, ServiceError> {
+            Ok(self.record("start"))
+        }
+        fn stop(&self) -> std::result::Result<LifecycleResult, ServiceError> {
+            Ok(self.record("stop"))
+        }
+        fn restart(&self) -> std::result::Result<LifecycleResult, ServiceError> {
+            Ok(self.record("restart"))
+        }
+        fn status(&self) -> std::result::Result<ServiceStatus, ServiceError> {
+            self.calls.borrow_mut().push("status");
+            Ok(ServiceStatus {
+                installed: true,
+                running: true,
+                last_fired_at: None,
+                last_exit_code: Some(0),
+                subscriptions_count: Some(3),
+                re_applies_since_start: Some(1),
+            })
+        }
+    }
+
+    #[test]
+    fn dispatch_routes_each_subcommand_to_its_backend_method() {
+        // The recorded call proves which backend method the dispatch invoked, so
+        // a miswired match arm (e.g. Restart calling stop) fails here. `status`
+        // dispatches separately (it takes the shared lock), so it is not part of
+        // this mutating path.
+        let cases = [
+            (WatchCommand::Install, "install"),
+            (WatchCommand::Uninstall { yes: true }, "uninstall"),
+            (WatchCommand::Start, "start"),
+            (WatchCommand::Stop, "stop"),
+            (WatchCommand::Restart, "restart"),
+        ];
+        for (command, expected_method) in cases {
+            let backend = RecordingBackend::new(LifecycleResult::Installed);
+            let mut reporter = BufferReporter::new();
+            let code = dispatch_lifecycle(&backend, &command, true, &mut reporter);
+            assert_eq!(code, ExitCode::Success.code(), "{command:?} must exit 0");
+            assert_eq!(
+                backend.calls.borrow().as_slice(),
+                &[expected_method],
+                "{command:?} must route to {expected_method}"
+            );
+        }
+    }
+
+    #[test]
+    fn dispatch_status_arm_is_a_defensive_no_op_that_never_queries_the_backend() {
+        // `status` is handled by `run_lifecycle` before dispatch (it takes the
+        // shared lock and returns early), so the `Status` arm here is defensive:
+        // it maps to NotInstalled → exit 1 without querying the backend.
+        let backend = RecordingBackend::new(LifecycleResult::Installed);
+        let mut reporter = BufferReporter::new();
+        let code = dispatch_lifecycle(&backend, &WatchCommand::Status, false, &mut reporter);
+        assert_eq!(code, ExitCode::Generic.code());
+        assert!(
+            reporter.err.contains("service not installed"),
+            "the defensive Status arm must surface the not-installed message, got: {}",
+            reporter.err
+        );
+        assert!(
+            backend.calls.borrow().is_empty(),
+            "the defensive Status arm must not call any backend method"
+        );
+    }
+
+    #[test]
+    fn dispatch_on_a_not_installed_service_warns_and_exits_one() {
+        // A lifecycle action whose backend reports the service is not installed
+        // is a no-op: dispatch surfaces the "service not installed" message and
+        // exits 1 rather than reporting a spurious success.
+        let backend = RecordingBackend::new(LifecycleResult::NotInstalled);
+        let mut reporter = BufferReporter::new();
+        let code = dispatch_lifecycle(&backend, &WatchCommand::Start, false, &mut reporter);
+        assert_eq!(code, ExitCode::Generic.code());
+        assert!(
+            reporter
+                .err
+                .contains("service not installed; run `patina watch install` first"),
+            "stderr must carry the not-installed message, got: {}",
+            reporter.err
+        );
+    }
+
+    #[test]
+    fn render_status_emits_the_backend_status_in_both_modes() {
+        // Exercises `render_status` (and the backend's `status`) directly: the
+        // human path names each field, the JSON path emits the structured
+        // object. Both exit 0.
+        let backend = RecordingBackend::new(LifecycleResult::Installed);
+
+        let mut human = BufferReporter::new();
+        let code = render_status(backend.status(), false, &mut human);
+        assert_eq!(code, ExitCode::Success.code());
+        assert!(
+            human.out.contains("installed:") && human.out.contains("true"),
+            "human status must name the installed field, got: {}",
+            human.out
+        );
+
+        let mut json = BufferReporter::new();
+        let code = render_status(backend.status(), true, &mut json);
+        assert_eq!(code, ExitCode::Success.code());
+        let doc: serde_json::Value =
+            serde_json::from_str(json.out.trim()).expect("status --json is one JSON doc");
+        assert_eq!(doc.get("installed"), Some(&serde_json::Value::Bool(true)));
+        assert_eq!(doc.get("subscriptions_count"), Some(&serde_json::json!(3)));
+    }
 
     #[test]
     fn status_envelope_carries_the_six_fields_with_null_for_absent_counters() {

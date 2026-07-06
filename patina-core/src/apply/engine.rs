@@ -1149,6 +1149,18 @@ pub async fn execute(
     // rollback units. Only the targets actually written produce a
     // record; `Unchanged` targets are recorded in the commit from the
     // resolved plan instead (see `build_apply_record`).
+    // Test-only crash-injection seam. Compiled only in debug builds — so it is
+    // absent from the release binary users install — and dormant unless the
+    // `PATINA_TEST_ABORT_AFTER_OP` environment variable is set. When set to
+    // `k`, the process exits abruptly after the k-th materialized operation,
+    // before the COMMIT sentinel is written, simulating a `kill -9` so an
+    // integration test can prove the next run converges to a consistent state.
+    // See `patina-cli/tests/apply_crash_recovery.rs`.
+    #[cfg(debug_assertions)]
+    let abort_after_op: Option<u32> = std::env::var("PATINA_TEST_ABORT_AFTER_OP")
+        .ok()
+        .and_then(|value| value.parse().ok());
+
     let mut completed: Vec<(u32, CompletionRecord)> = Vec::new();
     let mut op_index: u32 = 0;
     for op in &resolved.operations {
@@ -1175,6 +1187,14 @@ pub async fn execute(
                 journal.record_progress(op_index)?;
                 op_index = op_index.saturating_add(1);
                 completed.push((entry_index, record));
+
+                // Test-only crash-injection point (see `abort_after_op` above):
+                // terminate immediately, before COMMIT, leaving `op_index`
+                // operations durably applied and the plan an orphan.
+                #[cfg(debug_assertions)]
+                if abort_after_op == Some(op_index) {
+                    std::process::exit(70);
+                }
             }
         }
     }

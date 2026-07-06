@@ -26,6 +26,7 @@ pub use repo::default_repo_pointer_path;
 pub use repo::persisted_default_present;
 pub use repo::resolve_repository_root;
 pub use repo::resolve_repository_root_with;
+pub use repo::validate_repo_root;
 pub use repo::write_persisted_default;
 use serde::Deserialize;
 

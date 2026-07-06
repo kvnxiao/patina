@@ -117,6 +117,38 @@ fn fix_yes_writes_default_repo_from_cwd_and_exits_zero() {
     );
 }
 
+/// `patina doctor --fix --yes` run from a directory that is not a Patina
+/// repository must refuse: it exits 1 and leaves no `default_repo` pointer,
+/// rather than recording an arbitrary directory as the default repo. Guards the
+/// `validate_repo_root` check in `fix_default_repo` — without it the pointer
+/// would be written unconditionally.
+#[test]
+fn fix_yes_from_non_repo_cwd_exits_one_and_writes_no_pointer() {
+    let fx = Fixture::new();
+    // A plain directory with no `patina.toml` — not a repository root.
+    let not_a_repo = fx.home.join("not_a_repo");
+    fs_err::create_dir_all(not_a_repo.as_std_path()).expect("mkdir non-repo cwd");
+
+    let out = fx.run_in(&not_a_repo, &["doctor", "--fix", "--yes"], &[]);
+    assert_eq!(
+        code(&out),
+        1,
+        "doctor --fix --yes from a non-repo CWD must exit 1; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("not a valid Patina repository"),
+        "the refusal must explain the CWD is not a repository, got stderr: {stderr}"
+    );
+
+    let pointer = fx.state_root().join("default_repo");
+    assert!(
+        !pointer.as_std_path().exists(),
+        "a non-repo CWD must not have the default_repo pointer written"
+    );
+}
+
 /// A non-TTY `patina doctor --fix` without `--yes`
 /// exits 1 and names the missing `--yes` flag on stderr (no per-finding prompt
 /// is possible without a TTY). The subprocess stdin is not a TTY, so this is

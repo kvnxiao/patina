@@ -328,7 +328,9 @@ Patina is built so an interrupted apply converges deterministically on
 the next run. If `patina apply` is killed mid-write, the filesystem
 ends up in either the pre-apply or the post-apply state — never a torn
 intermediate. The next invocation reads the journal and rolls forward
-or back to reach a consistent state.
+or back to reach a consistent state. This guarantee covers process
+termination (a `kill -9` or crash where the page cache survives); a
+power loss or kernel panic mid-apply is out of scope for v1.0.
 
 Two commands help you recover deliberately:
 
@@ -336,8 +338,9 @@ Two commands help you recover deliberately:
   declares and what is currently on disk.
 - `patina rollback` reverses the last successful apply by restoring the
   pre-apply bytes recorded in the journal. Afterwards the filesystem
-  matches the pre-apply state byte-for-byte, modulo files you edited
-  outside Patina.
+  matches the pre-apply state in content and entry kind (file, symlink,
+  or directory), modulo mode/timestamp bits and files you edited outside
+  Patina.
 
 For a post-mortem, `patina debug journal <path>` decodes the binary
 journal into human-readable form so you can see exactly what the
