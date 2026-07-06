@@ -137,6 +137,51 @@ fn assert_applied(out: &Output) {
 }
 
 #[test]
+fn rollback_restores_an_unmanaged_file_overwritten_by_a_copy() {
+    // The consent + always-backup guarantee for content mode: a pre-existing
+    // *unmanaged* regular file overwritten by a copy-mode apply is first backed
+    // up, so `rollback --yes` restores its original bytes byte-for-byte. This is
+    // the non-tree, content-mode companion to
+    // `rollback_restores_a_regular_file_replaced_by_a_symlink` above.
+    let f = Fixture::new();
+    let module = f.module(
+        "shell",
+        "[[file]]\nsource = \"rc\"\ntarget = \"~/.rc\"\nmode = \"copy\"\n",
+    );
+    fs_err::write(module.join("rc"), "managed-content\n").expect("write source");
+
+    // Given: ~/.rc pre-exists as an unmanaged regular file Patina did not create.
+    let target = f.home.join(".rc");
+    fs_err::write(&target, "user-original\n").expect("seed pre-existing unmanaged file");
+
+    // Apply overwrites it (with consent via --yes), backing up the original.
+    assert_applied(&f.apply(&["--yes"]));
+    assert_eq!(
+        fs_err::read_to_string(&target).expect("read after apply"),
+        "managed-content\n",
+        "apply must overwrite the unmanaged file with the managed content"
+    );
+
+    // Rollback restores the pre-apply bytes exactly.
+    let rolled = f.rollback(&["--yes"]);
+    assert_eq!(
+        code(&rolled),
+        0,
+        "rollback must succeed; stderr: {}",
+        String::from_utf8_lossy(&rolled.stderr)
+    );
+    assert_eq!(
+        fs_err::read_to_string(&target).expect("read after rollback"),
+        "user-original\n",
+        "rollback must restore the unmanaged file's original bytes byte-for-byte"
+    );
+    assert!(
+        has_rolled_back_sentinel(&f.journal_dir()),
+        "a ROLLED_BACK sentinel must be written"
+    );
+}
+
+#[test]
 fn rollback_deletes_a_symlink_target_and_writes_the_sentinel() {
     // Fresh-creation leg: a ~/.zshrc materialized as a symlink with
     // no pre-existing file, rolled back, is removed (the link had no backup)

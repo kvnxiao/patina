@@ -13,7 +13,21 @@
 //! | 2    | A `must_succeed` `pre_apply` hook failed; apply aborted before any file operation. |
 //! | 3    | A `must_succeed` `post_apply` hook failed; file operations rolled back. |
 //! | 4    | Exclusive-lock acquisition timed out (`apply` / `rollback`).  |
-//! | 5    | Interactive prompt declined (the user entered anything other than `y`/`Y`). |
+//! | 5    | Interactive prompt declined (the user entered anything other than `y`/`Y`), or an elevation request refused. |
+//!
+//! Two overlaps are deliberate and worth calling out:
+//!
+//! - **Code 2 is also clap's usage-error code.** A malformed command line
+//!   (unknown subcommand, bad flag) exits 2 at parse time — inside [`clap`],
+//!   before any subcommand runs — so it never collides in practice with a
+//!   run-time `pre_apply` abort (also 2): the two are distinguishable by phase,
+//!   and 2 for usage errors is the conventional Unix code.
+//! - **`EngineError::DevModeRequired` maps to 1, not 5.** When the Windows
+//!   engine backstop fires because symlink creation needs elevation, that is an
+//!   environment error → generic 1. A user who is *prompted* for elevation and
+//!   declines is a command-layer control-flow decision → 5. Same subject
+//!   (elevation), deliberately different codes: "cannot proceed" vs "you said
+//!   no".
 //!
 //! The numeric values are the contract — downstream tooling and the
 //! integration suite assert on them — so the discriminants are pinned

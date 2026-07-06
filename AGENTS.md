@@ -6,7 +6,7 @@ Patina is a cross-platform dotfile manager written in Rust. This file orients LL
 
 ## Product north star
 
-Its source of truth is a user's centralized git repository. A user runs `patina apply` and the configurations declared in `patina.toml` files materialize at the right targets — as symbolic links pointing back into the repo, rendered template output, or byte copies where a link is not appropriate. The engine guarantees that a mid-apply crash leaves the filesystem in either the pre-apply or post-apply state, never an intermediate one.
+Its source of truth is a user's centralized git repository. A user runs `patina apply` and the configurations declared in `patina.toml` files materialize at the right targets — as symbolic links pointing back into the repo, rendered template output, or byte copies where a link is not appropriate. The engine guarantees that an apply interrupted by process termination (`kill -9`) leaves the filesystem in either the pre-apply or post-apply state, never an intermediate one; power-loss durability is a post-1.0 hardening item (see Known unknowns).
 
 ### Users
 
@@ -28,10 +28,10 @@ V1.0 is considered complete when a user can:
 
 ### Quality bar
 
-- **Crash safety.** Single-fsync postcard journal + per-operation progress cursor; `kill -9` mid-apply converges deterministically on the next run.
+- **Crash safety.** Single-fsync postcard journal + per-operation progress cursor; `kill -9` mid-apply converges deterministically on the next run. Scope: process termination, where the page cache survives; power-loss / kernel-panic durability is out of scope for v1.0 (see Known unknowns).
 - **Idempotency.** Re-applying against unchanged source is a no-op — same plan, no writes, byte-identical stdout.
-- **Never overwrite without consent.** Files Patina doesn't own are never clobbered.
-- **Rollback fidelity.** After `patina rollback`, filesystem matches pre-apply state byte-for-byte (modulo files the user touched outside Patina).
+- **Never overwrite without consent.** Files Patina doesn't own are never clobbered without consent; every overwrite is first backed up so `patina rollback` restores it.
+- **Rollback fidelity.** After `patina rollback`, the filesystem matches pre-apply state in content and entry kind (file / symlink / directory), modulo mode/timestamp bits and files the user touched outside Patina.
 - **Deterministic stdout.** Two consecutive `apply`s against unchanged source produce byte-identical output. No timestamps, PIDs, or random IDs (`--json` included).
 - **Cross-platform parity.** macOS, Linux, Windows are first-class. Two-of-three is not done.
 - **No panics; tests gate truth.**
@@ -60,6 +60,7 @@ If the user asks for one of these, the answer is "not in v1.0" — surface as a 
 - **`fs2` advisory lock semantics** — paper over POSIX `flock(2)` vs Windows `LockFileEx` for single-CLI and watcher↔CLI coordination.
 - **`tokio` file I/O remains `spawn_blocking`-backed** in v1.0; we accept the cost.
 - **MiniJinja strict-undefined** (including the Jinja2 `{% else %}` empty-string rule) is acceptable.
+- **Power-loss / kernel-panic durability** — backups are not fsync'd before an overwrite, so crash safety holds under process termination (`kill -9`, page cache intact) but not a power cut. Full never-intermediate durability under power loss (atomic temp+rename target writes plus fsync of backups and parent dirs) is a post-1.0 hardening item.
 - **Per-machine state directory must not live on cloud-sync paths** (iCloud / OneDrive / Dropbox / Box / Google Drive / Syncthing). `patina doctor` warns when it does; the constraint is otherwise documented only.
 
 ---
@@ -95,7 +96,7 @@ Patina-specific additions and crate choices layered on the `rust-rules` Skill. W
 
 - **On-disk format version (pre-release no-bump policy):** the `postcard` binary formats (journal plan, committed apply record, watch drift cache) share one major-version envelope, `FILE_MAJOR_VERSION` in `patina-core/src/journal/plan.rs`. **Hold the major at `1` until v1.0.** Pre-release has no shipped state to preserve, so breaking layout changes keep major `1` with no migration; an older binary then refuses a newer file (`decode_envelope` rejects `found > supported`). Bump the major once, at the v1.0 boundary, where it becomes a real compatibility contract.
 - **CLI output:** human-readable by default with color where appropriate, JSON when `--json` is set. Use the `output::Reporter` abstraction, not direct prints.
-- **Tests:** integration tests use `tempfile::TempDir` for repo fixtures. Snapshot tests use `insta`. Property-based tests use `proptest`.
+- **Tests:** integration tests use `tempfile::TempDir` for repo fixtures. Snapshot tests use `insta`.
 - **Diagrams in docs:** prefer Mermaid (` ```mermaid ` fenced blocks) over ASCII when either works — it renders on GitHub and diffs cleanly per-node. Keep ASCII only for what Mermaid can't express: directory trees with inline comments, exact-byte layouts, terminal output.
 
 ---

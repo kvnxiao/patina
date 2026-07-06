@@ -48,7 +48,6 @@ use patina_core::LockError;
 use patina_core::LockKind;
 use patina_core::SHARED_TIMEOUT;
 use patina_core::acquire_lock;
-use patina_core::canonicalize_path;
 use patina_core::dev_mode_status;
 use patina_core::discover_modules;
 use patina_core::exclusive_timeout;
@@ -57,6 +56,7 @@ use patina_core::parse_module_config;
 use patina_core::persisted_default_present;
 use patina_core::resolve_repository_root;
 use patina_core::resolve_state_dir;
+use patina_core::validate_repo_root;
 use patina_core::windows_build_supports_dev_mode;
 use patina_core::write_persisted_default;
 
@@ -295,9 +295,14 @@ fn run_fix(
 }
 
 /// Remediate the `DOC-NO-DEFAULT-REPO` finding by writing the current working
-/// directory's canonical absolute path as the persisted default. The
-/// CWD must be a valid Patina repository; canonicalization failure is a hard
-/// error (exit 1).
+/// directory's canonical absolute path as the persisted default.
+///
+/// The CWD is validated as a repository root — an existing directory holding a
+/// `patina.toml` with `[patina].root = true` — via
+/// [`patina_core::validate_repo_root`], the same predicate repository
+/// discovery uses. A non-repository CWD (or a canonicalization failure) is a
+/// hard error (exit 1) so `doctor --fix` cannot record a directory that is not
+/// a Patina repository as the default.
 fn fix_default_repo(
     args: &DoctorArgs,
     state: &Utf8Path,
@@ -318,7 +323,9 @@ fn fix_default_repo(
     let cwd = std::env::current_dir().context("failed to read the current directory")?;
     let cwd = Utf8PathBuf::from_path_buf(cwd)
         .map_err(|p| anyhow::anyhow!("current directory `{}` is not valid UTF-8", p.display()))?;
-    let canonical = canonicalize_path(&cwd).map_err(EngineError::from)?;
+    let canonical = validate_repo_root(&cwd).map_err(|reason| {
+        anyhow::anyhow!("current directory {cwd} is not a valid Patina repository: {reason}")
+    })?;
     write_persisted_default(state, &canonical).map_err(EngineError::from)?;
 
     tracing::info!(

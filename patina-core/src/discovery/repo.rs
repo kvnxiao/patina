@@ -128,7 +128,7 @@ pub fn resolve_repository_root_with(
     let env_attempt = match env_value.filter(|v| !v.is_empty()) {
         Some(raw) => {
             let path = Utf8PathBuf::from(raw);
-            match validate_root(&path) {
+            match validate_repo_root(&path) {
                 Ok(canonical) => return Ok(canonical),
                 Err(reason) => {
                     return Err(RepoDiscoveryError::EnvVarInvalid { path, reason });
@@ -248,9 +248,22 @@ pub fn write_persisted_default(
     })
 }
 
-/// Confirm `path` is a directory containing a `patina.toml` whose
-/// `[patina].root` is `true`, then canonicalize and return it.
-fn validate_root(path: &Utf8Path) -> Result<Utf8PathBuf, String> {
+/// Validate that `path` is a Patina repository root and return its
+/// canonical absolute form.
+///
+/// A valid root is an existing directory containing a `patina.toml` whose
+/// `[patina].root` is `true`. On success the path is canonicalized through
+/// [`crate::paths::canonicalize`] and returned. Repository discovery
+/// (`PATINA_REPO`, walk-up, persisted default) and `doctor --fix` share this
+/// single definition of "valid root" so they cannot drift.
+///
+/// # Errors
+///
+/// Returns a human-readable reason string when `path` is not a directory,
+/// contains no `patina.toml`, has a manifest missing `root = true`, or the
+/// manifest cannot be read, parsed, or canonicalized. The string is a
+/// diagnostic for display, not a structured error to branch on.
+pub fn validate_repo_root(path: &Utf8Path) -> Result<Utf8PathBuf, String> {
     if !path.is_dir() {
         return Err(format!("{path} is not a directory"));
     }
@@ -320,5 +333,5 @@ fn read_persisted_default(path: &Utf8Path) -> Option<Utf8PathBuf> {
         return None;
     }
     let candidate = Utf8PathBuf::from(trimmed);
-    validate_root(&candidate).ok()
+    validate_repo_root(&candidate).ok()
 }
