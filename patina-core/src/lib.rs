@@ -79,6 +79,7 @@ pub use discovery::default_repo_pointer_path;
 pub use discovery::discover_modules;
 pub use discovery::persisted_default_present;
 pub use discovery::resolve_repository_root;
+pub use discovery::validate_repo_root;
 pub use discovery::write_persisted_default;
 pub use error::EngineError;
 pub use journal::ApplyRecord;
