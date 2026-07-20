@@ -425,7 +425,7 @@ fn confirm(
         (true, _) => true,
         (false, Tty::NonInteractive) => false,
         (false, Tty::Interactive) => {
-            reporter.prompt(&format!("{question} [y/N] "));
+            reporter.confirm(question);
             let answer = reader.read_line().unwrap_or_default();
             matches!(answer.trim(), "y" | "Y")
         }

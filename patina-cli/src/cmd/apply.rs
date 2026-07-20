@@ -38,6 +38,7 @@ use patina_core::decide_symlink_gate;
 use patina_core::execute_plan;
 use patina_core::plan_apply;
 use patina_core::plan_is_full_noop;
+use patina_core::plan_orphans;
 
 /// Whether the invoking process is attached to an interactive terminal.
 /// Injected so the TTY decision is unit-testable without a real tty.
@@ -103,7 +104,11 @@ pub async fn run(
     // The diff render and prompt belong to the human review path only; a full
     // no-op skips both and proceeds straight to the (no-op) execute below.
     if !is_full_noop {
-        let rendered = render_diff(&resolved, args.pager, reporter)?;
+        // Orphans the reap phase would delete this run are not plan
+        // operations, so pass them to the renderer explicitly; the engine
+        // re-derives the same set under the held lock when it executes.
+        let orphans = plan_orphans(&resolved).context("failed to determine the reap set")?;
+        let rendered = render_diff(&resolved, &orphans, args.pager, reporter)?;
         reporter.diff(&rendered);
     }
 
@@ -166,7 +171,7 @@ fn confirm_apply(
         // Non-TTY without --yes: preview only, exit 0.
         (false, Tty::NonInteractive) => Confirmation::PreviewOnly,
         (false, Tty::Interactive) => {
-            reporter.prompt("Apply? [y/N] ");
+            reporter.confirm("Apply?");
             let answer = reader.read_line().unwrap_or_default();
             if matches!(answer.trim(), "y" | "Y") {
                 Confirmation::Proceed
@@ -257,9 +262,14 @@ async fn run_json(
     yes: bool,
     reporter: &mut impl Reporter,
 ) -> Result<i32> {
+    // Compute the reap set before any mutation so the envelope reports what
+    // this run would remove, matching the human diff (which renders reaps
+    // before execute). The engine re-derives the same set under the lock.
+    let reaped = plan_orphans(resolved).context("failed to determine the reap set")?;
+
     if !yes {
         // --json without --yes is a preview; never mutate.
-        let document = json_envelope(resolved, "previewed");
+        let document = json_envelope(resolved, &reaped, "previewed");
         reporter.json(&document);
         return Ok(ExitCode::Success.code());
     }
@@ -279,12 +289,13 @@ async fn run_json(
         ApplyResult::RolledBack { .. } => "rolled_back",
         ApplyResult::Aborted { .. } => "aborted",
     };
-    let document = json_envelope(resolved, result_field);
+    let document = json_envelope(resolved, &reaped, result_field);
     reporter.json(&document);
     Ok(exit_code_for(&result))
 }
 
-/// Build the `--json` envelope: `repo_root`, `profile`, `plan`, `result`.
+/// Build the `--json` envelope: `repo_root`, `profile`, `plan`, `reaped`,
+/// `result`.
 ///
 /// Each plan row carries a `state` field whose value is the target's
 /// [`Disposition`](patina_core::Disposition) label (`create` / `update` /
@@ -296,7 +307,13 @@ async fn run_json(
 /// own state rather than the per-op aggregate. The `state` field is a pure
 /// function of the disposition, so it inherits the deterministic-stdout
 /// contract.
-fn json_envelope(resolved: &ResolvedPlan, result: &str) -> String {
+///
+/// `reaped` lists the target paths this run would remove — orphans of a prior
+/// apply the current plan no longer manages. They are not plan operations, so
+/// they are reported in their own array rather than as `plan` rows; the human
+/// diff renders the same set as `remove` blocks. `plan_orphans` sorted them,
+/// so the array is a stable function of the reap set.
+fn json_envelope(resolved: &ResolvedPlan, reaped: &[camino::Utf8PathBuf], result: &str) -> String {
     let plan: Vec<serde_json::Value> = resolved
         .operations
         .iter()
@@ -307,10 +324,12 @@ fn json_envelope(resolved: &ResolvedPlan, result: &str) -> String {
                 .flat_map(move |(target, disposition)| plan_rows(op, target, disposition))
         })
         .collect();
+    let reaped: Vec<&str> = reaped.iter().map(|p| p.as_str()).collect();
     let envelope = serde_json::json!({
         "repo_root": resolved.repo_root.as_str(),
         "profile": resolved.profile,
         "plan": plan,
+        "reaped": reaped,
         "result": result,
     });
     serde_json::to_string_pretty(&envelope).unwrap_or_else(|_| "{}".to_owned())
@@ -369,10 +388,11 @@ fn mode_label(mode: patina_core::FileMode) -> &'static str {
 /// Render the diff, honouring `--pager` with a PATH-resolution fallback.
 fn render_diff(
     resolved: &ResolvedPlan,
+    orphans: &[camino::Utf8PathBuf],
     pager: Option<Pager>,
     reporter: &mut impl Reporter,
 ) -> Result<String> {
-    let rendered = diff::render(resolved).map_err(|e| anyhow!(e))?;
+    let rendered = diff::render(resolved, orphans).map_err(|e| anyhow!(e))?;
     if let Some(pager) = pager
         && patina_core::resolve_on_path(pager.binary()).is_none()
     {

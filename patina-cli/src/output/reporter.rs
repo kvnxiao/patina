@@ -13,9 +13,9 @@
 //! - [`StreamReporter`] writes the diff / JSON to stdout and prompts / warnings
 //!   / errors to stderr — the production wiring. It writes through an
 //!   `anstream` auto-stream, so ANSI styling emitted by the diff renderer and
-//!   the warn / error / prompt paths is stripped whenever the stream is not a
-//!   terminal (or `--color never` / `NO_COLOR` is in effect). The color
-//!   decision is carried by the [`anstream::ColorChoice`] passed at
+//!   the warn / error / prompt / confirm paths is stripped whenever the stream
+//!   is not a terminal (or `--color never` / `NO_COLOR` is in effect). The
+//!   color decision is carried by the [`anstream::ColorChoice`] passed at
 //!   construction.
 //! - `BufferReporter` captures both streams into in-memory buffers so a test
 //!   can assert on exactly what would have been printed. It never styles, so
@@ -37,9 +37,17 @@ pub trait Reporter {
     fn json(&mut self, document: &str);
     /// Emit a one-line status / summary message to the out stream.
     fn line(&mut self, message: &str);
-    /// Emit the `Apply? [y/N]` prompt text (no trailing newline) to the
-    /// err stream so it does not pollute the diff on stdout.
+    /// Emit a free-form input prompt (no trailing newline) to the err stream
+    /// so it does not pollute the diff on stdout. Styled in the prompt color
+    /// to signal that input is awaited. Use [`Reporter::confirm`] for a
+    /// yes/no question.
     fn prompt(&mut self, text: &str);
+    /// Emit a `<question> [y/N] ` confirmation prompt (no trailing newline) to
+    /// the err stream. The production reporter colors the prose and
+    /// highlights the affirmative `y` and default `N` keys distinctly; `y` /
+    /// `Y` remain the only affirmative answers. Under a plain palette the
+    /// bytes are exactly `"<question> [y/N] "`.
+    fn confirm(&mut self, question: &str);
     /// Emit a warning to the err stream.
     fn warn(&mut self, message: &str);
     /// Emit an error-chain cause to the err stream. Distinguished from
@@ -78,6 +86,32 @@ impl StreamReporter {
 /// it here is deliberate (and keeps the `must_use` lint satisfied without
 /// a bare `let _`).
 fn ignore_io<T>(_result: std::io::Result<T>) {}
+
+/// Wrap `text` in `style`'s opening escape and reset. An empty style renders
+/// to zero bytes on both, so under the plain palette this returns `text`
+/// unchanged — the property that keeps a plain confirm prompt byte-identical
+/// to its unstyled form.
+fn paint(style: Style, text: &str) -> String {
+    format!("{}{text}{}", style.render(), style.render_reset())
+}
+
+/// Compose the styled `<question> [y/N] ` confirmation prompt: the prose and
+/// brackets in the prompt style, the affirmative `y` and default `N` in their
+/// own styles so the two answers read distinctly. Under the plain palette
+/// every segment renders to zero bytes, so the result is exactly
+/// `"<question> [y/N] "` — the form the buffer reporter and `--color never`
+/// share. Shared by both reporters so the plain shape cannot drift between
+/// them.
+fn compose_confirm(styles: &Styles, question: &str) -> String {
+    [
+        paint(styles.prompt, &format!("{question} [")),
+        paint(styles.prompt_affirm, "y"),
+        paint(styles.prompt, "/"),
+        paint(styles.prompt_default, "N"),
+        paint(styles.prompt, "] "),
+    ]
+    .concat()
+}
 
 impl StreamReporter {
     /// Write a message styled with `style` to stderr, one line, through the
@@ -118,6 +152,13 @@ impl Reporter for StreamReporter {
 
     fn prompt(&mut self, text: &str) {
         self.styled_err(self.styles.prompt, text, false);
+    }
+
+    fn confirm(&mut self, question: &str) {
+        // Pre-composed with per-segment styles; write it verbatim (empty
+        // outer style) so the auto-stream still strips color when not wanted.
+        let composed = compose_confirm(&self.styles, question);
+        self.styled_err(Style::new(), &composed, false);
     }
 
     fn warn(&mut self, message: &str) {
@@ -168,6 +209,13 @@ impl Reporter for BufferReporter {
         self.err.push_str(text);
     }
 
+    fn confirm(&mut self, question: &str) {
+        // Plain palette → the composed prompt is exactly `<question> [y/N] `,
+        // matching what `--color never` prints through the stream reporter.
+        self.err
+            .push_str(&compose_confirm(&Styles::plain(), question));
+    }
+
     fn warn(&mut self, message: &str) {
         self.err.push_str(message);
         self.err.push('\n');
@@ -197,5 +245,41 @@ mod tests {
         // error (each newline-terminated).
         assert_eq!(r.out, "DL\n{\"k\":1}\n");
         assert_eq!(r.err, "PW\nE\n");
+    }
+
+    #[test]
+    fn confirm_plain_is_exactly_the_question_and_bracketed_keys() {
+        // Under the plain palette the composed confirm prompt must be the
+        // bare `<question> [y/N] ` — no escapes, trailing space intact — so
+        // `--color never` and the buffer reporter stay byte-identical to the
+        // pre-color prompt string.
+        let plain = compose_confirm(&Styles::plain(), "Apply?");
+        assert_eq!(plain, "Apply? [y/N] ");
+    }
+
+    #[test]
+    fn confirm_colored_highlights_y_and_n_distinctly_but_strips_to_plain() {
+        // The colored composition must carry escapes and wrap the `y` and `N`
+        // in different styles from the prose (and each other), yet reduce to
+        // the exact plain form once every escape is removed — proving color is
+        // purely additive over the stable bytes.
+        let colored = compose_confirm(&Styles::colored(), "Apply?");
+        assert!(
+            colored.contains('\u{1b}'),
+            "colored confirm must carry escapes: {colored:?}"
+        );
+        let affirm = Styles::colored().prompt_affirm.render().to_string();
+        let default = Styles::colored().prompt_default.render().to_string();
+        assert!(
+            colored.contains(&format!("{affirm}y")),
+            "the affirmative `y` must be wrapped in its own style: {colored:?}"
+        );
+        assert!(
+            colored.contains(&format!("{default}N")),
+            "the default `N` must be wrapped in its own style: {colored:?}"
+        );
+        // Stripping every ANSI escape must leave exactly the plain prompt.
+        let stripped = anstream::adapter::strip_str(&colored).to_string();
+        assert_eq!(stripped, "Apply? [y/N] ");
     }
 }
