@@ -61,7 +61,7 @@ If the user asks for one of these, the answer is "not in v1.0" — surface as a 
 - **`tokio` file I/O remains `spawn_blocking`-backed** in v1.0; we accept the cost.
 - **MiniJinja strict-undefined** (including the Jinja2 `{% else %}` empty-string rule) is acceptable.
 - **Power-loss / kernel-panic durability** — backups are not fsync'd before an overwrite, so crash safety holds under process termination (`kill -9`, page cache intact) but not a power cut. Full never-intermediate durability under power loss (atomic temp+rename target writes plus fsync of backups and parent dirs) is a post-1.0 hardening item.
-- **Per-machine state directory must not live on cloud-sync paths** (iCloud / OneDrive / Dropbox / Box / Google Drive / Syncthing). `patina doctor` warns when it does; the constraint is otherwise documented only.
+- **Per-machine state directory must not live on cloud-sync paths** (iCloud / OneDrive / Dropbox / Box / Google Drive / Syncthing). Patina does not detect cloud-sync paths in v1.0; the constraint is documented only.
 
 ---
 

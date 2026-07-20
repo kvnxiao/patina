@@ -91,8 +91,8 @@ pub enum Command {
     /// Scaffold a root `patina.toml` and persist the default-repo pointer.
     Init(InitArgs),
 
-    /// Bring an existing dotfile under management: move it into a module and
-    /// write a `[[file]]` entry.
+    /// Bring an existing dotfile under management: copy it into a module and
+    /// write a `[[file]]` or `[[directory]]` entry by source kind.
     Add(AddArgs),
 
     /// Unmanage a target: remove its `[[file]]` entry and replace the target
