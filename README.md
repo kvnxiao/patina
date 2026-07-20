@@ -50,14 +50,15 @@ patina watch install        # auto-reapply on change via a per-OS background ser
 | `remove` | Unmanage a target (replace it with a plain file holding the last-applied content); `--purge` deletes it outright. |
 | `promote` | Copy a drifted copy-mode target's current bytes back into its repo source, then re-apply. |
 | `apply` | Materialize declarations as symlinks / rendered templates / byte copies. Diff-and-prompt by default; plan-only in a non-TTY. |
-| `status` | Classify each managed target: `CLEAN` / `DRIFTED` / `MISSING` / `ORPHANED`. |
+| `status` | Classify each managed target: `clean` / `drifted` / `missing` / `orphaned`. |
 | `rollback` | Reverse the most recent successful apply from the journal and backups. |
 | `doctor` | Inspect the environment for known problems; `--fix` interactively remediates fixable findings. |
 | `watch` | `--foreground` runs the watcher inline; `install` / `uninstall` / `start` / `stop` / `restart` / `status` manage the per-OS background service. |
 | `debug journal` / `debug drift-cache` | Decode the binary journal / drift cache for post-mortem inspection. |
 
-Every command accepts `--json` for deterministic structured output;
-mutating commands accept `--yes` to skip the confirmation prompt.
+Every command except the `debug` family accepts `--json` for
+deterministic structured output. Commands that prompt for confirmation
+accept `--yes` to skip the prompt.
 
 ## Documentation
 

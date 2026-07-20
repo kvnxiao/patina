@@ -192,11 +192,16 @@ warnings. With `--fix`, it walks the findings it knows how to remediate,
 prompts for confirmation on each, and applies the fix on accept. In a
 non-interactive shell, `--fix` requires `--yes`.
 
-These commands reuse the exit codes established for `apply`:
+Patina uses one exit-code scheme across every command:
 
 - `0`: success.
 - `1`: a generic error (config parse, IO, an undefined template
   variable, and so on).
+- `2`: invalid usage, such as an unknown flag or two conflicting mode
+  flags on `add`. `apply` also returns `2` when a `pre_apply`
+  `must_succeed` hook fails.
+- `3`: an `apply` `post_apply` `must_succeed` hook failed, and its file
+  operations were rolled back.
 - `4`: exclusive-lock acquisition timed out (another `patina` process
   held the lock).
 - `5`: the interactive prompt was declined, or, on Windows, the
@@ -287,9 +292,9 @@ it the second way:
 
 - As the desktop notification above, **only while the watcher is
   running**.
-- As `DRIFTED` in `patina status`, **always**. `patina status` decides
+- As `drifted` in `patina status`, **always**. `patina status` decides
   drift by re-hashing the target live, independent of the watcher, so a
-  file you edit and then revert to its recorded bytes reports `CLEAN`
+  file you edit and then revert to its recorded bytes reports `clean`
   even though the watcher logged the intervening edit. The drift cache is
   the watcher's own notification ledger; `patina status` does not read
   it.
@@ -386,7 +391,7 @@ error naming the version mismatch, and exit 1 on an invalid path.
   --user` service ends with your session by default. Run `sudo loginctl
   enable-linger $USER` once to keep it running across logout (see "Watch
   service").
-- **`patina status` reports `DRIFTED` but no desktop notification
+- **`patina status` reports `drifted` but no desktop notification
   appeared.** Notifications only fire while the watcher is running, and
   are rate-limited to one per target per 60 seconds; `patina status`
   reports drift from a live re-hash regardless. Resolve with `patina

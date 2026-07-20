@@ -64,11 +64,12 @@ AGENTS.md "Hard rules" for the enforcement detail.
 ## Journal format
 
 Before Patina mutates any file, it writes the entire plan to a journal
-in the per-machine state directory and `fsync`s it exactly once. The
-journal is the source of truth a later recovery run reads to converge
-the filesystem.
+in the per-machine state directory and `fsync`s it up front, both the
+plan file and its parent directory. The journal is the source of truth a
+later recovery run reads to converge the filesystem.
 
-The journal is encoded with `postcard`. Because `postcard` makes no
+The plan file and the commit record are encoded with `postcard`; the
+progress cursor is a raw fixed-width byte log. Because `postcard` makes no
 wire-format-stability promise across versions, every journal carries a
 version envelope so a future Patina can detect and reject a journal it
 cannot decode rather than misread it (see the product north star's
@@ -143,18 +144,21 @@ overwrite durable while its backup is not, a genuinely intermediate
 state. Full power-loss durability (atomic temp+rename target writes plus
 `fsync` of backups and parent directories) is a post-1.0 hardening item.
 
-On the next run, recovery reads the journal envelope, then probes the
-filesystem to determine how far the interrupted apply got and converges
-deterministically:
+On the next run, before computing a fresh plan, recovery reads each
+journal envelope and converges deterministically:
 
-- If the journal has no terminal sentinel, recovery uses the progress
-  cursor and a filesystem probe to decide, per operation, whether to
-  complete the remaining mutations (roll forward) or restore from
-  backups (roll back).
-- Backups taken before overwrite are retained for the last ten apply
-  cycles; older cycles are garbage-collected on the next apply. Backups
-  live in the per-machine state directory and never inside the
-  repository.
+- A plan with no terminal sentinel is an orphan: an apply killed after
+  the journal became durable but before it committed. Recovery reverses
+  it backward to the pre-apply state, deciding per operation from the
+  recorded disposition and whether a backup exists. An `Unchanged`
+  target is left alone, a target with a backup is restored from it, and
+  a target with no backup was a fresh creation and is deleted. The
+  decision reads the filesystem and the backup directory, never the
+  progress cursor. The engine then computes and applies a fresh plan.
+- Backups taken before an overwrite are retained for the last ten apply
+  cycles; older cycles are pruned at the end of each successful apply,
+  right after its COMMIT. Backups live in the per-machine state
+  directory and never inside the repository.
 
 `patina rollback` reverses the last successful apply by reading the
 journal and restoring the recorded pre-apply bytes; afterwards the
