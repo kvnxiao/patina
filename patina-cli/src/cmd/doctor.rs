@@ -528,11 +528,18 @@ pub fn compute_findings(inputs: &Inputs) -> Vec<Finding> {
         // The advice must be actionable for the state it fires in: when a
         // repository already resolves (env var or walk-up), `patina init`
         // refuses on the existing manifest, so point at `doctor --fix`, which
-        // records the pointer for an existing repository.
+        // records the pointer for an existing repository. The message also
+        // says why the pointer matters — this invocation found the repository
+        // through its own working directory or PATINA_REPO, and invocations
+        // with neither (the background watch service in particular) fall back
+        // to the recorded default.
         let message = match inputs.repo_root.as_deref() {
             Some(repo_root) => format!(
                 "no default repository is recorded in the state directory; \
-                 run `patina doctor --fix` from {repo_root} to record it."
+                 {repo_root} was resolved from this invocation's working \
+                 directory or PATINA_REPO, so `patina` run without either \
+                 (including the background watch service) will not find it. \
+                 Run `patina doctor --fix` from {repo_root} to record it."
             ),
             None => "no default repository is recorded in the state directory; \
                      run `patina init` to set one."
@@ -743,12 +750,14 @@ mod tests {
         assert_eq!(note.level, Level::Info);
         // A repository resolved (base_inputs has repo_root set), so `patina
         // init` would refuse on the existing manifest; the advice must point
-        // at `doctor --fix` and name the resolved root instead.
+        // at `doctor --fix`, name the resolved root, and say what breaks
+        // without the pointer (the cwd-less background watch service).
         assert!(
             note.message.contains("patina doctor --fix")
-                && note.message.contains("/home/u/dotfiles"),
-            "with a resolved repository the note must suggest `patina doctor --fix` \
-             and name the root, got: {}",
+                && note.message.contains("/home/u/dotfiles")
+                && note.message.contains("watch service"),
+            "with a resolved repository the note must suggest `patina doctor --fix`, \
+             name the root, and name the watch-service consequence, got: {}",
             note.message
         );
         assert!(
