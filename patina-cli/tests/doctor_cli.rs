@@ -53,6 +53,18 @@ fn missing_default_repo_reports_info_finding_and_exits_zero() {
         Some("info"),
         "the missing-default-repo finding is info, not warning"
     );
+
+    // The fixture's repository resolves (PATINA_REPO points at it), so the
+    // advice must be `doctor --fix` — `patina init` refuses on an existing
+    // manifest and can never clear this finding.
+    let message = note
+        .get("message")
+        .and_then(serde_json::Value::as_str)
+        .expect("message field present");
+    assert!(
+        message.contains("patina doctor --fix"),
+        "with a resolved repository the advice must be `patina doctor --fix`, got: {message}"
+    );
 }
 
 /// Two `doctor --json` runs against the
