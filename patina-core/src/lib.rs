@@ -45,6 +45,7 @@ pub use apply::engine::execute as execute_plan;
 pub use apply::engine::is_content_materialization;
 pub use apply::engine::plan as plan_apply;
 pub use apply::engine::plan_is_full_noop;
+pub use apply::engine::plan_orphans;
 pub use apply::materialize;
 pub use apply::resolve_on_path;
 pub use apply::resolve_shells;

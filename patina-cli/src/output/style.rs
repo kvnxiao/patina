@@ -38,8 +38,13 @@ pub struct Styles {
     pub warn: Style,
     /// Error-chain causes.
     pub error: Style,
-    /// The interactive confirmation prompt text.
+    /// Interactive prompt prose — the question and its surrounding brackets,
+    /// and free-form input prompts. Signals that input is awaited.
     pub prompt: Style,
+    /// The affirmative key in a `[y/N]` confirmation (the `y`).
+    pub prompt_affirm: Style,
+    /// The default key in a `[y/N]` confirmation (the capitalized `N`).
+    pub prompt_default: Style,
 }
 
 impl Styles {
@@ -60,11 +65,15 @@ impl Styles {
             warn: none,
             error: none,
             prompt: none,
+            prompt_affirm: none,
+            prompt_default: none,
         }
     }
 
     /// The production palette: green inserts, red deletes and errors, yellow
-    /// warnings, bold headers and prompts.
+    /// warnings, bold headers, and cyan interactive prompts whose `[y/N]`
+    /// keys read green (affirm) / red (default) so the two answers stand
+    /// apart from the prose and each other.
     #[must_use = "construct the style set to render with it"]
     pub const fn colored() -> Self {
         Self {
@@ -74,7 +83,15 @@ impl Styles {
             header: Style::new().bold(),
             warn: Style::new().fg_color(Some(Color::Ansi(AnsiColor::Yellow))),
             error: Style::new().fg_color(Some(Color::Ansi(AnsiColor::Red))),
-            prompt: Style::new().bold(),
+            prompt: Style::new()
+                .fg_color(Some(Color::Ansi(AnsiColor::Cyan)))
+                .bold(),
+            prompt_affirm: Style::new()
+                .fg_color(Some(Color::Ansi(AnsiColor::Green)))
+                .bold(),
+            prompt_default: Style::new()
+                .fg_color(Some(Color::Ansi(AnsiColor::Red)))
+                .bold(),
         }
     }
 }
@@ -91,7 +108,15 @@ mod tests {
     fn plain_styles_render_to_zero_bytes() {
         let p = Styles::plain();
         for style in [
-            p.insert, p.delete, p.context, p.header, p.warn, p.error, p.prompt,
+            p.insert,
+            p.delete,
+            p.context,
+            p.header,
+            p.warn,
+            p.error,
+            p.prompt,
+            p.prompt_affirm,
+            p.prompt_default,
         ] {
             assert_eq!(
                 style.render().to_string(),
@@ -127,5 +152,25 @@ mod tests {
             c.delete.render().to_string(),
             "insert and delete must use different colors"
         );
+    }
+
+    /// The confirmation prompt's three roles must each emit an escape and be
+    /// mutually distinct, so the prose, the affirmative `y`, and the default
+    /// `N` are visually separable in a terminal.
+    #[test]
+    fn colored_prompt_roles_are_distinct_and_escaped() {
+        let c = Styles::colored();
+        for style in [c.prompt, c.prompt_affirm, c.prompt_default] {
+            assert!(
+                style.render().to_string().contains('\u{1b}'),
+                "each prompt role must carry a color escape"
+            );
+        }
+        let prose = c.prompt.render().to_string();
+        let affirm = c.prompt_affirm.render().to_string();
+        let default = c.prompt_default.render().to_string();
+        assert_ne!(prose, affirm, "prose and affirm must differ");
+        assert_ne!(prose, default, "prose and default must differ");
+        assert_ne!(affirm, default, "affirm and default must differ");
     }
 }

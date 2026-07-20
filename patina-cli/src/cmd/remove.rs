@@ -243,7 +243,7 @@ fn confirm(
             false
         }
         (false, Tty::Interactive) => {
-            reporter.prompt(&format!("Remove {}? [y/N] ", args.path));
+            reporter.confirm(&format!("Remove {}?", args.path));
             let answer = reader.read_line().unwrap_or_default();
             matches!(answer.trim(), "y" | "Y")
         }

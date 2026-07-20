@@ -17,10 +17,19 @@
 //! empty/full-insert diff. A binary copy source is legitimate, so it is a
 //! placeholder, not an error; the misleading "empty target" render would
 //! otherwise distort the apply consent decision.
+//!
+//! Removals are shown too: a target a prior apply materialized but the
+//! current plan no longer manages (an entry dropped from a `patina.toml`, a
+//! `when` flipped false) is reaped by the engine on the next apply. Those
+//! orphan targets are not [`ResolvedPlan`] operations, so the CLI passes them
+//! in alongside; each renders as a `remove <target>` block whose deleted body
+//! is the link it pointed at or its current content, so the reap is never
+//! invisible in the consent diff.
 
 use crate::output::style::Styles;
 use anstyle::Style;
 use camino::Utf8Path;
+use camino::Utf8PathBuf;
 use patina_core::Disposition;
 use patina_core::FileMode;
 use patina_core::ResolvedPlan;
@@ -32,13 +41,19 @@ use std::fmt::Write as _;
 
 /// Render the full plan diff to a deterministic string.
 ///
+/// `orphans` is the reap set the engine would delete this run
+/// ([`patina_core::plan_orphans`]): targets a prior apply materialized that
+/// the current plan no longer manages. They are not [`ResolvedPlan`]
+/// operations, so the caller passes them in; each renders as a `remove` block
+/// after the create/update blocks and before the unchanged summary.
+///
 /// # Errors
 ///
 /// Returns an error string when a template source cannot be rendered for
 /// preview (the same strict-undefined failure the apply would hit).
-pub fn render(resolved: &ResolvedPlan) -> Result<String, String> {
+pub fn render(resolved: &ResolvedPlan, orphans: &[Utf8PathBuf]) -> Result<String, String> {
     let mut out = String::new();
-    if resolved.operations.is_empty() {
+    if resolved.operations.is_empty() && orphans.is_empty() {
         out.push_str("No changes: the plan is empty.\n");
         return Ok(out);
     }
@@ -89,6 +104,14 @@ pub fn render(resolved: &ResolvedPlan) -> Result<String, String> {
                 }
             }
         }
+    }
+
+    // Reaps: each orphan the engine would back up and remove this run renders
+    // as a `remove` block, so a removed entry is never silently deleted on
+    // confirm. `plan_orphans` already sorted these, so the block order is a
+    // stable function of the reap set.
+    for orphan in orphans {
+        render_removal(&mut out, orphan, &styles);
     }
 
     // Exactly one deterministic summary line for the Unchanged count.
@@ -152,6 +175,29 @@ fn render_leaf(
         }
     }
     Ok(())
+}
+
+/// Render one `remove <target>` block for an orphan the reap phase will back
+/// up and delete. A symlink shows the link it pointed at (reading *through*
+/// it would show the linked file's bytes, not the link being removed); any
+/// other target shows its current content as a full deletion, falling back to
+/// the compact placeholder for binary / unreadable bytes — the same
+/// never-imply-empty rule [`content_diff`] uses.
+fn render_removal(out: &mut String, target: &Utf8Path, styles: &Styles) {
+    if let Some(link) = current_link_target(target) {
+        paint_line(out, styles.header, "", &format!("remove {target}"));
+        paint_line(out, styles.delete, "  - ", &link);
+        return;
+    }
+    let current = read_for_diff(target);
+    content_diff(
+        out,
+        "remove",
+        target,
+        &current,
+        &DiffContent::Absent,
+        styles,
+    );
 }
 
 /// A file's content as it should appear on one side of a content diff.
@@ -389,6 +435,61 @@ mod tests {
         assert!(
             out.ends_with("    tail\n"),
             "unterminated line gets a newline, got:\n{out}"
+        );
+    }
+
+    #[test]
+    fn render_removal_of_a_file_deletes_each_line_under_a_remove_header() {
+        // A reaped regular file renders a `remove <target>` header and every
+        // current line as a deletion, with no insert side.
+        let (_td, dir) = tempdir();
+        let target = dir.join("gone.conf");
+        fs_err::write(&target, "one\ntwo\n").expect("write target");
+
+        let mut out = String::new();
+        render_removal(&mut out, &target, &Styles::plain());
+
+        assert!(
+            out.contains(&format!("remove {target}")),
+            "the block header must name the removed target, got:\n{out}"
+        );
+        assert!(out.contains("  - one\n"), "first line deleted, got:\n{out}");
+        assert!(
+            out.contains("  - two\n"),
+            "second line deleted, got:\n{out}"
+        );
+        assert!(
+            !out.contains("  + "),
+            "a removal has no insert side, got:\n{out}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn render_removal_of_a_symlink_shows_the_link_target_not_the_linked_bytes() {
+        // A reaped symlink must show the link it pointed at, not read *through*
+        // it to the linked file's content — the link is what is being removed.
+        let (_td, dir) = tempdir();
+        let linked = dir.join("real.conf");
+        fs_err::write(&linked, "linked-bytes\n").expect("write link destination");
+        let target = dir.join("link.conf");
+        std::os::unix::fs::symlink(linked.as_std_path(), target.as_std_path())
+            .expect("create symlink");
+
+        let mut out = String::new();
+        render_removal(&mut out, &target, &Styles::plain());
+
+        assert!(
+            out.contains(&format!("remove {target}")),
+            "the block header must name the removed symlink, got:\n{out}"
+        );
+        assert!(
+            out.contains(&format!("  - {linked}")),
+            "the deleted body must be the link target, got:\n{out}"
+        );
+        assert!(
+            !out.contains("linked-bytes"),
+            "must not read through the symlink to the linked bytes, got:\n{out}"
         );
     }
 

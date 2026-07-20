@@ -1498,6 +1498,29 @@ pub fn plan_is_full_noop(resolved: &ResolvedPlan) -> Result<bool, EngineError> {
     is_full_noop(resolved, true)
 }
 
+/// The targets a `patina apply` over `resolved` would reap this run, sorted by
+/// path — the orphan targets a prior committed apply materialized that the
+/// current plan no longer manages and that are still present on disk as
+/// non-directories.
+///
+/// The CLI calls this to render the reap in the diff / `--json` preview
+/// *before* prompting, so an entry removed from config is never silently
+/// deleted on confirm. It is a read-only probe over the same orphan set
+/// [`execute`] re-derives under the held lock, so it only informs the
+/// preview, never whether a removal happens. Sorting makes the preview a
+/// stable function of the reap set (orphans have no config declaration order
+/// to preserve), upholding the byte-identical-stdout contract.
+///
+/// # Errors
+///
+/// Returns an [`EngineError`] when the commit read or the managed-set
+/// recomputation fails.
+pub fn plan_orphans(resolved: &ResolvedPlan) -> Result<Vec<Utf8PathBuf>, EngineError> {
+    let mut orphans = detect_orphans(resolved)?;
+    orphans.sort();
+    Ok(orphans)
+}
+
 /// The set of targets the reap phase would remove this run — the orphan
 /// targets a prior committed apply materialized that the current plan no
 /// longer manages and that are still present on disk as non-directories.

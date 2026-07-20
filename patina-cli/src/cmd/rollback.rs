@@ -55,7 +55,7 @@ pub async fn run(
             return Ok(ExitCode::Success.code());
         }
         (false, Tty::Interactive) => {
-            reporter.prompt("Roll back the most recent apply? [y/N] ");
+            reporter.confirm("Roll back the most recent apply?");
             let answer = reader.read_line().unwrap_or_default();
             matches!(answer.trim(), "y" | "Y")
         }

@@ -182,7 +182,7 @@ fn confirm(
             false
         }
         (false, Tty::Interactive) => {
-            reporter.prompt(&format!("Promote {}? [y/N] ", args.target));
+            reporter.confirm(&format!("Promote {}?", args.target));
             let answer = reader.read_line().unwrap_or_default();
             matches!(answer.trim(), "y" | "Y")
         }

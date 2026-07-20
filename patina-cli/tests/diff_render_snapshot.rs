@@ -86,29 +86,91 @@ mode = "copy"
     );
     let stdout = String::from_utf8(preview.stdout).expect("apply stdout is UTF-8");
 
-    // Redact the per-run tempdir home prefix to a stable token so the snapshot
-    // is reproducible across runs and machines while still proving the single
-    // Update block names its target path (`copy [HOME]/b_out`). The renderer
-    // prints the target resolved through `resolve_location`, which canonicalizes
-    // the parent (this home dir) and strips the Windows verbatim prefix — so the
-    // printed prefix is the *canonical* home, not the raw env value: on macOS the
-    // tempdir's `/var/...` resolves to `/private/var/...`, and on Windows a
-    // junction / short-name / `\\?\` form can differ from the env string (Linux
-    // `/tmp` canonicalizes to a no-op, which is why only it matched the raw form).
-    // Canonicalize the home the same way (`dunce::canonicalize` mirrors the
-    // engine's `canonicalize`) before redacting, and cover both separator
-    // spellings. A literal string replace (not a regex) avoids re-enabling
-    // insta's `filters` feature for this substitution.
+    insta::assert_snapshot!(redact_home(&stdout, &f.home));
+}
+
+/// An entry dropped from a `patina.toml` after a prior apply is reaped on the
+/// next apply. The preview must render that removal as a `remove <target>`
+/// block carrying the deleted content — not omit it and summarize only the
+/// surviving entry as unchanged.
+#[test]
+fn dropped_entry_renders_as_a_remove_block_in_the_preview() {
+    let f = Fixture::new();
+    // Two `copy` entries; apply both so a commit records them as managed.
+    let m = f.module(
+        "m",
+        r#"
+[[file]]
+source = "keep_src"
+target = "~/keep_out"
+mode = "copy"
+
+[[file]]
+source = "drop_src"
+target = "~/drop_out"
+mode = "copy"
+"#,
+    );
+    fs_err::write(m.join("keep_src"), b"keep-bytes\n").expect("write keep_src");
+    fs_err::write(m.join("drop_src"), b"drop-bytes\n").expect("write drop_src");
+
+    let first = f.apply(&["--yes"]);
+    assert_eq!(
+        code(&first),
+        0,
+        "first apply must succeed; stderr: {}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+
+    // Drop the second entry from the manifest: `keep_out` stays Unchanged and
+    // `drop_out` becomes an orphan the next apply reaps.
+    fs_err::write(
+        m.join("patina.toml"),
+        "[[file]]\nsource = \"keep_src\"\ntarget = \"~/keep_out\"\nmode = \"copy\"\n",
+    )
+    .expect("rewrite manifest without the dropped entry");
+
+    // Non-interactive preview (no `--yes`, non-TTY stdin, `--color never`):
+    // stdout is exactly the rendered diff body, plain.
+    let preview = f.apply(&["--color", "never"]);
+    assert_eq!(
+        code(&preview),
+        0,
+        "the non-interactive preview must exit 0; stderr: {}",
+        String::from_utf8_lossy(&preview.stderr)
+    );
+    let stdout = String::from_utf8(preview.stdout).expect("apply stdout is UTF-8");
+
+    insta::assert_snapshot!(redact_home(&stdout, &f.home));
+}
+
+/// Redact the per-run tempdir home prefix to a stable `[HOME]` token so the
+/// snapshot is reproducible across runs and machines while still proving each
+/// block names its target path.
+///
+/// The renderer prints the target resolved through `resolve_location`, which
+/// canonicalizes the parent (this home dir) and strips the Windows verbatim
+/// prefix — so the printed prefix is the *canonical* home, not the raw env
+/// value: on macOS the tempdir's `/var/...` resolves to `/private/var/...`,
+/// and on Windows a junction / short-name / `\\?\` form can differ from the
+/// env string (Linux `/tmp` canonicalizes to a no-op, which is why only it
+/// matched the raw form). Canonicalize the home the same way
+/// (`dunce::canonicalize` mirrors the engine's `canonicalize`) before
+/// redacting, and cover both separator spellings. A literal string replace
+/// (not a regex) avoids re-enabling insta's `filters` feature.
+#[expect(
+    clippy::expect_used,
+    reason = "test helper on fixture paths; allow-expect-in-tests covers #[test] fns and #[cfg(test)] modules but not free helper fns in a tests/*.rs integration crate."
+)]
+fn redact_home(stdout: &str, home: &camino::Utf8Path) -> String {
     let canon_home = camino::Utf8PathBuf::from_path_buf(
-        dunce::canonicalize(f.home.as_std_path()).expect("canonicalize fixture home"),
+        dunce::canonicalize(home.as_std_path()).expect("canonicalize fixture home"),
     )
     .expect("canonical home is utf8")
     .into_string();
     let home_fwd = canon_home.replace('\\', "/");
     let home_back = home_fwd.replace('/', "\\");
-    let redacted = stdout
+    stdout
         .replace(&format!("{home_fwd}/"), "[HOME]/")
-        .replace(&format!("{home_back}\\"), "[HOME]/");
-
-    insta::assert_snapshot!(redacted);
+        .replace(&format!("{home_back}\\"), "[HOME]/")
 }
