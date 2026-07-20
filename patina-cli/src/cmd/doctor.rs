@@ -525,12 +525,30 @@ pub fn compute_findings(inputs: &Inputs) -> Vec<Finding> {
     }
 
     if !inputs.default_repo_present {
+        // The advice must be actionable for the state it fires in: when a
+        // repository already resolves (env var or walk-up), `patina init`
+        // refuses on the existing manifest, so point at `doctor --fix`, which
+        // records the pointer for an existing repository. The message also
+        // says why the pointer matters — this invocation found the repository
+        // through its own working directory or PATINA_REPO, and invocations
+        // with neither (the background watch service in particular) fall back
+        // to the recorded default.
+        let message = match inputs.repo_root.as_deref() {
+            Some(repo_root) => format!(
+                "no default repository is recorded in the state directory; \
+                 {repo_root} was resolved from this invocation's working \
+                 directory or PATINA_REPO, so `patina` run without either \
+                 (including the background watch service) will not find it. \
+                 Run `patina doctor --fix` from {repo_root} to record it."
+            ),
+            None => "no default repository is recorded in the state directory; \
+                     run `patina init` to set one."
+                .to_owned(),
+        };
         findings.push(Finding {
             code: FindingCode::NoDefaultRepo,
             level: Level::Info,
-            message: "no default repository is recorded in the state directory; \
-                      run `patina init` to set one."
-                .to_owned(),
+            message,
             path: None,
         });
     }
@@ -730,13 +748,46 @@ mod tests {
         assert_eq!(codes(&findings), vec![FindingCode::NoDefaultRepo]);
         let note = findings.first().expect("one finding");
         assert_eq!(note.level, Level::Info);
+        // A repository resolved (base_inputs has repo_root set), so `patina
+        // init` would refuse on the existing manifest; the advice must point
+        // at `doctor --fix`, name the resolved root, and say what breaks
+        // without the pointer (the cwd-less background watch service).
         assert!(
-            note.message.contains("patina init"),
-            "the note must suggest `patina init`, got: {}",
+            note.message.contains("patina doctor --fix")
+                && note.message.contains("/home/u/dotfiles")
+                && note.message.contains("watch service"),
+            "with a resolved repository the note must suggest `patina doctor --fix`, \
+             name the root, and name the watch-service consequence, got: {}",
+            note.message
+        );
+        assert!(
+            !note.message.contains("patina init"),
+            "with a resolved repository the note must not suggest `patina init` \
+             (it refuses on an existing manifest), got: {}",
             note.message
         );
         // An info-only finding still exits 0.
         assert_eq!(exit_code(&findings), ExitCode::Success);
+    }
+
+    #[test]
+    fn missing_default_repo_without_a_repo_suggests_init() {
+        // No repository resolves at all: there is nothing for `doctor --fix`
+        // to record, so the advice is `patina init`.
+        let inputs = Inputs {
+            repo_root: None,
+            default_repo_present: false,
+            ..base_inputs()
+        };
+        let findings = compute_findings(&inputs);
+        assert_eq!(codes(&findings), vec![FindingCode::NoDefaultRepo]);
+        let note = findings.first().expect("one finding");
+        assert_eq!(note.level, Level::Info);
+        assert!(
+            note.message.contains("patina init"),
+            "without a resolved repository the note must suggest `patina init`, got: {}",
+            note.message
+        );
     }
 
     #[test]
