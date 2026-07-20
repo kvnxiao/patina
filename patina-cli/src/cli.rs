@@ -35,7 +35,7 @@ pub fn resolve_exit_code(outcome: anyhow::Result<i32>, reporter: &mut impl Repor
             // the offending TOML line) reaches the user, not just the
             // outermost `anyhow` context line.
             for cause in error.chain() {
-                reporter.warn(&cause.to_string());
+                reporter.error(&cause.to_string());
             }
             ExitCode::from_error_chain(&error).code()
         }
@@ -49,6 +49,40 @@ pub struct Cli {
     /// The subcommand to run.
     #[command(subcommand)]
     pub command: Command,
+
+    /// When to colorize output. Global: accepted before or after the
+    /// subcommand.
+    #[arg(long, value_enum, default_value = "auto", global = true)]
+    pub color: ColorChoiceArg,
+}
+
+/// The `--color` flag: when to emit ANSI styling. Resolved to an
+/// [`anstream::ColorChoice`] via [`ColorChoiceArg::choice`], which the
+/// reporter's auto-stream consumes to decide whether styling survives to the
+/// destination stream.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum ColorChoiceArg {
+    /// Color when the stream is a terminal; strip to plain text when piped,
+    /// redirected, or `NO_COLOR` is set. The default.
+    Auto,
+    /// Always emit color, even when the stream is not a terminal.
+    Always,
+    /// Never emit color.
+    Never,
+}
+
+impl ColorChoiceArg {
+    /// Map to the `anstream` policy the reporter's auto-stream consumes.
+    /// `Auto` defers the per-stream terminal / `NO_COLOR` decision to
+    /// `anstream`; `Always` / `Never` are unconditional.
+    #[must_use = "the returned policy drives whether output is styled"]
+    pub fn choice(self) -> anstream::ColorChoice {
+        match self {
+            ColorChoiceArg::Auto => anstream::ColorChoice::Auto,
+            ColorChoiceArg::Always => anstream::ColorChoice::Always,
+            ColorChoiceArg::Never => anstream::ColorChoice::Never,
+        }
+    }
 }
 
 /// Top-level subcommands.

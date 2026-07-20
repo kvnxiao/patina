@@ -18,6 +18,8 @@
 //! placeholder, not an error; the misleading "empty target" render would
 //! otherwise distort the apply consent decision.
 
+use crate::output::style::Styles;
+use anstyle::Style;
 use camino::Utf8Path;
 use patina_core::Disposition;
 use patina_core::FileMode;
@@ -43,6 +45,10 @@ pub fn render(resolved: &ResolvedPlan) -> Result<String, String> {
 
     let engine = TemplateEngine::new();
     let vars = &resolved.resolver;
+    // The renderer always emits the colored palette; the reporter's
+    // auto-stream strips it when the destination is not a terminal (or
+    // `--color never` / `NO_COLOR`), so piped output stays plain.
+    let styles = Styles::colored();
 
     // Only `Create` and `Update` targets render a
     // per-entry block; `Unchanged` targets are summarized by a single count
@@ -57,7 +63,9 @@ pub fn render(resolved: &ResolvedPlan) -> Result<String, String> {
                 if disposition.aggregate == Disposition::Unchanged {
                     unchanged += 1;
                 } else {
-                    render_leaf(&mut out, op.mode, &op.source, target, &engine, vars)?;
+                    render_leaf(
+                        &mut out, op.mode, &op.source, target, &engine, vars, &styles,
+                    )?;
                 }
             } else {
                 // Tree mode: route per materialized leaf so a single drifted
@@ -68,7 +76,15 @@ pub fn render(resolved: &ResolvedPlan) -> Result<String, String> {
                     } else {
                         let leaf_source = op.source.join(&leaf.relative);
                         let leaf_target = target.join(&leaf.relative);
-                        render_leaf(&mut out, op.mode, &leaf_source, &leaf_target, &engine, vars)?;
+                        render_leaf(
+                            &mut out,
+                            op.mode,
+                            &leaf_source,
+                            &leaf_target,
+                            &engine,
+                            vars,
+                            &styles,
+                        )?;
                     }
                 }
             }
@@ -96,16 +112,19 @@ fn render_leaf(
     target: &Utf8Path,
     engine: &TemplateEngine,
     vars: &Resolver,
+    styles: &Styles,
 ) -> Result<(), String> {
     match mode {
         FileMode::Symlink | FileMode::SymlinkDir | FileMode::SymlinkTree => {
             let current = current_link_target(target);
-            emit(out, format_args!("symlink {target}\n"));
-            emit(
+            paint_line(out, styles.header, "", &format!("symlink {target}"));
+            paint_line(
                 out,
-                format_args!("  - {}\n", current.as_deref().unwrap_or("(absent)")),
+                styles.delete,
+                "  - ",
+                current.as_deref().unwrap_or("(absent)"),
             );
-            emit(out, format_args!("  + {source}\n"));
+            paint_line(out, styles.insert, "  + ", source.as_str());
         }
         FileMode::Copy | FileMode::CopyTree => {
             // A copy source may legitimately be a binary file (fonts, images,
@@ -113,7 +132,7 @@ fn render_leaf(
             // placeholder rather than a misleading empty/full-insert diff.
             let new = read_for_diff(source);
             let current = read_for_diff(target);
-            content_diff(out, "copy", target, &current, &new);
+            content_diff(out, "copy", target, &current, &new, styles);
         }
         FileMode::TemplateRender => {
             let body = fs_err::read_to_string(source)
@@ -128,6 +147,7 @@ fn render_leaf(
                 target,
                 &current,
                 &DiffContent::Text(rendered),
+                styles,
             );
         }
     }
@@ -197,28 +217,45 @@ fn content_diff(
     target: &Utf8Path,
     current: &DiffContent,
     new: &DiffContent,
+    styles: &Styles,
 ) {
-    emit(out, format_args!("{action} {target}\n"));
+    paint_line(out, styles.header, "", &format!("{action} {target}"));
     // Both sides line-diffable → a line-level diff; otherwise (binary /
     // unreadable on either side) a compact placeholder pair.
     if let (Some(current), Some(new)) = (current.as_text(), new.as_text()) {
         let diff = TextDiff::from_lines(current, new);
         for change in diff.iter_all_changes() {
-            let sign = match change.tag() {
-                ChangeTag::Delete => "  - ",
-                ChangeTag::Insert => "  + ",
-                ChangeTag::Equal => "    ",
+            let (style, sign) = match change.tag() {
+                ChangeTag::Delete => (styles.delete, "  - "),
+                ChangeTag::Insert => (styles.insert, "  + "),
+                ChangeTag::Equal => (styles.context, "    "),
             };
-            out.push_str(sign);
-            out.push_str(change.value());
-            if !change.value().ends_with('\n') {
-                out.push('\n');
-            }
+            // `similar` yields one line per change (with its own trailing
+            // newline, if any). Strip it so the style reset lands before the
+            // newline, then re-append exactly one — matching the prior
+            // unstyled shape, which appended a newline to an unterminated
+            // final line.
+            let value = change.value();
+            let line = value.strip_suffix('\n').unwrap_or(value);
+            paint_line(out, style, sign, line);
         }
     } else {
-        emit(out, format_args!("  - {}\n", current.describe()));
-        emit(out, format_args!("  + {}\n", new.describe()));
+        paint_line(out, styles.delete, "  - ", &current.describe());
+        paint_line(out, styles.insert, "  + ", &new.describe());
     }
+}
+
+/// Write one styled line — `<style><prefix><text><reset>\n` — to `out`. An
+/// empty style renders to zero bytes on both the opening code and the reset,
+/// so a plain style produces exactly `<prefix><text>\n`, byte-identical to
+/// the unstyled form.
+fn paint_line(out: &mut String, style: Style, prefix: &str, text: &str) {
+    discard(writeln!(
+        out,
+        "{}{prefix}{text}{}",
+        style.render(),
+        style.render_reset()
+    ));
 }
 
 /// Read the link target at `target` if it is a symlink, as a UTF-8 string.
@@ -301,7 +338,7 @@ mod tests {
         let mut out = String::new();
         let current = read_for_diff(&target);
         let new = DiffContent::Text("new text\n".to_owned());
-        content_diff(&mut out, "copy", &target, &current, &new);
+        content_diff(&mut out, "copy", &target, &current, &new, &Styles::plain());
 
         // The placeholder pair must appear, and the new text must NOT be
         // rendered as a full-insert line diff against an assumed-empty target.
@@ -327,7 +364,14 @@ mod tests {
         let mut out = String::new();
         let current = DiffContent::Text("same\nold\ntail".to_owned());
         let new = DiffContent::Text("same\nnew\ntail".to_owned());
-        content_diff(&mut out, "copy", Utf8Path::new("/t"), &current, &new);
+        content_diff(
+            &mut out,
+            "copy",
+            Utf8Path::new("/t"),
+            &current,
+            &new,
+            &Styles::plain(),
+        );
 
         assert!(
             out.contains("    same\n"),
@@ -357,7 +401,7 @@ mod tests {
         let mut out = String::new();
         let current = read_for_diff(&target);
         let new = DiffContent::Text("line1\nline2\n".to_owned());
-        content_diff(&mut out, "copy", &target, &current, &new);
+        content_diff(&mut out, "copy", &target, &current, &new, &Styles::plain());
 
         assert!(
             out.contains("  + line1"),
@@ -370,6 +414,64 @@ mod tests {
         assert!(
             !out.contains("(absent)"),
             "an absent target paired with text must line-diff, not use the placeholder, got:\n{out}"
+        );
+    }
+
+    #[test]
+    fn colored_styles_wrap_changed_lines_while_plain_stays_escape_free() {
+        // Same inputs, two palettes. The colored palette must wrap the +/-
+        // bodies in ANSI escapes; the plain palette must produce
+        // escape-free, byte-stable output. Context lines use the empty
+        // context style, so they stay unstyled under both.
+        let current = DiffContent::Text("keep\ndrop\n".to_owned());
+        let new = DiffContent::Text("keep\nadd\n".to_owned());
+
+        let mut plain = String::new();
+        content_diff(
+            &mut plain,
+            "copy",
+            Utf8Path::new("/t"),
+            &current,
+            &new,
+            &Styles::plain(),
+        );
+        assert!(
+            !plain.contains('\u{1b}'),
+            "plain output must carry no escapes: {plain:?}"
+        );
+        assert!(
+            plain.contains("  - drop\n"),
+            "plain delete intact: {plain:?}"
+        );
+        assert!(
+            plain.contains("  + add\n"),
+            "plain insert intact: {plain:?}"
+        );
+
+        let mut colored = String::new();
+        content_diff(
+            &mut colored,
+            "copy",
+            Utf8Path::new("/t"),
+            &current,
+            &new,
+            &Styles::colored(),
+        );
+        assert!(
+            colored.contains('\u{1b}'),
+            "colored output must carry escapes: {colored:?}"
+        );
+        assert!(
+            colored.contains("  - drop"),
+            "delete body present under color: {colored:?}"
+        );
+        assert!(
+            colored.contains("  + add"),
+            "insert body present under color: {colored:?}"
+        );
+        assert!(
+            colored.contains("    keep\n"),
+            "context line stays unstyled under color: {colored:?}"
         );
     }
 }
