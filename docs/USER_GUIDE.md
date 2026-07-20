@@ -134,7 +134,11 @@ diff-and-prompt loop by default:
    `patina.toml`, resolves variables and the active profile, and
    renders templates into a concrete list of operations.
 2. **Diff.** Patina compares the planned end-state against what is
-   actually on disk and prints the diff.
+   actually on disk and prints the diff. A target a prior apply
+   materialized but the current plan no longer manages — an entry you
+   dropped from a `patina.toml`, or one whose `when` is now false — shows
+   as a `remove <target>` block: it is backed up and deleted on apply, so
+   the reap is never hidden from the consent diff.
 3. **Prompt.** In an interactive terminal, Patina asks for
    confirmation before writing anything. In a non-interactive shell
    (CI, a piped invocation), it falls through to plan-only and writes
@@ -145,8 +149,11 @@ plan, no writes, and byte-identical stdout. Patina never overwrites a
 file it does not own without taking a backup first.
 
 On a terminal the diff is colorized (green additions, red removals,
-bold entry headers), and the confirmation prompt, warnings, and errors
-are styled too. Color is a display concern only: piped or redirected
+bold entry headers), and warnings and errors are styled too. The
+confirmation prompt is shown in a distinct prompt color, and its
+`[y/N]` keys are highlighted apart from the prose and each other — a
+green affirmative `y`, a red default `N`. Color is a display concern
+only: piped or redirected
 output is always plain, so the byte-identical-stdout guarantee is
 unchanged. The `--color` flag (global, accepted before or after any
 subcommand) forces the choice: `auto` (the default) colors a terminal
