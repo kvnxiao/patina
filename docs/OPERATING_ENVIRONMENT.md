@@ -27,6 +27,7 @@ Layout under the state directory:
 patina/
 ├── journal/             postcard-encoded plan + COMMIT/ROLLED_BACK sentinels
 ├── backups/<ts>/        last-applied byte content, last 10 cycles retained
+├── logs/                rotating watcher logs, created lazily by `patina watch`
 ├── default_repo         persisted dotfiles repo pointer (UTF-8 text)
 ├── profile              persisted profile name (UTF-8 text)
 ├── lock                 advisory file lock (fs2)
@@ -59,7 +60,7 @@ and your **dotfiles repository** off the following kinds of mounts:
 Patina's crash-safety guarantee depends on the journal being written
 atomically and surviving a kill-9. Cloud-sync
 providers intermediate file writes through their own queueing
-layer — your local `fsync` returns before the provider has uploaded,
+layer: your local `fsync` returns before the provider has uploaded,
 and the provider may rename, version, or delay files for reasons
 Patina cannot observe. Specifically:
 

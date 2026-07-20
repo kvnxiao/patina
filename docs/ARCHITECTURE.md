@@ -47,12 +47,12 @@ flowchart TD
   prints user-facing output directly.
 - **`patina-cli`** is the binary crate. It parses arguments with
   `clap`, drives the engine, and renders results through the
-  `output::Reporter` abstraction — human-readable by default, JSON under
+  `output::Reporter` abstraction: human-readable by default, JSON under
   `--json`. All process exit codes flow through a single funnel that
   maps engine outcomes onto the formalized codes.
 - **`patina-elevate`** is a standalone Windows-only helper binary. It
-  carries the smallest possible trust surface — no dependency on
-  `patina-core` or `patina-cli` — and exists solely to toggle the
+  carries the smallest possible trust surface (no dependency on
+  `patina-core` or `patina-cli`) and exists solely to toggle the
   Developer Mode registry flag under a single UAC prompt. It is gated
   behind a `windows` Cargo feature, so a non-Windows build produces no
   such artifact.
@@ -64,11 +64,12 @@ AGENTS.md "Hard rules" for the enforcement detail.
 ## Journal format
 
 Before Patina mutates any file, it writes the entire plan to a journal
-in the per-machine state directory and `fsync`s it exactly once. The
-journal is the source of truth a later recovery run reads to converge
-the filesystem.
+in the per-machine state directory and `fsync`s it up front, both the
+plan file and its parent directory. The journal is the source of truth a
+later recovery run reads to converge the filesystem.
 
-The journal is encoded with `postcard`. Because `postcard` makes no
+The plan file and the commit record are encoded with `postcard`; the
+progress cursor is a raw fixed-width byte log. Because `postcard` makes no
 wire-format-stability promise across versions, every journal carries a
 version envelope so a future Patina can detect and reject a journal it
 cannot decode rather than misread it (see the product north star's
@@ -85,7 +86,7 @@ flowchart LR
 - The **encoded plan** is the full set of operations, written and
   fsynced upfront in a single durable write.
 - The **progress cursor** records per-operation completion as the apply
-  proceeds. The cursor is written without a per-operation `fsync` — the
+  proceeds. The cursor is written without a per-operation `fsync`: the
   upfront plan fsync plus the filesystem-probing recovery makes per-op
   durability unnecessary.
 - The **terminal sentinel** records whether the cycle committed or
@@ -139,22 +140,25 @@ leaves the filesystem in either the pre-apply or post-apply state,
 never an intermediate one. This holds for process termination, where
 the page cache survives. Backups are copied but not `fsync`ed before an
 overwrite, so power loss or a kernel panic mid-apply can leave an
-overwrite durable while its backup is not — a genuinely intermediate
+overwrite durable while its backup is not, a genuinely intermediate
 state. Full power-loss durability (atomic temp+rename target writes plus
 `fsync` of backups and parent directories) is a post-1.0 hardening item.
 
-On the next run, recovery reads the journal envelope, then probes the
-filesystem to determine how far the interrupted apply got and converges
-deterministically:
+On the next run, before computing a fresh plan, recovery reads each
+journal envelope and converges deterministically:
 
-- If the journal has no terminal sentinel, recovery uses the progress
-  cursor and a filesystem probe to decide, per operation, whether to
-  complete the remaining mutations (roll forward) or restore from
-  backups (roll back).
-- Backups taken before overwrite are retained for the last ten apply
-  cycles; older cycles are garbage-collected on the next apply. Backups
-  live in the per-machine state directory and never inside the
-  repository.
+- A plan with no terminal sentinel is an orphan: an apply killed after
+  the journal became durable but before it committed. Recovery reverses
+  it backward to the pre-apply state, deciding per operation from the
+  recorded disposition and whether a backup exists. An `Unchanged`
+  target is left alone, a target with a backup is restored from it, and
+  a target with no backup was a fresh creation and is deleted. The
+  decision reads the filesystem and the backup directory, never the
+  progress cursor. The engine then computes and applies a fresh plan.
+- Backups taken before an overwrite are retained for the last ten apply
+  cycles; older cycles are pruned at the end of each successful apply,
+  right after its COMMIT. Backups live in the per-machine state
+  directory and never inside the repository.
 
 `patina rollback` reverses the last successful apply by reading the
 journal and restoring the recorded pre-apply bytes; afterwards the
@@ -163,5 +167,5 @@ symlink, or directory), modulo mode/timestamp bits and files the user
 touched outside Patina. `patina status` reports drift between the
 declared end-state and the live filesystem. The per-machine state
 directory that holds journal, backups, lock, and drift cache uses
-OS-appropriate locations and must not live on a cloud-sync mount — see
+OS-appropriate locations and must not live on a cloud-sync mount. See
 `docs/USER_GUIDE.md` "State directory".

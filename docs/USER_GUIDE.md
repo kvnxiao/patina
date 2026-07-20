@@ -34,19 +34,19 @@ when it lacks the privilege rather than failing cryptically.
 Configuration lives in `patina.toml` files inside your dotfiles
 repository. Each entry declares a source path in the repo and one or
 more targets on the machine. Entries are declared under one of two
-kind-typed table-arrays — `[[file]]` for a file source, `[[directory]]`
-for a directory source — and each carries an optional `mode` choosing
+kind-typed table-arrays (`[[file]]` for a file source, `[[directory]]`
+for a directory source), and each carries an optional `mode` choosing
 how Patina materializes it.
 
 A minimal example:
 
 ```toml
-# A file symlink — `mode` defaults to "symlink" when omitted.
+# A file symlink. `mode` defaults to "symlink" when omitted.
 [[file]]
 source = "git/gitconfig"
 target = "~/.gitconfig"
 
-# A template — a `.tmpl` source is rendered with MiniJinja. The mode is
+# A template. A `.tmpl` source is rendered with MiniJinja. The mode is
 # implicit for `.tmpl` sources and must not be declared.
 [[file]]
 source = "shell/zshrc.tmpl"
@@ -60,14 +60,14 @@ mode = "symlink-tree"
 ```
 
 The table you declare an entry under fixes its source kind, and the
-`mode` names are shared across both tables — they mean "symlink this
+`mode` names are shared across both tables: they mean "symlink this
 thing" or "copy this thing", with the table supplying the file/dir
 context:
 
-- A `[[file]]` accepts `mode = "symlink"` (the default — a symbolic link
+- A `[[file]]` accepts `mode = "symlink"` (the default, a symbolic link
   to the source file) or `mode = "copy"` (a byte copy). A `.tmpl` source
   is always rendered as a template and takes no explicit `mode`.
-- A `[[directory]]` accepts `mode = "symlink"` (the default — a single
+- A `[[directory]]` accepts `mode = "symlink"` (the default, a single
   atomic symbolic link to the whole directory), `mode = "symlink-tree"`
   (one symbolic link per leaf file, mirroring the source tree), or
   `mode = "copy"` (a recursive byte copy of the tree).
@@ -79,7 +79,7 @@ source out to many. (The earlier single `[[file]]` table with the
 
 ### Conditional entries with `when`
 
-Any entry may carry a `when` expression — a MiniJinja predicate gating
+Any entry may carry a `when` expression, a MiniJinja predicate gating
 whether the entry applies on this host. When `when` evaluates false, the
 entry contributes no operations and its target is left untouched (and is
 classified orphaned if a prior apply had materialized it):
@@ -93,8 +93,8 @@ when = "patina.os == 'windows'"
 ```
 
 `when` expressions are evaluated by the same MiniJinja engine that
-renders templates and resolves `[[auto_match]]` profile rules — one
-unified predicate engine across every `when` site. It uses
+renders templates and resolves `[[auto_match]]` profile rules. The same
+predicate engine runs at every `when` site. It uses
 strict-undefined semantics: referencing a variable that was never
 defined (for example a typo like `patina.oss` instead of `patina.os`)
 is an error that fails the run, not a silently-false predicate. Built-in
@@ -112,7 +112,7 @@ table, per-machine variables, and finally CLI overrides. A higher layer
 overrides a lower one for the same key.
 
 ```toml
-# Root patina.toml — repo-shared defaults plus a per-profile override.
+# Root patina.toml: repo-shared defaults plus a per-profile override.
 [variables]
 editor = "nvim"
 
@@ -130,12 +130,12 @@ machine-specific variable set layered on top of the repo-shared one.
 Run `patina apply` to materialize your declarations. Apply is a
 diff-and-prompt loop by default:
 
-1. **Plan** — Patina discovers your repository, parses every
+1. **Plan.** Patina discovers your repository, parses every
    `patina.toml`, resolves variables and the active profile, and
    renders templates into a concrete list of operations.
-2. **Diff** — Patina compares the planned end-state against what is
+2. **Diff.** Patina compares the planned end-state against what is
    actually on disk and prints the diff.
-3. **Prompt** — in an interactive terminal, Patina asks for
+3. **Prompt.** In an interactive terminal, Patina asks for
    confirmation before writing anything. In a non-interactive shell
    (CI, a piped invocation), it falls through to plan-only and writes
    nothing.
@@ -144,8 +144,8 @@ Re-running `patina apply` against unchanged source is a no-op: the same
 plan, no writes, and byte-identical stdout. Patina never overwrites a
 file it does not own without taking a backup first.
 
-On a terminal the diff is colorized — green additions, red removals,
-bold entry headers — and the confirmation prompt, warnings, and errors
+On a terminal the diff is colorized (green additions, red removals,
+bold entry headers), and the confirmation prompt, warnings, and errors
 are styled too. Color is a display concern only: piped or redirected
 output is always plain, so the byte-identical-stdout guarantee is
 unchanged. The `--color` flag (global, accepted before or after any
@@ -163,16 +163,16 @@ common flags:
 - `--json` emits a structured JSON envelope instead of human-readable
   output. For read-only commands this is a pure formatting switch.
 - `--yes` proceeds without the interactive confirmation prompt. The
-  commands that overwrite or delete data — `remove`, `promote`, and
-  `doctor --fix` — follow the same prompt semantics as `apply`: a bare
+  commands that overwrite or delete data (`remove`, `promote`, and
+  `doctor --fix`) follow the same prompt semantics as `apply`: a bare
   invocation in an interactive terminal prompts before mutating; a
   non-interactive shell refuses to mutate unless you pass `--yes`.
   `init` and `add` do not have a confirm-before-mutate gate. `init`
   writes unconditionally (it refuses only if a manifest already
   exists), and accepts `--yes` for parity without acting on it. `add`
   prompts only for an omitted mode or module when run in an interactive
-  terminal — and refuses *those specific* missing inputs in a
-  non-interactive shell — so once mode and module are supplied it
+  terminal, and refuses *those specific* missing inputs in a
+  non-interactive shell, so once mode and module are supplied it
   writes without prompting.
 
 | Command   | Purpose                                                                                       |
@@ -192,14 +192,19 @@ warnings. With `--fix`, it walks the findings it knows how to remediate,
 prompts for confirmation on each, and applies the fix on accept. In a
 non-interactive shell, `--fix` requires `--yes`.
 
-These commands reuse the exit codes established for `apply`:
+Patina uses one exit-code scheme across every command:
 
-- `0` — success.
-- `1` — a generic error (config parse, IO, an undefined template
+- `0`: success.
+- `1`: a generic error (config parse, IO, an undefined template
   variable, and so on).
-- `4` — exclusive-lock acquisition timed out (another `patina` process
+- `2`: invalid usage, such as an unknown flag or two conflicting mode
+  flags on `add`. `apply` also returns `2` when a `pre_apply`
+  `must_succeed` hook fails.
+- `3`: an `apply` `post_apply` `must_succeed` hook failed, and its file
+  operations were rolled back.
+- `4`: exclusive-lock acquisition timed out (another `patina` process
   held the lock).
-- `5` — the interactive prompt was declined, or — on Windows — the
+- `5`: the interactive prompt was declined, or, on Windows, the
   one-time elevation UAC prompt was refused.
 
 ### Windows symbolic-link elevation
@@ -248,9 +253,9 @@ the OS:
 ### Surviving logout on Linux
 
 A `systemd --user` service stops when you log out and starts again when
-you next log in. If you want the watcher to keep running across logout —
-for example on a server you SSH in and out of — enable lingering for your
-user once:
+you next log in. If you want the watcher to keep running across logout
+(for example, on a server you SSH in and out of), enable lingering for
+your user once:
 
 ```sh
 sudo loginctl enable-linger $USER
@@ -267,7 +272,7 @@ needs to run while you are logged in.
 `patina watch install` targets `systemd --user` on Linux. On a
 distribution without systemd (Void, Devuan with a non-systemd init,
 Alpine), run `patina watch --foreground` under your own supervisor
-(runit, s6, OpenRC) instead — Patina does not ship service templates for
+(runit, s6, OpenRC) instead. Patina does not ship service templates for
 these init systems in v1.0.
 
 ### Drift notifications
@@ -279,7 +284,7 @@ emits a desktop notification titled "Patina: drift detected" naming the
 target, and records the event in a drift cache at
 `<state>/patina/drift.cache`. Notifications are rate-limited to at most
 one per target per 60-second window. Symlink targets are not watched for
-drift — editing a symlinked file is editing the source, which the source
+drift: editing a symlinked file is editing the source, which the source
 watcher already catches.
 
 Drift surfaces two ways, and you do not need the watcher running to see
@@ -287,9 +292,9 @@ it the second way:
 
 - As the desktop notification above, **only while the watcher is
   running**.
-- As `DRIFTED` in `patina status`, **always**. `patina status` decides
+- As `drifted` in `patina status`, **always**. `patina status` decides
   drift by re-hashing the target live, independent of the watcher, so a
-  file you edit and then revert to its recorded bytes reports `CLEAN`
+  file you edit and then revert to its recorded bytes reports `clean`
   even though the watcher logged the intervening edit. The drift cache is
   the watcher's own notification ledger; `patina status` does not read
   it.
@@ -317,8 +322,8 @@ crash-safety guarantee depends on the journal being written atomically
 and surviving a `kill -9`; cloud-sync providers intermediate writes
 through their own queueing and versioning layers, which breaks atomic
 `fsync`, reorders recovery reads, and leaves the advisory lock
-undefined. **Patina does not detect cloud-sync directories in v1.0** —
-keep both the state directory and your dotfiles repository off the
+undefined. **Patina does not detect cloud-sync directories in v1.0.**
+Keep both the state directory and your dotfiles repository off the
 following kinds of mounts:
 
 - iCloud Drive
@@ -335,7 +340,7 @@ another local-disk path; do not point it at any of the providers above.
 
 Patina is built so an interrupted apply converges deterministically on
 the next run. If `patina apply` is killed mid-write, the filesystem
-ends up in either the pre-apply or the post-apply state — never a torn
+ends up in either the pre-apply or the post-apply state, never a torn
 intermediate. The next invocation reads the journal and rolls forward
 or back to reach a consistent state. This guarantee covers process
 termination (a `kill -9` or crash where the page cache survives); a
@@ -386,7 +391,7 @@ error naming the version mismatch, and exit 1 on an invalid path.
   --user` service ends with your session by default. Run `sudo loginctl
   enable-linger $USER` once to keep it running across logout (see "Watch
   service").
-- **`patina status` reports `DRIFTED` but no desktop notification
+- **`patina status` reports `drifted` but no desktop notification
   appeared.** Notifications only fire while the watcher is running, and
   are rate-limited to one per target per 60 seconds; `patina status`
   reports drift from a live re-hash regardless. Resolve with `patina
