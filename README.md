@@ -8,13 +8,13 @@ Your dotfiles, oxidized to perfection.
 written in Rust. It manages your dotfiles across macOS, Linux, and Windows
 from a single centralized git repository: it primarily creates symbolic
 links from that repo to system locations, with optional templated copies,
-profile-based selection, and per-OS variation. First-class support for
-multi-destination links (one source → many targets), an always-on watcher
+profile-based selection, and per-OS variation. It also supports
+multi-destination links (one source to many targets), an always-on watcher
 with per-OS service installation, and crash-safe transactional apply.
 
 **Status:** Pre-release (`0.1.0`), in active development. The v1.0 command
 surface is implemented and tested on macOS, Linux, and Windows, but there
-are no published binaries yet — install from source (below). Interfaces may
+are no published binaries yet. Install from source (below). Interfaces may
 still shift before a tagged release.
 
 ## Install
@@ -46,7 +46,7 @@ patina watch install        # auto-reapply on change via a per-OS background ser
 | Command | What it does |
 | --- | --- |
 | `init` | Scaffold a root `patina.toml` and persist the default-repo pointer. |
-| `add` | Bring an existing dotfile under management — copy it into a module and write a `[[file]]` or `[[directory]]` entry by source kind. |
+| `add` | Bring an existing dotfile under management: copy it into a module and write a `[[file]]` or `[[directory]]` entry by source kind. |
 | `remove` | Unmanage a target (replace it with a plain file holding the last-applied content); `--purge` deletes it outright. |
 | `promote` | Copy a drifted copy-mode target's current bytes back into its repo source, then re-apply. |
 | `apply` | Materialize declarations as symlinks / rendered templates / byte copies. Diff-and-prompt by default; plan-only in a non-TTY. |
@@ -61,13 +61,14 @@ mutating commands accept `--yes` to skip the confirmation prompt.
 
 ## Documentation
 
-- **Users** — [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md): install, declaring
+- [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md) for users: install, declaring
   dotfiles, the apply flow, the watch service, recovery, and troubleshooting.
-- **Operations** — [`docs/OPERATING_ENVIRONMENT.md`](docs/OPERATING_ENVIRONMENT.md):
-  state-directory layout, the cloud-sync caveat, and Linux `enable-linger`.
-- **Architecture** — [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md): crate
+- [`docs/OPERATING_ENVIRONMENT.md`](docs/OPERATING_ENVIRONMENT.md) for
+  operations: state-directory layout, the cloud-sync caveat, and Linux
+  `enable-linger`.
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for architecture: crate
   layout, journal format, apply phases, and recovery.
-- **Agents** — [`AGENTS.md`](AGENTS.md) (also reachable as `CLAUDE.md`).
+- [`AGENTS.md`](AGENTS.md) for agents, also reachable as `CLAUDE.md`.
 
 ## Design
 
@@ -78,7 +79,7 @@ product north star and the contributor workflow.
 
 ## Contributing
 
-Read [`AGENTS.md`](AGENTS.md) first — it explains the conventions, the
+Read [`AGENTS.md`](AGENTS.md) first. It explains the conventions, the
 development loop, and what "done" means. Both human and AI-agent
 contributions follow the same rules.
 
@@ -102,7 +103,7 @@ just check        # = just lint + just test; run before opening a PR
 ```
 
 CI runs the same gates natively across macOS, Linux, and Windows. A green
-local `just check` is necessary but not sufficient — the full per-OS test
+local `just check` is necessary but not sufficient. The full per-OS test
 behaviour matrix, the MSRV build, and coverage run only in CI.
 
 ## License

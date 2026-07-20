@@ -47,12 +47,12 @@ flowchart TD
   prints user-facing output directly.
 - **`patina-cli`** is the binary crate. It parses arguments with
   `clap`, drives the engine, and renders results through the
-  `output::Reporter` abstraction — human-readable by default, JSON under
+  `output::Reporter` abstraction: human-readable by default, JSON under
   `--json`. All process exit codes flow through a single funnel that
   maps engine outcomes onto the formalized codes.
 - **`patina-elevate`** is a standalone Windows-only helper binary. It
-  carries the smallest possible trust surface — no dependency on
-  `patina-core` or `patina-cli` — and exists solely to toggle the
+  carries the smallest possible trust surface (no dependency on
+  `patina-core` or `patina-cli`) and exists solely to toggle the
   Developer Mode registry flag under a single UAC prompt. It is gated
   behind a `windows` Cargo feature, so a non-Windows build produces no
   such artifact.
@@ -85,7 +85,7 @@ flowchart LR
 - The **encoded plan** is the full set of operations, written and
   fsynced upfront in a single durable write.
 - The **progress cursor** records per-operation completion as the apply
-  proceeds. The cursor is written without a per-operation `fsync` — the
+  proceeds. The cursor is written without a per-operation `fsync`: the
   upfront plan fsync plus the filesystem-probing recovery makes per-op
   durability unnecessary.
 - The **terminal sentinel** records whether the cycle committed or
@@ -139,7 +139,7 @@ leaves the filesystem in either the pre-apply or post-apply state,
 never an intermediate one. This holds for process termination, where
 the page cache survives. Backups are copied but not `fsync`ed before an
 overwrite, so power loss or a kernel panic mid-apply can leave an
-overwrite durable while its backup is not — a genuinely intermediate
+overwrite durable while its backup is not, a genuinely intermediate
 state. Full power-loss durability (atomic temp+rename target writes plus
 `fsync` of backups and parent directories) is a post-1.0 hardening item.
 
@@ -163,5 +163,5 @@ symlink, or directory), modulo mode/timestamp bits and files the user
 touched outside Patina. `patina status` reports drift between the
 declared end-state and the live filesystem. The per-machine state
 directory that holds journal, backups, lock, and drift cache uses
-OS-appropriate locations and must not live on a cloud-sync mount — see
+OS-appropriate locations and must not live on a cloud-sync mount. See
 `docs/USER_GUIDE.md` "State directory".
