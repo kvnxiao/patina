@@ -18,6 +18,8 @@ path = "src/main.rs"
 
 [dependencies]
 patina-core = { path = "../patina-core", version = "0.1.0" }
+anstream = { workspace = true }
+anstyle = { workspace = true }
 anyhow = { workspace = true }
 camino = { workspace = true }
 clap = { workspace = true }

@@ -144,6 +144,15 @@ Re-running `patina apply` against unchanged source is a no-op: the same
 plan, no writes, and byte-identical stdout. Patina never overwrites a
 file it does not own without taking a backup first.
 
+On a terminal the diff is colorized — green additions, red removals,
+bold entry headers — and the confirmation prompt, warnings, and errors
+are styled too. Color is a display concern only: piped or redirected
+output is always plain, so the byte-identical-stdout guarantee is
+unchanged. The `--color` flag (global, accepted before or after any
+subcommand) forces the choice: `auto` (the default) colors a terminal
+and strips otherwise, `always` colors even when piped, `never` disables
+color. `NO_COLOR` in the environment is honoured under `auto`.
+
 ## Commands
 
 Beyond `apply`, `status`, `rollback`, and `debug journal`, Patina ships

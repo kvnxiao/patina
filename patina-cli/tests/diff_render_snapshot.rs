@@ -73,7 +73,11 @@ mode = "copy"
 
     // No `--yes`, non-TTY stdin (subprocess): `apply` renders the diff and
     // previews-only (exit 0), so stdout is exactly the rendered diff body.
-    let preview = f.apply(&[]);
+    // `--color never` makes the strip unconditional: the renderer emits ANSI
+    // that the reporter's auto-stream removes, and forcing `never` keeps the
+    // pinned bytes plain regardless of the runner's terminal / CLICOLOR_FORCE
+    // state.
+    let preview = f.apply(&["--color", "never"]);
     assert_eq!(
         code(&preview),
         0,
