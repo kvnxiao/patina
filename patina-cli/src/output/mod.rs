@@ -7,3 +7,4 @@
 
 pub mod diff;
 pub mod reporter;
+pub mod style;

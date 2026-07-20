@@ -13,6 +13,15 @@ homepage = "https://github.com/kvnxiao/patina"
 readme = "README.md"
 
 [workspace.dependencies]
+# Terminal styling for user-facing output (diff +/- lines, prompts, warnings,
+# errors). `anstyle` defines the styles; `anstream` writes through an
+# auto-stream that strips ANSI when the stream is not a terminal (or
+# `--color never` / `NO_COLOR`) and enables Windows VT. Both crates, and their
+# whole transitive stack, already resolve in the tree via clap's `color`
+# feature, so adding them as direct deps introduces no new crates and clears
+# `cargo deny` at no marginal cost.
+anstream = "1.0"
+anstyle = "1.0"
 anyhow = "1.0"
 blake3 = "1.5"
 camino = { version = "1.1", features = ["serde1"] }

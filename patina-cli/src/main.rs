@@ -37,7 +37,7 @@ fn detect_tty() -> Tty {
 #[tokio::main]
 async fn main() -> ! {
     let cli = Cli::parse();
-    let mut reporter = StreamReporter::new();
+    let mut reporter = StreamReporter::new(cli.color.choice());
     let outcome = match cli.command {
         Command::Init(args) => cmd::init::run(&args, &mut reporter).await,
         Command::Add(args) => {
