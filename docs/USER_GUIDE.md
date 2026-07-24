@@ -224,6 +224,50 @@ accepting it toggles Developer Mode on via the bundled
 decline the UAC prompt, Patina exits with code `5` and points you at
 `patina doctor --fix`, which offers the same Developer Mode remediation.
 
+## Windows Defender exclusions
+
+On Windows, Microsoft Defender scans file I/O in real time. A dotfiles
+repository is a pile of small git objects, and `apply` reads and writes
+many links and copies, so that per-access scan is pure overhead for paths
+you already trust. `patina defender` adds Defender **path exclusions** for
+the repository and its deployed targets to remove it. The command is
+Windows-only and does not appear in `--help` on macOS or Linux.
+
+An exclusion is a permanent hole in your antivirus coverage, so this is
+never something `patina apply` does on its own. You run it deliberately,
+you see every path first, and you consent before anything changes:
+
+| Command                   | Purpose                                                                             |
+| ------------------------- | ----------------------------------------------------------------------------------- |
+| `patina defender status`  | Show the current exclusions against the desired set. Read-only and unprivileged.    |
+| `patina defender apply`   | Add every desired exclusion that is missing and remove the patina-owned ones the current plan no longer manages. |
+| `patina defender clear`   | Remove every patina-owned exclusion.                                                |
+
+The desired set is exactly the repository root plus **one** exclusion per
+managed target: a folder exclusion for a directory entry
+(`symlink` / `symlink-tree` / `copy`) and a file exclusion for a file
+entry (`symlink` / `copy` / template). A `symlink-tree` of forty files
+contributes the one declared target directory, never forty entries.
+Patina emits exact paths only — no wildcards, no process or extension
+exclusions — and refuses to exclude a UNC path, a drive root, or a system
+directory (`%SystemRoot%`, `%ProgramFiles%`, and friends).
+
+`apply` and `clear` preview the additions and removals, then prompt before
+acting; a non-interactive shell requires `--yes`. Accepting raises one UAC
+prompt (the main `patina.exe` never runs elevated — only a small bundled
+helper does). Declining the prompt exits `5`. If the write is silently
+rejected — typically Tamper Protection or a managed Defender (Intune /
+GPO) — Patina detects it with a mandatory re-read and exits `1` rather than
+reporting a success that did not happen.
+
+Patina records only the exclusions it added in a per-machine ledger, so
+`apply` reaps a stale patina-owned exclusion while a **user-added
+exclusion is never touched**, and `clear` removes only what Patina owns.
+
+If you are on Windows 11, a [Dev Drive](https://learn.microsoft.com/windows/dev-drive/)
+(ReFS) in Defender *performance mode* scans asynchronously instead of not
+at all, and is the lower-risk choice where it applies.
+
 ## Watch service
 
 `patina watch` runs a per-user background watcher that re-applies your

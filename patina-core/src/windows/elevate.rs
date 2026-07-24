@@ -95,7 +95,10 @@ pub fn launch_elevate_helper() -> Result<ElevationOutcome, WindowsError> {
 }
 
 /// Resolve `patina-elevate.exe` next to the running `patina.exe`.
-fn helper_path() -> Result<String, WindowsError> {
+///
+/// Shared with the Defender launch path ([`super::defender`]), which resolves
+/// the same sibling helper for its own `runas` invocation.
+pub(crate) fn helper_path() -> Result<String, WindowsError> {
     let current = env::current_exe().map_err(|source| WindowsError::WinApi {
         call: "GetModuleFileName",
         source,

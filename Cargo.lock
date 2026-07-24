@@ -1088,6 +1088,7 @@ dependencies = [
  "notify-rust",
  "postcard",
  "serde",
+ "serde_json",
  "tempfile",
  "thiserror",
  "tokio",
