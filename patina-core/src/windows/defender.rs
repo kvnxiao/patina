@@ -1144,4 +1144,81 @@ mod tests {
             "A C:\\Users\\kevin\\.gitconfig\nR C:\\Users\\kevin\\.oldrc\n"
         );
     }
+
+    #[test]
+    fn exclusion_kind_label_is_the_lowercase_kind_name() {
+        assert_eq!(ExclusionKind::File.label(), "file");
+        assert_eq!(ExclusionKind::Folder.label(), "folder");
+    }
+
+    #[test]
+    fn exclusions_collapse_in_a_hash_set_on_the_normalized_key() {
+        // Hash/Eq key on the normalized path, so entries differing only in case
+        // and a trailing separator are one member of a HashSet — the same
+        // identity the BTreeSet diff relies on, exercised through Hash.
+        use std::collections::HashSet;
+        let mut set = HashSet::new();
+        set.insert(Exclusion::new(REPO, ExclusionKind::Folder));
+        set.insert(Exclusion::new(
+            REPO.to_ascii_lowercase() + "\\",
+            ExclusionKind::Folder,
+        ));
+        assert_eq!(set.len(), 1);
+    }
+
+    #[test]
+    fn derive_skips_an_invalid_repository_root_but_keeps_valid_targets() {
+        // A repo root that fails validation (here UNC) is dropped from the
+        // desired set with a warning rather than aborting the derivation.
+        let mut resolved = plan(vec![op(FileMode::Symlink, &[r"C:\Users\kevin\.gitconfig"])]);
+        resolved.repo_root = Utf8PathBuf::from(r"\\server\share\dotfiles");
+        let desired = derive_exclusions(&resolved);
+        assert!(
+            !desired.iter().any(|e| e.path == resolved.repo_root),
+            "the UNC repo root must be skipped"
+        );
+        assert!(
+            desired.contains(&Exclusion::new(
+                r"C:\Users\kevin\.gitconfig",
+                ExclusionKind::File
+            )),
+            "a valid target must still be excluded"
+        );
+    }
+
+    #[test]
+    fn is_drive_root_guards_input_without_a_drive_and_colon() {
+        // The early-return guard: a string too short to carry a drive letter and
+        // colon is not a drive root. `validate_exclusion_path` only ever reaches
+        // `is_drive_root` with a drive-absolute path, so this guard is exercised
+        // directly.
+        assert!(is_drive_root("C:"));
+        assert!(is_drive_root(r"C:\"));
+        assert!(!is_drive_root("C"));
+        assert!(!is_drive_root(r"C:\Users"));
+    }
+
+    #[test]
+    fn is_within_is_false_for_an_empty_directory() {
+        // An empty directory key can never contain a path; the guard prevents a
+        // vacuous prefix match against "".
+        assert!(!is_within(
+            Utf8Path::new(r"C:\Users\kevin"),
+            Utf8Path::new("")
+        ));
+        assert!(is_within(
+            Utf8Path::new(r"C:\Users\kevin\x"),
+            Utf8Path::new(r"C:\Users\kevin")
+        ));
+    }
+
+    #[test]
+    fn state_dir_paths_are_distinct_files_under_the_state_dir() {
+        let state_dir = Utf8Path::new(r"C:\Users\kevin\AppData\Local\patina");
+        let ledger = defender_ledger_path(state_dir);
+        let request = defender_request_path(state_dir);
+        assert_eq!(ledger.parent(), Some(state_dir));
+        assert_eq!(request.parent(), Some(state_dir));
+        assert_ne!(ledger, request, "ledger and request must be distinct files");
+    }
 }

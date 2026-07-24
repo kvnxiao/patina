@@ -269,4 +269,25 @@ mod tests {
             .expect_err("apply-defender-exclusions is unsupported off Windows");
         assert!(matches!(err, defender::DefenderError::NotWindows));
     }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn run_dispatches_apply_defender_exclusions_to_a_failure_exit() {
+        // The `run` dispatch arm for the Defender action: off Windows the action
+        // resolves to NotWindows, which `run` maps to a failure exit — distinct
+        // from the success code the Ok arm produces.
+        let code = run(&Command::ApplyDefenderExclusions {
+            request: PathBuf::from("/tmp/patina-defender-request.txt"),
+        });
+        assert_eq!(format!("{code:?}"), format!("{:?}", ExitCode::FAILURE));
+    }
+
+    #[test]
+    fn report_result_maps_ok_to_a_success_exit_code() {
+        // The success arm of the exit-code mapping: an action returning Ok
+        // resolves to a success exit, distinct from the failure exit an error
+        // takes.
+        let code = report_result::<std::io::Error>("test-action", Ok(()));
+        assert_eq!(format!("{code:?}"), format!("{:?}", ExitCode::SUCCESS));
+    }
 }

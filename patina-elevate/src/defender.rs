@@ -427,4 +427,53 @@ mod tests {
         validate_exclusion_path_with("C:\\WindowsApps\\x", &system_dirs)
             .expect("a shared prefix that is not a component boundary must not match");
     }
+
+    #[test]
+    fn parse_skips_blank_lines_between_entries() {
+        let (adds, removes) = parse_request("A C:\\a\n\nR C:\\b\n").expect("parse");
+        assert_eq!(adds, vec!["C:\\a".to_owned()]);
+        assert_eq!(removes, vec!["C:\\b".to_owned()]);
+    }
+
+    #[test]
+    fn cross_platform_errors_render_and_carry_no_source() {
+        // The three host-independent variants must display a message naming the
+        // offending input (so the CLI can surface it) and expose no `source` —
+        // they wrap nothing.
+        let malformed = DefenderError::MalformedRequest {
+            line: "bogus".to_owned(),
+        };
+        assert!(malformed.to_string().contains("bogus"));
+
+        let invalid = DefenderError::InvalidPath {
+            path: "C:\\x".to_owned(),
+            reason: "wildcards are not allowed; only exact paths",
+        };
+        let rendered = invalid.to_string();
+        assert!(rendered.contains("C:\\x") && rendered.contains("wildcards"));
+
+        for err in [malformed, invalid, DefenderError::NotWindows] {
+            assert!(
+                std::error::Error::source(&err).is_none(),
+                "cross-platform variants wrap no source"
+            );
+        }
+    }
+
+    #[test]
+    fn is_drive_root_guards_input_without_a_drive_and_colon() {
+        // The early-return guard: `is_drive_root` is only reached with a
+        // drive-absolute path through the validator, so exercise the guard
+        // directly with input that lacks the drive-letter-and-colon prefix.
+        assert!(is_drive_root("C:"));
+        assert!(is_drive_root("C:\\"));
+        assert!(!is_drive_root("C"));
+        assert!(!is_drive_root("C:\\Users"));
+    }
+
+    #[test]
+    fn is_within_is_false_for_an_empty_directory() {
+        assert!(!is_within("C:\\Users\\kevin", ""));
+        assert!(is_within("C:\\Users\\kevin\\x", "C:\\Users\\kevin"));
+    }
 }
