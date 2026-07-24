@@ -165,6 +165,27 @@ pub use windows::GateDecision;
 pub use windows::HostDevModeProbe;
 pub use windows::WindowsError;
 pub use windows::decide_symlink_gate;
+pub use windows::defender::DefenderDiff;
+pub use windows::defender::DefenderError;
+pub use windows::defender::DefenderLedger;
+#[cfg(windows)]
+pub use windows::defender::DefenderOutcome;
+pub use windows::defender::DefenderProbe;
+pub use windows::defender::Exclusion;
+pub use windows::defender::ExclusionKind;
+pub use windows::defender::ExclusionPathError;
+#[cfg(windows)]
+pub use windows::defender::HostDefenderProbe;
+pub use windows::defender::defender_ledger_path;
+pub use windows::defender::defender_request_path;
+pub use windows::defender::derive_exclusions;
+pub use windows::defender::exclusion_kind_for;
+#[cfg(windows)]
+pub use windows::defender::launch_defender_helper;
+pub use windows::defender::parse_exclusion_paths;
+pub use windows::defender::plan_defender;
+pub use windows::defender::serialize_request;
+pub use windows::defender::validate_exclusion_path;
 pub use windows::dev_mode_status;
 #[cfg(windows)]
 pub use windows::elevate::ElevationOutcome;

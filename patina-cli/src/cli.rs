@@ -126,6 +126,15 @@ pub enum Command {
     /// subcommands manage the per-OS background service.
     Watch(WatchArgs),
 
+    /// Manage Windows Defender path exclusions for the repository and its
+    /// deployed targets. Windows-only: absent from `--help` on macOS/Linux.
+    /// `apply` reconciles (adds missing, reaps patina-owned stale), `status`
+    /// reads current vs desired unprivileged, `clear` removes all
+    /// patina-owned. Weakening antivirus is deliberate: previewed, consented,
+    /// and gated behind one UAC prompt.
+    #[cfg(windows)]
+    Defender(DefenderArgs),
+
     /// Debugging utilities. Hidden from the top-level help summary but
     /// documented; `journal` decodes a binary plan file post-mortem.
     #[command(hide = true, subcommand, disable_help_subcommand = true)]
@@ -394,6 +403,58 @@ pub struct ApplyArgs {
     /// CLI variable override, repeatable: `-v key=value`.
     #[arg(short = 'v', value_name = "key=value")]
     pub var: Vec<String>,
+}
+
+/// Flags for `patina defender` (Windows-only).
+#[cfg(windows)]
+#[derive(Debug, Args)]
+#[command(disable_help_subcommand = true)]
+pub struct DefenderArgs {
+    /// The Defender exclusion subcommand to run.
+    #[command(subcommand)]
+    pub command: DefenderCommand,
+}
+
+/// Subcommands under `patina defender` (Windows-only).
+#[cfg(windows)]
+#[derive(Debug, Subcommand)]
+pub enum DefenderCommand {
+    /// Reconcile Defender exclusions: add every desired exclusion that is
+    /// missing and reap the patina-owned exclusions the current plan no
+    /// longer manages. Previewed and consented; launches the elevated helper
+    /// behind one UAC prompt.
+    Apply {
+        /// Proceed without prompting. Required to reconcile in a
+        /// non-interactive shell.
+        #[arg(long)]
+        yes: bool,
+
+        /// Emit a JSON envelope instead of human output.
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Report the current Defender exclusions against the desired set. A
+    /// read-only, unprivileged `Get-MpPreference`; no elevation.
+    Status {
+        /// Emit a JSON envelope instead of human output.
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Remove every patina-owned Defender exclusion, leaving user-added
+    /// exclusions untouched. Previewed and consented; launches the elevated
+    /// helper behind one UAC prompt.
+    Clear {
+        /// Proceed without prompting. Required to clear in a non-interactive
+        /// shell.
+        #[arg(long)]
+        yes: bool,
+
+        /// Emit a JSON envelope instead of human output.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 /// External pager tools `--pager` accepts.

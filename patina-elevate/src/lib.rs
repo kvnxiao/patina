@@ -6,12 +6,14 @@
 //! then performs the single requested elevated action and exits with a
 //! documented code.
 //!
-//! Its sole responsibility in v1.0 is the `enable-developer-mode`
-//! subcommand, which sets the Developer Mode registry switch
-//! (`AllowDevelopmentWithoutDevLicense` under `AppModelUnlock` in `HKLM`)
-//! to `1`. Keeping it a separate, dependency-light binary (no
-//! `patina-core` / `patina-cli`) keeps the surface UAC must trust
-//! as small as possible.
+//! It exposes two elevated actions. `enable-developer-mode` sets the Developer
+//! Mode registry switch (`AllowDevelopmentWithoutDevLicense` under
+//! `AppModelUnlock` in `HKLM`) to `1`. `apply-defender-exclusions` reads a
+//! request file naming Windows Defender path exclusions to add and remove,
+//! independently re-validates every path, and applies them through the
+//! `Defender` PowerShell module with a mandatory re-read verification. Keeping
+//! this a separate, dependency-light binary (no `patina-core` / `patina-cli`)
+//! keeps the surface UAC must trust as small as possible.
 //!
 //! ## Why a library plus a thin binary
 //!
@@ -27,15 +29,17 @@
 //! | Code | Meaning                                                        |
 //! |------|----------------------------------------------------------------|
 //! | 0    | The requested action succeeded.                                |
-//! | 1    | The action ran but failed (e.g. non-elevated → access denied). |
+//! | 1    | The action ran but failed (e.g. non-elevated → access denied, or a Defender write blocked by Tamper Protection). |
 //! | 2    | Argument parsing failed (unknown subcommand / usage). clap.    |
 
 use clap::CommandFactory;
 use clap::Parser;
 use clap::Subcommand;
 use clap::error::ErrorKind;
+use std::path::PathBuf;
 use std::process::ExitCode;
 
+pub mod defender;
 pub mod devmode;
 
 /// `patina-elevate` — perform one elevated action and exit.
@@ -113,12 +117,22 @@ fn supported_subcommands() -> String {
         .join(", ")
 }
 
-/// The set of elevated actions the helper supports. v1.0 ships exactly one.
+/// The set of elevated actions the helper supports.
 #[derive(Debug, Subcommand, PartialEq, Eq)]
 pub enum Command {
     /// Set the Developer Mode registry flag
     /// (`AllowDevelopmentWithoutDevLicense`) to `1`.
     EnableDeveloperMode,
+
+    /// Apply the Windows Defender path exclusions listed in a request file,
+    /// re-validating each path and verifying the result with a re-read.
+    ApplyDefenderExclusions {
+        /// Absolute path to the request file the unprivileged CLI wrote. The
+        /// helper reads exactly this file and never recomputes the state
+        /// directory (a `runas` to a different admin has a different
+        /// `%LOCALAPPDATA%`).
+        request: PathBuf,
+    },
 }
 
 /// Dispatch a parsed command to its action and resolve the exit code.
@@ -130,26 +144,38 @@ pub enum Command {
 #[must_use = "the returned code is the process's terminal exit status"]
 pub fn run(command: &Command) -> ExitCode {
     match command {
-        Command::EnableDeveloperMode => match devmode::enable_developer_mode() {
-            Ok(()) => ExitCode::SUCCESS,
-            Err(error) => {
-                // User-facing output normally routes through `output::Reporter`,
-                // but this helper deliberately has no `patina-core` dependency
-                // and therefore no Reporter, and pulling in `tracing`
-                // for one error line would widen the surface UAC must trust. A
-                // raw stderr write is the right primitive here, so the workspace
-                // `disallowed-macros` gate is suppressed at this one documented
-                // site (clippy.toml sanctions exactly this carve-out).
-                #[expect(
-                    clippy::disallowed_macros,
-                    reason = "helper has no Reporter; typed error to stderr is the documented exit-1 path"
-                )]
-                {
-                    eprintln!("patina-elevate: enable-developer-mode failed: {error}");
-                }
-                ExitCode::FAILURE
+        Command::EnableDeveloperMode => {
+            report_result("enable-developer-mode", devmode::enable_developer_mode())
+        }
+        Command::ApplyDefenderExclusions { request } => report_result(
+            "apply-defender-exclusions",
+            defender::apply_defender_exclusions(request),
+        ),
+    }
+}
+
+/// Map an action's result to an [`ExitCode`], writing the typed failure to
+/// stderr on the exit-1 path.
+///
+/// User-facing output normally routes through `output::Reporter`, but this
+/// helper deliberately has no `patina-core` dependency and therefore no
+/// Reporter, and pulling in `tracing` for one error line would widen the
+/// surface UAC must trust. A raw stderr write is the right primitive here, so
+/// the workspace `disallowed-macros` gate is suppressed at this one documented
+/// site (clippy.toml sanctions exactly this carve-out).
+fn report_result<E: std::error::Error>(action: &str, result: Result<(), E>) -> ExitCode {
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            #[expect(
+                clippy::disallowed_macros,
+                reason = "helper has no Reporter; typed error to stderr is the documented exit-1 path"
+            )]
+            {
+                eprintln!("patina-elevate: {action} failed: {error}");
             }
-        },
+            ExitCode::FAILURE
+        }
     }
 }
 
@@ -160,10 +186,30 @@ mod tests {
 
     #[test]
     fn parses_the_enable_developer_mode_subcommand() {
-        // The one supported subcommand parses to its variant on any host.
+        // A supported subcommand parses to its variant on any host.
         let cli = Cli::try_parse_from(["patina-elevate", "enable-developer-mode"])
             .expect("enable-developer-mode is a valid invocation");
         assert_eq!(cli.command, Command::EnableDeveloperMode);
+    }
+
+    #[test]
+    fn parses_the_apply_defender_exclusions_subcommand() {
+        // The request path is a single positional argument, quoted at the
+        // launch site so a path with spaces survives argv splitting.
+        let cli = Cli::try_parse_from([
+            "patina-elevate",
+            "apply-defender-exclusions",
+            r"C:\Users\kevin\AppData\Local\patina\defender-request.txt",
+        ])
+        .expect("apply-defender-exclusions is a valid invocation");
+        assert_eq!(
+            cli.command,
+            Command::ApplyDefenderExclusions {
+                request: std::path::PathBuf::from(
+                    r"C:\Users\kevin\AppData\Local\patina\defender-request.txt"
+                )
+            }
+        );
     }
 
     #[test]
@@ -212,5 +258,15 @@ mod tests {
         let err = devmode::enable_developer_mode()
             .expect_err("enable-developer-mode is unsupported off Windows");
         assert!(matches!(err, devmode::DevModeError::NotWindows));
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn apply_defender_on_non_windows_reports_not_windows() {
+        // The Defender apply likewise resolves to the NotWindows stub off
+        // Windows, so its dispatch arm stays exercisable on Linux/macOS CI.
+        let err = defender::apply_defender_exclusions(std::path::Path::new("/tmp/request.txt"))
+            .expect_err("apply-defender-exclusions is unsupported off Windows");
+        assert!(matches!(err, defender::DefenderError::NotWindows));
     }
 }

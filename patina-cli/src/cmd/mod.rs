@@ -6,6 +6,8 @@
 pub mod add;
 pub mod apply;
 pub mod debug;
+#[cfg(windows)]
+pub mod defender;
 pub mod doctor;
 pub mod init;
 pub mod managed;

@@ -46,6 +46,8 @@ pub(crate) mod registry;
 #[cfg(windows)]
 pub mod elevate;
 
+pub mod defender;
+
 /// The fully-qualified registry path of the Developer Mode switch, named in
 /// user-facing errors when a post-elevation re-read still shows the flag
 /// off. Spelled here as a single `&'static str` so the engine and
