@@ -144,6 +144,7 @@ fn user_guide_has_required_h2_headings() {
         "Declaring dotfiles",
         "Apply flow",
         "State directory",
+        "Windows Defender exclusions",
         "Recovery",
         "Troubleshooting",
     ] {

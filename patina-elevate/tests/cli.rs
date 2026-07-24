@@ -124,6 +124,50 @@ fn enable_developer_mode_elevated_sets_flag_and_exits_0() {
     assert_eq!(flag, Some(1), "the Developer Mode flag must read back as 1");
 }
 
+/// The elevated `apply-defender-exclusions` action adds a path exclusion, its
+/// mandatory re-read confirms the write took (so the process exits `0`), and a
+/// follow-up removal clears it again. Gated `#[cfg(windows)]` `#[ignore]`
+/// because it needs an elevated Windows host with an active, unmanaged Defender
+/// — CI has none. On a Tamper-Protected or policy-managed host the add instead
+/// exits `1`, since the re-read shows the exclusion never appeared. Run by hand
+/// on an elevated Windows shell with `--ignored`.
+#[cfg(windows)]
+#[test]
+#[ignore = "needs an elevated Windows host with an active, unmanaged Defender"]
+fn apply_defender_exclusions_adds_then_removes_a_path() {
+    let bin = elevate_bin().expect("the bin is built on Windows under --features windows");
+    let dir = tempfile::tempdir().expect("create a temp dir for the exclusion and request");
+    let excluded = dir.path().join("patina-defender-it");
+    std::fs::create_dir_all(&excluded).expect("create the directory to exclude");
+    let excluded = excluded.to_string_lossy().into_owned();
+
+    let run = |body: &str| {
+        let request = dir.path().join("request.txt");
+        std::fs::write(&request, body).expect("write the request file");
+        Command::new(bin)
+            .arg("apply-defender-exclusions")
+            .arg(&request)
+            .output()
+            .expect("spawn patina-elevate")
+    };
+
+    let add = run(&format!("A {excluded}\n"));
+    assert_eq!(
+        add.status.code(),
+        Some(0),
+        "adding an exclusion must exit 0 after the re-read verification; stderr: {}",
+        String::from_utf8_lossy(&add.stderr)
+    );
+
+    let remove = run(&format!("R {excluded}\n"));
+    assert_eq!(
+        remove.status.code(),
+        Some(0),
+        "removing the exclusion must exit 0 after the re-read verification; stderr: {}",
+        String::from_utf8_lossy(&remove.stderr)
+    );
+}
+
 /// Read the Developer Mode DWORD back out for the assertion above.
 /// Duplicated read (the helper must not depend on `patina-core`).
 #[cfg(windows)]
