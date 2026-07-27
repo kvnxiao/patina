@@ -72,7 +72,12 @@ whoami = "2.1"
 # base handle types. `taskschd` is deliberately NOT enabled — that surface
 # belongs to the watcher service install, and enabling an unused
 # feature now violates the enable-only-needed-features rule.
-winsafe = { version = "0.0.27", features = ["advapi", "kernel"] }
+# 0.0.28 is the floor. Earlier releases only tolerate ERROR_INSUFFICIENT_BUFFER
+# from the sizing call in `GetTokenInformation`, but the fixed-size
+# `TokenElevation` class answers with ERROR_BAD_LENGTH instead, so the elevation
+# read behind `is_elevated` failed on every call. Because that error is treated
+# as "not elevated", every elevated process was reported as unelevated.
+winsafe = { version = "0.0.28", features = ["advapi", "kernel"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

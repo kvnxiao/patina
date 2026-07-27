@@ -91,6 +91,18 @@ pub enum WindowsError {
         #[source]
         source: std::io::Error,
     },
+
+    /// A previous run's Defender result file could not be removed before
+    /// launching the elevated helper. Leaving it in place would let the stale
+    /// verdict be read as this run's, so the launch is refused instead.
+    #[error("failed to clear the stale Defender result file `{path}`: {source}")]
+    StaleReceipt {
+        /// The result file that could not be removed.
+        path: camino::Utf8PathBuf,
+        /// The underlying I/O error.
+        #[source]
+        source: std::io::Error,
+    },
 }
 
 /// Whether the running process can create symbolic links without a
@@ -291,6 +303,43 @@ pub fn decide_symlink_gate(plan: &ResolvedPlan, probe: &impl DevModeProbe) -> Ga
     }
 }
 
+/// Poll `observe` until it yields a value, giving up once `deadline` elapses.
+///
+/// Returns the first `Some` produced, or `None` if the deadline passes without
+/// one. `observe` always runs at least once, so even a zero deadline gets a
+/// single attempt.
+///
+/// # Why the helper launches need this
+///
+/// `ShellExecuteEx` is the only way to raise the UAC consent dialog without
+/// `unsafe`, and it returns as soon as the shell has *created* the elevated
+/// helper process, not when that process exits. Waiting on the process would
+/// need its handle, which the safe wrapper discards. So a launcher can only
+/// learn what the helper did by observing its effect, and a single observation
+/// taken immediately after the launch races the helper's own startup: image
+/// load, runtime init, and argument parsing all happen after
+/// `ShellExecuteEx` has already returned. Both launch sites poll instead.
+///
+/// Taking the observation as a closure keeps the interval and deadline
+/// arithmetic separable from whatever is being observed.
+#[cfg(windows)]
+pub(crate) fn poll_until<T>(
+    deadline: std::time::Duration,
+    interval: std::time::Duration,
+    mut observe: impl FnMut() -> Option<T>,
+) -> Option<T> {
+    let start = std::time::Instant::now();
+    loop {
+        if let Some(observed) = observe() {
+            return Some(observed);
+        }
+        if start.elapsed() >= deadline {
+            return None;
+        }
+        std::thread::sleep(interval);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -439,5 +488,59 @@ mod tests {
         };
         let decision = decide_symlink_gate(&plan(vec![op(FileMode::Symlink)]), &probe);
         assert_eq!(decision, GateDecision::Proceed);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn poll_returns_the_first_observed_value_without_sleeping() {
+        // An effect already visible on entry must be returned by the first
+        // observation, so a helper that finished before its launcher looked
+        // costs no wait at all.
+        let mut calls = 0_u32;
+        let observed = poll_until(
+            std::time::Duration::from_secs(30),
+            std::time::Duration::from_secs(30),
+            || {
+                calls += 1;
+                Some("done")
+            },
+        );
+        assert_eq!(observed, Some("done"));
+        assert_eq!(calls, 1, "an immediately-ready observation must not sleep");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn poll_keeps_observing_until_the_effect_appears() {
+        // The race this primitive exists for: the effect becomes visible only
+        // on a later observation.
+        let mut calls = 0_u32;
+        let observed = poll_until(
+            std::time::Duration::from_secs(30),
+            std::time::Duration::from_millis(1),
+            || {
+                calls += 1;
+                (calls >= 3).then_some(calls)
+            },
+        );
+        assert_eq!(observed, Some(3));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn poll_gives_up_after_the_deadline_but_observes_once() {
+        // A zero deadline still gets one attempt: the launcher must never
+        // conclude "no effect" without having looked.
+        let mut calls = 0_u32;
+        let observed = poll_until(
+            std::time::Duration::ZERO,
+            std::time::Duration::from_millis(1),
+            || {
+                calls += 1;
+                None::<()>
+            },
+        );
+        assert_eq!(observed, None);
+        assert_eq!(calls, 1);
     }
 }

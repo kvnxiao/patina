@@ -13,7 +13,14 @@
 //! |----------------------------------------------|------|
 //! | Applied, previewed, cleared, or up to date   | 0    |
 //! | Defender rejected the write (Tamper/managed) | 1    |
+//! | The helper could not apply the request       | 1    |
+//! | The helper never reported an outcome         | 1    |
 //! | User declined the prompt or UAC consent      | 5    |
+//!
+//! The three exit-1 outcomes share a code but never a message. Only a genuine
+//! rejection is reported as one; an apply whose outcome nobody observed says so
+//! instead of guessing, which is the whole point of routing verification
+//! through the elevated helper.
 
 use crate::cli::DefenderArgs;
 use crate::cli::DefenderCommand;
@@ -21,6 +28,8 @@ use crate::cmd::apply::PromptReader;
 use crate::cmd::apply::Tty;
 use crate::exit_code::ExitCode;
 use crate::output::reporter::Reporter;
+use crate::output::style::Styles;
+use crate::output::style::paint;
 use anyhow::Context;
 use anyhow::Result;
 use anyhow::anyhow;
@@ -31,11 +40,15 @@ use patina_core::DefenderLedger;
 use patina_core::DefenderOutcome;
 use patina_core::DefenderProbe;
 use patina_core::Exclusion;
+use patina_core::ExclusionClassifier;
+use patina_core::ExclusionKind;
+use patina_core::ExclusionState;
 use patina_core::HostDefenderProbe;
 use patina_core::ResolvedPlan;
 use patina_core::current_timestamp;
 use patina_core::defender_ledger_path;
 use patina_core::defender_request_path;
+use patina_core::defender_result_path;
 use patina_core::derive_exclusions;
 use patina_core::launch_defender_helper;
 use patina_core::plan_apply;
@@ -43,6 +56,45 @@ use patina_core::plan_defender;
 use patina_core::resolve_state_dir;
 use patina_core::serialize_request;
 use std::collections::BTreeSet;
+
+/// Told to the user whenever a rendered state was inferred from the ledger
+/// rather than read from Defender, so no reader mistakes the one for the other.
+///
+/// It names the remedy, not just the constraint. Nothing on this path ever
+/// raises a UAC prompt (`status` is read-only by contract), so a reader told
+/// only that administrator is required is left waiting for a prompt that will
+/// never come. Elevating is the user's move, and the note has to say so.
+const LEDGER_SOURCE_NOTE: &str =
+    "  (showing what Patina recorded; re-run elevated to compare against Defender's list)";
+
+/// The human label for an exclusion state.
+///
+/// The three readable states each get their own wording, and the two
+/// ledger-only states are worded to sound like the inference they are:
+/// `recorded` never reads as `present`.
+fn state_label(state: ExclusionState) -> &'static str {
+    match state {
+        ExclusionState::Owned => "present",
+        ExclusionState::Unmanaged => "present, not recorded by patina",
+        ExclusionState::Absent => "missing",
+        ExclusionState::Recorded => "recorded",
+        ExclusionState::Unrecorded => "not recorded",
+    }
+}
+
+/// The stable machine token for an exclusion state, for `--json`.
+///
+/// Separate from [`state_label`] so the human wording can be reworded without
+/// breaking a consumer.
+fn state_token(state: ExclusionState) -> &'static str {
+    match state {
+        ExclusionState::Owned => "owned",
+        ExclusionState::Unmanaged => "unmanaged",
+        ExclusionState::Absent => "absent",
+        ExclusionState::Recorded => "recorded",
+        ExclusionState::Unrecorded => "unrecorded",
+    }
+}
 
 /// Which reconcile a run performs — they differ only in the desired set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -116,31 +168,45 @@ fn run_reconcile(
         }
     };
 
-    let ledger_path = defender_ledger_path(&state_dir);
-    let ledger = load_ledger(&ledger_path)?;
+    let ledger = load_ledger(&defender_ledger_path(&state_dir))?;
     let current = HostDefenderProbe::default()
         .read_exclusions()
         .context("failed to read current Defender exclusions")?;
-    let diff = plan_defender(&desired, &current, &ledger.to_set());
+    let recorded = ledger.to_set();
+    let diff = plan_defender(&desired, &current, &recorded);
+    let classifier = ExclusionClassifier::new(&current, &recorded);
+    let reconcile = Reconcile {
+        state_dir: &state_dir,
+        repo_root: repo_root.as_deref(),
+        desired: &desired,
+        diff: &diff,
+        classifier: &classifier,
+    };
 
     if json {
-        return run_reconcile_json(
-            &state_dir,
-            repo_root.as_deref(),
-            &desired,
-            &diff,
-            yes,
-            &ledger_path,
-            reporter,
-        );
+        return run_reconcile_json(&reconcile, yes, reporter);
     }
 
-    render_preview(repo_root.as_deref(), &desired, &diff, reporter);
+    // The renderer always emits the colored palette; the reporter's auto-stream
+    // strips it when the destination is not a terminal, so piped output stays
+    // plain and the deterministic-stdout contract holds.
+    render_preview(&reconcile, &Styles::colored(), reporter);
 
     if diff.is_empty() {
-        // Nothing to enact; converge the ledger to the desired set and report.
-        save_ledger(&ledger_path, &DefenderLedger::from_set(&desired))?;
-        reporter.line("Defender exclusions already up to date. No changes.");
+        // Nothing to enact against Defender, but converging the ledger may still
+        // claim exclusions it did not previously own, so say so rather than
+        // reporting "no changes" over a write that just happened.
+        let adopted = reconcile.adoptable();
+        reconcile.record_ledger()?;
+        reporter.line(&if adopted == 0 {
+            "Defender exclusions already up to date. No changes.".to_owned()
+        } else {
+            let paths = if adopted == 1 { "path" } else { "paths" };
+            format!(
+                "Defender exclusions already up to date. Recorded {adopted} already-excluded \
+                 {paths} as patina-owned."
+            )
+        });
         return Ok(ExitCode::Success.code());
     }
 
@@ -150,23 +216,67 @@ fn run_reconcile(
         Confirmation::Declined => return Ok(ExitCode::UserDeclined.code()),
     }
 
-    enact(&state_dir, &desired, &diff, &ledger_path, reporter)
+    enact(&reconcile, reporter)
+}
+
+/// Everything a reconcile's preview and enact need, gathered so the human and
+/// JSON paths take one context instead of two long parallel argument lists.
+struct Reconcile<'a> {
+    /// The resolved state directory holding the request, result, and ledger
+    /// files.
+    state_dir: &'a Utf8Path,
+    /// The repository the desired set was derived from; `None` for `clear`,
+    /// which reconciles to the empty set without planning one.
+    repo_root: Option<&'a Utf8Path>,
+    /// The exclusion set this run reconciles to.
+    desired: &'a BTreeSet<Exclusion>,
+    /// The add/remove work the run would perform.
+    diff: &'a DefenderDiff,
+    /// Classifies each desired exclusion against the same live-list reading and
+    /// ledger the diff was computed from, and so also says whether that reading
+    /// saw Defender's list at all.
+    classifier: &'a ExclusionClassifier,
+}
+
+impl Reconcile<'_> {
+    /// Converge the ledger to this run's desired set, recording what Patina now
+    /// owns.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the ledger cannot be serialized or written.
+    fn record_ledger(&self) -> Result<()> {
+        save_ledger(
+            &defender_ledger_path(self.state_dir),
+            &DefenderLedger::from_set(self.desired),
+        )
+    }
+
+    /// How many desired exclusions Defender already has that the ledger does
+    /// not, and that [`Reconcile::record_ledger`] will therefore claim.
+    ///
+    /// Always zero when the live list was withheld, since an unmanaged entry
+    /// cannot be told from an owned one without it.
+    fn adoptable(&self) -> usize {
+        self.desired
+            .iter()
+            .filter(|exclusion| self.classifier.classify(exclusion) == ExclusionState::Unmanaged)
+            .count()
+    }
 }
 
 /// Write the request file, launch the elevated helper, and map the verified
 /// outcome to the ledger update and exit code.
-fn enact(
-    state_dir: &Utf8Path,
-    desired: &BTreeSet<Exclusion>,
-    diff: &DefenderDiff,
-    ledger_path: &Utf8Path,
-    reporter: &mut impl Reporter,
-) -> Result<i32> {
-    match write_and_launch(state_dir, diff)? {
+fn enact(reconcile: &Reconcile<'_>, reporter: &mut impl Reporter) -> Result<i32> {
+    // The helper runs with its window hidden and its PowerShell work takes
+    // seconds, so the terminal would otherwise sit silent from here until the
+    // verdict, with only the UAC dialog in between to explain the pause.
+    reporter.line("Elevating to apply and verify the change; this takes a few seconds.");
+    match write_and_launch(reconcile.state_dir, reconcile.diff)? {
         DefenderOutcome::Applied => {
             // Only after the helper's re-read confirms the change do we record
             // the new patina-owned set.
-            save_ledger(ledger_path, &DefenderLedger::from_set(desired))?;
+            reconcile.record_ledger()?;
             reporter.line("Applied Defender exclusion changes.");
             Ok(ExitCode::Success.code())
         }
@@ -174,53 +284,66 @@ fn enact(
             reporter.warn("Defender exclusions were not changed (elevation declined).");
             Ok(ExitCode::UserDeclined.code())
         }
-        DefenderOutcome::Blocked => Err(blocked_error()),
+        DefenderOutcome::Blocked { detail } => Err(blocked_error(&detail)),
+        DefenderOutcome::Failed { detail } => Err(failed_error(&detail)),
+        DefenderOutcome::Unconfirmed => Err(unconfirmed_error()),
     }
 }
 
 /// JSON reconcile path: preview without `--yes`, otherwise enact and report.
 fn run_reconcile_json(
-    state_dir: &Utf8Path,
-    repo_root: Option<&Utf8Path>,
-    desired: &BTreeSet<Exclusion>,
-    diff: &DefenderDiff,
+    reconcile: &Reconcile<'_>,
     yes: bool,
-    ledger_path: &Utf8Path,
     reporter: &mut impl Reporter,
 ) -> Result<i32> {
+    let mut report = |result: &str, detail: &str| {
+        reporter.json(&reconcile_json(reconcile, result, detail));
+    };
+
     if !yes {
-        reporter.json(&reconcile_json(repo_root, diff, "previewed"));
+        report("previewed", "");
         return Ok(ExitCode::Success.code());
     }
-    if diff.is_empty() {
-        save_ledger(ledger_path, &DefenderLedger::from_set(desired))?;
-        reporter.json(&reconcile_json(repo_root, diff, "up_to_date"));
+    if reconcile.diff.is_empty() {
+        reconcile.record_ledger()?;
+        report("up_to_date", "");
         return Ok(ExitCode::Success.code());
     }
 
-    match write_and_launch(state_dir, diff)? {
+    match write_and_launch(reconcile.state_dir, reconcile.diff)? {
         DefenderOutcome::Applied => {
-            save_ledger(ledger_path, &DefenderLedger::from_set(desired))?;
-            reporter.json(&reconcile_json(repo_root, diff, "applied"));
+            reconcile.record_ledger()?;
+            report("applied", "");
             Ok(ExitCode::Success.code())
         }
         DefenderOutcome::Declined => {
-            reporter.json(&reconcile_json(repo_root, diff, "declined"));
+            report("declined", "");
             Ok(ExitCode::UserDeclined.code())
         }
-        DefenderOutcome::Blocked => {
-            reporter.json(&reconcile_json(repo_root, diff, "blocked"));
+        // The three failing results share an exit code, so the envelope has to
+        // carry what separates them; the human path says it in prose.
+        DefenderOutcome::Blocked { detail } => {
+            report("blocked", &detail);
+            Ok(ExitCode::Generic.code())
+        }
+        DefenderOutcome::Failed { detail } => {
+            report("failed", &detail);
+            Ok(ExitCode::Generic.code())
+        }
+        DefenderOutcome::Unconfirmed => {
+            report("unconfirmed", "");
             Ok(ExitCode::Generic.code())
         }
     }
 }
 
-/// Write the request file and launch the elevated helper, returning the
-/// re-read-verified outcome. Shared by the human and JSON enact paths.
+/// Write the request file and launch the elevated helper, returning the outcome
+/// the helper reported. Shared by the human and JSON enact paths.
 fn write_and_launch(state_dir: &Utf8Path, diff: &DefenderDiff) -> Result<DefenderOutcome> {
     let request_path = defender_request_path(state_dir);
     write_request(&request_path, diff)?;
-    launch_defender_helper(&request_path, diff).context("failed to launch the Defender helper")
+    launch_defender_helper(&request_path, &defender_result_path(state_dir))
+        .context("failed to launch the Defender helper")
 }
 
 /// Report current Defender exclusions against the desired set (read-only).
@@ -232,11 +355,20 @@ fn run_status(json: bool, reporter: &mut impl Reporter) -> Result<i32> {
 
     match HostDefenderProbe::default().read_exclusions() {
         Ok(current) => {
-            let diff = plan_defender(&desired, &current, &ledger.to_set());
+            let recorded = ledger.to_set();
+            let diff = plan_defender(&desired, &current, &recorded);
+            let classifier = ExclusionClassifier::new(&current, &recorded);
             if json {
-                reporter.json(&status_json(&resolved, &desired, &diff));
+                reporter.json(&status_json(&resolved, &desired, &diff, &classifier));
             } else {
-                render_status(&resolved, &desired, &diff, reporter);
+                render_status(
+                    &resolved,
+                    &desired,
+                    &diff,
+                    &classifier,
+                    &Styles::colored(),
+                    reporter,
+                );
             }
             Ok(ExitCode::Success.code())
         }
@@ -250,7 +382,7 @@ fn run_status(json: bool, reporter: &mut impl Reporter) -> Result<i32> {
             if json {
                 reporter.json(&status_desired_only_json(&resolved, &desired));
             } else {
-                render_status_desired_only(&resolved, &desired, reporter);
+                render_status_desired_only(&resolved, &desired, &Styles::colored(), reporter);
             }
             Ok(ExitCode::Success.code())
         }
@@ -279,40 +411,76 @@ fn confirm(
     }
 }
 
+/// The exclusion's path, painted in its kind's color.
+///
+/// The listing prints no `(file)` / `(folder)` text, so this color is the only
+/// place the kind appears in human output. See
+/// [`ExclusionStyles`](crate::output::style::ExclusionStyles) for what that
+/// costs and where the kind is still readable as data.
+fn path_by_kind(exclusion: &Exclusion, styles: &Styles) -> String {
+    let style = match exclusion.kind {
+        ExclusionKind::File => styles.exclusion.file,
+        ExclusionKind::Folder => styles.exclusion.folder,
+    };
+    paint(style, exclusion.path.as_str())
+}
+
+/// The bracketed state tag for a classified exclusion.
+fn state_tag(state: ExclusionState, styles: &Styles) -> String {
+    let style = match state {
+        ExclusionState::Owned | ExclusionState::Recorded => styles.exclusion.state_present,
+        ExclusionState::Unmanaged => styles.exclusion.state_unmanaged,
+        ExclusionState::Absent | ExclusionState::Unrecorded => styles.exclusion.state_absent,
+    };
+    paint(style, &format!("[{}]", state_label(state)))
+}
+
+/// A bracketed tag carrying arbitrary prose, in the not-in-place style.
+///
+/// Only the stale-entry line needs this: its phrase is not one of the five
+/// exclusion states, because a stale entry is not a desired exclusion at all.
+fn stale_tag(styles: &Styles) -> String {
+    paint(
+        styles.exclusion.state_absent,
+        "[stale: patina-owned, no longer managed]",
+    )
+}
+
 /// Render the add / remove / unchanged preview for a reconcile. `repo_root` is
 /// `None` for `clear`, which reconciles to the empty set without planning a
 /// repository.
-fn render_preview(
-    repo_root: Option<&Utf8Path>,
-    desired: &BTreeSet<Exclusion>,
-    diff: &DefenderDiff,
-    reporter: &mut impl Reporter,
-) {
+fn render_preview(reconcile: &Reconcile<'_>, styles: &Styles, reporter: &mut impl Reporter) {
+    let Reconcile {
+        repo_root,
+        desired,
+        diff,
+        classifier,
+        ..
+    } = *reconcile;
+
     match repo_root {
         Some(repo_root) => reporter.line(&format!("Defender exclusions for {repo_root}:")),
         None => reporter.line("Patina-owned Defender exclusions:"),
     }
-    let add_keys: BTreeSet<String> = diff.to_add.iter().map(Exclusion::key).collect();
+    if !classifier.live_list_was_read() {
+        reporter.line(LEDGER_SOURCE_NOTE);
+    }
     for exclusion in &diff.to_add {
-        reporter.line(&format!(
-            "  + {} ({})",
-            exclusion.path,
-            exclusion.kind.label()
-        ));
+        reporter.line(&format!("  + {}", path_by_kind(exclusion, styles)));
     }
     for exclusion in &diff.to_remove {
-        reporter.line(&format!(
-            "  - {} ({})",
-            exclusion.path,
-            exclusion.kind.label()
-        ));
+        reporter.line(&format!("  - {}", path_by_kind(exclusion, styles)));
     }
+    // Everything the reconcile will not add, tagged with why it need not be.
+    // This is where an exclusion Defender already has but Patina does not own
+    // becomes visible.
     for exclusion in desired {
-        if !add_keys.contains(&exclusion.key()) {
+        let state = classifier.classify(exclusion);
+        if !state.needs_add() {
             reporter.line(&format!(
-                "    {} ({}) [unchanged]",
-                exclusion.path,
-                exclusion.kind.label()
+                "    {} {}",
+                path_by_kind(exclusion, styles),
+                state_tag(state, styles)
             ));
         }
     }
@@ -327,30 +495,24 @@ fn render_status(
     resolved: &ResolvedPlan,
     desired: &BTreeSet<Exclusion>,
     diff: &DefenderDiff,
+    classifier: &ExclusionClassifier,
+    styles: &Styles,
     reporter: &mut impl Reporter,
 ) {
     reporter.line(&format!("Defender exclusions for {}:", resolved.repo_root));
-    // A desired exclusion in `to_add` is not currently present; everything else
-    // in the desired set is present.
-    let missing_keys: BTreeSet<String> = diff.to_add.iter().map(Exclusion::key).collect();
+    if !classifier.live_list_was_read() {
+        reporter.line(LEDGER_SOURCE_NOTE);
+    }
     for exclusion in desired {
-        let state = if missing_keys.contains(&exclusion.key()) {
-            "missing"
-        } else {
-            "present"
-        };
         reporter.line(&format!(
-            "  {} ({}) [{state}]",
-            exclusion.path,
-            exclusion.kind.label()
+            "  {} {}",
+            path_by_kind(exclusion, styles),
+            state_tag(classifier.classify(exclusion), styles)
         ));
     }
+    let stale = stale_tag(styles);
     for exclusion in &diff.to_remove {
-        reporter.line(&format!(
-            "  {} ({}) [stale — patina-owned, no longer managed]",
-            exclusion.path,
-            exclusion.kind.label()
-        ));
+        reporter.line(&format!("  {} {stale}", path_by_kind(exclusion, styles)));
     }
 }
 
@@ -358,6 +520,7 @@ fn render_status(
 fn render_status_desired_only(
     resolved: &ResolvedPlan,
     desired: &BTreeSet<Exclusion>,
+    styles: &Styles,
     reporter: &mut impl Reporter,
 ) {
     reporter.line(&format!(
@@ -365,23 +528,28 @@ fn render_status_desired_only(
         resolved.repo_root
     ));
     for exclusion in desired {
-        reporter.line(&format!(
-            "  {} ({})",
-            exclusion.path,
-            exclusion.kind.label()
-        ));
+        reporter.line(&format!("  {}", path_by_kind(exclusion, styles)));
     }
 }
 
-/// The reconcile JSON envelope: `repo_root`, `to_add`, `to_remove`, `result`.
+/// The reconcile JSON envelope: `repo_root`, `current_readable`, `to_add`,
+/// `to_remove`, `result`, `detail`.
 ///
 /// `repo_root` is `null` for `clear`, which does not plan a repository.
-fn reconcile_json(repo_root: Option<&Utf8Path>, diff: &DefenderDiff, result: &str) -> String {
+/// `current_readable` is `false` when Defender withheld the live list, which
+/// tells a consumer the diff was computed against the ledger. [`status_json`]
+/// carries the same field for the same reason. `detail` is the helper's own
+/// words on a `blocked` or `failed` result and empty otherwise; without it the
+/// three results that exit `1` would be indistinguishable to a script in a way
+/// they are not to a reader.
+fn reconcile_json(reconcile: &Reconcile<'_>, result: &str, detail: &str) -> String {
     let envelope = serde_json::json!({
-        "repo_root": repo_root.map(Utf8Path::as_str),
-        "to_add": exclusions_json(&diff.to_add),
-        "to_remove": exclusions_json(&diff.to_remove),
+        "repo_root": reconcile.repo_root.map(Utf8Path::as_str),
+        "current_readable": reconcile.classifier.live_list_was_read(),
+        "to_add": exclusions_json(&reconcile.diff.to_add),
+        "to_remove": exclusions_json(&reconcile.diff.to_remove),
         "result": result,
+        "detail": detail,
     });
     serde_json::to_string_pretty(&envelope).unwrap_or_else(|_| "{}".to_owned())
 }
@@ -392,15 +560,15 @@ fn status_json(
     resolved: &ResolvedPlan,
     desired: &BTreeSet<Exclusion>,
     diff: &DefenderDiff,
+    classifier: &ExclusionClassifier,
 ) -> String {
-    let missing_keys: BTreeSet<String> = diff.to_add.iter().map(Exclusion::key).collect();
     let exclusions: Vec<serde_json::Value> = desired
         .iter()
         .map(|exclusion| {
             serde_json::json!({
                 "path": exclusion.path.as_str(),
                 "kind": exclusion.kind.label(),
-                "present": !missing_keys.contains(&exclusion.key()),
+                "state": state_token(classifier.classify(exclusion)),
             })
         })
         .collect();
@@ -408,7 +576,7 @@ fn status_json(
         "repo_root": resolved.repo_root.as_str(),
         "exclusions": exclusions,
         "stale": exclusions_json(&diff.to_remove),
-        "current_readable": true,
+        "current_readable": classifier.live_list_was_read(),
     });
     serde_json::to_string_pretty(&envelope).unwrap_or_else(|_| "{}".to_owned())
 }
@@ -446,16 +614,42 @@ fn exclusions_json(exclusions: &[Exclusion]) -> Vec<serde_json::Value> {
 }
 
 /// The typed error for a blocked write — Defender returned success but the
-/// re-read shows the exclusions did not change. Names the likely cause and an
-/// actionable next step.
-fn blocked_error() -> anyhow::Error {
+/// helper's elevated re-read shows the exclusions did not change. Names the
+/// likely cause and an actionable next step.
+fn blocked_error(detail: &str) -> anyhow::Error {
     anyhow!(
-        "Defender rejected the exclusion change; the write did not take. This \
-         usually means Tamper Protection is enabled or Defender is managed by \
-         policy (Intune / GPO). Check `Get-MpComputerStatus` (IsTamperProtected \
-         and AMRunningMode); apply the exclusions through your management tool, \
-         or consider a Windows 11 Dev Drive in Defender performance mode as a \
-         lower-risk alternative to path exclusions."
+        "Defender rejected the exclusion change; the write did not take \
+         ({detail}). This usually means Tamper Protection is enabled or \
+         Defender is managed by policy (Intune / GPO). Check \
+         `Get-MpComputerStatus` (IsTamperProtected and AMRunningMode); apply \
+         the exclusions through your management tool, or consider a Windows 11 \
+         Dev Drive in Defender performance mode as a lower-risk alternative to \
+         path exclusions."
+    )
+}
+
+/// The typed error for a helper that never reached the point of applying: a
+/// path it refused, an unreadable request file, PowerShell unavailable.
+///
+/// Kept apart from [`blocked_error`] because none of those are Defender
+/// declining the change, and sending the user to hunt for Tamper Protection
+/// over an unrelated failure wastes their time.
+fn failed_error(detail: &str) -> anyhow::Error {
+    anyhow!("the elevated helper could not apply the Defender exclusions: {detail}")
+}
+
+/// The typed error for an apply whose outcome nobody observed.
+///
+/// Deliberately claims nothing about Defender's behaviour: the helper never
+/// reported, so the exclusions may well have been applied. Re-running is safe
+/// because the reconcile is idempotent, and a re-run also writes the ledger
+/// entry this outcome withheld.
+fn unconfirmed_error() -> anyhow::Error {
+    anyhow!(
+        "the elevated helper did not report a result, so whether the Defender \
+         exclusions changed is unknown. They may have been applied without \
+         being recorded. Re-run `patina defender apply` (it is idempotent), or \
+         check the live list with `Get-MpPreference` from an elevated shell."
     )
 }
 
@@ -486,4 +680,348 @@ fn save_ledger(path: &Utf8Path, ledger: &DefenderLedger) -> Result<()> {
     json.push('\n');
     fs_err::write(path.as_std_path(), json)
         .with_context(|| format!("failed to write the Defender ledger `{path}`"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::output::reporter::BufferReporter;
+    use patina_core::CurrentExclusions;
+    use patina_core::ExclusionKind;
+
+    const REPO: &str = r"C:\Users\kevin\dotfiles";
+
+    /// A reconcile derived from one live-list reading and one ledger, so the
+    /// diff and the classifier cannot disagree the way hand-built parts could.
+    ///
+    /// The state directory is inert: every assertion below renders or
+    /// serializes and touches no filesystem.
+    struct Fixture {
+        desired: BTreeSet<Exclusion>,
+        diff: DefenderDiff,
+        classifier: ExclusionClassifier,
+    }
+
+    impl Fixture {
+        fn new(
+            desired: &[(&str, ExclusionKind)],
+            current: &CurrentExclusions,
+            ledger: &[(&str, ExclusionKind)],
+        ) -> Self {
+            let desired: BTreeSet<Exclusion> = desired
+                .iter()
+                .map(|(path, kind)| Exclusion::new(*path, *kind))
+                .collect();
+            let recorded: BTreeSet<Exclusion> = ledger
+                .iter()
+                .map(|(path, kind)| Exclusion::new(*path, *kind))
+                .collect();
+            Self {
+                diff: plan_defender(&desired, current, &recorded),
+                classifier: ExclusionClassifier::new(current, &recorded),
+                desired,
+            }
+        }
+
+        fn reconcile(&self) -> Reconcile<'_> {
+            Reconcile {
+                state_dir: Utf8Path::new(r"C:\state"),
+                repo_root: Some(Utf8Path::new(REPO)),
+                desired: &self.desired,
+                diff: &self.diff,
+                classifier: &self.classifier,
+            }
+        }
+
+        /// Render the preview with the plain palette and return stdout.
+        fn preview(&self) -> String {
+            let mut reporter = BufferReporter::new();
+            render_preview(&self.reconcile(), &Styles::plain(), &mut reporter);
+            reporter.out
+        }
+    }
+
+    fn known(paths: &[&str]) -> CurrentExclusions {
+        CurrentExclusions::Known(paths.iter().map(camino::Utf8PathBuf::from).collect())
+    }
+
+    const GITCONFIG: &str = r"C:\Users\kevin\.gitconfig";
+
+    #[test]
+    fn preview_from_defender_claims_presence_and_says_nothing_about_the_ledger() {
+        let fixture = Fixture::new(
+            &[
+                (REPO, ExclusionKind::Folder),
+                (GITCONFIG, ExclusionKind::File),
+            ],
+            &known(&[REPO]),
+            &[(REPO, ExclusionKind::Folder)],
+        );
+        let out = fixture.preview();
+
+        assert!(out.contains(&format!("  + {GITCONFIG}")));
+        assert!(out.contains("[present]"));
+        assert!(
+            !out.contains(LEDGER_SOURCE_NOTE),
+            "a list read from Defender needs no ledger caveat: {out}"
+        );
+    }
+
+    #[test]
+    fn preview_from_the_ledger_never_claims_an_exclusion_is_present() {
+        // The regression guard for the whole feature: unprivileged, Patina has
+        // not seen Defender's list, so it must not report `present`, only that
+        // it recorded the exclusion itself.
+        let fixture = Fixture::new(
+            &[(REPO, ExclusionKind::Folder)],
+            &CurrentExclusions::Unreadable,
+            &[(REPO, ExclusionKind::Folder)],
+        );
+        let out = fixture.preview();
+
+        assert!(out.contains(LEDGER_SOURCE_NOTE));
+        assert!(out.contains("[recorded]"));
+        assert!(
+            !out.contains("[present]"),
+            "an inferred state must not be rendered as an observed one: {out}"
+        );
+    }
+
+    #[test]
+    fn an_exclusion_defender_has_that_patina_does_not_record_is_called_out() {
+        // The state that was previously invisible: Defender already excludes the
+        // path, so nothing will be added, but the ledger does not own it, which
+        // is what decides whether `clear` can ever reap it.
+        let fixture = Fixture::new(&[(REPO, ExclusionKind::Folder)], &known(&[REPO]), &[]);
+        let out = fixture.preview();
+
+        assert!(
+            out.contains("[present, not recorded by patina]"),
+            "an unowned exclusion must say so: {out}"
+        );
+        assert!(
+            fixture.diff.to_add.is_empty(),
+            "it is already excluded, so nothing is added: {:?}",
+            fixture.diff
+        );
+    }
+
+    #[test]
+    fn an_unowned_exclusion_does_not_render_the_same_as_an_owned_one() {
+        // Both are present in Defender and neither is added, so without the
+        // distinct state the listing would show them identically.
+        let owned = Fixture::new(
+            &[(REPO, ExclusionKind::Folder)],
+            &known(&[REPO]),
+            &[(REPO, ExclusionKind::Folder)],
+        );
+        let unowned = Fixture::new(&[(REPO, ExclusionKind::Folder)], &known(&[REPO]), &[]);
+        assert_ne!(owned.preview(), unowned.preview());
+    }
+
+    #[test]
+    fn adoptable_counts_only_the_exclusions_the_ledger_does_not_own() {
+        // What the "already up to date" line reports. Two of the three are
+        // excluded but unrecorded; the third is already Patina's.
+        let fixture = Fixture::new(
+            &[
+                (REPO, ExclusionKind::Folder),
+                (GITCONFIG, ExclusionKind::File),
+                (r"C:\Users\kevin\.zshrc", ExclusionKind::File),
+            ],
+            &known(&[REPO, GITCONFIG, r"C:\Users\kevin\.zshrc"]),
+            &[(REPO, ExclusionKind::Folder)],
+        );
+        assert_eq!(fixture.reconcile().adoptable(), 2);
+        assert!(
+            fixture.diff.is_empty(),
+            "adoption happens on the no-op path, so the diff must be empty: {:?}",
+            fixture.diff
+        );
+    }
+
+    #[test]
+    fn nothing_is_adoptable_when_the_live_list_was_withheld() {
+        // Unmanaged is undetectable unprivileged, so the count must not guess.
+        let fixture = Fixture::new(
+            &[(REPO, ExclusionKind::Folder)],
+            &CurrentExclusions::Unreadable,
+            &[],
+        );
+        assert_eq!(fixture.reconcile().adoptable(), 0);
+    }
+
+    #[test]
+    fn reconcile_json_reports_whether_the_live_list_was_readable() {
+        let readable = Fixture::new(&[], &known(&[]), &[]);
+        let withheld = Fixture::new(&[], &CurrentExclusions::Unreadable, &[]);
+
+        assert!(
+            reconcile_json(&readable.reconcile(), "applied", "")
+                .contains("\"current_readable\": true")
+        );
+        assert!(
+            reconcile_json(&withheld.reconcile(), "applied", "")
+                .contains("\"current_readable\": false")
+        );
+    }
+
+    #[test]
+    fn reconcile_json_carries_the_detail_that_separates_the_failing_results() {
+        // `blocked`, `failed`, and `unconfirmed` all exit 1, so a script that
+        // reads only `result` learns as little as a reader told only "it went
+        // wrong". The human path says which; the envelope has to as well.
+        let fixture = Fixture::new(&[], &known(&[]), &[]);
+        let blocked = reconcile_json(
+            &fixture.reconcile(),
+            "blocked",
+            "exclusions not applied (TamperProtected=True)",
+        );
+        assert!(blocked.contains("TamperProtected=True"), "{blocked}");
+        assert!(
+            reconcile_json(&fixture.reconcile(), "applied", "").contains("\"detail\": \"\""),
+            "a result with nothing to explain carries an empty detail, not a missing key"
+        );
+    }
+
+    #[test]
+    fn only_a_rejected_write_is_reported_as_defender_refusing_it() {
+        // The three exit-1 outcomes share a code, so the message is the only
+        // thing distinguishing them. Blaming Tamper Protection for an outcome
+        // nobody observed is the exact bug this split fixes.
+        let blocked = blocked_error("TamperProtected=True").to_string();
+        assert!(blocked.contains("Defender rejected the exclusion change"));
+        assert!(blocked.contains("Tamper Protection"));
+        assert!(blocked.contains("TamperProtected=True"));
+
+        for other in [
+            unconfirmed_error().to_string(),
+            failed_error("refusing to exclude `C:\\`").to_string(),
+        ] {
+            assert!(
+                !other.contains("rejected") && !other.contains("Tamper Protection"),
+                "only a verified rejection may blame Defender: {other}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unconfirmed_outcome_says_the_state_is_unknown_and_a_re_run_is_safe() {
+        let message = unconfirmed_error().to_string();
+        assert!(message.contains("unknown"));
+        assert!(message.contains("patina defender apply"));
+    }
+
+    #[test]
+    fn a_failed_outcome_carries_the_helpers_own_detail() {
+        assert!(
+            failed_error("refusing to exclude `C:\\`")
+                .to_string()
+                .contains("refusing to exclude `C:\\`")
+        );
+    }
+
+    /// Every exclusion state, listed by hand. Adding a variant is caught by the
+    /// wildcard-free matches in [`state_label`] and [`state_token`]; this array
+    /// is what checks the new wording and token do not collide with an existing
+    /// one, so it has to be extended alongside them.
+    const ALL_STATES: [ExclusionState; 5] = [
+        ExclusionState::Owned,
+        ExclusionState::Unmanaged,
+        ExclusionState::Absent,
+        ExclusionState::Recorded,
+        ExclusionState::Unrecorded,
+    ];
+
+    #[test]
+    fn every_state_has_its_own_label_and_token() {
+        // Two states sharing a label would be indistinguishable in the listing;
+        // sharing a token would be indistinguishable to a `--json` consumer.
+        let labels: BTreeSet<&str> = ALL_STATES.into_iter().map(state_label).collect();
+        let tokens: BTreeSet<&str> = ALL_STATES.into_iter().map(state_token).collect();
+        assert_eq!(labels.len(), ALL_STATES.len(), "labels collide: {labels:?}");
+        assert_eq!(tokens.len(), ALL_STATES.len(), "tokens collide: {tokens:?}");
+    }
+
+    #[test]
+    fn the_three_readable_states_are_colored_apart() {
+        // Under a readable live list these are the three the user has to tell
+        // apart, and color is the only thing separating the two present ones
+        // beyond their wording.
+        let styles = Styles::colored();
+        let escapes: BTreeSet<String> = [
+            ExclusionState::Owned,
+            ExclusionState::Unmanaged,
+            ExclusionState::Absent,
+        ]
+        .into_iter()
+        .map(|state| state_tag(state, &styles).replace(state_label(state), "LABEL"))
+        .collect();
+        assert_eq!(escapes.len(), 3, "the three states must paint apart");
+    }
+
+    #[test]
+    fn the_plain_palette_leaves_a_path_and_tag_byte_identical_to_unstyled() {
+        // What every other assertion in this module relies on: a plain render
+        // emits no escapes, so a path or label reads back verbatim.
+        let file = Exclusion::new(r"C:\a", ExclusionKind::File);
+        assert_eq!(path_by_kind(&file, &Styles::plain()), r"C:\a");
+        assert_eq!(
+            state_tag(ExclusionState::Recorded, &Styles::plain()),
+            "[recorded]"
+        );
+        assert_eq!(
+            stale_tag(&Styles::plain()),
+            "[stale: patina-owned, no longer managed]"
+        );
+    }
+
+    #[test]
+    fn a_file_path_and_a_folder_path_are_colored_differently() {
+        // Color is the only place the kind appears in human output, so if the
+        // two kinds painted alike the distinction would be gone entirely.
+        let styles = Styles::colored();
+        let same_path = r"C:\a";
+        let file = path_by_kind(&Exclusion::new(same_path, ExclusionKind::File), &styles);
+        let folder = path_by_kind(&Exclusion::new(same_path, ExclusionKind::Folder), &styles);
+
+        assert!(file.contains('\u{1b}') && folder.contains('\u{1b}'));
+        assert_ne!(
+            file, folder,
+            "the same path must paint differently by kind: that color is the only signal"
+        );
+    }
+
+    #[test]
+    fn a_painted_path_keeps_the_path_contiguous() {
+        // The path is painted whole, so it stays greppable and copy-pasteable
+        // out of a terminal. Painting per-component would break both.
+        let styles = Styles::colored();
+        let path = r"C:\Users\kevin\.gitconfig";
+        let painted = path_by_kind(&Exclusion::new(path, ExclusionKind::File), &styles);
+        assert!(painted.contains(path), "escapes must not split the path");
+    }
+
+    #[test]
+    fn a_colored_preview_still_reads_as_the_plain_text_it_paints() {
+        // Path and tag are each painted whole, so a substring search for either
+        // survives the escapes. A regression painting the brackets separately
+        // would slip an escape into the middle of `[recorded]` and break every
+        // consumer that greps this output.
+        let fixture = Fixture::new(
+            &[(REPO, ExclusionKind::Folder)],
+            &CurrentExclusions::Unreadable,
+            &[(REPO, ExclusionKind::Folder)],
+        );
+        let mut reporter = BufferReporter::new();
+        render_preview(&fixture.reconcile(), &Styles::colored(), &mut reporter);
+
+        assert!(reporter.out.contains(REPO));
+        assert!(reporter.out.contains("[recorded]"));
+        assert!(
+            reporter.out.contains('\u{1b}'),
+            "the colored palette must actually emit escapes: {}",
+            reporter.out.escape_debug()
+        );
+    }
 }

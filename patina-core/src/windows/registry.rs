@@ -130,3 +130,29 @@ fn read_dword(sub_key: &str, value: &str) -> Result<Option<u32>, WindowsError> {
         Err(err) => Err(win_err("RegQueryValueEx", err)),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The elevation read must *succeed*, whatever it reports.
+    ///
+    /// [`super::super::is_elevated`] maps any error to "not elevated", so a
+    /// broken read is indistinguishable from an unelevated process, which is
+    /// how a `winsafe` release that rejected the `ERROR_BAD_LENGTH` answer from
+    /// the fixed-size `TokenElevation` class went unnoticed while every
+    /// elevated process was reported as unelevated. Asserting the call
+    /// itself succeeds catches that; the boolean depends on how the suite
+    /// was launched and is deliberately not asserted.
+    #[test]
+    fn the_elevation_read_succeeds_whatever_it_reports() {
+        process_is_elevated().expect("querying the process token's elevation must succeed");
+    }
+
+    /// The Developer Mode read must succeed too, reporting an absent key or
+    /// value as `None` rather than an error.
+    #[test]
+    fn the_dev_mode_flag_read_succeeds_whether_or_not_the_flag_is_set() {
+        read_dev_mode_flag().expect("reading the Developer Mode flag must succeed");
+    }
+}
