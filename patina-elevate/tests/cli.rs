@@ -189,11 +189,17 @@ fn apply_defender_exclusions_adds_then_removes_a_path() {
 ///
 /// Needs no elevation and no Defender, because the path is rejected by the
 /// helper's own validator before any cmdlet runs, so unlike the test above this
-/// one runs in CI on Windows.
+/// one runs unattended in CI on Windows.
+///
+/// It skips when the helper binary is absent, like the argument-parsing tests
+/// above: the bin exists only under `--features windows`, and CI's per-OS test
+/// leg runs a bare `cargo test --workspace`.
 #[cfg(windows)]
 #[test]
 fn a_refused_path_is_recorded_as_failed_not_blocked() {
-    let bin = elevate_bin().expect("the bin is built on Windows under --features windows");
+    let Some(bin) = elevate_bin() else {
+        return;
+    };
     let dir = tempfile::tempdir().expect("create a temp dir for the request");
     let request = dir.path().join("request.txt");
     // A drive root: refused by the validator, so the run never reaches Defender.
