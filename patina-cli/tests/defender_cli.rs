@@ -64,6 +64,23 @@ fn elevated() -> bool {
     patina_core::is_elevated()
 }
 
+/// Canonicalize `path` the way the engine does, as the string form the CLI
+/// reports.
+///
+/// Derived paths come out of the plan canonicalized, so a raw fixture path is
+/// not comparable to one. The two forms differ on a CI runner, whose `%TEMP%`
+/// resolves through a junction, and are identical on most developer machines,
+/// which is exactly the shape of difference that passes locally and fails in
+/// CI. `dunce::canonicalize` mirrors the engine's `canonicalize_path`: a
+/// filesystem canonicalize with the Windows `\\?\` verbatim prefix stripped
+/// where the plain form is equivalent.
+fn canonical(path: &camino::Utf8Path) -> String {
+    let canon = dunce::canonicalize(path.as_std_path()).expect("canonicalize a fixture path");
+    camino::Utf8PathBuf::from_path_buf(canon)
+        .expect("a canonical fixture path is utf8")
+        .into_string()
+}
+
 #[test]
 fn apply_without_yes_previews_and_writes_nothing() {
     // The contract a non-interactive shell relies on: no `--yes`, no mutation,
@@ -184,11 +201,14 @@ fn the_preview_proposes_the_repo_root_and_each_managed_target() {
         })
         .collect();
 
+    let repo_root = canonical(&fixture.root);
     assert!(
-        proposed.contains(&(fixture.root.as_str(), "folder")),
+        proposed.contains(&(repo_root.as_str(), "folder")),
         "the repository root must be proposed as a folder exclusion: {proposed:?}"
     );
-    let target = fixture.home.join(".gitconfig");
+    // The target does not exist yet, so canonicalize its parent and rejoin the
+    // leaf, which is what the engine's own path resolution does.
+    let target = format!("{}\\.gitconfig", canonical(&fixture.home));
     assert!(
         proposed.contains(&(target.as_str(), "file")),
         "the declared target must be proposed as a file exclusion: {proposed:?}"
