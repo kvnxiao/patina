@@ -125,12 +125,18 @@ fn enable_developer_mode_elevated_sets_flag_and_exits_0() {
 }
 
 /// The elevated `apply-defender-exclusions` action adds a path exclusion, its
-/// mandatory re-read confirms the write took (so the process exits `0`), and a
-/// follow-up removal clears it again. Gated `#[cfg(windows)]` `#[ignore]`
-/// because it needs an elevated Windows host with an active, unmanaged Defender
-/// — CI has none. On a Tamper-Protected or policy-managed host the add instead
-/// exits `1`, since the re-read shows the exclusion never appeared. Run by hand
-/// on an elevated Windows shell with `--ignored`.
+/// mandatory re-read confirms the write took (so the process exits `0` and
+/// records `applied`), and a follow-up removal clears it again. Gated
+/// `#[cfg(windows)]` `#[ignore]` because it needs an elevated Windows host with
+/// an active, unmanaged Defender, which CI does not provide. On a
+/// Tamper-Protected or policy-managed host the add instead exits `1` and
+/// records `blocked`, since
+/// the re-read shows the exclusion never appeared. Run by hand on an elevated
+/// Windows shell with `--ignored`.
+///
+/// The result file is asserted alongside the exit code because it, not the exit
+/// code, is what the unprivileged CLI actually reads. `ShellExecuteEx` gives
+/// the launcher no way to collect a child's status.
 #[cfg(windows)]
 #[test]
 #[ignore = "needs an elevated Windows host with an active, unmanaged Defender"]
@@ -140,6 +146,7 @@ fn apply_defender_exclusions_adds_then_removes_a_path() {
     let excluded = dir.path().join("patina-defender-it");
     std::fs::create_dir_all(&excluded).expect("create the directory to exclude");
     let excluded = excluded.to_string_lossy().into_owned();
+    let receipt = dir.path().join("defender-result.txt");
 
     let run = |body: &str| {
         let request = dir.path().join("request.txt");
@@ -158,6 +165,11 @@ fn apply_defender_exclusions_adds_then_removes_a_path() {
         "adding an exclusion must exit 0 after the re-read verification; stderr: {}",
         String::from_utf8_lossy(&add.stderr)
     );
+    assert_eq!(
+        std::fs::read_to_string(&receipt).expect("the helper must record its verdict"),
+        "applied\n",
+        "a confirmed add must be recorded as `applied` for the launching CLI"
+    );
 
     let remove = run(&format!("R {excluded}\n"));
     assert_eq!(
@@ -165,6 +177,45 @@ fn apply_defender_exclusions_adds_then_removes_a_path() {
         Some(0),
         "removing the exclusion must exit 0 after the re-read verification; stderr: {}",
         String::from_utf8_lossy(&remove.stderr)
+    );
+    assert_eq!(
+        std::fs::read_to_string(&receipt).expect("the helper must record its verdict"),
+        "applied\n"
+    );
+}
+
+/// A request the helper refuses records `failed`, not `blocked`: the launching
+/// CLI must not tell the user Defender rejected a change Defender never saw.
+///
+/// Needs no elevation and no Defender, because the path is rejected by the
+/// helper's own validator before any cmdlet runs, so unlike the test above this
+/// one runs in CI on Windows.
+#[cfg(windows)]
+#[test]
+fn a_refused_path_is_recorded_as_failed_not_blocked() {
+    let bin = elevate_bin().expect("the bin is built on Windows under --features windows");
+    let dir = tempfile::tempdir().expect("create a temp dir for the request");
+    let request = dir.path().join("request.txt");
+    // A drive root: refused by the validator, so the run never reaches Defender.
+    std::fs::write(&request, "A C:\\\n").expect("write the request file");
+
+    let output = Command::new(bin)
+        .arg("apply-defender-exclusions")
+        .arg(&request)
+        .output()
+        .expect("spawn patina-elevate");
+    assert_eq!(output.status.code(), Some(1));
+
+    let receipt = std::fs::read_to_string(dir.path().join("defender-result.txt"))
+        .expect("a refused request must still be recorded");
+    assert!(
+        receipt.starts_with("failed "),
+        "a refused path is not Defender rejecting the write: {receipt}"
+    );
+    assert_eq!(
+        receipt.lines().count(),
+        1,
+        "the verdict must be one line: {receipt}"
     );
 }
 

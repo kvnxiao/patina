@@ -52,10 +52,20 @@ flowchart TD
   maps engine outcomes onto the formalized codes.
 - **`patina-elevate`** is a standalone Windows-only helper binary. It
   carries the smallest possible trust surface (no dependency on
-  `patina-core` or `patina-cli`) and exists solely to toggle the
-  Developer Mode registry flag under a single UAC prompt. It is gated
-  behind a `windows` Cargo feature, so a non-Windows build produces no
-  such artifact.
+  `patina-core` or `patina-cli`) and performs one elevated action under a
+  single UAC prompt: toggling the Developer Mode registry flag, or
+  applying a set of Windows Defender path exclusions. It is gated behind a
+  `windows` Cargo feature, so a non-Windows build produces no such
+  artifact.
+
+  The helper also *verifies* its own work, because it is the only part of
+  Patina elevated enough to read back what it changed: `Get-MpPreference`
+  withholds the exclusion list from an unelevated caller. Its verdict
+  reaches the launching `patina.exe` through a result file rather than an
+  exit code. `ShellExecuteEx` is the only way to raise the UAC dialog
+  without `unsafe`, and it returns as soon as the process is created,
+  keeping no handle to wait on, so both launch sites poll for the helper's
+  effect instead of reading a status.
 
 User-facing output never uses `println!` / `eprintln!` outside the
 `Reporter` layer; everything else logs through `tracing`. See

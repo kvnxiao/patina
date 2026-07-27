@@ -135,8 +135,8 @@ diff-and-prompt loop by default:
    renders templates into a concrete list of operations.
 2. **Diff.** Patina compares the planned end-state against what is
    actually on disk and prints the diff. A target a prior apply
-   materialized but the current plan no longer manages — an entry you
-   dropped from a `patina.toml`, or one whose `when` is now false — shows
+   materialized but the current plan no longer manages (an entry you
+   dropped from a `patina.toml`, or one whose `when` is now false) shows
    as a `remove <target>` block: it is backed up and deleted on apply, so
    the reap is never hidden from the consent diff.
 3. **Prompt.** In an interactive terminal, Patina asks for
@@ -151,7 +151,7 @@ file it does not own without taking a backup first.
 On a terminal the diff is colorized (green additions, red removals,
 bold entry headers), and warnings and errors are styled too. The
 confirmation prompt is shown in a distinct prompt color, and its
-`[y/N]` keys are highlighted apart from the prose and each other — a
+`[y/N]` keys are highlighted apart from the prose and each other: a
 green affirmative `y`, a red default `N`. Color is a display concern
 only: piped or redirected
 output is always plain, so the byte-identical-stdout guarantee is
@@ -243,22 +243,83 @@ you see every path first, and you consent before anything changes:
 | `patina defender apply`   | Add every desired exclusion that is missing and remove the patina-owned ones the current plan no longer manages. |
 | `patina defender clear`   | Remove every patina-owned exclusion.                                                |
 
+### What Patina can see without administrator
+
+Not the exclusion list. `Get-MpPreference` returns it only to an elevated
+caller. Unelevated it reports `N/A: Must be an administrator to view
+exclusions` and exits successfully, so there is nothing to compare against.
+
+Without administrator, Patina reports state from its own ledger and labels
+it as such: `recorded` and `not recorded` rather than `present` and
+`missing`, under a note saying where the state came from. `--json` carries
+the same distinction as `current_readable: false`. The practical limit is
+that an exclusion you delete by hand in the Defender UI goes unnoticed
+until you run `patina defender status` from an elevated shell, which reads
+the live list and reports `present` or `missing` against it.
+
 The desired set is exactly the repository root plus **one** exclusion per
 managed target: a folder exclusion for a directory entry
 (`symlink` / `symlink-tree` / `copy`) and a file exclusion for a file
 entry (`symlink` / `copy` / template). A `symlink-tree` of forty files
 contributes the one declared target directory, never forty entries.
-Patina emits exact paths only — no wildcards, no process or extension
-exclusions — and refuses to exclude a UNC path, a drive root, or a system
-directory (`%SystemRoot%`, `%ProgramFiles%`, and friends).
+Patina emits exact paths only, with no wildcards and no process or
+extension exclusions. It refuses to exclude a UNC path, a drive root, or a
+system directory (`%SystemRoot%`, `%ProgramFiles%`, and friends).
+
+### Reading the listing
+
+The listing carries the exclusion kind as **color on the path**, and the
+state as a colored tag after it:
+
+| Element      | Meaning            |
+| ------------ | ------------------ |
+| Blue path    | A file exclusion   |
+| Magenta path | A folder exclusion |
+
+| State tag                                  | Meaning                                                   |
+| ------------------------------------------ | --------------------------------------------------------- |
+| Green `[present]`                          | Excluded in Defender, and Patina's ledger records it       |
+| Yellow `[present, not recorded by patina]` | Excluded in Defender, but Patina does not own it           |
+| Red `[missing]`                            | Not excluded; `apply` would add it                         |
+| Green `[recorded]`                         | Ledger records it; the live list was not readable          |
+| Red `[not recorded]`                       | Ledger does not record it; the live list was not readable  |
+
+`[present, not recorded by patina]` is worth acting on. The path is already
+excluded, so `apply` will not touch Defender for it, but the ledger does not
+own it and **`clear` will not reap it**. You get this when you excluded the
+path by hand, or when a Patina run applied it without recording the result.
+Running `apply` adopts it: the ledger converges on the whole desired set, so
+the entry becomes `present` and `clear` can reverse it afterwards.
+
+Spotting an unowned exclusion needs the live list, so it only shows up on an
+elevated run. Unprivileged there is nothing to compare against, and you see
+the two ledger-derived states instead.
+
+Color is the only place the kind appears, so it is gone wherever ANSI is
+stripped: a pipe, a redirect, `--color never`, `NO_COLOR`. Use `--json` when
+you need this as data. Every entry there carries an explicit `kind` (`file`
+or `folder`) and `state` (`owned`, `unmanaged`, `absent`, `recorded`,
+`unrecorded`).
 
 `apply` and `clear` preview the additions and removals, then prompt before
 acting; a non-interactive shell requires `--yes`. Accepting raises one UAC
-prompt (the main `patina.exe` never runs elevated — only a small bundled
-helper does). Declining the prompt exits `5`. If the write is silently
-rejected — typically Tamper Protection or a managed Defender (Intune /
-GPO) — Patina detects it with a mandatory re-read and exits `1` rather than
-reporting a success that did not happen.
+prompt (the main `patina.exe` never runs elevated, only a small bundled
+helper does). Declining the prompt exits `5`.
+
+The helper is also what verifies the change, since it is the only part of
+Patina elevated enough to read the exclusion list back. It re-reads after
+writing and records the verdict, which the waiting `patina.exe` picks up.
+Three outcomes exit `1`, and they say different things:
+
+| Outcome                                | What it means                                                                        |
+| -------------------------------------- | ------------------------------------------------------------------------------------ |
+| Defender rejected the change           | The write returned success and changed nothing. Usually Tamper Protection or a Defender managed by policy (Intune, GPO). Check `Get-MpComputerStatus`. |
+| The helper could not apply the request | It never reached Defender: a path it refused, or a request file it could not read.     |
+| The helper reported no result          | Nobody observed the outcome. The exclusions may have been applied without being recorded, so re-run `apply`, which is idempotent. |
+
+The distinction matters because the fix differs. Patina will not report a
+success it could not confirm, and it will not blame Defender for an outcome
+it never saw.
 
 Patina records only the exclusions it added in a per-machine ledger, so
 `apply` reaps a stale patina-owned exclusion while a **user-added

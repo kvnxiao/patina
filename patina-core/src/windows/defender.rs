@@ -37,6 +37,30 @@
 //! trailing separator stripped) while the original casing is preserved for
 //! display and for the add/remove call. This is the single most important
 //! correctness point in the feature: it is what makes re-runs idempotent.
+//!
+//! # Who can see the live exclusion list
+//!
+//! Only an elevated process can. `Get-MpPreference` does not fail for an
+//! unelevated caller. It exits `0` and returns the string
+//! `"N/A: Must be an administrator to view exclusions"` in place of
+//! `ExclusionPath`. Treating that as a one-element path list makes every
+//! desired exclusion look absent and every verification look failed, so the
+//! read is modelled as [`CurrentExclusions`], which distinguishes a real list
+//! from a withheld one.
+//!
+//! Two consequences shape the rest of the feature:
+//!
+//! - **The unprivileged diff falls back to the ledger.** With the live list
+//!   withheld, [`DefenderLedger`] (Patina's own record of what it applied) is
+//!   the only available stand-in for what is present. It is weaker than the
+//!   live list (an exclusion deleted by hand in the Defender UI goes unnoticed)
+//!   but it keeps an unchanged re-run a no-op, which a `desired`-is-everything
+//!   fallback would not.
+//! - **Verification happens in the elevated helper, not here.** The helper is
+//!   the only party that can re-read the list, so it writes its verdict to a
+//!   result file ([`defender_result_path`]) and [`launch_defender_helper`]
+//!   polls for it. A verification attempted from the unprivileged CLI can only
+//!   ever conclude "not applied".
 
 use crate::apply::engine::ResolvedPlan;
 use crate::config::FileMode;
@@ -59,11 +83,30 @@ const LEDGER_FILENAME: &str = "defender.json";
 /// elevated helper reads, under the resolved state directory.
 const REQUEST_FILENAME: &str = "defender-request.txt";
 
+/// The basename of the result file the elevated helper writes and the
+/// unprivileged CLI polls for, under the resolved state directory.
+///
+/// Duplicated verbatim in `patina-elevate`, which cannot depend on
+/// `patina-core`, so the two sides of the receipt protocol agree by hand. Keep
+/// them in sync along with the verdict tokens below.
+const RESULT_FILENAME: &str = "defender-result.txt";
+
 /// The request-line prefix (character plus one space) marking a path to add.
 const REQUEST_ADD_PREFIX: &str = "A ";
 
 /// The request-line prefix (character plus one space) marking a path to remove.
 const REQUEST_REMOVE_PREFIX: &str = "R ";
+
+/// Receipt verdict: the helper applied the request and its elevated re-read
+/// confirmed the change took.
+const RECEIPT_APPLIED: &str = "applied";
+
+/// Receipt verdict: Defender accepted the call but the helper's re-read shows
+/// the change did not take.
+const RECEIPT_BLOCKED: &str = "blocked";
+
+/// Receipt verdict: the helper could not apply the request at all.
+const RECEIPT_FAILED: &str = "failed";
 
 /// Environment variables naming system directories that must never be excluded.
 ///
@@ -241,6 +284,125 @@ pub fn derive_exclusions(resolved: &ResolvedPlan) -> BTreeSet<Exclusion> {
     desired
 }
 
+/// The live Defender exclusion list, as far as the reading process could see
+/// it.
+///
+/// `Get-MpPreference` withholds the list from an unelevated caller without
+/// failing, so "read it" and "got a list" are different outcomes and the type
+/// keeps them apart. See the module's *Who can see the live exclusion list*
+/// section for why this distinction drives the whole reconcile.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CurrentExclusions {
+    /// The list was read: exactly these paths are excluded.
+    Known(BTreeSet<Utf8PathBuf>),
+    /// Defender withheld the list from this process, so the live state is
+    /// unknown here. Only an elevated reader gets [`Known`].
+    ///
+    /// [`Known`]: CurrentExclusions::Known
+    Unreadable,
+}
+
+/// How one desired exclusion stands against the live Defender list and the
+/// Patina-owned ledger.
+///
+/// The first three arise when the live list was read; the last two are all that
+/// can be said when it was withheld and the ledger is the only evidence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExclusionState {
+    /// Excluded in Defender and recorded in the ledger: Patina owns it.
+    Owned,
+    /// Excluded in Defender but absent from the ledger: already covered, and
+    /// not by Patina.
+    ///
+    /// It arises when the path was excluded by hand, or by a Patina run whose
+    /// ledger write never landed. Worth surfacing because ownership decides
+    /// reversibility: a reap reaches only what [`DefenderLedger`] records, so
+    /// an unmanaged exclusion outlives it. A successful reconcile adopts
+    /// the entry, since the ledger converges on the whole desired set.
+    Unmanaged,
+    /// Not excluded in Defender. A reconcile would add it.
+    Absent,
+    /// The live list was withheld; the ledger records this exclusion.
+    Recorded,
+    /// The live list was withheld; the ledger does not record it.
+    Unrecorded,
+}
+
+impl ExclusionState {
+    /// Whether a reconcile would send an add for this exclusion.
+    ///
+    /// True exactly for the states that read as "not in Defender as far as this
+    /// process can tell", which is what puts an entry in
+    /// [`DefenderDiff::to_add`].
+    #[must_use = "the verdict selects how the entry is rendered"]
+    pub fn needs_add(self) -> bool {
+        matches!(self, Self::Absent | Self::Unrecorded)
+    }
+}
+
+/// Classifies desired exclusions against one reading of the live list and one
+/// ledger.
+///
+/// Built once per run so the normalized-key sets are computed once rather than
+/// rebuilt for every exclusion. [`plan_defender`] derives the whole diff from
+/// it, so the listing and the preview cannot disagree about what is already in
+/// place.
+#[derive(Debug, Clone)]
+pub struct ExclusionClassifier {
+    /// Normalized keys Defender currently excludes, or `None` when the live
+    /// list was withheld from the reading process.
+    present: Option<BTreeSet<String>>,
+    /// Normalized keys the Patina ledger records.
+    recorded: BTreeSet<String>,
+}
+
+impl ExclusionClassifier {
+    /// Prepare a classifier over a live-list reading and a ledger.
+    #[must_use = "construct the classifier to classify with it"]
+    pub fn new(current: &CurrentExclusions, ledger: &BTreeSet<Exclusion>) -> Self {
+        let present = match current {
+            CurrentExclusions::Known(paths) => {
+                Some(paths.iter().map(|path| normalized_key(path)).collect())
+            }
+            CurrentExclusions::Unreadable => None,
+        };
+        Self {
+            present,
+            recorded: ledger.iter().map(Exclusion::key).collect(),
+        }
+    }
+
+    /// Classify one desired exclusion.
+    #[must_use = "the state is what the listing renders"]
+    pub fn classify(&self, exclusion: &Exclusion) -> ExclusionState {
+        let key = exclusion.key();
+        let recorded = self.recorded.contains(&key);
+        match &self.present {
+            Some(present) if present.contains(&key) => {
+                if recorded {
+                    ExclusionState::Owned
+                } else {
+                    ExclusionState::Unmanaged
+                }
+            }
+            Some(_) => ExclusionState::Absent,
+            None if recorded => ExclusionState::Recorded,
+            None => ExclusionState::Unrecorded,
+        }
+    }
+
+    /// Whether the classifier saw Defender's live list, as opposed to falling
+    /// back to the ledger.
+    ///
+    /// The renderers need this to label their verdicts honestly: an inference
+    /// drawn from Patina's own record must never be presented as an
+    /// observation of Defender.
+    #[must_use = "the answer decides whether the output may claim to have seen Defender's list"]
+    pub fn live_list_was_read(&self) -> bool {
+        self.present.is_some()
+    }
+}
+
 /// The reconciliation between the desired exclusion set, the live Defender
 /// state, and the Patina-owned ledger.
 ///
@@ -266,6 +428,8 @@ impl DefenderDiff {
 /// Reconcile the desired exclusions against the current Defender state and the
 /// Patina-owned ledger.
 ///
+/// With the live list in hand ([`CurrentExclusions::Known`]):
+///
 /// - `to_add` = the desired exclusions whose path is not already present.
 /// - `to_remove` = the ledger entries (Patina-owned) that are no longer desired
 ///   **and** are actually still present. Anchoring removals to the ledger is
@@ -273,31 +437,50 @@ impl DefenderDiff {
 ///   not record is never a removal candidate. Anchoring them to `current` too
 ///   keeps the diff honest — an already-gone entry is not re-removed.
 ///
+/// With the list withheld ([`CurrentExclusions::Unreadable`]) the ledger stands
+/// in for what is present, so `to_add` = `desired - ledger` and `to_remove` =
+/// `ledger - desired`. Removals stay ledger-anchored, so the never-touch-a-
+/// user-added-exclusion guarantee holds either way; what is lost is the
+/// `current` anchor, which only means a removal may be sent for a path already
+/// gone, which `Remove-MpPreference` treats as a no-op.
+///
 /// The identity case (desired equals the present set, ledger equals desired)
-/// yields an empty diff, which is the idempotency guarantee re-runs depend on.
+/// yields an empty diff under both readings, which is the idempotency guarantee
+/// re-runs depend on. Deriving `to_add` from the ledger rather than from
+/// `desired` outright is what preserves it when the list is withheld: the
+/// alternative would re-propose every exclusion on every run and raise a UAC
+/// prompt each time.
+///
+/// Both readings run through [`ExclusionClassifier`], which is also what the
+/// listing renders. One implementation of "is this already excluded" means the
+/// preview cannot propose an add for an entry the listing calls present.
 #[must_use = "the diff must be previewed and enacted"]
 pub fn plan_defender(
     desired: &BTreeSet<Exclusion>,
-    current: &BTreeSet<Utf8PathBuf>,
+    current: &CurrentExclusions,
     ledger: &BTreeSet<Exclusion>,
 ) -> DefenderDiff {
-    let current_keys: BTreeSet<String> = current.iter().map(|p| normalized_key(p)).collect();
+    let classifier = ExclusionClassifier::new(current, ledger);
 
-    let to_add: Vec<Exclusion> = desired
-        .iter()
-        .filter(|exclusion| !current_keys.contains(&exclusion.key()))
-        .cloned()
-        .collect();
-
-    let to_remove: Vec<Exclusion> = ledger
-        .iter()
-        .filter(|exclusion| {
-            !desired.contains(*exclusion) && current_keys.contains(&exclusion.key())
-        })
-        .cloned()
-        .collect();
-
-    DefenderDiff { to_add, to_remove }
+    DefenderDiff {
+        to_add: desired
+            .iter()
+            .filter(|exclusion| classifier.classify(exclusion).needs_add())
+            .cloned()
+            .collect(),
+        // A ledger entry classifies as present exactly when the live list shows
+        // it. With the list withheld it always does, since being in the ledger
+        // is the whole evidence. That reproduces the `current` anchor where it
+        // exists and drops it where it does not, which is what the two readings
+        // above call for.
+        to_remove: ledger
+            .iter()
+            .filter(|exclusion| {
+                !desired.contains(*exclusion) && !classifier.classify(exclusion).needs_add()
+            })
+            .cloned()
+            .collect(),
+    }
 }
 
 /// Failure modes of [`validate_exclusion_path`].
@@ -440,46 +623,107 @@ fn is_within(path: &Utf8Path, dir: &Utf8Path) -> bool {
     p == d || p.starts_with(&format!("{d}\\"))
 }
 
-/// Parse the `ExclusionPath` JSON emitted by `Get-MpPreference` into the set of
-/// currently-excluded paths.
+/// Parse the `ExclusionPath` JSON emitted by `Get-MpPreference` into the
+/// current exclusion state.
 ///
 /// `Get-MpPreference | Select ExclusionPath | ConvertTo-Json` (Windows
 /// PowerShell 5.1, which has no `-AsArray`) collapses to one of three shapes,
 /// all handled here:
 ///
-/// - **empty / `null`** — no exclusions are configured → an empty set.
-/// - **a bare JSON string** — exactly one exclusion.
-/// - **a JSON array of strings** — several exclusions.
+/// - **empty / `null`**: no exclusions are configured, so the [`Known`] set is
+///   empty.
+/// - **a bare JSON string**: either exactly one exclusion, or Defender's "must
+///   be an administrator" placeholder.
+/// - **a JSON array of strings**: several exclusions.
 ///
-/// Non-string array elements and other unexpected scalar shapes yield no paths
-/// rather than an error; only malformed JSON is an error.
+/// A lone string that is not a drive-absolute Windows path is the withheld-list
+/// placeholder, and yields [`Unreadable`]. The verdict keys on the *shape*
+/// rather than the placeholder's wording because that message is localized, and
+/// a build that changes it must not silently start reporting a bogus exclusion.
+///
+/// Inside a real (multi-element) list a non-absolute entry is dropped with a
+/// warning instead: a hand-added exclusion Patina would never write is no
+/// reason to condemn the whole read. Non-string elements and other scalar
+/// shapes likewise contribute nothing; only malformed JSON is an error.
 ///
 /// # Errors
 ///
 /// Returns the underlying [`serde_json::Error`] when the input is not valid
 /// JSON.
-pub fn parse_exclusion_paths(json: &str) -> Result<BTreeSet<Utf8PathBuf>, serde_json::Error> {
+///
+/// [`Known`]: CurrentExclusions::Known
+/// [`Unreadable`]: CurrentExclusions::Unreadable
+pub fn parse_current_exclusions(json: &str) -> Result<CurrentExclusions, serde_json::Error> {
     let trimmed = json.trim();
     if trimmed.is_empty() {
-        return Ok(BTreeSet::new());
+        return Ok(CurrentExclusions::Known(BTreeSet::new()));
     }
     let value: serde_json::Value = serde_json::from_str(trimmed)?;
     let mut paths = BTreeSet::new();
     match value {
         serde_json::Value::String(single) => {
+            if !is_windows_absolute(&single) {
+                warn!("Defender withheld the exclusion list: {single}");
+                return Ok(CurrentExclusions::Unreadable);
+            }
             paths.insert(Utf8PathBuf::from(single));
         }
         serde_json::Value::Array(items) => {
             for item in items {
-                if let serde_json::Value::String(path) = item {
+                let Some(path) = item.as_str() else { continue };
+                if is_windows_absolute(path) {
                     paths.insert(Utf8PathBuf::from(path));
+                } else {
+                    warn!("ignoring non-absolute Defender exclusion `{path}`");
                 }
             }
         }
         // `null`, a number, a bare object: no usable exclusion paths.
         _ => {}
     }
-    Ok(paths)
+    Ok(CurrentExclusions::Known(paths))
+}
+
+/// The elevated helper's verdict, as recovered from the result file.
+///
+/// The helper is the only party that can re-read Defender's exclusion list, so
+/// this is the authoritative outcome of an apply. [`launch_defender_helper`]
+/// polls for it and maps it onto a [`DefenderOutcome`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DefenderReceipt {
+    /// The request applied and the helper's elevated re-read confirmed it.
+    Applied,
+    /// Defender accepted the call but the helper's re-read shows the change did
+    /// not take: a silently rejected write.
+    Blocked {
+        /// The helper's detail, naming the paths and the live Defender status.
+        detail: String,
+    },
+    /// The helper could not apply the request at all.
+    Failed {
+        /// The helper's detail.
+        detail: String,
+    },
+}
+
+/// Parse the result file the elevated helper writes.
+///
+/// The body is one line: a verdict token, optionally followed by a space and a
+/// single-line detail. Anything else, an empty file included, yields `None`,
+/// which the poll treats as "no verdict yet" rather than as a failure, so a
+/// half-written or unrecognized receipt makes the launcher keep waiting instead
+/// of reporting a verdict it did not understand.
+#[must_use = "the receipt is the helper's verdict and decides the outcome"]
+pub fn parse_receipt(content: &str) -> Option<DefenderReceipt> {
+    let line = content.lines().next()?.trim();
+    let (verdict, detail) = line.split_once(' ').unwrap_or((line, ""));
+    let detail = detail.trim().to_owned();
+    match verdict {
+        RECEIPT_APPLIED => Some(DefenderReceipt::Applied),
+        RECEIPT_BLOCKED => Some(DefenderReceipt::Blocked { detail }),
+        RECEIPT_FAILED => Some(DefenderReceipt::Failed { detail }),
+        _ => None,
+    }
 }
 
 /// The per-machine record of the exclusions **Patina** owns.
@@ -521,6 +765,17 @@ pub fn defender_ledger_path(state_dir: &Utf8Path) -> Utf8PathBuf {
 #[must_use = "the returned path locates the request file"]
 pub fn defender_request_path(state_dir: &Utf8Path) -> Utf8PathBuf {
     state_dir.join(REQUEST_FILENAME)
+}
+
+/// The absolute path of the Defender result file under a resolved state
+/// directory.
+///
+/// The elevated helper derives the same path as a sibling of the request file
+/// it was handed, rather than recomputing the state directory, because a
+/// `runas` to a different admin has a different `%LOCALAPPDATA%`.
+#[must_use = "the returned path locates the helper's result file"]
+pub fn defender_result_path(state_dir: &Utf8Path) -> Utf8PathBuf {
+    state_dir.join(RESULT_FILENAME)
 }
 
 /// Serialize a diff into the request-file body the elevated helper consumes.
@@ -582,12 +837,16 @@ pub enum DefenderError {
 /// The production implementation (`HostDefenderProbe`, Windows-only) runs
 /// `Get-MpPreference`; tests supply a fake returning a fixed set.
 pub trait DefenderProbe {
-    /// Read the set of paths Defender currently excludes.
+    /// Read the paths Defender currently excludes, or report that the list was
+    /// withheld from this process.
     ///
     /// # Errors
     ///
-    /// Returns a [`DefenderError`] when the underlying read fails.
-    fn read_exclusions(&self) -> Result<BTreeSet<Utf8PathBuf>, DefenderError>;
+    /// Returns a [`DefenderError`] when the underlying read fails. A list
+    /// withheld for lack of elevation is **not** an error. It is
+    /// [`CurrentExclusions::Unreadable`], a normal outcome for the
+    /// unprivileged CLI.
+    fn read_exclusions(&self) -> Result<CurrentExclusions, DefenderError>;
 }
 
 #[cfg(windows)]
@@ -601,17 +860,20 @@ pub use host::launch_defender_helper;
 /// elevated-helper launch.
 #[cfg(windows)]
 mod host {
-    use super::DefenderDiff;
+    use super::CurrentExclusions;
     use super::DefenderError;
     use super::DefenderProbe;
-    use super::normalized_key;
-    use super::parse_exclusion_paths;
+    use super::DefenderReceipt;
+    use super::parse_current_exclusions;
+    use super::parse_receipt;
     use crate::apply::resolve_on_path;
     use crate::windows::WindowsError;
+    use crate::windows::is_elevated;
+    use crate::windows::poll_until;
     use camino::Utf8Path;
     use camino::Utf8PathBuf;
-    use std::collections::BTreeSet;
     use std::process::Command;
+    use std::time::Duration;
     use winsafe::co;
 
     /// The verb that asks the shell to launch a target elevated, raising the
@@ -620,6 +882,20 @@ mod host {
 
     /// The helper subcommand that applies the request file's add/remove set.
     const HELPER_SUBCOMMAND: &str = "apply-defender-exclusions";
+
+    /// How long to wait for the helper's result file before giving up.
+    ///
+    /// The helper starts Windows PowerShell and runs `Add-MpPreference`,
+    /// `Remove-MpPreference`, `Get-MpPreference`, and `Get-MpComputerStatus`; a
+    /// cold shell start plus those cmdlets is seconds, not milliseconds. The
+    /// bound is deliberately generous, because being too short reports
+    /// "could not confirm" over an apply that in fact succeeded, the exact
+    /// class of false negative this whole path exists to avoid.
+    const RECEIPT_DEADLINE: Duration = Duration::from_mins(2);
+
+    /// How often to look for the result file while waiting. Short enough that
+    /// the common case adds no perceptible delay past the helper's own work.
+    const RECEIPT_POLL_INTERVAL: Duration = Duration::from_millis(250);
 
     /// The PowerShell script that reads the exclusion list back as a forced
     /// JSON array. Wrapping in `@(...)` keeps the single-exclusion case an
@@ -635,7 +911,15 @@ mod host {
     pub struct HostDefenderProbe;
 
     impl DefenderProbe for HostDefenderProbe {
-        fn read_exclusions(&self) -> Result<BTreeSet<Utf8PathBuf>, DefenderError> {
+        fn read_exclusions(&self) -> Result<CurrentExclusions, DefenderError> {
+            // Defender withholds the exclusion list from an unelevated caller,
+            // so asking costs a PowerShell start to be told nothing. The
+            // process token settles it up front, and settles it on the
+            // definitive signal rather than on the wording of the placeholder
+            // Defender would have returned.
+            if !is_elevated() {
+                return Ok(CurrentExclusions::Unreadable);
+            }
             let output = powershell()
                 .args(["-Command", READ_SCRIPT])
                 .output()
@@ -650,7 +934,7 @@ mod host {
                 });
             }
             let stdout = String::from_utf8_lossy(&output.stdout);
-            parse_exclusion_paths(&stdout).map_err(|source| DefenderError::Parse { source })
+            parse_current_exclusions(&stdout).map_err(|source| DefenderError::Parse { source })
         }
     }
 
@@ -673,47 +957,80 @@ mod host {
 
     /// How the one-time elevated add/remove settled.
     ///
-    /// Mirrors [`crate::windows::elevate::ElevationOutcome`]: [`Applied`] lets
-    /// the CLI rewrite the ledger; [`Declined`] is the exit-5 UAC-declined
-    /// path; [`Blocked`] is the exit-1 path when the helper ran but a
-    /// post-run re-read shows the change did not take (Tamper Protection /
-    /// managed Defender).
+    /// Every variant but [`Declined`] comes from the helper's own elevated
+    /// verification, relayed through the result file. The unprivileged CLI
+    /// cannot read Defender's exclusion list and so cannot judge this for
+    /// itself. The three failure variants stay distinct because they call for
+    /// different things from the user: [`Blocked`] means Defender refused the
+    /// write, [`Failed`] means the helper never got that far, and
+    /// [`Unconfirmed`] means nobody knows.
     ///
     /// [`Applied`]: DefenderOutcome::Applied
     /// [`Declined`]: DefenderOutcome::Declined
     /// [`Blocked`]: DefenderOutcome::Blocked
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    /// [`Failed`]: DefenderOutcome::Failed
+    /// [`Unconfirmed`]: DefenderOutcome::Unconfirmed
+    #[derive(Debug, Clone, PartialEq, Eq)]
     pub enum DefenderOutcome {
-        /// The helper ran and a re-read confirms the desired add/remove took.
+        /// The helper ran and its elevated re-read confirms the add/remove
+        /// took. The only variant that may update the ledger.
         Applied,
-        /// The user dismissed the UAC consent dialog (`ERROR_CANCELLED`).
+        /// The user dismissed the UAC consent dialog (`ERROR_CANCELLED`), so
+        /// the helper never ran.
         Declined,
-        /// The helper ran but the re-read shows the exclusions did not change
-        /// as requested — the write was silently rejected.
-        Blocked,
+        /// Defender accepted the call but the helper's re-read shows the
+        /// exclusions did not change as requested: the write was silently
+        /// rejected (Tamper Protection / managed Defender).
+        Blocked {
+            /// The helper's detail, naming the paths and the live Defender
+            /// status.
+            detail: String,
+        },
+        /// The helper ran but could not apply the request: a path it refused,
+        /// an unreadable request file, PowerShell unavailable.
+        Failed {
+            /// The helper's detail.
+            detail: String,
+        },
+        /// The helper never reported a verdict before the deadline, so whether
+        /// the exclusions changed is unknown. Distinct from [`Blocked`]
+        /// precisely because claiming Defender refused a write nobody observed
+        /// is the failure mode this path is built to avoid.
+        ///
+        /// [`Blocked`]: DefenderOutcome::Blocked
+        Unconfirmed,
     }
 
-    /// Launch the elevated helper to enact `diff`, then re-read Defender state
-    /// to classify the outcome.
+    /// Launch the elevated helper to enact the request file, and relay the
+    /// verdict it writes to `receipt_path`.
     ///
     /// The `request_path` is passed as a **quoted** `ShellExecuteEx` parameter
-    /// (exclusion paths contain spaces). After the helper returns, this
-    /// re-reads the live exclusion list and confirms every add is now present
-    /// and every removal now absent — the mandatory verification that catches a
-    /// Tamper-Protected write which returned success but changed nothing.
+    /// (exclusion paths contain spaces). Verification is the helper's job: it
+    /// is the only party elevated enough to re-read the exclusion list, so it
+    /// re-reads and records the result, and this function waits for that record
+    /// rather than judging for itself.
+    ///
+    /// Waiting means polling for the result file to appear;
+    /// `windows::poll_until` carries why a launcher cannot simply wait on
+    /// the process.
     ///
     /// # Errors
     ///
-    /// Returns [`WindowsError`] when the running executable cannot be located
-    /// or the `ShellExecuteEx` launch fails for a reason other than the
-    /// user declining consent (reported as [`DefenderOutcome::Declined`],
-    /// not an error).
+    /// Returns [`WindowsError`] when the running executable cannot be located,
+    /// a previous run's result file cannot be cleared, or the `ShellExecuteEx`
+    /// launch fails for a reason other than the user declining consent
+    /// (reported as [`DefenderOutcome::Declined`], not an error).
     pub fn launch_defender_helper(
         request_path: &Utf8Path,
-        diff: &DefenderDiff,
+        receipt_path: &Utf8Path,
     ) -> Result<DefenderOutcome, WindowsError> {
         let helper = crate::windows::elevate::helper_path()?;
         let parameters = format!("{HELPER_SUBCOMMAND} \"{request_path}\"");
+
+        // A result file left by an earlier run would be picked up as this
+        // run's verdict, including a stale `applied` for a run the user just
+        // declined. Refuse to launch rather than risk relaying it.
+        clear_stale_receipt(receipt_path)?;
 
         let info = winsafe::SHELLEXECUTEINFO {
             verb: Some(RUNAS_VERB),
@@ -724,7 +1041,7 @@ mod host {
         };
 
         match winsafe::ShellExecuteEx(&info) {
-            Ok(()) => Ok(verify_outcome(diff)),
+            Ok(()) => Ok(await_receipt(receipt_path)),
             Err(err) if err == co::ERROR::CANCELLED => Ok(DefenderOutcome::Declined),
             Err(err) => Err(WindowsError::WinApi {
                 call: "ShellExecuteEx",
@@ -733,28 +1050,29 @@ mod host {
         }
     }
 
-    /// Re-read Defender state and classify whether `diff` took effect.
+    /// Remove a previous run's result file, treating an absent one as done.
+    fn clear_stale_receipt(receipt_path: &Utf8Path) -> Result<(), WindowsError> {
+        crate::fsx::remove_entry(receipt_path).map_err(|source| WindowsError::StaleReceipt {
+            path: receipt_path.to_owned(),
+            source,
+        })
+    }
+
+    /// Wait for the helper's result file and map its verdict onto an outcome.
     ///
-    /// A failed re-read is conservatively treated as
-    /// [`DefenderOutcome::Blocked`] — the CLI must not report success it
-    /// cannot confirm.
-    fn verify_outcome(diff: &DefenderDiff) -> DefenderOutcome {
-        let Ok(current) = HostDefenderProbe.read_exclusions() else {
-            return DefenderOutcome::Blocked;
-        };
-        let current_keys: BTreeSet<String> = current.iter().map(|p| normalized_key(p)).collect();
-        let adds_present = diff
-            .to_add
-            .iter()
-            .all(|exclusion| current_keys.contains(&exclusion.key()));
-        let removes_absent = diff
-            .to_remove
-            .iter()
-            .all(|exclusion| !current_keys.contains(&exclusion.key()));
-        if adds_present && removes_absent {
-            DefenderOutcome::Applied
-        } else {
-            DefenderOutcome::Blocked
+    /// A file that is absent, unreadable, or not yet a recognizable verdict is
+    /// "no answer yet", so the poll keeps waiting; only the deadline turns that
+    /// into [`DefenderOutcome::Unconfirmed`].
+    fn await_receipt(receipt_path: &Utf8Path) -> DefenderOutcome {
+        let verdict = poll_until(RECEIPT_DEADLINE, RECEIPT_POLL_INTERVAL, || {
+            let content = fs_err::read_to_string(receipt_path.as_std_path()).ok()?;
+            parse_receipt(&content)
+        });
+        match verdict {
+            Some(DefenderReceipt::Applied) => DefenderOutcome::Applied,
+            Some(DefenderReceipt::Blocked { detail }) => DefenderOutcome::Blocked { detail },
+            Some(DefenderReceipt::Failed { detail }) => DefenderOutcome::Failed { detail },
+            None => DefenderOutcome::Unconfirmed,
         }
     }
 }
@@ -809,6 +1127,11 @@ mod tests {
             .iter()
             .map(|(p, kind)| Exclusion::new(*p, *kind))
             .collect()
+    }
+
+    /// A successfully-read live exclusion list built from raw path strings.
+    fn known(paths: &[&str]) -> CurrentExclusions {
+        CurrentExclusions::Known(paths.iter().map(Utf8PathBuf::from).collect())
     }
 
     #[test]
@@ -935,8 +1258,7 @@ mod tests {
             (REPO, ExclusionKind::Folder),
             (r"C:\Users\kevin\.gitconfig", ExclusionKind::File),
         ]);
-        let current: BTreeSet<Utf8PathBuf> = [Utf8PathBuf::from(REPO)].into_iter().collect();
-        let diff = plan_defender(&desired, &current, &BTreeSet::new());
+        let diff = plan_defender(&desired, &known(&[REPO]), &BTreeSet::new());
         assert_eq!(
             diff.to_add,
             vec![Exclusion::new(
@@ -957,12 +1279,7 @@ mod tests {
             (REPO, ExclusionKind::Folder),
             (r"C:\Users\kevin\.oldrc", ExclusionKind::File),
         ]);
-        let current: BTreeSet<Utf8PathBuf> = [
-            Utf8PathBuf::from(REPO),
-            Utf8PathBuf::from(r"C:\Users\kevin\.oldrc"),
-        ]
-        .into_iter()
-        .collect();
+        let current = known(&[REPO, r"C:\Users\kevin\.oldrc"]);
         let diff = plan_defender(&desired, &current, &ledger);
         assert!(diff.to_add.is_empty());
         assert_eq!(diff.to_remove, vec![stale]);
@@ -974,12 +1291,7 @@ mod tests {
         // never a removal candidate.
         let desired = set(&[(REPO, ExclusionKind::Folder)]);
         let ledger = set(&[(REPO, ExclusionKind::Folder)]);
-        let current: BTreeSet<Utf8PathBuf> = [
-            Utf8PathBuf::from(REPO),
-            Utf8PathBuf::from(r"C:\Users\kevin\user-added"),
-        ]
-        .into_iter()
-        .collect();
+        let current = known(&[REPO, r"C:\Users\kevin\user-added"]);
         let diff = plan_defender(&desired, &current, &ledger);
         assert!(
             diff.is_empty(),
@@ -994,12 +1306,7 @@ mod tests {
             (REPO, ExclusionKind::Folder),
             (r"C:\Users\kevin\.gitconfig", ExclusionKind::File),
         ]);
-        let current: BTreeSet<Utf8PathBuf> = [
-            Utf8PathBuf::from(REPO),
-            Utf8PathBuf::from(r"C:\Users\kevin\.gitconfig"),
-        ]
-        .into_iter()
-        .collect();
+        let current = known(&[REPO, r"C:\Users\kevin\.gitconfig"]);
         let diff = plan_defender(&desired, &current, &desired);
         assert!(diff.is_empty(), "identity must be a no-op: {diff:?}");
     }
@@ -1009,14 +1316,79 @@ mod tests {
         // The key idempotency guard: Get-MpPreference echoing a path back with
         // different case or a trailing separator must produce no churn.
         let desired = set(&[(r"C:\Users\kevin\dotfiles", ExclusionKind::Folder)]);
-        let current: BTreeSet<Utf8PathBuf> = [Utf8PathBuf::from(r"c:\users\kevin\DOTFILES\")]
-            .into_iter()
-            .collect();
+        let current = known(&[r"c:\users\kevin\DOTFILES\"]);
         let ledger = desired.clone();
         let diff = plan_defender(&desired, &current, &ledger);
         assert!(
             diff.is_empty(),
             "case/trailing-separator differences must not produce a diff: {diff:?}"
+        );
+    }
+
+    #[test]
+    fn plan_unreadable_takes_presence_from_the_ledger() {
+        // With the live list withheld, the ledger says what is already there:
+        // a desired-but-unrecorded path is added, a recorded one is left alone.
+        let desired = set(&[
+            (REPO, ExclusionKind::Folder),
+            (r"C:\Users\kevin\.gitconfig", ExclusionKind::File),
+        ]);
+        let ledger = set(&[(REPO, ExclusionKind::Folder)]);
+        let diff = plan_defender(&desired, &CurrentExclusions::Unreadable, &ledger);
+        assert_eq!(
+            diff.to_add,
+            vec![Exclusion::new(
+                r"C:\Users\kevin\.gitconfig",
+                ExclusionKind::File
+            )]
+        );
+        assert!(diff.to_remove.is_empty());
+    }
+
+    #[test]
+    fn plan_unreadable_identity_is_an_empty_diff() {
+        // The reason `to_add` is ledger-relative rather than all of `desired`:
+        // an unchanged re-run must stay a no-op even unprivileged, or every
+        // invocation would raise a UAC prompt for work already done.
+        let desired = set(&[
+            (REPO, ExclusionKind::Folder),
+            (r"C:\Users\kevin\.gitconfig", ExclusionKind::File),
+        ]);
+        let diff = plan_defender(&desired, &CurrentExclusions::Unreadable, &desired);
+        assert!(
+            diff.is_empty(),
+            "an unchanged plan must not churn when the live list is withheld: {diff:?}"
+        );
+    }
+
+    #[test]
+    fn plan_unreadable_reaps_a_stale_ledger_entry() {
+        let desired = set(&[(REPO, ExclusionKind::Folder)]);
+        let ledger = set(&[
+            (REPO, ExclusionKind::Folder),
+            (r"C:\Users\kevin\.oldrc", ExclusionKind::File),
+        ]);
+        let diff = plan_defender(&desired, &CurrentExclusions::Unreadable, &ledger);
+        assert!(diff.to_add.is_empty());
+        assert_eq!(
+            diff.to_remove,
+            vec![Exclusion::new(
+                r"C:\Users\kevin\.oldrc",
+                ExclusionKind::File
+            )]
+        );
+    }
+
+    #[test]
+    fn plan_unreadable_still_never_removes_a_path_outside_the_ledger() {
+        // Losing the `current` anchor must not widen removals: they stay
+        // ledger-derived, so a user-added exclusion is still untouchable.
+        let desired = set(&[(REPO, ExclusionKind::Folder)]);
+        let ledger = set(&[(REPO, ExclusionKind::Folder)]);
+        let diff = plan_defender(&desired, &CurrentExclusions::Unreadable, &ledger);
+        assert!(
+            diff.is_empty(),
+            "a path Patina never recorded must never be reaped: {diff:?}"
         );
     }
 
@@ -1076,38 +1448,168 @@ mod tests {
     }
 
     #[test]
+    fn classify_splits_a_present_exclusion_by_whether_the_ledger_records_it() {
+        // The distinction the Unmanaged state exists for: both entries are
+        // excluded in Defender, and only one of them is Patina's.
+        let ours = Exclusion::new(REPO, ExclusionKind::Folder);
+        let theirs = Exclusion::new(r"C:\Users\kevin\.gitconfig", ExclusionKind::File);
+        let current = known(&[REPO, r"C:\Users\kevin\.gitconfig"]);
+        let ledger = set(&[(REPO, ExclusionKind::Folder)]);
+        let classifier = ExclusionClassifier::new(&current, &ledger);
+
+        assert_eq!(classifier.classify(&ours), ExclusionState::Owned);
+        assert_eq!(classifier.classify(&theirs), ExclusionState::Unmanaged);
+    }
+
+    #[test]
+    fn classify_reports_absent_whether_or_not_the_ledger_records_it() {
+        // A ledger entry Defender no longer excludes is still absent: the live
+        // list wins when it is available.
+        let gone = Exclusion::new(REPO, ExclusionKind::Folder);
+        let ledger = set(&[(REPO, ExclusionKind::Folder)]);
+        let classifier = ExclusionClassifier::new(&known(&[]), &ledger);
+        assert_eq!(classifier.classify(&gone), ExclusionState::Absent);
+
+        let classifier = ExclusionClassifier::new(&known(&[]), &BTreeSet::new());
+        assert_eq!(classifier.classify(&gone), ExclusionState::Absent);
+    }
+
+    #[test]
+    fn classify_falls_back_to_the_ledger_when_the_list_is_withheld() {
+        // Unmanaged is undetectable here: without the live list there is nothing
+        // to notice an unrecorded-but-present exclusion against.
+        let recorded = Exclusion::new(REPO, ExclusionKind::Folder);
+        let other = Exclusion::new(r"C:\Users\kevin\.gitconfig", ExclusionKind::File);
+        let ledger = set(&[(REPO, ExclusionKind::Folder)]);
+        let classifier = ExclusionClassifier::new(&CurrentExclusions::Unreadable, &ledger);
+
+        assert_eq!(classifier.classify(&recorded), ExclusionState::Recorded);
+        assert_eq!(classifier.classify(&other), ExclusionState::Unrecorded);
+    }
+
+    #[test]
+    fn classify_matches_a_present_path_across_case_and_trailing_separator() {
+        // Classification keys on the normalized path, like the diff, so
+        // `Get-MpPreference` echoing a path back differently cannot demote an
+        // owned exclusion to Absent.
+        let ours = Exclusion::new(r"C:\Users\kevin\dotfiles", ExclusionKind::Folder);
+        let ledger = set(&[(r"C:\Users\kevin\dotfiles", ExclusionKind::Folder)]);
+        let classifier = ExclusionClassifier::new(&known(&[r"c:\users\kevin\DOTFILES\"]), &ledger);
+        assert_eq!(classifier.classify(&ours), ExclusionState::Owned);
+    }
+
+    #[test]
     fn parse_handles_zero_one_and_many_shapes() {
-        // null / empty ⇒ none.
-        assert!(
-            parse_exclusion_paths("null")
-                .expect("null parses")
-                .is_empty()
+        // null / empty ⇒ a known-empty list, not an unreadable one: Defender
+        // answered, it just has nothing configured.
+        assert_eq!(
+            parse_current_exclusions("null").expect("null parses"),
+            known(&[])
         );
-        assert!(
-            parse_exclusion_paths("   ")
-                .expect("blank parses")
-                .is_empty()
+        assert_eq!(
+            parse_current_exclusions("   ").expect("blank parses"),
+            known(&[])
         );
         // A bare string ⇒ one (the PowerShell 5.1 single-element collapse).
         assert_eq!(
-            parse_exclusion_paths("\"C:\\\\Users\\\\kevin\\\\dotfiles\"").expect("scalar parses"),
-            [Utf8PathBuf::from(r"C:\Users\kevin\dotfiles")]
-                .into_iter()
-                .collect::<BTreeSet<_>>()
+            parse_current_exclusions("\"C:\\\\Users\\\\kevin\\\\dotfiles\"")
+                .expect("scalar parses"),
+            known(&[r"C:\Users\kevin\dotfiles"])
         );
         // An array ⇒ many.
-        let many = parse_exclusion_paths("[\"C:\\\\a\", \"C:\\\\b\"]").expect("array parses");
         assert_eq!(
-            many,
-            [Utf8PathBuf::from(r"C:\a"), Utf8PathBuf::from(r"C:\b")]
-                .into_iter()
-                .collect::<BTreeSet<_>>()
+            parse_current_exclusions("[\"C:\\\\a\", \"C:\\\\b\"]").expect("array parses"),
+            known(&[r"C:\a", r"C:\b"])
+        );
+    }
+
+    #[test]
+    fn parse_reports_the_withheld_list_as_unreadable() {
+        // The regression this type exists for. Read unprivileged,
+        // `Get-MpPreference` exits 0 and returns this placeholder in place of
+        // the list; taking it for an exclusion path made every desired path
+        // look absent and every verification look failed.
+        assert_eq!(
+            parse_current_exclusions("\"N/A: Must be an administrator to view exclusions\"")
+                .expect("the placeholder parses as JSON"),
+            CurrentExclusions::Unreadable
+        );
+    }
+
+    #[test]
+    fn parse_treats_any_lone_non_path_string_as_unreadable() {
+        // The verdict keys on the shape, not the wording, because the
+        // placeholder is localized, so a translated build must reach the same
+        // conclusion.
+        for withheld in [
+            "\"Nicht verfügbar\"",
+            "\"管理者である必要があります\"",
+            "\"\"",
+        ] {
+            assert_eq!(
+                parse_current_exclusions(withheld).expect("a JSON string parses"),
+                CurrentExclusions::Unreadable,
+                "`{withheld}` is not a path, so the list was not read"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_drops_a_non_absolute_entry_from_a_real_list() {
+        // A multi-element list is a genuine answer. An entry Patina would never
+        // write (an env-var-relative exclusion added by hand) is skipped rather
+        // than condemning the whole read as unreadable.
+        assert_eq!(
+            parse_current_exclusions("[\"C:\\\\a\", \"%USERPROFILE%\\\\x\", \"C:\\\\b\"]")
+                .expect("array parses"),
+            known(&[r"C:\a", r"C:\b"])
         );
     }
 
     #[test]
     fn parse_rejects_malformed_json() {
-        parse_exclusion_paths("{not json").expect_err("malformed JSON must be rejected");
+        parse_current_exclusions("{not json").expect_err("malformed JSON must be rejected");
+    }
+
+    #[test]
+    fn receipt_parses_each_verdict_with_its_detail() {
+        assert_eq!(parse_receipt("applied\n"), Some(DefenderReceipt::Applied));
+        assert_eq!(
+            parse_receipt("blocked exclusions not applied (TamperProtected=True)\n"),
+            Some(DefenderReceipt::Blocked {
+                detail: "exclusions not applied (TamperProtected=True)".to_owned()
+            })
+        );
+        assert_eq!(
+            parse_receipt("failed refusing to exclude `C:\\`\n"),
+            Some(DefenderReceipt::Failed {
+                detail: "refusing to exclude `C:\\`".to_owned()
+            })
+        );
+    }
+
+    #[test]
+    fn receipt_verdict_without_a_detail_parses() {
+        assert_eq!(
+            parse_receipt("blocked"),
+            Some(DefenderReceipt::Blocked {
+                detail: String::new()
+            })
+        );
+    }
+
+    #[test]
+    fn receipt_yields_none_for_anything_unrecognized() {
+        // `None` means "no verdict yet", which keeps the launcher polling. An
+        // empty or truncated file must land here rather than being read as a
+        // verdict the helper never wrote.
+        for not_a_verdict in ["", "\n", "applie", "garbage line", "APPLIED"] {
+            assert_eq!(
+                parse_receipt(not_a_verdict),
+                None,
+                "`{not_a_verdict}` must not resolve to a verdict"
+            );
+        }
     }
 
     #[test]
@@ -1217,8 +1719,24 @@ mod tests {
         let state_dir = Utf8Path::new(r"C:\Users\kevin\AppData\Local\patina");
         let ledger = defender_ledger_path(state_dir);
         let request = defender_request_path(state_dir);
-        assert_eq!(ledger.parent(), Some(state_dir));
-        assert_eq!(request.parent(), Some(state_dir));
-        assert_ne!(ledger, request, "ledger and request must be distinct files");
+        let result = defender_result_path(state_dir);
+        for path in [&ledger, &request, &result] {
+            assert_eq!(path.parent(), Some(state_dir));
+        }
+        let distinct: BTreeSet<&Utf8PathBuf> = [&ledger, &request, &result].into_iter().collect();
+        assert_eq!(distinct.len(), 3, "the three files must not collide");
+    }
+
+    #[test]
+    fn the_result_file_keeps_the_basename_the_helper_writes() {
+        // `patina-elevate` cannot depend on this crate, so it spells this
+        // basename itself and derives the path as a sibling of the request file
+        // it was handed. Renaming the constant here alone would break the
+        // handoff silently; pinning the literal is what makes it fail loudly.
+        let state_dir = Utf8Path::new(r"C:\Users\kevin\AppData\Local\patina");
+        assert_eq!(
+            defender_result_path(state_dir).file_name(),
+            Some("defender-result.txt")
+        );
     }
 }

@@ -22,6 +22,7 @@
 //!   its buffers are always plain text.
 
 use crate::output::style::Styles;
+use crate::output::style::paint;
 use anstream::AutoStream;
 use anstream::ColorChoice;
 use anstyle::Style;
@@ -86,14 +87,6 @@ impl StreamReporter {
 /// it here is deliberate (and keeps the `must_use` lint satisfied without
 /// a bare `let _`).
 fn ignore_io<T>(_result: std::io::Result<T>) {}
-
-/// Wrap `text` in `style`'s opening escape and reset. An empty style renders
-/// to zero bytes on both, so under the plain palette this returns `text`
-/// unchanged — the property that keeps a plain confirm prompt byte-identical
-/// to its unstyled form.
-fn paint(style: Style, text: &str) -> String {
-    format!("{}{text}{}", style.render(), style.render_reset())
-}
 
 /// Compose the styled `<question> [y/N] ` confirmation prompt: the prose and
 /// brackets in the prompt style, the affirmative `y` and default `N` in their

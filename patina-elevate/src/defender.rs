@@ -15,13 +15,29 @@
 //! argument-parsing surface and the pure validator/parser exercisable by the
 //! cross-platform tests.
 //!
+//! ## Reporting the verdict back
+//!
+//! The unprivileged CLI cannot check this helper's work: `Get-MpPreference`
+//! withholds the exclusion list from an unelevated caller, so a verification
+//! attempted there can only ever conclude "not applied". Nor can it read this
+//! process's exit code, because `ShellExecuteEx` hands the launcher no handle
+//! to wait on.
+//!
+//! So the verdict travels through a **result file** written beside the request
+//! file, which the CLI polls for. It is written on every terminal path, so a
+//! clean failure reaches the user as itself rather than as a timeout, and it
+//! distinguishes a silently rejected write from a helper that never got that
+//! far. Reporting "Defender refused this" over an unrelated failure is the
+//! confusion the file exists to prevent.
+//!
 //! ## Duplicated constants
 //!
-//! The system-directory environment-variable names below are copied verbatim
-//! from `patina-core`'s validator *on purpose*. This helper must not depend on
-//! `patina-core`, so the denylist cannot be shared across the crate boundary;
-//! the duplication is the deliberate price of the minimal trust surface. Keep
-//! the two sites in sync by hand.
+//! The system-directory environment-variable names and the result-file name and
+//! verdict tokens below are copied verbatim from `patina-core` *on purpose*.
+//! This helper must not depend on `patina-core`, so neither the denylist nor
+//! the receipt protocol can be shared across the crate boundary; the
+//! duplication is the deliberate price of the minimal trust surface. Keep the
+//! sites in sync by hand.
 
 use std::fmt;
 use std::path::Path;
@@ -34,6 +50,28 @@ const SYSTEM_DIR_ENV_VARS: [&str; 4] = [
     "ProgramW6432",
     "ProgramFiles(x86)",
 ];
+
+/// The basename of the result file, written beside the request file.
+/// Duplicated verbatim from `patina_core::windows::defender`.
+#[cfg(windows)]
+const RESULT_FILENAME: &str = "defender-result.txt";
+
+/// The scratch name the result is written under before being renamed into
+/// place, so the polling CLI never reads a partially-written verdict.
+#[cfg(windows)]
+const RESULT_TMP_FILENAME: &str = "defender-result.txt.tmp";
+
+/// Receipt verdict: applied, and the elevated re-read confirmed it.
+/// Duplicated verbatim from `patina_core::windows::defender`.
+const RECEIPT_APPLIED: &str = "applied";
+
+/// Receipt verdict: Defender accepted the call but the re-read shows the change
+/// did not take. Duplicated verbatim from `patina_core::windows::defender`.
+const RECEIPT_BLOCKED: &str = "blocked";
+
+/// Receipt verdict: the request could not be applied at all.
+/// Duplicated verbatim from `patina_core::windows::defender`.
+const RECEIPT_FAILED: &str = "failed";
 
 /// Failure modes of [`apply_defender_exclusions`].
 #[derive(Debug)]
@@ -73,14 +111,27 @@ pub enum DefenderError {
         source: std::io::Error,
     },
 
-    /// PowerShell ran but the apply-and-verify script reported failure — either
-    /// `Add`/`Remove-MpPreference` errored, or the mandatory re-read showed the
-    /// exclusions did not change as requested (Tamper Protection / managed
-    /// Defender silently rejecting the write).
+    /// The mandatory re-read showed the exclusions did not change as requested:
+    /// Defender accepted the call and silently rejected the write (Tamper
+    /// Protection / managed Defender).
+    ///
+    /// Kept distinct from [`Apply`] because only this variant justifies telling
+    /// the user Defender refused their change. It is not `#[cfg(windows)]`
+    /// because it carries nothing platform-specific, and leaving it ungated is
+    /// what lets [`receipt_body`] be exercised off Windows.
+    ///
+    /// [`Apply`]: DefenderError::Apply
+    Blocked {
+        /// The script's detail, naming the specific paths and the live
+        /// Tamper-Protection status.
+        detail: String,
+    },
+
+    /// PowerShell ran but the apply-and-verify script failed for some other
+    /// reason: `Add`/`Remove-MpPreference` errored, or the script itself did.
     #[cfg(windows)]
     Apply {
-        /// The script's stderr, carrying the specific paths and Defender
-        /// status.
+        /// The script's stderr.
         detail: String,
     },
 }
@@ -100,6 +151,9 @@ impl fmt::Display for DefenderError {
             }
             Self::InvalidPath { path, reason } => {
                 write!(f, "refusing to exclude `{path}`: {reason}")
+            }
+            Self::Blocked { detail } => {
+                write!(f, "Defender rejected the exclusion change: {detail}")
             }
             #[cfg(windows)]
             Self::ReadRequest { path, source } => {
@@ -122,7 +176,10 @@ impl fmt::Display for DefenderError {
 impl std::error::Error for DefenderError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::NotWindows | Self::MalformedRequest { .. } | Self::InvalidPath { .. } => None,
+            Self::NotWindows
+            | Self::MalformedRequest { .. }
+            | Self::InvalidPath { .. }
+            | Self::Blocked { .. } => None,
             #[cfg(windows)]
             Self::ReadRequest { source, .. } | Self::PowerShell { source } => Some(source),
             #[cfg(windows)]
@@ -260,7 +317,8 @@ fn normalize(s: &str) -> String {
     unified.trim_end_matches('\\').to_ascii_lowercase()
 }
 
-/// Apply the add/remove exclusions listed in the request file.
+/// Apply the add/remove exclusions listed in the request file, and record the
+/// verdict beside it.
 ///
 /// On Windows this reads the request file at the given absolute path (it must
 /// **not** recompute the state directory — a `runas` to a different admin has a
@@ -269,6 +327,9 @@ fn normalize(s: &str) -> String {
 /// batches `Add-MpPreference` / `Remove-MpPreference` and verifies the result
 /// with a mandatory re-read.
 ///
+/// Whatever the outcome, it is written to the result file the launching CLI
+/// polls for. See the module's *Reporting the verdict back*.
+///
 /// # Errors
 ///
 /// Returns [`DefenderError`] when the request cannot be read or parsed, a path
@@ -276,6 +337,16 @@ fn normalize(s: &str) -> String {
 /// script reports the exclusions did not take.
 #[cfg(windows)]
 pub fn apply_defender_exclusions(request: &Path) -> Result<(), DefenderError> {
+    let outcome = apply_from_request(request);
+    write_receipt(request, &outcome);
+    outcome
+}
+
+/// The apply proper, with no receipt concern. Split out so
+/// [`apply_defender_exclusions`] records every terminal path through one seam
+/// rather than repeating the write at each `?`.
+#[cfg(windows)]
+fn apply_from_request(request: &Path) -> Result<(), DefenderError> {
     let content =
         std::fs::read_to_string(request).map_err(|source| DefenderError::ReadRequest {
             path: request.to_path_buf(),
@@ -287,6 +358,52 @@ pub fn apply_defender_exclusions(request: &Path) -> Result<(), DefenderError> {
         validate_exclusion_path_with(path, &system_dirs)?;
     }
     run_apply_and_verify(request)
+}
+
+/// Write the verdict the launching CLI polls for, beside the request file.
+///
+/// Written to a scratch name and renamed into place, so a poll that reads the
+/// file mid-write cannot mistake a partial line for a verdict.
+///
+/// Failures here are deliberately silent. There is nowhere to report them,
+/// since the helper runs with no console attached, and the consequence is
+/// already well-defined: the CLI waits out its deadline and tells the user it
+/// could not confirm the outcome, which is exactly true.
+#[cfg(windows)]
+fn write_receipt(request: &Path, outcome: &Result<(), DefenderError>) {
+    let tmp = request.with_file_name(RESULT_TMP_FILENAME);
+    if std::fs::write(&tmp, receipt_body(outcome)).is_ok() {
+        drop(std::fs::rename(
+            &tmp,
+            request.with_file_name(RESULT_FILENAME),
+        ));
+    }
+}
+
+/// Render an outcome as the result file's single-line body.
+///
+/// The line is `<verdict>` or `<verdict> <detail>`. The detail is flattened to
+/// one line because the format reserves the first token for the verdict and a
+/// PowerShell error rendering spans several lines.
+///
+/// Public, like [`parse_request`] and [`validate_exclusion_path`], so the
+/// protocol it defines is exercisable on any host. The writer that calls it is
+/// Windows-only, but what it writes is what the CLI parses and so is worth
+/// pinning everywhere.
+#[must_use = "the rendered body is what the launching CLI reads as the verdict"]
+pub fn receipt_body(outcome: &Result<(), DefenderError>) -> String {
+    match outcome {
+        Ok(()) => format!("{RECEIPT_APPLIED}\n"),
+        Err(DefenderError::Blocked { detail }) => {
+            format!("{RECEIPT_BLOCKED} {}\n", one_line(detail))
+        }
+        Err(other) => format!("{RECEIPT_FAILED} {}\n", one_line(&other.to_string())),
+    }
+}
+
+/// Collapse whitespace runs, newlines included, into single spaces.
+fn one_line(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// Non-Windows fallback: the Defender apply does not exist on this target.
@@ -307,7 +424,8 @@ pub fn apply_defender_exclusions(_request: &Path) -> Result<(), DefenderError> {
 /// -LiteralPath`; the exclusion paths themselves are only ever bound to `$path`
 /// variables, never interpolated into a command string. On a verification
 /// mismatch the script raises with the specific paths and the live
-/// Tamper-Protection status, which surfaces on stderr as
+/// Tamper-Protection status, which surfaces here as
+/// [`DefenderError::Blocked`]; any other non-zero exit is
 /// [`DefenderError::Apply`].
 #[cfg(windows)]
 fn run_apply_and_verify(request: &Path) -> Result<(), DefenderError> {
@@ -329,11 +447,42 @@ fn run_apply_and_verify(request: &Path) -> Result<(), DefenderError> {
         .map_err(|source| DefenderError::PowerShell { source })?;
 
     if output.status.success() {
-        Ok(())
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-        Err(DefenderError::Apply { detail: stderr })
+        return Ok(());
     }
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+    match blocked_detail(&stderr) {
+        Some(detail) => Err(DefenderError::Blocked { detail }),
+        None => Err(DefenderError::Apply { detail: stderr }),
+    }
+}
+
+/// The marker the apply-and-verify script prefixes onto its
+/// verification-mismatch throw.
+///
+/// It exists so a silently rejected write is recognizable in stderr. Without
+/// it, a rejected write and an unrelated cmdlet failure are both "PowerShell
+/// exited non-zero", and the user gets told Defender refused a change over
+/// failures that had nothing to do with Defender's policy.
+#[cfg(windows)]
+const BLOCKED_MARKER: &str = "PATINA-BLOCKED";
+
+/// Extract the verification-mismatch detail from the script's stderr, or `None`
+/// if this was some other failure.
+///
+/// PowerShell wraps a thrown message in its own multi-line error rendering, so
+/// the marker is searched for anywhere in stderr rather than expected at the
+/// start, and the detail runs to the end of the marker's line.
+#[cfg(windows)]
+fn blocked_detail(stderr: &str) -> Option<String> {
+    let (_, after_marker) = stderr.split_once(BLOCKED_MARKER)?;
+    Some(
+        after_marker
+            .lines()
+            .next()
+            .unwrap_or_default()
+            .trim()
+            .to_owned(),
+    )
 }
 
 /// Wrap `value` as a single-quoted PowerShell string literal, doubling any
@@ -365,7 +514,7 @@ fn apply_script(request_literal: &str) -> String {
          foreach ($p in $removes) {{ if ($current -contains $p.TrimEnd('\\').ToLowerInvariant()) {{ $lingering += $p }} }}; \
          if ($missing.Count -gt 0 -or $lingering.Count -gt 0) {{ \
            $s = Get-MpComputerStatus; \
-           throw \"exclusions not applied (TamperProtected=$($s.IsTamperProtected), RunningMode=$($s.AMRunningMode)); not added: $($missing -join ', '); not removed: $($lingering -join ', ')\" \
+           throw \"{BLOCKED_MARKER} exclusions not applied (TamperProtected=$($s.IsTamperProtected), RunningMode=$($s.AMRunningMode)); not added: $($missing -join ', '); not removed: $($lingering -join ', ')\" \
          }}"
     )
 }
@@ -475,5 +624,80 @@ mod tests {
     fn is_within_is_false_for_an_empty_directory() {
         assert!(!is_within("C:\\Users\\kevin", ""));
         assert!(is_within("C:\\Users\\kevin\\x", "C:\\Users\\kevin"));
+    }
+
+    #[test]
+    fn receipt_body_marks_success_with_the_applied_verdict_alone() {
+        assert_eq!(receipt_body(&Ok(())), "applied\n");
+    }
+
+    #[test]
+    fn receipt_body_distinguishes_a_rejected_write_from_any_other_failure() {
+        // The distinction the CLI relays to the user: only `Blocked` earns the
+        // "Defender refused this" message, so the two must not share a verdict
+        // token.
+        let blocked = receipt_body(&Err(DefenderError::Blocked {
+            detail: "exclusions not applied (TamperProtected=True)".to_owned(),
+        }));
+        assert_eq!(
+            blocked,
+            "blocked exclusions not applied (TamperProtected=True)\n"
+        );
+
+        let failed = receipt_body(&Err(DefenderError::MalformedRequest {
+            line: "garbage".to_owned(),
+        }));
+        assert!(
+            failed.starts_with("failed "),
+            "a non-Defender failure must not claim Defender rejected it: {failed}"
+        );
+    }
+
+    #[test]
+    fn receipt_body_is_a_single_line_even_for_a_multi_line_detail() {
+        // The format reserves the first token for the verdict, so a detail
+        // spanning lines (a PowerShell error rendering always does) must be
+        // flattened or the CLI reads only its first fragment.
+        let body = receipt_body(&Err(DefenderError::Blocked {
+            detail: "not added:\n  C:\\a\n  C:\\b".to_owned(),
+        }));
+        assert_eq!(body, "blocked not added: C:\\a C:\\b\n");
+        assert_eq!(body.lines().count(), 1);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn blocked_detail_is_found_inside_powershells_error_rendering() {
+        // PowerShell wraps a thrown message in its own multi-line rendering, so
+        // the marker never sits at the start of stderr.
+        let stderr = "\
+C:\\script.ps1 : PATINA-BLOCKED exclusions not applied (TamperProtected=True)
+At line:1 char:1
++ powershell -Command ...
+    + CategoryInfo : OperationStopped";
+        assert_eq!(
+            blocked_detail(stderr).as_deref(),
+            Some("exclusions not applied (TamperProtected=True)")
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn blocked_detail_is_absent_for_an_unrelated_failure() {
+        // An `Add-MpPreference` error carries no marker, so it must not be
+        // reported as Defender refusing the change.
+        assert_eq!(
+            blocked_detail("Add-MpPreference : The service cannot be started"),
+            None
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn the_apply_script_emits_the_marker_the_parser_looks_for() {
+        // The script and `blocked_detail` are two halves of one protocol; a
+        // marker renamed on one side and not the other silently downgrades
+        // every rejected write to a generic failure.
+        assert!(apply_script("'C:\\request.txt'").contains(BLOCKED_MARKER));
     }
 }
