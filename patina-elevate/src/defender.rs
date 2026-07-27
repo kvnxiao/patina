@@ -115,12 +115,12 @@ pub enum DefenderError {
     /// Defender accepted the call and silently rejected the write (Tamper
     /// Protection / managed Defender).
     ///
-    /// Kept distinct from [`Apply`] because only this variant justifies telling
+    /// Kept distinct from `Apply` because only this variant justifies telling
     /// the user Defender refused their change. It is not `#[cfg(windows)]`
     /// because it carries nothing platform-specific, and leaving it ungated is
-    /// what lets [`receipt_body`] be exercised off Windows.
-    ///
-    /// [`Apply`]: DefenderError::Apply
+    /// what lets [`receipt_body`] be exercised off Windows. `Apply` is not
+    /// linked here: it is Windows-only, so the link would not resolve when the
+    /// docs are built for another target.
     Blocked {
         /// The script's detail, naming the specific paths and the live
         /// Tamper-Protection status.

@@ -58,9 +58,9 @@
 //!   fallback would not.
 //! - **Verification happens in the elevated helper, not here.** The helper is
 //!   the only party that can re-read the list, so it writes its verdict to a
-//!   result file ([`defender_result_path`]) and [`launch_defender_helper`]
-//!   polls for it. A verification attempted from the unprivileged CLI can only
-//!   ever conclude "not applied".
+//!   result file ([`defender_result_path`]) and the Windows-only
+//!   `launch_defender_helper` polls for it. A verification attempted from the
+//!   unprivileged CLI can only ever conclude "not applied".
 
 use crate::apply::engine::ResolvedPlan;
 use crate::config::FileMode;
@@ -687,8 +687,10 @@ pub fn parse_current_exclusions(json: &str) -> Result<CurrentExclusions, serde_j
 /// The elevated helper's verdict, as recovered from the result file.
 ///
 /// The helper is the only party that can re-read Defender's exclusion list, so
-/// this is the authoritative outcome of an apply. [`launch_defender_helper`]
-/// polls for it and maps it onto a [`DefenderOutcome`].
+/// this is the authoritative outcome of an apply. The Windows-only
+/// `launch_defender_helper` polls for it and maps it onto a `DefenderOutcome`.
+/// Neither is linked: both live behind `#[cfg(windows)]`, so the link would not
+/// resolve when the docs are built for another target.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DefenderReceipt {
     /// The request applied and the helper's elevated re-read confirmed it.
