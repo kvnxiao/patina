@@ -9,6 +9,9 @@
 //! `ShellExecuteEx` (the OS renders the UAC consent UI), then re-reads the
 //! Developer Mode registry flag to learn the outcome.
 //!
+//! The re-read polls rather than sampling once; the parent module's
+//! `poll_until` carries why.
+//!
 //! The helper is a standalone crate with no `patina-core`
 //! dependency; we invoke it purely as a sibling executable. The
 //! engine never renders the UAC *prompt* — that is the CLI's job — but the
@@ -18,6 +21,7 @@
 use super::WindowsError;
 use super::registry;
 use std::env;
+use std::time::Duration;
 use winsafe::co;
 
 /// The verb that asks the shell to launch a target elevated, raising the
@@ -110,12 +114,31 @@ pub(crate) fn helper_path() -> Result<String, WindowsError> {
     Ok(dir.join(HELPER_EXE).to_string_lossy().into_owned())
 }
 
+/// How long to keep re-reading the Developer Mode flag before concluding the
+/// helper did not set it.
+///
+/// The helper's work is one registry write, so the whole wait is its startup:
+/// image load, runtime init, argument parsing. A few seconds covers a cold
+/// start on a loaded machine.
+const FLAG_DEADLINE: Duration = Duration::from_secs(10);
+
+/// How often to re-read the flag while waiting. Short, because the write itself
+/// is instant once the helper is running. The wait is startup, not work.
+const FLAG_POLL_INTERVAL: Duration = Duration::from_millis(50);
+
 /// Re-read the Developer Mode flag after the helper has run and classify
 /// the result. A `1` means the toggle took; anything else (including a
 /// failed read) means the apply must not proceed.
+///
+/// Polls rather than reading once, for the reason the parent module's
+/// `poll_until` gives. Only a full deadline without a `1` is
+/// [`ElevationOutcome::RanButStillDisabled`].
 fn reread_outcome() -> ElevationOutcome {
-    match registry::read_dev_mode_flag() {
-        Ok(Some(1)) => ElevationOutcome::EnabledNow,
-        Ok(_) | Err(_) => ElevationOutcome::RanButStillDisabled,
+    let enabled = super::poll_until(FLAG_DEADLINE, FLAG_POLL_INTERVAL, || {
+        matches!(registry::read_dev_mode_flag(), Ok(Some(1))).then_some(())
+    });
+    match enabled {
+        Some(()) => ElevationOutcome::EnabledNow,
+        None => ElevationOutcome::RanButStillDisabled,
     }
 }
