@@ -12,6 +12,7 @@ pub mod doctor;
 pub mod init;
 pub mod managed;
 pub mod promote;
+pub mod remote;
 pub mod remove;
 pub mod rollback;
 pub mod status;

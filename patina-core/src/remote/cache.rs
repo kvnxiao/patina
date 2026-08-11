@@ -3,6 +3,7 @@
 //! ```text
 //! <state>/remotes/
 //! ├── notice                       plain-text pending-update notice
+//! ├── pending                      the same fact, one module name per line
 //! ├── last_check                   background-check throttle stamp
 //! └── <module>/
 //!     ├── repo.git/                bare fetch repository
@@ -67,6 +68,13 @@ pub fn checkout_dir(state_dir: &Utf8Path, module: &str, rev: &str) -> Utf8PathBu
 #[must_use = "the notice path is read by the shell integration and by `patina status`"]
 pub fn notice_path(state_dir: &Utf8Path) -> Utf8PathBuf {
     remotes_root(state_dir).join("notice")
+}
+
+/// `<state>/remotes/pending` — the module names the last check found behind,
+/// the machine-readable twin of the prose notice.
+#[must_use = "the pending path carries the per-remote state `remote list` reports"]
+pub fn pending_path(state_dir: &Utf8Path) -> Utf8PathBuf {
+    remotes_root(state_dir).join("pending")
 }
 
 /// `<state>/remotes/last_check` — the background-check throttle stamp.
@@ -319,6 +327,7 @@ mod tests {
             "/state/patina/remotes/humanizer/abc123"
         );
         assert_eq!(notice_path(state), "/state/patina/remotes/notice");
+        assert_eq!(pending_path(state), "/state/patina/remotes/pending");
         assert_eq!(last_check_path(state), "/state/patina/remotes/last_check");
     }
 

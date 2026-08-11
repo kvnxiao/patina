@@ -58,6 +58,8 @@ pub use backups::BackupError;
 pub use backups::RETENTION_COUNT;
 pub use backups::backup_before_overwrite;
 pub use backups::gc_retain;
+pub use clock::current_epoch_seconds;
+pub use clock::current_rfc3339;
 pub use clock::current_timestamp;
 pub use config::ConfigParseError;
 pub use config::ConfigWriteError;

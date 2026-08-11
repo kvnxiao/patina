@@ -93,6 +93,23 @@ fn write_lock(f: &Fixture, module: &str, origin: &Origin, rev: &str) {
     fs_err::write(f.root.join("patina.lock").as_std_path(), body).expect("write patina.lock");
 }
 
+/// Block until the wall clock crosses into the next second.
+///
+/// Used only where a test needs two applies to land in distinct journal cycles:
+/// the engine keys those by a one-second-resolution timestamp, so two applies
+/// inside one second collapse onto a single `<ts>.COMMIT`.
+fn wait_for_next_second() {
+    let now = || {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |elapsed| elapsed.as_secs())
+    };
+    let start = now();
+    while now() == start {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+}
+
 /// The checkout directory the engine resolves a remote module's sources
 /// against.
 fn checkout(f: &Fixture, module: &str, rev: &str) -> Utf8PathBuf {
@@ -374,6 +391,13 @@ fn bumping_the_pin_re_points_the_link_and_rollback_restores_the_prior_checkout()
     );
     write_lock(&f, "moving", &origin, &first_rev);
     assert_eq!(code(&f.apply(&["--yes"])), 0, "apply the first pin");
+
+    // Journal files are keyed by a one-second-resolution timestamp, so two
+    // applies inside the same second share a `<ts>.COMMIT` and the earlier
+    // record is overwritten — which would leave the prior checkout unreferenced
+    // and swept, and rollback with a dangling link. Cross a second boundary so
+    // the two applies get distinct journal cycles.
+    wait_for_next_second();
 
     let second_rev = origin.commit(&[("a.md", "second\n")]);
     write_lock(&f, "moving", &origin, &second_rev);

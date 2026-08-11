@@ -86,6 +86,12 @@ pub async fn run(
     reporter: &mut impl Reporter,
 ) -> Result<i32> {
     let request = build_request(args)?;
+    // `--update` runs the producer pass first so a pin bump and the consent diff
+    // for its content happen in one sitting. It must precede planning, since
+    // planning reads the pins it may have just rewritten.
+    if args.update {
+        run_remote_updates(args, tty, reader, reporter);
+    }
     let timestamp = current_timestamp();
     let resolved = plan_apply(&request, timestamp).context("failed to compute the apply plan")?;
 
@@ -131,6 +137,38 @@ pub async fn run(
         .context("apply execution failed")?;
     report_result(&result, reporter);
     Ok(exit_code_for(&result))
+}
+
+/// Run `patina remote update` over every remote before the apply proper.
+///
+/// Failures here never fail the apply: an unreachable remote degrades to a
+/// plain apply against the committed pins, with a warning, which is exactly
+/// what an offline `apply --update` should do. Whatever pins the pass did
+/// manage to bump are already written, so the apply that follows sees them.
+fn run_remote_updates(
+    args: &ApplyArgs,
+    tty: Tty,
+    reader: &mut impl PromptReader,
+    reporter: &mut impl Reporter,
+) {
+    let remote_args = crate::cli::RemoteArgs {
+        command: crate::cli::RemoteCommand::Update {
+            name: None,
+            now: false,
+            yes: args.yes,
+        },
+        json: false,
+    };
+    match crate::cmd::remote::run(&remote_args, tty, reader, reporter) {
+        Ok(code) if code == ExitCode::Success.code() => {}
+        Ok(_) => reporter.warn(
+            "some remotes could not be updated; applying the pins already committed \
+             in patina.lock",
+        ),
+        Err(error) => reporter.warn(&format!(
+            "remote update failed ({error}); applying the pins already committed in patina.lock"
+        )),
+    }
 }
 
 /// The confirmation decision for the human apply path.

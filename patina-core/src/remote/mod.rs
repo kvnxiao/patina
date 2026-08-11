@@ -8,12 +8,18 @@
 //! - [`git`] — typed wrappers over the `git` binary on `PATH`.
 //! - [`cache`] — the per-machine checkout layout under `<state>/remotes/`.
 //! - [`lockfile`] — the committed `patina.lock` every machine converges to.
+//! - [`gate`] — the four checks a candidate tip must clear to become a pin.
+//! - [`update`] — enumerating remotes and proposing pin bumps through the gate.
+//! - [`notice`] — the notify-only pending-update file and its throttle stamp.
 //!
 //! The normative behaviour for all of it is `docs/REMOTE_SOURCES.md`.
 
 pub mod cache;
+pub mod gate;
 pub mod git;
 pub mod lockfile;
+pub mod notice;
+pub mod update;
 
 use camino::Utf8Path;
 use camino::Utf8PathBuf;

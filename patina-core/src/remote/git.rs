@@ -480,6 +480,44 @@ pub fn resolve_commit(git_dir: &Utf8Path, rev: &str) -> Result<String, GitError>
     }
 }
 
+/// Whether the dotfiles repository at `repo_root` is out of sync with the
+/// branch it tracks on its origin.
+///
+/// Answered with `ls-remote` only, so it downloads no objects: the remote tip
+/// is compared to the local `HEAD`. That makes it a "differs from origin" test
+/// rather than a strict "is behind" one, which is the right signal for the
+/// notice — either way the user's next move is `git pull`.
+///
+/// Every failure reads as "not behind": the repository may not be a git
+/// repository at all, may have no configured remote, or the network may be
+/// down, and none of those should make a notify-only check noisy or fatal.
+#[must_use = "the answer selects which notice message is written"]
+pub fn repo_differs_from_origin(repo_root: &Utf8Path) -> bool {
+    try_repo_differs_from_origin(repo_root).unwrap_or(false)
+}
+
+/// The fallible core of [`repo_differs_from_origin`]: `None` whenever any step
+/// could not be answered.
+fn try_repo_differs_from_origin(repo_root: &Utf8Path) -> Option<bool> {
+    let in_repo = |args: &[&str]| -> Option<String> {
+        let mut full = vec!["-C", repo_root.as_str()];
+        full.extend_from_slice(args);
+        run(&full, None).ok().map(|output| stdout_of(&output))
+    };
+
+    let head = in_repo(&["rev-parse", "HEAD"])?;
+    let branch = in_repo(&["rev-parse", "--abbrev-ref", "HEAD"])?;
+    // A detached HEAD tracks nothing, so there is nothing to be behind.
+    if branch == "HEAD" {
+        return Some(false);
+    }
+    let remote = in_repo(&["config", &format!("branch.{branch}.remote")])
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| "origin".to_owned());
+    let listing = in_repo(&["ls-remote", &remote, &branch])?;
+    Some(select_ls_remote_sha(&listing, &branch)? != head)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
