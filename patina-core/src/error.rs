@@ -85,6 +85,14 @@ pub enum EngineError {
     #[error(transparent)]
     Classify(#[from] crate::apply::ClassifyError),
 
+    /// Two active entries fight over one target: they resolve to the same
+    /// canonical path, or a directory-mode entry's target contains the other's.
+    /// Raised at plan time, over the post-`when` entry set, before the diff is
+    /// rendered — so a colliding manifest never reaches a prompt, let alone a
+    /// write.
+    #[error(transparent)]
+    Collision(#[from] crate::apply::CollisionError),
+
     /// Hook shell resolution, `when` evaluation, or execution failed.
     #[error(transparent)]
     Hook(#[from] crate::apply::HookError),

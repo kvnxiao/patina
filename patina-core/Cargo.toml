@@ -56,6 +56,7 @@ whoami = { workspace = true }
 winsafe = { workspace = true, features = ["shell", "taskschd"] }
 
 [dev-dependencies]
+insta = { workspace = true }
 tempfile = { workspace = true }
 
 [lints]

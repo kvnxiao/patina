@@ -331,25 +331,28 @@ pub fn plan(
 
         for entry in &config.files {
             file_entries.push(gate_and_resolve_entry(
-                entry,
-                &module.path,
-                &home,
-                &engine,
-                &resolver,
+                entry, module, &home, &engine, &resolver,
             )?);
         }
         for entry in &config.directories {
             directory_entries.push(gate_and_resolve_entry(
-                entry,
-                &module.path,
-                &home,
-                &engine,
-                &resolver,
+                entry, module, &home, &engine, &resolver,
             )?);
         }
 
         hooks.extend(config.hooks.iter().cloned());
     }
+
+    // Refuse a plan whose active entries fight over a target before the CLI
+    // renders a diff or prompts. Only surviving (`when`-true) entries claim
+    // anything, so `flatten` drops the gated-off slots.
+    let claims: Vec<crate::apply::TargetClaim<'_>> = file_entries
+        .iter()
+        .chain(&directory_entries)
+        .flatten()
+        .map(ResolvedEntry::claim)
+        .collect();
+    crate::apply::collisions::validate_targets(&claims)?;
 
     let (operations, resolved_ops) = assemble_plan_operations(file_entries, directory_entries);
 
@@ -600,6 +603,24 @@ struct ResolvedEntry {
     /// resolution while the template engine and resolver are in scope (a
     /// template target is classified against its freshly rendered output).
     dispositions: Vec<TargetDisposition>,
+    /// Name of the module that declared this entry, and the entry's declared
+    /// module-relative source. Neither drives materialization; both exist so a
+    /// target-collision error can point the author at a specific manifest line.
+    module: String,
+    /// The entry's declared source, as written in the manifest.
+    declared_source: Utf8PathBuf,
+}
+
+impl ResolvedEntry {
+    /// Project this entry into the claim the target-collision check consumes.
+    fn claim(&self) -> crate::apply::TargetClaim<'_> {
+        crate::apply::TargetClaim {
+            module: &self.module,
+            source: &self.declared_source,
+            mode: self.mode,
+            targets: &self.targets,
+        }
+    }
 }
 
 /// Impose the single deterministic order on the resolved entries and
@@ -676,7 +697,7 @@ fn assemble_plan_operations(
 /// validated.
 fn gate_and_resolve_entry(
     entry: &ManagedEntry,
-    module_path: &Utf8Path,
+    module: &crate::discovery::ModuleHandle,
     home: &Utf8Path,
     engine: &Engine,
     resolver: &Resolver,
@@ -686,13 +707,7 @@ fn gate_and_resolve_entry(
     {
         return Ok(None);
     }
-    Ok(Some(resolve_entry(
-        entry,
-        module_path,
-        home,
-        engine,
-        resolver,
-    )?))
+    Ok(Some(resolve_entry(entry, module, home, engine, resolver)?))
 }
 
 /// Classify each declared target of one resolved entry against live
@@ -822,12 +837,12 @@ fn classify_target(
 /// [`EngineError::Template`].
 fn resolve_entry(
     entry: &ManagedEntry,
-    module_path: &Utf8Path,
+    module: &crate::discovery::ModuleHandle,
     home: &Utf8Path,
     engine: &Engine,
     resolver: &Resolver,
 ) -> Result<ResolvedEntry, EngineError> {
-    let source = canonicalize(&module_path.join(&entry.source))?;
+    let source = canonicalize(&module.path.join(&entry.source))?;
     validate_source_kind(&source, entry.kind)?;
     let mut targets = Vec::with_capacity(entry.targets.len());
     for target in &entry.targets {
@@ -850,6 +865,8 @@ fn resolve_entry(
         source,
         targets,
         dispositions,
+        module: module.name.clone(),
+        declared_source: entry.source.clone(),
     })
 }
 
@@ -1737,6 +1754,8 @@ mod tests {
             source: Utf8PathBuf::from(format!("/repo/{source_tag}")),
             targets,
             dispositions,
+            module: "m".to_owned(),
+            declared_source: Utf8PathBuf::from(source_tag),
         }
     }
 
@@ -2509,6 +2528,8 @@ mod tests {
                 aggregate: Disposition::Unchanged,
                 leaves: Vec::new(),
             }],
+            module: "m".to_owned(),
+            declared_source: Utf8PathBuf::from("config"),
         };
 
         let (operations, resolved_ops) = assemble_plan_operations(vec![Some(resolved)], vec![]);

@@ -1,0 +1,5 @@
+---
+source: patina-core/src/apply/collisions.rs
+expression: err.to_string()
+---
+the directory entry `skills` in module `skills` deploys to /home/u/.claude/skills, which contains the target /home/u/.claude/skills/humanizer of `skills/humanizer` in module `humanizer`. A directory entry owns every path under its target, so move one of the two

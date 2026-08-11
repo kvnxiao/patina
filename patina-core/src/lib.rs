@@ -28,6 +28,7 @@ pub mod watch;
 pub mod windows;
 
 pub use apply::ClassifyError;
+pub use apply::CollisionError;
 pub use apply::CompletionRecord;
 pub use apply::ExecutorError;
 pub use apply::ForceDeploy;
@@ -35,6 +36,7 @@ pub use apply::HookError;
 pub use apply::HookOutcome;
 pub use apply::Materialization;
 pub use apply::ResolvedHook;
+pub use apply::TargetClaim;
 pub use apply::engine::ApplyRequest;
 pub use apply::engine::ApplyResult;
 pub use apply::engine::LockPolicy;
