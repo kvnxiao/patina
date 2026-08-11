@@ -70,17 +70,32 @@ impl Origin {
     }
 }
 
-/// Declare a remote-backed module, optionally with a per-remote `min_age`.
-fn declare(f: &Fixture, module: &str, origin: &Origin, min_age: Option<&str>) {
-    let floor = min_age.map_or_else(String::new, |value| format!("min_age = \"{value}\"\n"));
+/// Declare a remote in the root manifest, optionally with a per-remote
+/// `min_age`, plus a module entry that sources from it.
+fn declare(f: &Fixture, name: &str, origin: &Origin, min_age: Option<&str>) {
+    declare_only(f, name, origin, min_age);
     f.module(
-        module,
+        name,
         &format!(
-            "[remote]\nurl = \"{}\"\nref = \"main\"\n{floor}\n\
-             [[file]]\nsource = \"a.md\"\ntarget = \"~/.a.md\"\nmode = \"copy\"\n",
-            origin.url()
+            "[[file]]\nsource = \"a.md\"\nremote = \"{name}\"\ntarget = \"~/.a.md\"\n\
+             mode = \"copy\"\n"
         ),
     );
+}
+
+/// Declare a remote in the root manifest without any entry selecting it.
+fn declare_only(f: &Fixture, name: &str, origin: &Origin, min_age: Option<&str>) {
+    f.declare_remote(name, &origin.url(), Some("main"));
+    let Some(value) = min_age else {
+        return;
+    };
+    let manifest = f.root.join("patina.toml");
+    let existing = fs_err::read_to_string(manifest.as_std_path()).expect("read root manifest");
+    fs_err::write(
+        manifest.as_std_path(),
+        format!("{existing}min_age = \"{value}\"\n"),
+    )
+    .expect("write root manifest");
 }
 
 fn lockfile(f: &Fixture) -> String {
@@ -271,7 +286,7 @@ fn list_reports_each_remote_and_its_pin() {
     let doc = json_of(&unpinned);
     let row = doc.pointer("/remotes/0").expect("one remote row").clone();
     assert_eq!(
-        row.get("module").and_then(serde_json::Value::as_str),
+        row.get("name").and_then(serde_json::Value::as_str),
         Some("humanizer")
     );
     assert!(
@@ -299,7 +314,7 @@ fn list_says_so_when_no_remote_is_declared() {
     let out = f.run(&["remote", "list"], &[]);
     assert_eq!(code(&out), 0);
     assert!(
-        String::from_utf8_lossy(&out.stdout).contains("No remote-backed modules"),
+        String::from_utf8_lossy(&out.stdout).contains("No remotes are declared"),
         "a repository with no remotes must say so, not print nothing"
     );
 }
@@ -416,6 +431,136 @@ fn prune_removes_an_unreferenced_checkout() {
             .map(Vec::len),
         Some(1),
         "the envelope must report exactly what was removed: {doc}"
+    );
+}
+
+#[test]
+fn prune_removes_the_whole_cache_tree_of_an_undeclared_remote() {
+    // The reachability sweep only ever considers checkout directories, so a
+    // remote's own directory and its bare fetch repository would survive
+    // deleting the declaration for good.
+    let f = Fixture::new();
+    let origin = Origin::new(&f, "humanizer");
+    origin.commit("first\n", OLD_EPOCH);
+    declare(&f, "humanizer", &origin, Some("0s"));
+    assert_eq!(code(&f.run(&["remote", "update"], &[])), 0, "first pin");
+    let cached = patina_core::remote::cache::module_dir(&f.state_root(), "humanizer");
+    assert!(
+        cached.join("repo.git").is_dir(),
+        "the update must have filled the fetch repository at {cached}"
+    );
+
+    // Drop both the declaration and the entry that named it.
+    fs_err::write(
+        f.root.join("patina.toml").as_std_path(),
+        "[patina]\nroot = true\n",
+    )
+    .expect("rewrite the root manifest");
+    fs_err::remove_dir_all(f.root.join("humanizer").as_std_path()).expect("remove the module");
+
+    let out = f.run(&["remote", "prune"], &[]);
+    assert_eq!(
+        code(&out),
+        0,
+        "prune must succeed; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        !cached.exists(),
+        "an undeclared remote's whole cache tree must be removed"
+    );
+}
+
+#[test]
+fn a_mutating_apply_drops_a_pin_no_declaration_names() {
+    let f = Fixture::new();
+    let origin = Origin::new(&f, "humanizer");
+    origin.commit("first\n", OLD_EPOCH);
+    declare(&f, "humanizer", &origin, Some("0s"));
+    assert_eq!(code(&f.apply(&["--update", "--yes"])), 0, "priming run");
+    assert!(lockfile(&f).contains("[remotes.humanizer]"), "pin recorded");
+
+    // The remote is no longer declared, but its pin is still committed.
+    fs_err::write(
+        f.root.join("patina.toml").as_std_path(),
+        "[patina]\nroot = true\n",
+    )
+    .expect("rewrite the root manifest");
+    fs_err::remove_dir_all(f.root.join("humanizer").as_std_path()).expect("remove the module");
+
+    let out = f.apply(&["--yes"]);
+    assert_eq!(
+        code(&out),
+        0,
+        "apply must succeed; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        !lockfile(&f).contains("humanizer"),
+        "the stale pin must be dropped:\n{}",
+        lockfile(&f)
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("humanizer"),
+        "the drop must be reported: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn a_preview_apply_reports_a_stale_pin_without_rewriting_the_lockfile() {
+    let f = Fixture::new();
+    let origin = Origin::new(&f, "humanizer");
+    origin.commit("first\n", OLD_EPOCH);
+    declare(&f, "humanizer", &origin, Some("0s"));
+    assert_eq!(code(&f.apply(&["--update", "--yes"])), 0, "priming run");
+
+    fs_err::write(
+        f.root.join("patina.toml").as_std_path(),
+        "[patina]\nroot = true\n",
+    )
+    .expect("rewrite the root manifest");
+    fs_err::remove_dir_all(f.root.join("humanizer").as_std_path()).expect("remove the module");
+    let before = lockfile(&f);
+
+    // No `--yes` in a non-interactive shell: a preview, which owes zero writes.
+    let out = f.apply(&[]);
+    assert_eq!(code(&out), 0, "a preview exits 0");
+    assert_eq!(
+        lockfile(&f),
+        before,
+        "a preview must not rewrite patina.lock"
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("humanizer"),
+        "the stale pin must still be reported: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn update_pins_every_declaration_not_only_the_ones_in_use() {
+    // The committed lock has to be complete for every machine, so a remote no
+    // entry currently names is still pinned here.
+    let f = Fixture::new();
+    let used = Origin::new(&f, "used");
+    used.commit("first\n", OLD_EPOCH);
+    declare(&f, "used", &used, Some("0s"));
+    let unused = Origin::new(&f, "unused");
+    let unused_rev = unused.commit("first\n", OLD_EPOCH);
+    declare_only(&f, "unused", &unused, Some("0s"));
+
+    let out = f.run(&["remote", "update"], &[]);
+    assert_eq!(
+        code(&out),
+        0,
+        "update must succeed; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        lockfile(&f).contains(&unused_rev),
+        "a declaration no entry names must still be pinned:\n{}",
+        lockfile(&f)
     );
 }
 

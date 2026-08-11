@@ -3,15 +3,16 @@
     reason = "integration tests use .expect() on fixture setup; allow-expect-in-tests covers #[cfg(test)] modules but not the helper functions in tests/*.rs integration crates."
 )]
 
-//! `patina apply` over a remote-backed module, end to end.
+//! `patina apply` over entries sourced from a declared remote, end to end.
 //!
-//! Each test builds a throwaway origin repository with the real `git` binary
-//! inside the fixture tempdir, hand-writes the `patina.lock` a producer machine
-//! would have committed, and drives the CLI as a subprocess. Nothing touches
-//! the network: the "remote" is a local filesystem path.
+//! Each test declares the remote in the root manifest, builds a throwaway
+//! origin repository with the real `git` binary inside the fixture tempdir,
+//! hand-writes the `patina.lock` a producer machine would have committed, and
+//! drives the CLI as a subprocess. Nothing touches the network: the "remote" is
+//! a local filesystem path.
 //!
-//! See `docs/REMOTE_SOURCES.md` "Remote-backed modules", "The remote cache",
-//! and "Trust boundaries".
+//! See `docs/REMOTE_SOURCES.md` "The remote registry", "The remote cache", and
+//! "Trust boundaries".
 
 mod common;
 
@@ -84,13 +85,18 @@ impl Origin {
 }
 
 /// Write the `patina.lock` a producer machine would have committed.
-fn write_lock(f: &Fixture, module: &str, origin: &Origin, rev: &str) {
+fn write_lock(f: &Fixture, name: &str, origin: &Origin, rev: &str) {
     let body = format!(
-        "version = 1\n\n[remotes.{module}]\nurl = \"{}\"\nref = \"main\"\nrev = \"{rev}\"\n\
+        "version = 1\n\n[remotes.{name}]\nurl = \"{}\"\nref = \"main\"\nrev = \"{rev}\"\n\
          updated_at = \"2026-08-11T14:00:00Z\"\n",
         origin.url()
     );
     fs_err::write(f.root.join("patina.lock").as_std_path(), body).expect("write patina.lock");
+}
+
+/// Declare `origin` in the root manifest under `name`, tracking `main`.
+fn declare(f: &Fixture, name: &str, origin: &Origin) {
+    f.declare_remote(name, &origin.url(), Some("main"));
 }
 
 /// Block until the wall clock crosses into the next second.
@@ -110,10 +116,9 @@ fn wait_for_next_second() {
     }
 }
 
-/// The checkout directory the engine resolves a remote module's sources
-/// against.
-fn checkout(f: &Fixture, module: &str, rev: &str) -> Utf8PathBuf {
-    patina_core::remote::cache::checkout_dir(&f.state_root(), module, rev)
+/// The checkout directory the engine resolves a remote-sourced entry against.
+fn checkout(f: &Fixture, name: &str, rev: &str) -> Utf8PathBuf {
+    patina_core::remote::cache::checkout_dir(&f.state_root(), name, rev)
 }
 
 #[test]
@@ -124,14 +129,11 @@ fn a_remote_copy_mode_directory_materializes_from_the_pinned_checkout() {
         ("skills/humanizer/SKILL.md", "humanize\n"),
         ("README.md", "unrelated\n"),
     ]);
+    declare(&f, "humanizer", &origin);
     f.module(
-        "humanizer",
-        &format!(
-            "[remote]\nurl = \"{}\"\nref = \"main\"\n\n\
-             [[directory]]\nsource = \"skills/humanizer\"\n\
-             target = \"~/.claude/skills/humanizer\"\nmode = \"copy\"\n",
-            origin.url()
-        ),
+        "agents",
+        "[[directory]]\nsource = \"skills/humanizer\"\nremote = \"humanizer\"\n\
+         target = \"~/.claude/skills/humanizer\"\nmode = \"copy\"\n",
     );
     write_lock(&f, "humanizer", &origin, &rev);
 
@@ -158,9 +160,113 @@ fn a_remote_copy_mode_directory_materializes_from_the_pinned_checkout() {
 }
 
 #[test]
+fn one_module_mixes_its_own_files_with_a_remotes() {
+    // The shape the root registry exists for: a manifest that deploys the
+    // repository's own file beside a single file from someone else's repo.
+    let f = Fixture::new();
+    let origin = Origin::new(&f, "humanizer");
+    let rev = origin.commit(&[("SKILL.md", "humanize\n")]);
+    declare(&f, "humanizer", &origin);
+    let module = f.module(
+        "agents",
+        "[[file]]\nsource = \"shared/AGENTS.md\"\ntarget = \"~/.claude/CLAUDE.md\"\n\
+         mode = \"copy\"\n\n\
+         [[file]]\nsource = \"SKILL.md\"\nremote = \"humanizer\"\n\
+         target = \"~/.claude/skills/humanizer/SKILL.md\"\nmode = \"copy\"\n",
+    );
+    fs_err::create_dir_all(module.join("shared").as_std_path()).expect("mkdir shared");
+    fs_err::write(module.join("shared/AGENTS.md").as_std_path(), "be brief\n")
+        .expect("write the local source");
+    write_lock(&f, "humanizer", &origin, &rev);
+
+    let out = f.apply(&["--yes"]);
+    assert_eq!(
+        code(&out),
+        0,
+        "a mixed module must plan and apply; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        fs_err::read_to_string(f.home.join(".claude/CLAUDE.md").as_std_path())
+            .expect("the local target is readable"),
+        "be brief\n"
+    );
+    assert_eq!(
+        fs_err::read_to_string(
+            f.home
+                .join(".claude/skills/humanizer/SKILL.md")
+                .as_std_path()
+        )
+        .expect("the remote-sourced target is readable"),
+        "humanize\n"
+    );
+}
+
+#[test]
+fn an_entry_naming_an_undeclared_remote_fails_planning() {
+    let f = Fixture::new();
+    f.module(
+        "agents",
+        "[[file]]\nsource = \"SKILL.md\"\nremote = \"humanizer\"\ntarget = \"~/.skill.md\"\n",
+    );
+
+    let out = f.apply(&["--yes"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+
+    assert_eq!(
+        code(&out),
+        1,
+        "an entry naming nothing declared must fail; stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("humanizer") && stderr.contains("[[remote]]"),
+        "the message must name the remote and where to declare it; stderr: {stderr}"
+    );
+    assert!(!f.home.join(".skill.md").exists(), "nothing may be applied");
+}
+
+#[test]
+fn a_remote_only_a_when_false_entry_names_is_never_fetched() {
+    // Materializing a checkout is a consequence of an entry actually selecting
+    // the remote here. This one is switched off on every host, so the run must
+    // not read the (absent) pin, must not reach the (deleted) origin, and must
+    // leave no cache directory behind.
+    let f = Fixture::new();
+    let origin = Origin::new(&f, "unused");
+    origin.commit(&[("a.md", "a\n")]);
+    declare(&f, "unused", &origin);
+    let module = f.module(
+        "agents",
+        "[[file]]\nsource = \"local.md\"\ntarget = \"~/.local.md\"\nmode = \"copy\"\n\n\
+         [[file]]\nsource = \"a.md\"\nremote = \"unused\"\ntarget = \"~/.a.md\"\n\
+         when = \"false\"\n",
+    );
+    fs_err::write(module.join("local.md").as_std_path(), "local\n").expect("write local source");
+    // No pin is written at all: resolving this remote would fail outright.
+    fs_err::remove_dir_all(origin.dir.as_std_path()).expect("delete the origin");
+
+    let out = f.apply(&["--yes"]);
+    assert_eq!(
+        code(&out),
+        0,
+        "a `when`-false entry must not drag its remote into the plan; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        fs_err::read_to_string(f.home.join(".local.md").as_std_path()).expect("local applied"),
+        "local\n"
+    );
+    assert!(
+        !patina_core::remote::cache::module_dir(&f.state_root(), "unused").exists(),
+        "no cache directory may be created for a remote nothing active names"
+    );
+}
+
+#[test]
 fn a_repository_with_no_remote_module_ignores_a_malformed_lockfile() {
-    // The lockfile is read lazily, only for a remote-backed module, so a repo
-    // with none must apply even when a stray patina.lock is unreadable.
+    // The lockfile is read lazily, on the first entry that selects a remote, so
+    // a repo with no such entry must apply even when a stray patina.lock is
+    // unreadable.
     let f = Fixture::new();
     let module = f.module(
         "shell",
@@ -193,13 +299,11 @@ fn apply_update_under_json_does_not_bump_the_lockfile() {
     let f = Fixture::new();
     let origin = Origin::new(&f, "humanizer");
     let rev = origin.commit(&[("skills/x/SKILL.md", "one\n")]);
+    declare(&f, "humanizer", &origin);
     f.module(
-        "humanizer",
-        &format!(
-            "[remote]\nurl = \"{}\"\nref = \"main\"\n\n\
-             [[directory]]\nsource = \"skills/x\"\ntarget = \"~/.claude/skills/x\"\nmode = \"copy\"\n",
-            origin.url()
-        ),
+        "agents",
+        "[[directory]]\nsource = \"skills/x\"\nremote = \"humanizer\"\n\
+         target = \"~/.claude/skills/x\"\nmode = \"copy\"\n",
     );
     write_lock(&f, "humanizer", &origin, &rev);
     // A newer upstream tip a producer pass would otherwise bump to.
@@ -238,13 +342,10 @@ fn a_remote_source_that_escapes_its_checkout_is_refused() {
     let f = Fixture::new();
     let origin = Origin::new(&f, "evil");
     let rev = origin.commit(&[("inside.txt", "ok\n")]);
+    declare(&f, "evil", &origin);
     f.module(
         "evil",
-        &format!(
-            "[remote]\nurl = \"{}\"\nref = \"main\"\n\n\
-             [[file]]\nsource = \"../escape.txt\"\ntarget = \"~/.escaped\"\n",
-            origin.url()
-        ),
+        "[[file]]\nsource = \"../escape.txt\"\nremote = \"evil\"\ntarget = \"~/.escaped\"\n",
     );
     write_lock(&f, "evil", &origin, &rev);
 
@@ -270,13 +371,11 @@ fn a_remote_symlink_entry_points_into_the_pinned_checkout() {
     let f = Fixture::new();
     let origin = Origin::new(&f, "prompts");
     let rev = origin.commit(&[("prompts/agent.md", "be brief\n")]);
+    declare(&f, "prompts", &origin);
     f.module(
         "prompts",
-        &format!(
-            "[remote]\nurl = \"{}\"\nref = \"main\"\n\n\
-             [[file]]\nsource = \"prompts/agent.md\"\ntarget = \"~/.agent.md\"\n",
-            origin.url()
-        ),
+        "[[file]]\nsource = \"prompts/agent.md\"\nremote = \"prompts\"\n\
+         target = \"~/.agent.md\"\n",
     );
     write_lock(&f, "prompts", &origin, &rev);
 
@@ -323,13 +422,11 @@ fn a_patina_toml_inside_the_checkout_contributes_nothing() {
              [[hook]]\nevent = \"post_apply\"\ncommand = \"touch pwned\"\n",
         ),
     ]);
+    declare(&f, "hostile", &origin);
     f.module(
         "hostile",
-        &format!(
-            "[remote]\nurl = \"{}\"\nref = \"main\"\n\n\
-             [[file]]\nsource = \"payload/note.md\"\ntarget = \"~/.note.md\"\nmode = \"copy\"\n",
-            origin.url()
-        ),
+        "[[file]]\nsource = \"payload/note.md\"\nremote = \"hostile\"\n\
+         target = \"~/.note.md\"\nmode = \"copy\"\n",
     );
     write_lock(&f, "hostile", &origin, &rev);
 
@@ -368,17 +465,15 @@ fn a_patina_toml_inside_the_checkout_contributes_nothing() {
 }
 
 #[test]
-fn a_remote_module_with_no_lock_entry_fails_planning_and_names_the_command() {
+fn an_entry_naming_an_unpinned_remote_fails_planning_and_names_the_command() {
     let f = Fixture::new();
     let origin = Origin::new(&f, "humanizer");
     origin.commit(&[("a.md", "a\n")]);
+    declare(&f, "humanizer", &origin);
     f.module(
-        "humanizer",
-        &format!(
-            "[remote]\nurl = \"{}\"\n\n\
-             [[file]]\nsource = \"a.md\"\ntarget = \"~/.a.md\"\nmode = \"copy\"\n",
-            origin.url()
-        ),
+        "agents",
+        "[[file]]\nsource = \"a.md\"\nremote = \"humanizer\"\ntarget = \"~/.a.md\"\n\
+         mode = \"copy\"\n",
     );
 
     let out = f.apply(&["--yes"]);
@@ -401,13 +496,11 @@ fn a_cold_cache_with_an_unreachable_remote_fails_naming_the_rev() {
     let f = Fixture::new();
     let origin = Origin::new(&f, "gone");
     let rev = origin.commit(&[("a.md", "a\n")]);
+    declare(&f, "gone", &origin);
     f.module(
-        "gone",
-        &format!(
-            "[remote]\nurl = \"{}\"\nref = \"main\"\n\n\
-             [[file]]\nsource = \"a.md\"\ntarget = \"~/.a.md\"\nmode = \"copy\"\n",
-            origin.url()
-        ),
+        "agents",
+        "[[file]]\nsource = \"a.md\"\nremote = \"gone\"\ntarget = \"~/.a.md\"\n\
+         mode = \"copy\"\n",
     );
     write_lock(&f, "gone", &origin, &rev);
     // Simulating offline: the remote is unreachable and nothing is cached yet.
@@ -433,13 +526,11 @@ fn a_warm_cache_applies_fully_with_the_remote_unreachable() {
     let f = Fixture::new();
     let origin = Origin::new(&f, "warm");
     let rev = origin.commit(&[("a.md", "a\n")]);
+    declare(&f, "warm", &origin);
     f.module(
-        "warm",
-        &format!(
-            "[remote]\nurl = \"{}\"\nref = \"main\"\n\n\
-             [[file]]\nsource = \"a.md\"\ntarget = \"~/.a.md\"\nmode = \"copy\"\n",
-            origin.url()
-        ),
+        "agents",
+        "[[file]]\nsource = \"a.md\"\nremote = \"warm\"\ntarget = \"~/.a.md\"\n\
+         mode = \"copy\"\n",
     );
     write_lock(&f, "warm", &origin, &rev);
     assert_eq!(code(&f.apply(&["--yes"])), 0, "priming apply");
@@ -471,13 +562,11 @@ fn a_checkout_holds_the_commit_bytes_even_under_autocrlf() {
     let f = Fixture::new();
     let origin = Origin::new(&f, "crlf");
     let rev = origin.commit(&[("a.md", "one\ntwo\n")]);
+    declare(&f, "crlf", &origin);
     f.module(
-        "crlf",
-        &format!(
-            "[remote]\nurl = \"{}\"\nref = \"main\"\n\n\
-             [[file]]\nsource = \"a.md\"\ntarget = \"~/.a.md\"\nmode = \"copy\"\n",
-            origin.url()
-        ),
+        "agents",
+        "[[file]]\nsource = \"a.md\"\nremote = \"crlf\"\ntarget = \"~/.a.md\"\n\
+         mode = \"copy\"\n",
     );
     write_lock(&f, "crlf", &origin, &rev);
 
@@ -511,13 +600,11 @@ fn re_applying_an_unchanged_pin_is_a_byte_identical_no_op() {
     let f = Fixture::new();
     let origin = Origin::new(&f, "stable");
     let rev = origin.commit(&[("a.md", "a\n")]);
+    declare(&f, "stable", &origin);
     f.module(
-        "stable",
-        &format!(
-            "[remote]\nurl = \"{}\"\nref = \"main\"\n\n\
-             [[file]]\nsource = \"a.md\"\ntarget = \"~/.a.md\"\nmode = \"copy\"\n",
-            origin.url()
-        ),
+        "agents",
+        "[[file]]\nsource = \"a.md\"\nremote = \"stable\"\ntarget = \"~/.a.md\"\n\
+         mode = \"copy\"\n",
     );
     write_lock(&f, "stable", &origin, &rev);
     assert_eq!(code(&f.apply(&["--yes"])), 0, "priming apply");
@@ -538,13 +625,10 @@ fn bumping_the_pin_re_points_the_link_and_rollback_restores_the_prior_checkout()
     let f = Fixture::new();
     let origin = Origin::new(&f, "moving");
     let first_rev = origin.commit(&[("a.md", "first\n")]);
+    declare(&f, "moving", &origin);
     f.module(
-        "moving",
-        &format!(
-            "[remote]\nurl = \"{}\"\nref = \"main\"\n\n\
-             [[file]]\nsource = \"a.md\"\ntarget = \"~/.a.md\"\n",
-            origin.url()
-        ),
+        "agents",
+        "[[file]]\nsource = \"a.md\"\nremote = \"moving\"\ntarget = \"~/.a.md\"\n",
     );
     write_lock(&f, "moving", &origin, &first_rev);
     assert_eq!(code(&f.apply(&["--yes"])), 0, "apply the first pin");
@@ -590,13 +674,11 @@ fn apply_prunes_a_checkout_no_journal_record_references() {
     let f = Fixture::new();
     let origin = Origin::new(&f, "sweep");
     let rev = origin.commit(&[("a.md", "a\n")]);
+    declare(&f, "sweep", &origin);
     f.module(
-        "sweep",
-        &format!(
-            "[remote]\nurl = \"{}\"\nref = \"main\"\n\n\
-             [[file]]\nsource = \"a.md\"\ntarget = \"~/.a.md\"\nmode = \"copy\"\n",
-            origin.url()
-        ),
+        "agents",
+        "[[file]]\nsource = \"a.md\"\nremote = \"sweep\"\ntarget = \"~/.a.md\"\n\
+         mode = \"copy\"\n",
     );
     write_lock(&f, "sweep", &origin, &rev);
     assert_eq!(code(&f.apply(&["--yes"])), 0, "priming apply");

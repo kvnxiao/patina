@@ -29,6 +29,7 @@ use camino::Utf8Path;
 use camino::Utf8PathBuf;
 use serde::Deserialize;
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 
 /// Filename of the lockfile, beside the root `patina.toml`.
 pub const LOCKFILE_NAME: &str = "patina.lock";
@@ -67,7 +68,7 @@ impl LockEntry {
     }
 }
 
-/// The parsed lockfile: one pin per remote-backed module, keyed by module name.
+/// The parsed lockfile: one pin per declared remote, keyed by remote name.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Lockfile {
     remotes: BTreeMap<String, LockEntry>,
@@ -127,23 +128,23 @@ impl Lockfile {
         }
 
         let mut remotes = BTreeMap::new();
-        for (module, entry) in raw.remotes {
+        for (name, entry) in raw.remotes {
             if !super::git::is_full_sha(&entry.rev) {
                 return Err(RemoteRepr::LockfileRev {
-                    module,
+                    name,
                     value: entry.rev,
                 }
                 .into());
             }
             if entry.updated_at.parse::<jiff::Timestamp>().is_err() {
                 return Err(RemoteRepr::LockfileTimestamp {
-                    module,
+                    name,
                     value: entry.updated_at,
                 }
                 .into());
             }
             remotes.insert(
-                module,
+                name,
                 LockEntry {
                     url: entry.url,
                     git_ref: entry.git_ref,
@@ -172,15 +173,15 @@ impl Lockfile {
 
     /// Render the lockfile as TOML.
     ///
-    /// Entries come out in module-name order with a fixed field order, so two
+    /// Entries come out in remote-name order with a fixed field order, so two
     /// renders of the same pins are byte-identical and a pin bump shows up as a
     /// one-entry diff.
     #[must_use = "the rendered document is what gets committed"]
     pub fn render(&self) -> String {
         let mut out = format!("version = {LOCKFILE_VERSION}\n");
-        for (module, entry) in &self.remotes {
+        for (name, entry) in &self.remotes {
             out.push_str("\n[remotes.");
-            out.push_str(&toml_key(module));
+            out.push_str(&toml_key(name));
             out.push_str("]\n");
             push_field(&mut out, "url", &entry.url);
             if let Some(git_ref) = &entry.git_ref {
@@ -192,27 +193,53 @@ impl Lockfile {
         out
     }
 
-    /// The pin for `module`, if any.
+    /// The pin for the remote called `name`, if any.
     #[must_use = "the pin is the rev apply materializes"]
-    pub fn get(&self, module: &str) -> Option<&LockEntry> {
-        self.remotes.get(module)
+    pub fn get(&self, name: &str) -> Option<&LockEntry> {
+        self.remotes.get(name)
     }
 
-    /// Record (or replace) the pin for `module`.
-    pub fn insert(&mut self, module: impl Into<String>, entry: LockEntry) {
-        self.remotes.insert(module.into(), entry);
+    /// Record (or replace) the pin for the remote called `name`.
+    pub fn insert(&mut self, name: impl Into<String>, entry: LockEntry) {
+        self.remotes.insert(name.into(), entry);
     }
 
-    /// Drop the pin for `module`, returning it when one was present.
-    pub fn remove(&mut self, module: &str) -> Option<LockEntry> {
-        self.remotes.remove(module)
+    /// Drop the pin for the remote called `name`, returning it when one was
+    /// present.
+    pub fn remove(&mut self, name: &str) -> Option<LockEntry> {
+        self.remotes.remove(name)
     }
 
-    /// Every pin, in module-name order.
+    /// Drop every pin `declared` does not name, returning the dropped names in
+    /// order.
+    ///
+    /// The lockfile is a statement about the root manifest's declarations, so a
+    /// pin whose declaration was deleted is stale by definition: it would keep
+    /// its checkout alive in the cache and reappear in `patina remote` output
+    /// forever. Nothing else depends on it — an entry naming a remote that is
+    /// not declared fails at plan time, before this runs.
+    pub fn retain_declared<'a>(
+        &mut self,
+        declared: impl IntoIterator<Item = &'a str>,
+    ) -> Vec<String> {
+        let declared: BTreeSet<&str> = declared.into_iter().collect();
+        let stale: Vec<String> = self
+            .remotes
+            .keys()
+            .filter(|name| !declared.contains(name.as_str()))
+            .cloned()
+            .collect();
+        for name in &stale {
+            self.remotes.remove(name);
+        }
+        stale
+    }
+
+    /// Every pin, in remote-name order.
     pub fn iter(&self) -> impl Iterator<Item = (&str, &LockEntry)> {
         self.remotes
             .iter()
-            .map(|(module, entry)| (module.as_str(), entry))
+            .map(|(name, entry)| (name.as_str(), entry))
     }
 
     /// Whether any pin is recorded.
@@ -263,8 +290,7 @@ fn toml_string(value: &str) -> String {
 }
 
 /// Render `name` as a TOML table key: bare when it is a bare-key, quoted
-/// otherwise. A module name is a directory name, so it can contain characters a
-/// bare key cannot.
+/// otherwise. A remote name may contain `.`, which a bare key cannot.
 fn toml_key(name: &str) -> String {
     let bare = !name.is_empty()
         && name
@@ -283,7 +309,7 @@ struct RawLockfile {
     /// Layout version. A value other than [`LOCKFILE_VERSION`] is refused
     /// rather than guessed at.
     version: u32,
-    /// One table per remote-backed module.
+    /// One table per declared remote.
     #[serde(default)]
     remotes: BTreeMap<String, RawLockEntry>,
 }
@@ -340,9 +366,32 @@ mod tests {
         );
         assert!(
             first.render().find("[remotes.humanizer]") < first.render().find("[remotes.zsh]"),
-            "entries must be emitted in module-name order:\n{}",
+            "entries must be emitted in remote-name order:\n{}",
             first.render()
         );
+    }
+
+    #[test]
+    fn retaining_the_declared_set_drops_the_rest_and_names_them() {
+        let mut lock = Lockfile::default();
+        lock.insert("humanizer", entry(REV));
+        lock.insert("zsh", entry(REV));
+        assert_eq!(lock.retain_declared(["zsh"]), vec!["humanizer".to_owned()]);
+        assert!(lock.get("humanizer").is_none());
+        assert!(
+            lock.get("zsh").is_some(),
+            "a declared remote's pin must survive"
+        );
+    }
+
+    #[test]
+    fn retaining_a_superset_drops_nothing() {
+        // A declaration with no pin yet is the ordinary state before the first
+        // `patina remote update`; it must not make the sweep report anything.
+        let mut lock = Lockfile::default();
+        lock.insert("zsh", entry(REV));
+        assert!(lock.retain_declared(["zsh", "humanizer"]).is_empty());
+        assert!(lock.get("zsh").is_some());
     }
 
     #[test]
@@ -457,12 +506,12 @@ mod tests {
     }
 
     #[test]
-    fn a_module_name_that_is_not_a_bare_key_is_quoted() {
+    fn a_remote_name_that_is_not_a_bare_key_is_quoted() {
         let mut lock = Lockfile::default();
-        lock.insert("my.module", entry(REV));
+        lock.insert("my.remote", entry(REV));
         let rendered = lock.render();
         assert!(
-            rendered.contains("[remotes.\"my.module\"]"),
+            rendered.contains("[remotes.\"my.remote\"]"),
             "a dotted name must be quoted or it would nest tables:\n{rendered}"
         );
         assert_eq!(Lockfile::parse(&rendered).expect("re-parse"), lock);

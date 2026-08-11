@@ -44,10 +44,11 @@ use patina_core::remote::update::RemoteView;
 ///
 /// # Errors
 ///
-/// Returns an error when repository / state-directory resolution, module
-/// enumeration, the lockfile read, or lock acquisition fails. A remote that is
-/// individually unreachable or held back by the gate is not an error: it is
-/// reported and the run continues, so one bad remote never blocks the rest.
+/// Returns an error when repository / state-directory resolution,
+/// root-manifest parsing, the lockfile read, or lock acquisition fails. A
+/// remote that is individually unreachable or held back by the gate is not an
+/// error: it is reported and the run continues, so one bad remote never blocks
+/// the rest.
 pub fn run(
     args: &RemoteArgs,
     tty: Tty,
@@ -93,12 +94,13 @@ pub fn run(
         RemoteCommand::Prune => {
             let _guard = acquire_lock(&lock_path, LockKind::Exclusive, exclusive_timeout())
                 .context("failed to acquire the exclusive lock for `patina remote prune`")?;
-            run_prune(&state_dir, args.json, reporter)
+            let inventory = declared_remotes()?;
+            run_prune(&inventory, args.json, reporter)
         }
     }
 }
 
-/// Enumerate the declared remotes and their pins.
+/// Enumerate the root manifest's declared remotes and their pins.
 fn declared_remotes() -> Result<RemoteInventory> {
     update::inventory().context("failed to enumerate the declared remotes")
 }
@@ -128,12 +130,12 @@ fn run_list(inventory: &RemoteInventory, json: bool, reporter: &mut impl Reporte
             .iter()
             .map(|view| {
                 serde_json::json!({
-                    "module": view.module,
+                    "name": view.name,
                     "url": view.spec.url,
                     "ref": view.spec.git_ref,
                     "rev": view.pin.as_ref().map(|pin| pin.rev.clone()),
                     "updated_at": view.pin.as_ref().map(|pin| pin.updated_at.clone()),
-                    "pending": pending.contains(&view.module),
+                    "pending": pending.contains(&view.name),
                 })
             })
             .collect();
@@ -142,7 +144,7 @@ fn run_list(inventory: &RemoteInventory, json: bool, reporter: &mut impl Reporte
     }
 
     if inventory.remotes.is_empty() {
-        reporter.line("No remote-backed modules are declared.");
+        reporter.line("No remotes are declared.");
         return ExitCode::Success.code();
     }
     for view in &inventory.remotes {
@@ -151,14 +153,14 @@ fn run_list(inventory: &RemoteInventory, json: bool, reporter: &mut impl Reporte
             .pin
             .as_ref()
             .map_or("(unpinned)", |pin| pin.rev.as_str());
-        let state = if pending.contains(&view.module) {
+        let state = if pending.contains(&view.name) {
             "  update pending"
         } else {
             ""
         };
         reporter.line(&format!(
             "{}  {}  {}  {}{}",
-            view.module, view.spec.url, git_ref, rev, state
+            view.name, view.spec.url, git_ref, rev, state
         ));
     }
     ExitCode::Success.code()
@@ -181,9 +183,9 @@ fn run_check(
     let mut failures: Vec<String> = Vec::new();
     for view in &inventory.remotes {
         match update::check_upstream(view) {
-            Ok(result) if result.has_update() => behind.push(result.module),
+            Ok(result) if result.has_update() => behind.push(result.name),
             Ok(_) => {}
-            Err(error) => failures.push(format!("{}: {error}", view.module)),
+            Err(error) => failures.push(format!("{}: {error}", view.name)),
         }
     }
 
@@ -278,7 +280,7 @@ fn run_update(
     let views: Vec<RemoteView> = if let Some(name) = &flags.name {
         let Some(view) = inventory.find(name) else {
             reporter.warn(&format!(
-                "no remote-backed module named `{name}` is declared in this repository"
+                "no remote named `{name}` is declared in this repository's root patina.toml"
             ));
             return Ok(ExitCode::Generic.code());
         };
@@ -288,7 +290,7 @@ fn run_update(
     };
 
     if views.is_empty() {
-        reporter.line("No remote-backed modules are declared.");
+        reporter.line("No remotes are declared.");
         return Ok(ExitCode::Success.code());
     }
 
@@ -302,8 +304,8 @@ fn run_update(
             Ok(proposal) => proposal,
             Err(error) => {
                 // One unreachable remote must not stop the others.
-                reporter.warn(&format!("could not update remote {}: {error}", view.module));
-                rows.push(row(&view.module, "failed", None));
+                reporter.warn(&format!("could not update remote {}: {error}", view.name));
+                rows.push(row(&view.name, "failed", None));
                 rejected = true;
                 continue;
             }
@@ -322,7 +324,7 @@ fn run_update(
             rejected = true;
         }
         rows.push(row(
-            &view.module,
+            &view.name,
             action.label(),
             Some(&proposal.candidate_rev),
         ));
@@ -385,7 +387,7 @@ fn settle(
             if !flags.json {
                 reporter.line(&format!(
                     "{}: already at {}",
-                    proposal.module, proposal.candidate_rev
+                    proposal.name, proposal.candidate_rev
                 ));
             }
             Ok(Action::UpToDate)
@@ -398,7 +400,7 @@ fn settle(
             reporter.warn(&format!(
                 "{}: refusing {} because its committer time is more than an hour ahead of this \
                  machine's clock",
-                proposal.module, proposal.candidate_rev
+                proposal.name, proposal.candidate_rev
             ));
             Ok(Action::Rejected)
         }
@@ -406,7 +408,7 @@ fn settle(
             if !flags.json {
                 reporter.line(&format!(
                     "{}: holding {} until {} (min_age not yet met); the pin is unchanged",
-                    proposal.module,
+                    proposal.name,
                     proposal.candidate_rev,
                     format_epoch(*eligible_at)
                 ));
@@ -414,14 +416,14 @@ fn settle(
             Ok(Action::Held)
         }
         GateOutcome::NeedsConfirmation(concerns) => {
-            if confirm(&proposal.module, concerns, flags.yes, tty, reader, reporter) {
+            if confirm(&proposal.name, concerns, flags.yes, tty, reader, reporter) {
                 bump(inventory, view, proposal, now_rfc3339, flags.json, reporter)?;
                 Ok(Action::Updated)
             } else {
                 if !flags.json {
                     reporter.line(&format!(
                         "{}: pin unchanged at {}",
-                        proposal.module,
+                        proposal.name,
                         proposal.current_rev.as_deref().unwrap_or("(unpinned)")
                     ));
                 }
@@ -434,7 +436,7 @@ fn settle(
             reporter.warn(&format!(
                 "{}: the update gate returned a verdict this patina does not recognize; \
                  the pin is unchanged",
-                proposal.module
+                proposal.name
             ));
             Ok(Action::Held)
         }
@@ -456,7 +458,7 @@ fn bump(
     if !json {
         reporter.line(&format!(
             "{}: {} -> {}",
-            proposal.module,
+            proposal.name,
             proposal.current_rev.as_deref().unwrap_or("(unpinned)"),
             proposal.candidate_rev
         ));
@@ -470,7 +472,7 @@ fn bump(
 /// it declines: leaving the pin where it is, is the safe answer for a check
 /// that exists to catch a rewritten or backdated upstream.
 fn confirm(
-    module: &str,
+    name: &str,
     concerns: &[GateConcern],
     yes: bool,
     tty: Tty,
@@ -478,30 +480,39 @@ fn confirm(
     reporter: &mut impl Reporter,
 ) -> bool {
     for concern in concerns {
-        reporter.warn(&format!("{module}: {}", concern.describe()));
+        reporter.warn(&format!("{name}: {}", concern.describe()));
     }
     if yes {
         return true;
     }
     if tty == Tty::NonInteractive {
         reporter.warn(&format!(
-            "{module}: cannot confirm in a non-interactive shell; re-run with --yes to accept"
+            "{name}: cannot confirm in a non-interactive shell; re-run with --yes to accept"
         ));
         return false;
     }
-    reporter.confirm(&format!("Bump the pin for {module} anyway?"));
+    reporter.confirm(&format!("Bump the pin for {name} anyway?"));
     matches!(reader.read_line().unwrap_or_default().trim(), "y" | "Y")
 }
 
-/// Run the reachability sweep by hand.
-fn run_prune(
-    state_dir: &camino::Utf8Path,
-    json: bool,
-    reporter: &mut impl Reporter,
-) -> Result<i32> {
-    let removed = cache::prune(state_dir)
+/// Run the cache sweep by hand: whole trees for remotes the root manifest no
+/// longer declares, then unreferenced checkouts of the ones it does.
+fn run_prune(inventory: &RemoteInventory, json: bool, reporter: &mut impl Reporter) -> Result<i32> {
+    let state_dir = &inventory.state_dir;
+    let declared = inventory
+        .remotes
+        .iter()
+        .map(|view| view.name.as_str())
+        .collect();
+    let mut removed = cache::prune_undeclared(state_dir, &declared)
         .map_err(patina_core::EngineError::from)
-        .context("failed to prune the remote checkout cache")?;
+        .context("failed to prune the cache of undeclared remotes")?;
+    removed.extend(
+        cache::prune(state_dir)
+            .map_err(patina_core::EngineError::from)
+            .context("failed to prune the remote checkout cache")?,
+    );
+    removed.sort();
     if json {
         let paths: Vec<&str> = removed.iter().map(|path| path.as_str()).collect();
         reporter.json(&document(&serde_json::json!({ "removed": paths })));
@@ -516,8 +527,8 @@ fn run_prune(
 }
 
 /// One `remotes` row of the `remote update` JSON envelope.
-fn row(module: &str, action: &str, rev: Option<&str>) -> serde_json::Value {
-    serde_json::json!({ "module": module, "action": action, "rev": rev })
+fn row(name: &str, action: &str, rev: Option<&str>) -> serde_json::Value {
+    serde_json::json!({ "name": name, "action": action, "rev": rev })
 }
 
 /// Serialize a JSON envelope, falling back to an empty object so a
@@ -568,8 +579,9 @@ mod tests {
             global_min_age: None,
             lockfile: patina_core::remote::lockfile::Lockfile::default(),
             remotes: vec![RemoteView {
-                module: "humanizer".to_owned(),
+                name: "humanizer".to_owned(),
                 spec: patina_core::RemoteSpec {
+                    name: "humanizer".to_owned(),
                     url: "https://example.invalid/r".to_owned(),
                     git_ref: Some("main".to_owned()),
                     min_age: None,
@@ -581,7 +593,7 @@ mod tests {
 
     fn proposal(outcome: GateOutcome, current: Option<&str>) -> Proposal {
         Proposal {
-            module: "humanizer".to_owned(),
+            name: "humanizer".to_owned(),
             candidate_rev: "b".repeat(40),
             candidate_epoch: 1_786_456_800,
             current_rev: current.map(str::to_owned),
@@ -597,7 +609,7 @@ mod tests {
         let doc: serde_json::Value =
             serde_json::from_str(reporter.out.trim()).expect("one JSON document");
         assert_eq!(
-            doc.pointer("/remotes/0/module")
+            doc.pointer("/remotes/0/name")
                 .and_then(serde_json::Value::as_str),
             Some("humanizer")
         );
@@ -631,7 +643,7 @@ mod tests {
         empty.remotes.clear();
         let mut reporter = BufferReporter::new();
         assert_eq!(run_list(&empty, false, &mut reporter), 0);
-        assert!(reporter.out.contains("No remote-backed modules"));
+        assert!(reporter.out.contains("No remotes are declared"));
     }
 
     #[test]

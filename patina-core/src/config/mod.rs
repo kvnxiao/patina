@@ -28,7 +28,6 @@ pub use file_entry::FileEntry;
 pub use file_entry::FileEntryError;
 pub use file_entry::FileMode;
 pub use file_entry::ManagedEntry;
-pub use file_entry::TemplatePolicy;
 pub use hook_entry::HookEntry;
 pub use hook_entry::HookEntryError;
 pub use hook_entry::HookEvent;
@@ -63,9 +62,6 @@ pub struct ModuleConfig {
     /// Raw `[variables]` table for the resolver to consume. `None` when
     /// the module declares no `[variables]` table.
     pub variables: Option<toml::value::Table>,
-    /// The module's `[remote]` table when it is remote-backed. `None` for an
-    /// ordinary module whose sources live in its own directory.
-    pub remote: Option<RemoteSpec>,
 }
 
 /// Failure modes returned by [`parse_module_config`].
@@ -105,7 +101,8 @@ pub enum ConfigParseError {
     #[error(transparent)]
     Variable(#[from] crate::variables::VariableError),
 
-    /// The `[remote]` table violated the parse-time rules.
+    /// The manifest carries a module-level `[remote]` table, which the root
+    /// registry replaced.
     #[error(transparent)]
     Remote(#[from] remote::RemoteConfigError),
 }
@@ -144,23 +141,21 @@ pub fn parse_module_config_str(text: &str) -> Result<ModuleConfig, ConfigParseEr
         source: Box::new(source),
     })?;
 
-    // A remote-backed module's sources are third-party bytes, so the implicit
-    // `.tmpl` render is off for every entry in it.
-    let remote = raw.remote.map(remote::RawRemote::validate).transpose()?;
-    let policy = if remote.is_some() {
-        TemplatePolicy::Never
-    } else {
-        TemplatePolicy::Implicit
-    };
+    // The parser accepts unknown keys, so a manifest left over from when a
+    // module carried its own `[remote]` table would otherwise parse clean and
+    // resolve every one of its entries against the module directory.
+    if raw.remote.is_some() {
+        return Err(remote::RemoteConfigError::ModuleRemoteTable.into());
+    }
 
     let mut files = Vec::with_capacity(raw.file.len());
     for raw_file in raw.file {
-        files.push(ManagedEntry::from_raw_file(raw_file, policy)?);
+        files.push(ManagedEntry::from_raw_file(raw_file)?);
     }
 
     let mut directories = Vec::with_capacity(raw.directory.len());
     for raw_dir in raw.directory {
-        directories.push(ManagedEntry::from_raw_directory(raw_dir, policy)?);
+        directories.push(ManagedEntry::from_raw_directory(raw_dir)?);
     }
 
     let mut hooks = Vec::with_capacity(raw.hook.len());
@@ -177,7 +172,6 @@ pub fn parse_module_config_str(text: &str) -> Result<ModuleConfig, ConfigParseEr
         directories,
         hooks,
         variables: raw.variables,
-        remote,
     })
 }
 
@@ -197,10 +191,10 @@ struct RawModule {
     #[serde(default)]
     variables: Option<toml::value::Table>,
 
-    /// The `[remote]` table that makes this module remote-backed; validated by
-    /// [`remote::RawRemote::validate`].
+    /// A module-level `[remote]` table (or `[[remote]]` array) from before the
+    /// root registry existed. Captured only so it can be rejected by name.
     #[serde(default)]
-    remote: Option<remote::RawRemote>,
+    remote: Option<toml::Value>,
 
     /// Raw `[[file]]` table-array entries; validated by
     /// [`ManagedEntry::from_raw_file`].

@@ -53,6 +53,7 @@ use patina_core::discover_modules;
 use patina_core::exclusive_timeout;
 use patina_core::is_unc_path;
 use patina_core::parse_module_config;
+use patina_core::parse_root_config;
 use patina_core::persisted_default_present;
 use patina_core::resolve_repository_root;
 use patina_core::resolve_state_dir;
@@ -466,17 +467,11 @@ fn gather_inputs(state: &Utf8Path) -> Inputs {
     }
 }
 
-/// Whether any of `repo_root`'s modules carries a `[remote]` table. A module
-/// whose manifest fails to parse is skipped, and a discovery failure yields
-/// `false`.
+/// Whether `repo_root`'s manifest declares any `[[remote]]`. A root manifest
+/// that fails to parse yields `false`.
 fn repository_declares_remote(repo_root: &Utf8Path) -> bool {
-    let Ok(modules) = discover_modules(repo_root) else {
-        return false;
-    };
-    modules.iter().any(|module| {
-        let manifest = module.path.join(crate::cmd::MANIFEST_FILENAME);
-        parse_module_config(&manifest).is_ok_and(|config| config.remote.is_some())
-    })
+    let manifest = repo_root.join(crate::cmd::MANIFEST_FILENAME);
+    parse_root_config(&manifest).is_ok_and(|config| !config.remotes.is_empty())
 }
 
 /// Whether `repo_root`'s modules declare any `symlink` / `symlink-dir`

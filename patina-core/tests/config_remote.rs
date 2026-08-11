@@ -1,118 +1,210 @@
-//! The `[remote]` module table and the trust boundaries it draws.
+//! The root `[[remote]]` registry, per-entry remote selection, and the trust
+//! boundary the pair draws.
 //!
-//! A `[remote]` table makes a module remote-backed. The parse-level
-//! consequences are that the table itself is validated and that every entry in
-//! the module loses the implicit `.tmpl` template render: third-party bytes
-//! are never handed to `MiniJinja`. See `docs/REMOTE_SOURCES.md`
-//! "Remote-backed modules" and "Trust boundaries".
+//! A remote is declared once in the root manifest and named by any entry that
+//! wants its bytes. The parse-level consequences are that each declaration is
+//! validated and named, that a module manifest may no longer declare a remote
+//! of its own, and that an entry naming one loses the implicit `.tmpl` template
+//! render — third-party bytes are never handed to `MiniJinja` — while its local
+//! neighbours in the same manifest keep it. See `docs/REMOTE_SOURCES.md` "The
+//! remote registry" and "Trust boundaries".
 
 use patina_core::FileMode;
 use patina_core::parse_module_config_str;
+use patina_core::parse_root_config_str;
 use std::time::Duration;
 
 #[test]
-fn a_remote_table_is_parsed_with_its_ref_and_min_age() {
-    let config = parse_module_config_str(
-        "[remote]\n\
-         url = \"https://github.com/blader/humanizer\"\n\
+fn a_remote_declaration_is_parsed_with_its_derived_name_ref_and_min_age() {
+    let config = parse_root_config_str(
+        "[patina]\nroot = true\n\n\
+         [[remote]]\n\
+         url = \"https://github.com/blader/humanizer.git\"\n\
          ref = \"main\"\n\
-         min_age = \"0s\"\n\n\
-         [[directory]]\n\
-         source = \"skills/humanizer\"\n\
-         target = \"~/.claude/skills/humanizer\"\n\
-         mode = \"copy\"\n",
+         min_age = \"0s\"\n",
     )
-    .expect("a remote-backed module parses");
+    .expect("a root registry parses");
 
-    let remote = config.remote.expect("the module is remote-backed");
-    assert_eq!(remote.url, "https://github.com/blader/humanizer");
+    let remote = config.remotes.first().expect("one declared remote");
+    assert_eq!(remote.name, "humanizer");
+    assert_eq!(remote.url, "https://github.com/blader/humanizer.git");
     assert_eq!(remote.git_ref.as_deref(), Some("main"));
-    assert_eq!(remote.min_age, Some(Duration::from_secs(0)));
-    assert_eq!(
-        config
-            .directories
-            .first()
-            .expect("one directory entry")
-            .mode,
-        FileMode::CopyTree
-    );
+    assert_eq!(remote.min_age, Some(Duration::ZERO));
 }
 
 #[test]
-fn a_remote_table_without_ref_or_min_age_defers_both() {
-    let config = parse_module_config_str("[remote]\nurl = \"git@example.invalid:r.git\"\n")
-        .expect("a minimal remote table parses");
-    let remote = config.remote.expect("the module is remote-backed");
+fn a_declaration_without_ref_or_min_age_defers_both() {
+    let config = parse_root_config_str("[[remote]]\nurl = \"git@example.invalid:r.git\"\n")
+        .expect("a minimal declaration parses");
+    let remote = config.remotes.first().expect("one declared remote");
+    assert_eq!(remote.name, "r", "the scp-like form names the last segment");
     assert_eq!(remote.git_ref, None, "no `ref` means the default branch");
     assert_eq!(
         remote.min_age, None,
-        "no per-remote `min_age` defers to the root table, then the shipped default"
+        "no per-remote `min_age` defers to `[patina] remote_min_age`, then to the default"
     );
 }
 
 #[test]
-fn a_module_without_a_remote_table_is_local() {
-    let config = parse_module_config_str("[[file]]\nsource = \"zshrc\"\ntarget = \"~/.zshrc\"\n")
-        .expect("a local module parses");
-    assert_eq!(config.remote, None);
-}
-
-#[test]
-fn a_remote_tmpl_source_is_plain_bytes_not_a_template() {
-    // The implicit render would hand third-party `{{ }}` to strict-undefined
-    // MiniJinja. In a remote-backed module the suffix is just a filename.
-    let config = parse_module_config_str(
-        "[remote]\nurl = \"https://example.invalid/r\"\n\n\
-         [[file]]\nsource = \"prompts/agent.tmpl\"\ntarget = \"~/.agent.tmpl\"\n",
+fn a_written_name_wins_over_the_url() {
+    let config = parse_root_config_str(
+        "[[remote]]\nname = \"agents\"\nurl = \"https://github.com/blader/humanizer.git\"\n",
     )
-    .expect("a remote `.tmpl` source parses");
+    .expect("an explicitly named declaration parses");
     assert_eq!(
-        config.files.first().expect("one file entry").mode,
-        FileMode::Symlink,
-        "a remote `.tmpl` source must fall to the declared (here defaulted) mode"
+        config.remotes.first().expect("one remote").name,
+        "agents",
+        "a written name must not be overridden by the derived one"
     );
 }
 
 #[test]
-fn a_remote_tmpl_source_may_declare_an_explicit_mode() {
+fn a_url_with_no_derivable_name_says_to_write_one() {
+    let err = parse_root_config_str("[[remote]]\nurl = \"https://example.invalid/repo?ref=x\"\n")
+        .expect_err("a URL with no legal last segment must be rejected");
+    assert!(
+        err.to_string().contains("name = "),
+        "the message must point at the key that fixes it, got: {err}"
+    );
+}
+
+#[test]
+fn two_declarations_may_not_share_a_name() {
+    let err = parse_root_config_str(
+        "[[remote]]\nurl = \"https://a.invalid/humanizer\"\n\n\
+         [[remote]]\nurl = \"https://b.invalid/humanizer.git\"\n",
+    )
+    .expect_err("two remotes may not answer to one name");
+    assert!(
+        err.to_string().contains("humanizer"),
+        "the message must name the collision, got: {err}"
+    );
+}
+
+#[test]
+fn names_differing_only_in_case_are_one_name() {
+    // The name becomes a cache directory name, which macOS and Windows treat
+    // case-insensitively; accepting both would let two remotes overwrite each
+    // other's checkouts on those hosts and not on Linux.
+    parse_root_config_str(
+        "[[remote]]\nname = \"Humanizer\"\nurl = \"https://a.invalid/r\"\n\n\
+         [[remote]]\nname = \"humanizer\"\nurl = \"https://b.invalid/r\"\n",
+    )
+    .expect_err("case-only-differing names must collide");
+}
+
+#[test]
+fn a_declaration_with_an_empty_url_is_rejected() {
+    parse_root_config_str("[[remote]]\nurl = \"\"\n").expect_err("a remote needs a URL");
+}
+
+#[test]
+fn a_declaration_missing_its_url_is_rejected() {
+    parse_root_config_str("[[remote]]\nref = \"main\"\n")
+        .expect_err("`url` is required in a `[[remote]]` table");
+}
+
+#[test]
+fn a_declaration_with_a_malformed_min_age_is_rejected() {
+    parse_root_config_str(
+        "[[remote]]\nurl = \"https://example.invalid/r\"\nmin_age = \"3 fortnights\"\n",
+    )
+    .expect_err("a malformed per-remote min_age must be rejected");
+}
+
+#[test]
+fn a_module_level_remote_table_points_at_the_root_manifest() {
+    // The parser accepts unknown keys, so a manifest written for the old format
+    // would otherwise parse clean and resolve its entries against the module
+    // directory — the silent wrong answer this rejection exists to prevent.
+    let err = parse_module_config_str(
+        "[remote]\nurl = \"https://github.com/blader/humanizer\"\n\n\
+         [[file]]\nsource = \"SKILL.md\"\ntarget = \"~/.claude/skills/humanizer/SKILL.md\"\n",
+    )
+    .expect_err("a module may not declare a remote of its own");
+    let message = err.to_string();
+    assert!(
+        message.contains("root patina.toml") && message.contains("[[remote]]"),
+        "the message must say where the declaration belongs now, got: {message}"
+    );
+}
+
+#[test]
+fn an_entry_with_no_remote_key_is_local() {
+    let config = parse_module_config_str("[[file]]\nsource = \"zshrc\"\ntarget = \"~/.zshrc\"\n")
+        .expect("a local entry parses");
+    assert_eq!(config.files.first().expect("one entry").remote, None);
+}
+
+#[test]
+fn an_entry_naming_a_remote_carries_the_name() {
+    let config = parse_module_config_str(
+        "[[file]]\nsource = \"SKILL.md\"\nremote = \"humanizer\"\n\
+         target = \"~/.claude/skills/humanizer/SKILL.md\"\n",
+    )
+    .expect("a remote-sourced entry parses");
+    assert_eq!(
+        config
+            .files
+            .first()
+            .expect("one entry")
+            .remote
+            .as_deref()
+            .expect("the entry names a remote"),
+        "humanizer"
+    );
+}
+
+#[test]
+fn an_entry_declaring_a_blank_remote_is_rejected() {
+    // Silently reading `remote = ""` as "local" would resolve the source
+    // against the wrong tree; omitting the key is how an entry stays local.
+    parse_module_config_str("[[file]]\nsource = \"a\"\nremote = \"  \"\ntarget = \"~/.a\"\n")
+        .expect_err("a blank `remote` must be rejected");
+}
+
+#[test]
+fn the_template_policy_is_per_entry_within_one_module() {
+    // The two entries sit in one manifest: the local `.tmpl` renders, the
+    // remote-sourced one is plain bytes under its declared (here defaulted)
+    // mode. A module-wide policy could not produce both.
+    let config = parse_module_config_str(
+        "[[file]]\nsource = \"gitconfig.tmpl\"\ntarget = \"~/.gitconfig\"\n\n\
+         [[file]]\nsource = \"prompts/agent.tmpl\"\nremote = \"humanizer\"\n\
+         target = \"~/.agent.tmpl\"\n",
+    )
+    .expect("a mixed module parses");
+    let modes: Vec<FileMode> = config.files.iter().map(|entry| entry.mode).collect();
+    assert_eq!(
+        modes,
+        [FileMode::TemplateRender, FileMode::Symlink],
+        "the local `.tmpl` must render and the remote-sourced one must fall to its declared mode"
+    );
+}
+
+#[test]
+fn a_remote_sourced_tmpl_may_declare_an_explicit_mode() {
     // The implicit-template rule forbids `mode` beside a local `.tmpl` source.
     // With no implicit render there is nothing for it to conflict with.
     let config = parse_module_config_str(
-        "[remote]\nurl = \"https://example.invalid/r\"\n\n\
-         [[file]]\nsource = \"a.tmpl\"\ntarget = \"~/.a\"\nmode = \"copy\"\n",
+        "[[file]]\nsource = \"a.tmpl\"\nremote = \"r\"\ntarget = \"~/.a\"\nmode = \"copy\"\n",
     )
-    .expect("a remote `.tmpl` source with an explicit mode parses");
+    .expect("a remote-sourced `.tmpl` with an explicit mode parses");
     assert_eq!(
-        config.files.first().expect("one file entry").mode,
+        config.files.first().expect("one entry").mode,
         FileMode::Copy
     );
 }
 
 #[test]
-fn a_remote_tmpl_directory_source_is_an_ordinary_directory_name() {
+fn a_remote_sourced_tmpl_directory_is_an_ordinary_directory_name() {
     let config = parse_module_config_str(
-        "[remote]\nurl = \"https://example.invalid/r\"\n\n\
-         [[directory]]\nsource = \"templates.tmpl\"\ntarget = \"~/.templates\"\n",
+        "[[directory]]\nsource = \"templates.tmpl\"\nremote = \"r\"\ntarget = \"~/.templates\"\n",
     )
-    .expect("a remote `.tmpl` directory source parses");
+    .expect("a remote-sourced `.tmpl` directory parses");
     assert_eq!(
         config.directories.first().expect("one entry").mode,
         FileMode::SymlinkDir
-    );
-}
-
-#[test]
-fn a_local_tmpl_source_still_renders() {
-    // The guard for the two tests above: without a `[remote]` table the same
-    // source must resolve to the implicit template render, so the policy switch
-    // is doing real work rather than disabling the feature outright.
-    let config = parse_module_config_str(
-        "[[file]]\nsource = \"gitconfig.tmpl\"\ntarget = \"~/.gitconfig\"\n",
-    )
-    .expect("a local `.tmpl` source parses");
-    assert_eq!(
-        config.files.first().expect("one file entry").mode,
-        FileMode::TemplateRender
     );
 }
 
@@ -123,21 +215,7 @@ fn a_local_tmpl_source_with_an_explicit_mode_is_still_rejected() {
 }
 
 #[test]
-fn a_remote_table_with_an_empty_url_is_rejected() {
-    parse_module_config_str("[remote]\nurl = \"\"\n")
-        .expect_err("a remote-backed module needs a URL");
-}
-
-#[test]
-fn a_remote_table_with_a_malformed_min_age_is_rejected() {
-    parse_module_config_str(
-        "[remote]\nurl = \"https://example.invalid/r\"\nmin_age = \"3 fortnights\"\n",
-    )
-    .expect_err("a malformed per-remote min_age must be rejected");
-}
-
-#[test]
-fn a_remote_table_missing_its_url_is_rejected() {
-    parse_module_config_str("[remote]\nref = \"main\"\n")
-        .expect_err("`url` is required in a `[remote]` table");
+fn a_local_tmpl_directory_source_is_still_rejected() {
+    parse_module_config_str("[[directory]]\nsource = \"t.tmpl\"\ntarget = \"~/.t\"\n")
+        .expect_err("template render stays file-only for local sources");
 }

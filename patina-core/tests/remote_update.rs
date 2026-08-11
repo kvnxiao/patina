@@ -100,8 +100,9 @@ impl Fixture {
             global_min_age: None,
             lockfile,
             remotes: vec![RemoteView {
-                module: "humanizer".to_owned(),
+                name: "humanizer".to_owned(),
                 spec: RemoteSpec {
+                    name: "humanizer".to_owned(),
                     url: self.origin.as_str().to_owned(),
                     git_ref: Some("main".to_owned()),
                     min_age,

@@ -195,6 +195,46 @@ pub fn prune(state_dir: &Utf8Path) -> Result<Vec<Utf8PathBuf>, RemoteError> {
     Ok(removed)
 }
 
+/// Remove the whole cache directory of every remote `declared` does not name,
+/// returning what was removed, sorted.
+///
+/// [`prune`] sweeps checkouts within a remote's directory but never the
+/// directory itself or its bare fetch repository, so deleting a `[[remote]]`
+/// declaration would otherwise leave its entire tree behind for good. A
+/// directory a journal record still points into is left to [`prune`], which
+/// keeps the reachable checkouts a `patina rollback` would re-point links at.
+///
+/// # Errors
+///
+/// Returns a [`RemoteError`] when the cache directory cannot be read or a
+/// removal fails.
+pub fn prune_undeclared(
+    state_dir: &Utf8Path,
+    declared: &BTreeSet<&str>,
+) -> Result<Vec<Utf8PathBuf>, RemoteError> {
+    let root = remotes_root(state_dir);
+    if !root.is_dir() {
+        return Ok(Vec::new());
+    }
+    let Some(referenced) = referenced_paths(&state_dir.join("journal"))? else {
+        return Ok(Vec::new());
+    };
+
+    let mut removed = Vec::new();
+    for module in read_subdirectories(&root)? {
+        let Some(name) = module.file_name() else {
+            continue;
+        };
+        if declared.contains(name) || is_referenced(&module, &referenced) {
+            continue;
+        }
+        remove_dir(&module)?;
+        removed.push(module);
+    }
+    removed.sort();
+    Ok(removed)
+}
+
 /// Whether `name` is shaped like a checkout directory (a full commit SHA).
 ///
 /// Anything else under a module's cache directory is left alone: the pruner

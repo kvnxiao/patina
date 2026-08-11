@@ -9,6 +9,7 @@
 
 pub mod apply;
 pub mod backups;
+pub mod caseless;
 pub mod clock;
 pub mod config;
 pub mod discovery;

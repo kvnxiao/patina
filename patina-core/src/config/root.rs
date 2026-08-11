@@ -1,10 +1,14 @@
-//! Parsing of the repository root `patina.toml`'s variable tables.
+//! Parsing of the repository root `patina.toml`'s variable tables and remote
+//! registry.
 //!
 //! The root manifest carries two variable sources that planning layers
 //! into the resolver (wired elsewhere, not here):
 //!
 //! - the repo-shared `[variables]` table, and
 //! - one `[profiles.<name>.variables]` table per declared profile.
+//!
+//! It also carries the `[[remote]]` registry: every third-party git source the
+//! repository consumes, declared once so a module entry can select one by name.
 //!
 //! This module is parse-and-return only: it reads the root manifest,
 //! validates each table against the reserved `patina.*` namespace via
@@ -21,12 +25,14 @@
 //! separately by [`crate::profile::load_auto_match_rules`]; this parser
 //! ignores it.
 
+use super::remote::RemoteSpec;
 use crate::variables::VariableError;
 use crate::variables::reject_reserved_keys;
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
 use serde::Deserialize;
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 
 /// The repo-shared `[variables]` table and per-profile
 /// `[profiles.<name>.variables]` tables parsed from the root
@@ -46,9 +52,13 @@ pub struct RootConfig {
     /// holding that profile's `[profiles.<name>.variables]` table. A
     /// profile with no `variables` table contributes an empty table.
     pub per_profile: BTreeMap<String, toml::value::Table>,
-    /// The repository-wide update-gate floor from `[remotes] min_age`. `None`
-    /// when the table (or the key) is absent, in which case the gate falls back
-    /// to [`crate::config::DEFAULT_MIN_AGE`].
+    /// The `[[remote]]` registry in declaration order: every third-party git
+    /// source entries may select by name. Empty when the manifest declares
+    /// none.
+    pub remotes: Vec<RemoteSpec>,
+    /// The repository-wide update-gate floor from `[patina] remote_min_age`.
+    /// `None` when the key is absent, in which case the gate falls back to
+    /// [`crate::config::DEFAULT_MIN_AGE`].
     pub remotes_min_age: Option<std::time::Duration>,
 }
 
@@ -82,7 +92,8 @@ pub enum RootConfigError {
     #[error(transparent)]
     Variable(#[from] VariableError),
 
-    /// The root `[remotes]` table declared a malformed duration.
+    /// A `[[remote]]` table, or the `[patina] remote_min_age` duration, is
+    /// malformed.
     #[error(transparent)]
     Remote(#[from] super::remote::RemoteConfigError),
 }
@@ -148,19 +159,43 @@ pub fn parse_root_config_str(text: &str) -> Result<RootConfig, RootConfigError> 
         per_profile.insert(name, table);
     }
 
-    let remotes_min_age = raw.remotes.unwrap_or_default().validate()?;
+    let remotes_min_age = raw
+        .patina
+        .unwrap_or_default()
+        .remote_min_age
+        .as_deref()
+        .map(|value| super::remote::parse_duration("remote_min_age", value))
+        .transpose()?;
+
+    let mut remotes = Vec::with_capacity(raw.remote.len());
+    let mut claimed: BTreeSet<String> = BTreeSet::new();
+    for table in raw.remote {
+        let spec = table.validate()?;
+        // Folded, because the name is a cache directory name on filesystems
+        // that would treat two spellings of it as one directory.
+        if !claimed.insert(crate::caseless::fold(&spec.name)) {
+            return Err(super::remote::RemoteConfigError::DuplicateName { name: spec.name }.into());
+        }
+        remotes.push(spec);
+    }
 
     Ok(RootConfig {
         repo_shared,
         per_profile,
+        remotes,
         remotes_min_age,
     })
 }
 
-/// Raw TOML projection of the root manifest's variable surface. Every
-/// other root section (`[patina]`, `[[auto_match]]`, …) is ignored.
+/// Raw TOML projection of the root manifest's variable and remote surface.
+/// Every other root section (`[[auto_match]]`, …) is ignored.
 #[derive(Debug, Default, Deserialize)]
 struct RawRoot {
+    /// The `[patina]` table. Only `remote_min_age` is read here; `root` is
+    /// [`crate::discovery`]'s.
+    #[serde(default)]
+    patina: Option<RawPatina>,
+
     /// The repo-shared `[variables]` table.
     #[serde(default)]
     variables: Option<toml::value::Table>,
@@ -170,9 +205,18 @@ struct RawRoot {
     #[serde(default)]
     profiles: BTreeMap<String, RawProfile>,
 
-    /// The `[remotes]` table carrying the repository-wide update-gate floor.
+    /// The `[[remote]]` registry, in declaration order.
     #[serde(default)]
-    remotes: Option<super::remote::RawRemotes>,
+    remote: Vec<super::remote::RawRemote>,
+}
+
+/// Raw projection of the `[patina]` table's remote key.
+#[derive(Debug, Default, Deserialize)]
+struct RawPatina {
+    /// Repository-wide update-gate floor, in the
+    /// [`parse_duration`](super::remote::parse_duration) shorthand.
+    #[serde(default)]
+    remote_min_age: Option<String>,
 }
 
 /// Raw projection of a single `[profiles.<name>]` section. Only its
@@ -266,29 +310,88 @@ mod tests {
             .expect("manifest with no variable tables parses");
         assert!(config.repo_shared.is_empty());
         assert!(config.per_profile.is_empty());
+        assert!(config.remotes.is_empty());
         assert_eq!(
             config.remotes_min_age, None,
-            "an absent `[remotes]` table must leave the gate floor to the shipped default"
+            "an absent `remote_min_age` must leave the gate floor to the shipped default"
         );
     }
 
     #[test]
     fn reads_the_global_remote_min_age() {
-        let config = parse_root_config_str("[remotes]\nmin_age = \"7d\"\n")
-            .expect("`[remotes]` table parses");
+        let config = parse_root_config_str("[patina]\nroot = true\nremote_min_age = \"7d\"\n")
+            .expect("`[patina] remote_min_age` parses");
         assert_eq!(
             config
                 .remotes_min_age
                 .map(|d| d.as_secs())
-                .expect("a declared min_age"),
+                .expect("a declared remote_min_age"),
             7 * 24 * 60 * 60
         );
     }
 
     #[test]
     fn rejects_a_malformed_global_remote_min_age() {
-        let err = parse_root_config_str("[remotes]\nmin_age = \"soon\"\n")
+        let err = parse_root_config_str("[patina]\nremote_min_age = \"soon\"\n")
             .expect_err("a malformed duration must be rejected");
+        assert!(
+            matches!(err, RootConfigError::Remote(_)),
+            "expected a remote-config error, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn reads_the_remote_registry_in_declaration_order() {
+        let config = parse_root_config_str(
+            "[[remote]]\nurl = \"https://example.invalid/zsh.git\"\n\n\
+             [[remote]]\nurl = \"https://github.com/blader/humanizer\"\nref = \"main\"\n\
+             min_age = \"0s\"\n",
+        )
+        .expect("a two-remote registry parses");
+        let names: Vec<&str> = config.remotes.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(
+            names,
+            ["zsh", "humanizer"],
+            "declaration order is what decides first-use fetch order"
+        );
+        let humanizer = config.remotes.last().expect("the second declaration");
+        assert_eq!(humanizer.git_ref.as_deref(), Some("main"));
+        assert_eq!(humanizer.min_age, Some(std::time::Duration::ZERO));
+    }
+
+    #[test]
+    fn rejects_two_remotes_claiming_one_name() {
+        let err = parse_root_config_str(
+            "[[remote]]\nurl = \"https://a.invalid/humanizer\"\n\n\
+             [[remote]]\nurl = \"https://b.invalid/humanizer.git\"\n",
+        )
+        .expect_err("two remotes may not share a name");
+        assert!(
+            err.to_string().contains("humanizer"),
+            "the message must name the collision, got: {err}"
+        );
+    }
+
+    #[test]
+    fn rejects_names_that_differ_only_in_case() {
+        // The name is a cache directory name; on macOS and Windows these two
+        // spellings address one directory, so accepting both would let two
+        // remotes overwrite each other's checkouts.
+        let err = parse_root_config_str(
+            "[[remote]]\nname = \"Humanizer\"\nurl = \"https://a.invalid/r\"\n\n\
+             [[remote]]\nname = \"humanizer\"\nurl = \"https://b.invalid/r\"\n",
+        )
+        .expect_err("case-only-differing names must collide");
+        assert!(
+            err.to_string().contains("Humanizer") || err.to_string().contains("humanizer"),
+            "the message must name the collision, got: {err}"
+        );
+    }
+
+    #[test]
+    fn a_remote_with_an_underivable_url_and_no_name_is_rejected() {
+        let err = parse_root_config_str("[[remote]]\nurl = \"https://example.invalid/.git\"\n")
+            .expect_err("a nameless remote with no derivable name must be rejected");
         assert!(
             matches!(err, RootConfigError::Remote(_)),
             "expected a remote-config error, got {err:?}"

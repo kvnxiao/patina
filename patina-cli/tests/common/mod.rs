@@ -54,6 +54,16 @@ impl Fixture {
         }
     }
 
+    /// Append a `[[remote]]` declaration to the root manifest, which is the
+    /// only place a remote is declared.
+    pub fn declare_remote(&self, name: &str, url: &str, git_ref: Option<&str>) {
+        let manifest = self.root.join("patina.toml");
+        let existing = fs_err::read_to_string(&manifest).expect("read root manifest");
+        let tracked = git_ref.map_or_else(String::new, |value| format!("ref = \"{value}\"\n"));
+        let body = format!("{existing}\n[[remote]]\nname = \"{name}\"\nurl = \"{url}\"\n{tracked}");
+        fs_err::write(&manifest, body).expect("write root manifest");
+    }
+
     /// Write a module directory with the given `patina.toml` body and an
     /// optional source file.
     pub fn module(&self, name: &str, manifest: &str) -> Utf8PathBuf {

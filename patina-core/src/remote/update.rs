@@ -22,12 +22,13 @@ use crate::error::EngineError;
 use camino::Utf8PathBuf;
 use std::time::Duration;
 
-/// One remote-backed module: what it declares, and what it is pinned to.
+/// One declared remote: what the root manifest says, and what it is pinned to.
 #[derive(Debug, Clone)]
 pub struct RemoteView {
-    /// The module directory name, which doubles as the remote's name.
-    pub module: String,
-    /// The module's `[remote]` table.
+    /// The remote's name, which entries select it by and which keys its pin,
+    /// its cache directory, and every `patina remote` verb.
+    pub name: String,
+    /// The root manifest's `[[remote]]` table.
     pub spec: RemoteSpec,
     /// The current pin, or `None` when the remote has never been pinned.
     pub pin: Option<LockEntry>,
@@ -40,39 +41,40 @@ pub struct RemoteInventory {
     pub repo_root: Utf8PathBuf,
     /// Per-machine state directory, which holds the cache and notice files.
     pub state_dir: Utf8PathBuf,
-    /// The root manifest's `[remotes] min_age`, when it declares one.
+    /// The root manifest's `[patina] remote_min_age`, when it declares one.
     pub global_min_age: Option<Duration>,
     /// The committed pins.
     pub lockfile: Lockfile,
-    /// Every remote-backed module, in module-name order (the order
-    /// `discover_modules` returns).
+    /// Every declared remote, in root-manifest declaration order.
     pub remotes: Vec<RemoteView>,
 }
 
-/// Enumerate the resolved repository's remote-backed modules and their pins.
+/// Enumerate the resolved repository's declared remotes and their pins.
+///
+/// Reads the root manifest alone: a remote exists because the root declares it,
+/// not because some module currently uses it. That is what lets `patina remote
+/// update` keep the committed lock complete for machines whose active entry set
+/// differs from this one's.
 ///
 /// # Errors
 ///
 /// Returns an [`EngineError`] when repository or state-directory resolution,
-/// module enumeration, manifest parsing, or the lockfile read fails.
+/// root-manifest parsing, or the lockfile read fails.
 pub fn inventory() -> Result<RemoteInventory, EngineError> {
     let repo_root = crate::discovery::resolve_repository_root()?;
     let state_dir = crate::state_dir::resolve()?;
     let root_config = crate::config::parse_root_config(&repo_root.join("patina.toml"))?;
     let lockfile = Lockfile::load(&lockfile_path(&repo_root))?;
 
-    let mut remotes = Vec::new();
-    for module in crate::discovery::discover_modules(&repo_root)? {
-        let config = crate::config::parse_module_config(&module.path.join("patina.toml"))?;
-        if let Some(spec) = config.remote {
-            let pin = lockfile.get(&module.name).cloned();
-            remotes.push(RemoteView {
-                module: module.name,
-                spec,
-                pin,
-            });
-        }
-    }
+    let remotes = root_config
+        .remotes
+        .into_iter()
+        .map(|spec| RemoteView {
+            pin: lockfile.get(&spec.name).cloned(),
+            name: spec.name.clone(),
+            spec,
+        })
+        .collect();
 
     Ok(RemoteInventory {
         repo_root,
@@ -84,18 +86,18 @@ pub fn inventory() -> Result<RemoteInventory, EngineError> {
 }
 
 impl RemoteInventory {
-    /// The view for `module`, if the repository declares it as a remote.
+    /// The view for the remote called `name`, if the root manifest declares it.
     #[must_use = "the view carries the spec and pin a command operates on"]
-    pub fn find(&self, module: &str) -> Option<&RemoteView> {
-        self.remotes.iter().find(|view| view.module == module)
+    pub fn find(&self, name: &str) -> Option<&RemoteView> {
+        self.remotes.iter().find(|view| view.name == name)
     }
 }
 
 /// One remote's upstream tip against its pin, from `ls-remote` alone.
 #[derive(Debug, Clone)]
 pub struct CheckResult {
-    /// The module name.
-    pub module: String,
+    /// The remote's name.
+    pub name: String,
     /// The pinned rev, or `None` when unpinned.
     pub pinned_rev: Option<String>,
     /// The rev the tracked ref points at upstream.
@@ -120,7 +122,7 @@ impl CheckResult {
 pub fn check_upstream(view: &RemoteView) -> Result<CheckResult, RemoteError> {
     let upstream_rev = git::ls_remote(&view.spec.url, view.spec.git_ref.as_deref())?;
     Ok(CheckResult {
-        module: view.module.clone(),
+        name: view.name.clone(),
         pinned_rev: view.pin.as_ref().map(|pin| pin.rev.clone()),
         upstream_rev,
     })
@@ -129,8 +131,8 @@ pub fn check_upstream(view: &RemoteView) -> Result<CheckResult, RemoteError> {
 /// A candidate pin bump and the gate's answer about it.
 #[derive(Debug, Clone)]
 pub struct Proposal {
-    /// The module name.
-    pub module: String,
+    /// The remote's name.
+    pub name: String,
     /// The rev the tracked ref points at upstream.
     pub candidate_rev: String,
     /// The candidate's committer time, Unix seconds. Zero when the gate
@@ -163,7 +165,7 @@ pub fn propose(
 
     if current_rev.as_deref() == Some(candidate_rev.as_str()) {
         return Ok(Proposal {
-            module: view.module.clone(),
+            name: view.name.clone(),
             candidate_rev,
             candidate_epoch: 0,
             current_rev,
@@ -173,7 +175,7 @@ pub fn propose(
 
     // Real history, not a depth-1 fetch: the ancestry check below is only
     // answerable when the commits between the pin and the candidate are present.
-    let git_dir = cache::bare_repo(&inventory.state_dir, &view.module);
+    let git_dir = cache::bare_repo(&inventory.state_dir, &view.name);
     git::fetch_history(&git_dir, &view.spec.url, view.spec.git_ref.as_deref())?;
     let candidate_epoch = git::committer_time(&git_dir, &candidate_rev)?;
 
@@ -199,7 +201,7 @@ pub fn propose(
     });
 
     Ok(Proposal {
-        module: view.module.clone(),
+        name: view.name.clone(),
         candidate_rev,
         candidate_epoch,
         current_rev,
@@ -207,7 +209,7 @@ pub fn propose(
     })
 }
 
-/// Record `proposal`'s candidate as `module`'s pin and write the lockfile.
+/// Record `proposal`'s candidate as the remote's pin and write the lockfile.
 ///
 /// `updated_at` is stamped from `now_rfc3339` and rides the same commit as the
 /// `rev` change, so the lockfile never needs a commit of its own.
@@ -222,7 +224,7 @@ pub fn accept(
     now_rfc3339: &str,
 ) -> Result<(), RemoteError> {
     inventory.lockfile.insert(
-        view.module.clone(),
+        view.name.clone(),
         LockEntry {
             url: view.spec.url.clone(),
             git_ref: view.spec.git_ref.clone(),

@@ -1,9 +1,9 @@
 //! Remote git sources: the cache, the lockfile, the update gate, and the
 //! `git` subprocess layer they share.
 //!
-//! A module carrying a `[remote]` table resolves its entry sources against a
-//! pinned checkout of another repository instead of its own directory. The
-//! pieces:
+//! The root manifest declares each remote once; a managed entry naming one
+//! resolves its source against a pinned checkout of that repository instead of
+//! its own module directory. The pieces:
 //!
 //! - [`git`] wraps the `git` binary on `PATH` in typed calls.
 //! - [`cache`] owns the per-machine checkout layout under `<state>/remotes/`.
@@ -57,28 +57,38 @@ impl RemoteError {
         self
     }
 
-    /// The plan-time failure for a remote-backed module with no pin.
-    #[must_use = "the error tells the user which command creates the first pin"]
-    pub fn missing_lock_entry(module: &str) -> Self {
-        RemoteRepr::MissingLockEntry {
-            module: module.to_owned(),
+    /// The plan-time failure for an entry naming a remote the root manifest
+    /// does not declare.
+    #[must_use = "the error names the remote no declaration matches"]
+    pub fn undeclared_remote(name: &str) -> Self {
+        RemoteRepr::UndeclaredRemote {
+            name: name.to_owned(),
         }
         .into()
     }
 
-    /// The plan-time failure for a remote entry whose source resolves outside
-    /// its checkout (a `..` in the declared source, or a symlink the checkout
-    /// shipped).
+    /// The plan-time failure for a declared remote with no pin.
+    #[must_use = "the error tells the user which command creates the first pin"]
+    pub fn missing_lock_entry(name: &str) -> Self {
+        RemoteRepr::MissingLockEntry {
+            name: name.to_owned(),
+        }
+        .into()
+    }
+
+    /// The plan-time failure for a remote-sourced entry whose source resolves
+    /// outside its checkout (a `..` in the declared source, or a symlink the
+    /// checkout shipped).
     #[must_use = "the error names the source that escaped its checkout"]
-    pub fn source_escapes_checkout(module: &str, source: &Utf8Path) -> Self {
+    pub fn source_escapes_checkout(name: &str, source: &Utf8Path) -> Self {
         RemoteRepr::SourceEscapesCheckout {
-            module: module.to_owned(),
+            name: name.to_owned(),
             declared_source: source.to_path_buf(),
         }
         .into()
     }
 
-    /// Restate a fetch failure as the cold-cache failure, naming the module and
+    /// Restate a fetch failure as the cold-cache failure, naming the remote and
     /// the rev this machine could not materialize.
     ///
     /// The underlying `git` error alone says a fetch failed; the user needs to
@@ -87,10 +97,10 @@ impl RemoteError {
     /// failure (a cache write, say) already names its own path and passes
     /// through.
     #[must_use = "the restated error is what the user sees"]
-    pub fn into_cold_cache(self, module: &str, rev: &str) -> Self {
+    pub fn into_cold_cache(self, name: &str, rev: &str) -> Self {
         match *self.0 {
             RemoteRepr::Git(source) => RemoteRepr::ColdCache {
-                module: module.to_owned(),
+                name: name.to_owned(),
                 rev: rev.to_owned(),
                 source,
             }
@@ -154,60 +164,70 @@ pub(crate) enum RemoteRepr {
 
     /// A lock entry's `rev` is not a full commit SHA.
     #[error(
-        "the lock entry for remote `{module}` records `rev = \"{value}\"`, which is not a full \
-         40-character commit SHA; re-pin it with `patina remote update {module}`"
+        "the lock entry for remote `{name}` records `rev = \"{value}\"`, which is not a full \
+         40-character commit SHA; re-pin it with `patina remote update {name}`"
     )]
     LockfileRev {
-        /// The module whose entry is malformed.
-        module: String,
+        /// The remote whose entry is malformed.
+        name: String,
         /// The offending value.
         value: String,
     },
 
     /// A lock entry's `updated_at` is not an RFC 3339 timestamp.
     #[error(
-        "the lock entry for remote `{module}` records `updated_at = \"{value}\"`, which is not an \
+        "the lock entry for remote `{name}` records `updated_at = \"{value}\"`, which is not an \
          RFC 3339 UTC timestamp (for example 2026-08-11T14:00:00Z)"
     )]
     LockfileTimestamp {
-        /// The module whose entry is malformed.
-        module: String,
+        /// The remote whose entry is malformed.
+        name: String,
         /// The offending value.
         value: String,
     },
 
-    /// A remote entry's source resolved outside its checkout directory.
+    /// An entry named a remote no `[[remote]]` table declares.
     #[error(
-        "the remote-backed module `{module}` declares a source (`{declared_source}`) that \
+        "an entry names the remote `{name}`, which no [[remote]] table in the root patina.toml \
+         declares; add one, or correct the entry's `remote` key"
+    )]
+    UndeclaredRemote {
+        /// The name nothing declares.
+        name: String,
+    },
+
+    /// A remote-sourced entry's source resolved outside its checkout directory.
+    #[error(
+        "an entry sourced from the remote `{name}` declares a source (`{declared_source}`) that \
          resolves outside its checkout; a remote may supply only bytes from within its own tree"
     )]
     SourceEscapesCheckout {
-        /// The remote-backed module whose entry escaped.
-        module: String,
+        /// The remote whose checkout the entry escaped.
+        name: String,
         /// The declared source that resolved outside the checkout.
         declared_source: Utf8PathBuf,
     },
 
-    /// A remote-backed module has no pin, so there is nothing for `apply` to
+    /// A declared remote has no pin, so there is nothing for `apply` to
     /// materialize.
     #[error(
-        "the remote-backed module `{module}` has no entry in patina.lock; run \
-         `patina remote update {module}` to create its first pin"
+        "the remote `{name}` has no entry in patina.lock; run \
+         `patina remote update {name}` to create its first pin"
     )]
     MissingLockEntry {
-        /// The module with no pin.
-        module: String,
+        /// The remote with no pin.
+        name: String,
     },
 
     /// A pinned rev is neither cached nor fetchable, so this machine cannot
     /// converge to the committed lock.
     #[error(
-        "the remote-backed module `{module}` is pinned to rev {rev}, which is not in the local \
-         cache and could not be fetched: {source}"
+        "the remote `{name}` is pinned to rev {rev}, which is not in the local cache and could \
+         not be fetched: {source}"
     )]
     ColdCache {
-        /// The module whose pin could not be materialized.
-        module: String,
+        /// The remote whose pin could not be materialized.
+        name: String,
         /// The pinned rev.
         rev: String,
         /// The fetch failure.
