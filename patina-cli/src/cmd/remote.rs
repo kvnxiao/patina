@@ -54,25 +54,29 @@ pub fn run(
     reader: &mut impl PromptReader,
     reporter: &mut impl Reporter,
 ) -> Result<i32> {
-    // `check --hook` decides whether to do anything at all before paying for
-    // repository discovery, so a shell hook on a machine with no remotes costs
-    // one stat.
-    let inventory = update::inventory().context("failed to enumerate the declared remotes")?;
-    let lock_path = inventory.state_dir.join("lock");
+    let state_dir =
+        patina_core::resolve_state_dir().context("failed to resolve the state directory")?;
+    let lock_path = state_dir.join("lock");
 
     match &args.command {
         RemoteCommand::List => {
             let _guard = shared_lock(&lock_path, reporter);
+            let inventory = declared_remotes()?;
             Ok(run_list(&inventory, args.json, reporter))
         }
         RemoteCommand::Check { hook } => {
             let _guard = shared_lock(&lock_path, reporter);
+            let inventory = declared_remotes()?;
             Ok(run_check(&inventory, *hook, args.json, reporter))
         }
         RemoteCommand::Update { name, now, yes } => {
             let _guard = acquire_lock(&lock_path, LockKind::Exclusive, exclusive_timeout())
                 .context("failed to acquire the exclusive lock for `patina remote update`")?;
-            let mut inventory = inventory;
+            // Read the lockfile only once the exclusive lock is held: this is a
+            // read-modify-write of a file another `patina remote update` may be
+            // rewriting, so a read taken before the lock could silently drop a
+            // concurrent bump.
+            let mut inventory = declared_remotes()?;
             run_update(
                 &mut inventory,
                 &UpdateFlags {
@@ -89,9 +93,14 @@ pub fn run(
         RemoteCommand::Prune => {
             let _guard = acquire_lock(&lock_path, LockKind::Exclusive, exclusive_timeout())
                 .context("failed to acquire the exclusive lock for `patina remote prune`")?;
-            run_prune(&inventory, args.json, reporter)
+            run_prune(&state_dir, args.json, reporter)
         }
     }
+}
+
+/// Enumerate the declared remotes and their pins.
+fn declared_remotes() -> Result<RemoteInventory> {
+    update::inventory().context("failed to enumerate the declared remotes")
 }
 
 /// Acquire the shared lock, warning and proceeding on a timeout — the read-only
@@ -477,8 +486,12 @@ fn confirm(
 }
 
 /// `patina remote prune` — the reachability sweep, run by hand.
-fn run_prune(inventory: &RemoteInventory, json: bool, reporter: &mut impl Reporter) -> Result<i32> {
-    let removed = cache::prune(&inventory.state_dir)
+fn run_prune(
+    state_dir: &camino::Utf8Path,
+    json: bool,
+    reporter: &mut impl Reporter,
+) -> Result<i32> {
+    let removed = cache::prune(state_dir)
         .map_err(patina_core::EngineError::from)
         .context("failed to prune the remote checkout cache")?;
     if json {
