@@ -242,6 +242,41 @@ fn has_commit_reports_cache_warmth() {
 }
 
 #[test]
+fn a_repository_reports_whether_it_matches_its_origin() {
+    // This selects which notice `patina remote check` writes, so it must
+    // distinguish a clone that is level with its origin from one that is not.
+    let f = Fixture::new();
+    f.commit("a.txt", "one\n", BASE_EPOCH);
+
+    let clone = f.state.join("clone");
+    git_in(
+        &f.state,
+        BASE_EPOCH,
+        &["clone", "--quiet", f.origin.as_str(), clone.as_str()],
+    );
+    assert!(
+        !git::repo_differs_from_origin(&clone),
+        "a fresh clone is level with its origin"
+    );
+
+    f.commit("a.txt", "two\n", BASE_EPOCH + 60);
+    assert!(
+        git::repo_differs_from_origin(&clone),
+        "a clone whose origin has moved on must report as differing"
+    );
+}
+
+#[test]
+fn a_directory_that_is_not_a_git_repository_reports_no_difference() {
+    // The check is notify-only, so an unanswerable question must read as "not
+    // behind" rather than failing a command or spamming a shell prompt.
+    let f = Fixture::new();
+    let plain = f.state.join("not-a-repo");
+    fs_err::create_dir_all(plain.as_std_path()).expect("mkdir plain dir");
+    assert!(!git::repo_differs_from_origin(&plain));
+}
+
+#[test]
 fn resolve_commit_normalizes_an_abbreviated_rev_to_the_full_sha() {
     let f = Fixture::new();
     let sha = f.commit("a.txt", "one\n", BASE_EPOCH);

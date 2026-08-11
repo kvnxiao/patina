@@ -268,6 +268,34 @@ mod tests {
     }
 
     #[test]
+    fn the_pending_set_round_trips_and_an_empty_list_clears_it() {
+        // `remote list` and `patina status` read this file to report per-remote
+        // pending state, so it has to survive the round trip in the order the
+        // caller supplied and vanish when nothing is pending.
+        let (_keep, dir) = state();
+        assert!(read_pending(&dir).is_empty(), "nothing pending initially");
+
+        write_pending(&dir, &["humanizer".to_owned(), "prompts".to_owned()])
+            .expect("record the pending set");
+        let pending = read_pending(&dir);
+        assert!(pending.contains("humanizer") && pending.contains("prompts"));
+        assert_eq!(pending.len(), 2);
+
+        write_pending(&dir, &[]).expect("clear the pending set");
+        assert!(read_pending(&dir).is_empty());
+        assert!(
+            !cache::pending_path(&dir).exists(),
+            "an empty set must remove the file rather than leave a blank one"
+        );
+    }
+
+    #[test]
+    fn clearing_an_absent_pending_set_is_a_no_op() {
+        let (_keep, dir) = state();
+        write_pending(&dir, &[]).expect("clearing when nothing is pending is fine");
+    }
+
+    #[test]
     fn a_stamp_round_trips() {
         let (_keep, dir) = state();
         assert_eq!(last_check_epoch(&dir), None);

@@ -13,7 +13,7 @@
 //! Locking follows the read/write split the rest of the CLI uses. `update` and
 //! `prune` mutate (the working-tree lockfile, the cache) and take the exclusive
 //! lock; `list` and `check` take the shared lock with the read-only escape
-//! hatch, since `check` writes only the per-machine notice files it alone owns
+//! hatch, since `check` writes only the per-machine notice files it alone owns.
 //! A shell hook must never contend with a running apply.
 //!
 //! See `docs/REMOTE_SOURCES.md` "Commands", "The update gate", and
@@ -541,6 +541,220 @@ mod tests {
 
     fn concerns() -> Vec<GateConcern> {
         vec![GateConcern::HistoryRewritten]
+    }
+
+    /// An inventory holding one remote, optionally pinned, over a state
+    /// directory that does not exist. Nothing here touches the network or the
+    /// filesystem: the renderers read only what they are handed.
+    fn inventory(rev: Option<&str>) -> RemoteInventory {
+        let pin = rev.map(|rev| patina_core::remote::lockfile::LockEntry {
+            url: "https://example.invalid/r".to_owned(),
+            git_ref: Some("main".to_owned()),
+            rev: rev.to_owned(),
+            updated_at: "2026-08-11T14:00:00Z".to_owned(),
+        });
+        RemoteInventory {
+            repo_root: camino::Utf8PathBuf::from("/repo"),
+            state_dir: camino::Utf8PathBuf::from("/state/does-not-exist"),
+            global_min_age: None,
+            lockfile: patina_core::remote::lockfile::Lockfile::default(),
+            remotes: vec![RemoteView {
+                module: "humanizer".to_owned(),
+                spec: patina_core::RemoteSpec {
+                    url: "https://example.invalid/r".to_owned(),
+                    git_ref: Some("main".to_owned()),
+                    min_age: None,
+                },
+                pin,
+            }],
+        }
+    }
+
+    fn proposal(outcome: GateOutcome, current: Option<&str>) -> Proposal {
+        Proposal {
+            module: "humanizer".to_owned(),
+            candidate_rev: "b".repeat(40),
+            candidate_epoch: 1_786_456_800,
+            current_rev: current.map(str::to_owned),
+            outcome,
+        }
+    }
+
+    #[test]
+    fn list_json_reports_the_declared_remote_and_its_pin() {
+        let mut reporter = BufferReporter::new();
+        let rev = "a".repeat(40);
+        assert_eq!(run_list(&inventory(Some(&rev)), true, &mut reporter), 0);
+        let doc: serde_json::Value =
+            serde_json::from_str(reporter.out.trim()).expect("one JSON document");
+        assert_eq!(
+            doc.pointer("/remotes/0/module")
+                .and_then(serde_json::Value::as_str),
+            Some("humanizer")
+        );
+        assert_eq!(
+            doc.pointer("/remotes/0/rev")
+                .and_then(serde_json::Value::as_str),
+            Some(rev.as_str())
+        );
+        assert_eq!(
+            doc.pointer("/remotes/0/pending")
+                .and_then(serde_json::Value::as_bool),
+            Some(false),
+            "no pending file exists, so nothing is pending"
+        );
+    }
+
+    #[test]
+    fn list_human_marks_an_unpinned_remote() {
+        let mut reporter = BufferReporter::new();
+        assert_eq!(run_list(&inventory(None), false, &mut reporter), 0);
+        assert!(
+            reporter.out.contains("humanizer") && reporter.out.contains("(unpinned)"),
+            "an unpinned remote must be shown as such: {}",
+            reporter.out
+        );
+    }
+
+    #[test]
+    fn list_human_says_so_when_nothing_is_declared() {
+        let mut empty = inventory(None);
+        empty.remotes.clear();
+        let mut reporter = BufferReporter::new();
+        assert_eq!(run_list(&empty, false, &mut reporter), 0);
+        assert!(reporter.out.contains("No remote-backed modules"));
+    }
+
+    #[test]
+    fn an_already_pinned_proposal_reports_up_to_date_and_writes_nothing() {
+        let mut inv = inventory(None);
+        let view = only_view(&inv);
+        let mut reader = ScriptedReader(None);
+        let mut reporter = BufferReporter::new();
+        let action = settle(
+            &mut inv,
+            &view,
+            &proposal(GateOutcome::AlreadyPinned, None),
+            "2026-08-11T14:00:00Z",
+            &flags(false),
+            Tty::NonInteractive,
+            &mut reader,
+            &mut reporter,
+        )
+        .expect("settling an up-to-date remote cannot fail");
+        assert_eq!(action, Action::UpToDate);
+        assert!(reporter.out.contains("already at"));
+        assert!(
+            inv.lockfile.is_empty(),
+            "an up-to-date remote must not write a pin"
+        );
+    }
+
+    #[test]
+    fn a_cooldown_proposal_reports_when_it_becomes_eligible() {
+        let mut inv = inventory(None);
+        let view = only_view(&inv);
+        let mut reader = ScriptedReader(None);
+        let mut reporter = BufferReporter::new();
+        let action = settle(
+            &mut inv,
+            &view,
+            &proposal(
+                GateOutcome::Cooldown {
+                    eligible_at: 1_786_456_800,
+                },
+                Some(&"a".repeat(40)),
+            ),
+            "2026-08-11T14:00:00Z",
+            &flags(false),
+            Tty::NonInteractive,
+            &mut reader,
+            &mut reporter,
+        )
+        .expect("settling a held remote cannot fail");
+        assert_eq!(action, Action::Held);
+        assert!(
+            reporter.out.contains("2026-08-11T14:00:00Z") && reporter.out.contains("min_age"),
+            "the cooldown must name the eligibility instant: {}",
+            reporter.out
+        );
+        assert!(
+            inv.lockfile.is_empty(),
+            "a held remote must not write a pin"
+        );
+    }
+
+    #[test]
+    fn a_future_dated_proposal_is_rejected_and_writes_nothing() {
+        let mut inv = inventory(None);
+        let view = only_view(&inv);
+        let mut reader = ScriptedReader(None);
+        let mut reporter = BufferReporter::new();
+        let action = settle(
+            &mut inv,
+            &view,
+            &proposal(
+                GateOutcome::RejectedFuture {
+                    candidate_epoch: 1,
+                    now_epoch: 0,
+                },
+                None,
+            ),
+            "2026-08-11T14:00:00Z",
+            &flags(false),
+            Tty::NonInteractive,
+            &mut reader,
+            &mut reporter,
+        )
+        .expect("settling a rejected remote cannot fail");
+        assert_eq!(action, Action::Rejected);
+        assert!(
+            reporter.err.contains("ahead of this machine's clock"),
+            "the reject must say why: {}",
+            reporter.err
+        );
+        assert!(inv.lockfile.is_empty());
+    }
+
+    #[test]
+    fn a_flagged_proposal_declined_in_a_non_tty_leaves_the_pin_alone() {
+        let mut inv = inventory(None);
+        let view = only_view(&inv);
+        let mut reader = ScriptedReader(None);
+        let mut reporter = BufferReporter::new();
+        let action = settle(
+            &mut inv,
+            &view,
+            &proposal(
+                GateOutcome::NeedsConfirmation(concerns()),
+                Some(&"a".repeat(40)),
+            ),
+            "2026-08-11T14:00:00Z",
+            &flags(false),
+            Tty::NonInteractive,
+            &mut reader,
+            &mut reporter,
+        )
+        .expect("settling a declined remote cannot fail");
+        assert_eq!(action, Action::Held);
+        assert!(reporter.out.contains("pin unchanged at"));
+        assert!(inv.lockfile.is_empty());
+    }
+
+    fn flags(json: bool) -> UpdateFlags {
+        UpdateFlags {
+            name: None,
+            bypass_age: false,
+            yes: false,
+            json,
+        }
+    }
+
+    fn only_view(inventory: &RemoteInventory) -> RemoteView {
+        inventory
+            .find("humanizer")
+            .expect("the fixture declares one remote")
+            .clone()
     }
 
     #[test]
