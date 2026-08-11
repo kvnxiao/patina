@@ -74,9 +74,12 @@ impl RemoteSpec {
             return Err(RemoteConfigError::EmptyUrl);
         }
         reject_leading_dash("url", &url)?;
-        let git_ref = raw.git_ref.filter(|r| !r.trim().is_empty());
+        let git_ref = raw
+            .git_ref
+            .map(|r| r.trim().to_owned())
+            .filter(|r| !r.is_empty());
         if let Some(git_ref) = &git_ref {
-            reject_leading_dash("ref", git_ref.trim())?;
+            reject_leading_dash("ref", git_ref)?;
         }
         let min_age = raw
             .min_age
@@ -303,5 +306,19 @@ mod tests {
         };
         let spec = raw.validate().expect("valid remote");
         assert_eq!(spec.git_ref, None);
+    }
+
+    #[test]
+    fn a_ref_is_stored_trimmed() {
+        // The stored ref reaches git as a bare argv element and is written into
+        // patina.lock, so surrounding whitespace would fail obscurely at fetch
+        // time and commit a ref no other machine can resolve.
+        let raw = RawRemote {
+            url: "https://example.invalid/r".to_owned(),
+            git_ref: Some("  main\n".to_owned()),
+            min_age: None,
+        };
+        let spec = raw.validate().expect("valid remote");
+        assert_eq!(spec.git_ref.as_deref(), Some("main"));
     }
 }
