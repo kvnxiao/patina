@@ -186,11 +186,16 @@ fn a_remote_symlink_entry_points_into_the_pinned_checkout() {
     );
     let link = fs_err::read_link(deployed.as_std_path()).expect("the target is a symbolic link");
     let link = Utf8PathBuf::from_path_buf(link).expect("utf8 link target");
+    // The engine records canonical paths, while `checkout` spells the cache
+    // directory the way the environment gives the state dir. Canonicalize both
+    // or this compares `/var/...` against `/private/var/...` on macOS and a
+    // long path against an 8.3 short one on Windows.
+    let expected = patina_core::canonicalize_path(&checkout(&f, "prompts", &rev))
+        .expect("canonicalize the checkout directory");
+    let link = patina_core::canonicalize_path(&link).expect("canonicalize the link target");
     assert!(
-        link.starts_with(dunce::simplified(
-            checkout(&f, "prompts", &rev).as_std_path()
-        )),
-        "the link must point into the pinned checkout, got {link}"
+        link.starts_with(&expected),
+        "the link must point into the pinned checkout {expected}, got {link}"
     );
 }
 
