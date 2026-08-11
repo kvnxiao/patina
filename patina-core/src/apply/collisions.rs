@@ -6,7 +6,7 @@
 //! another active entry's target. See `docs/REMOTE_SOURCES.md` under
 //! "Target collision validation" for the normative rules.
 //!
-//! Validation runs over the **active** set — after `when` filtering — so two
+//! Validation runs over the **active** set, after `when` filtering, so two
 //! entries aimed at one path under mutually exclusive guards are legal. Every
 //! element of a `targets = [...]` fan-out participates, since each element is
 //! its own claim on the filesystem.
@@ -24,7 +24,7 @@ use std::collections::BTreeMap;
 pub struct TargetClaim<'a> {
     /// Name of the module directory that declared the entry.
     pub module: &'a str,
-    /// The entry's declared source, relative to its module directory — the
+    /// The entry's declared source, relative to its module directory: the
     /// string the author wrote, so the error text points at something
     /// greppable in the manifest.
     pub source: &'a Utf8Path,
@@ -47,8 +47,8 @@ impl TargetClaim<'_> {
 
 /// Two active entries fight over one target.
 ///
-/// The payload is boxed behind an opaque wrapper so [`EngineError`] — which
-/// every fallible engine entry point returns by value — stays one pointer wider
+/// The payload is boxed behind an opaque wrapper so [`EngineError`], which
+/// every fallible engine entry point returns by value, stays one pointer wider
 /// rather than growing to the size of the widest collision variant.
 ///
 /// [`EngineError`]: crate::error::EngineError

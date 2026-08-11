@@ -170,7 +170,7 @@ pub enum FileEntryError {
 /// A local source takes the render, as it always has. A source inside a remote
 /// checkout never does: third-party bytes full of `{{ }}` would either explode
 /// under strict-undefined rendering or, worse, render. Under
-/// [`TemplatePolicy::Never`] a `.tmpl` suffix is just part of a filename — the
+/// [`TemplatePolicy::Never`] a `.tmpl` suffix is just part of a filename: the
 /// entry materializes as plain bytes under its declared mode, and a `.tmpl`
 /// directory source is an ordinary directory name rather than an error. See
 /// `docs/REMOTE_SOURCES.md` "Trust boundaries".

@@ -6,7 +6,7 @@
 //! Reachability-based pruning of the remote checkout cache.
 //!
 //! A checkout survives while any journal record on disk still names a path
-//! inside it — including records from older commits, because `patina rollback`
+//! inside it, including records from older commits, because `patina rollback`
 //! walks back through them. Everything else that looks like a checkout goes,
 //! and so do patina's own scratch artifacts.
 //!
@@ -102,7 +102,7 @@ fn an_unreferenced_checkout_is_pruned_and_a_referenced_one_survives() {
 #[test]
 fn a_checkout_referenced_only_by_an_older_commit_survives() {
     // Rollback walks back through older commits, so "referenced by the latest
-    // apply" is the wrong retention rule — reachability is per-record.
+    // apply" is the wrong retention rule; reachability is per-record.
     let f = Fixture::new();
     let previous_leaf = f.checkout("humanizer", REV_A);
     let current_leaf = f.checkout("humanizer", REV_B);

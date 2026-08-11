@@ -2,19 +2,19 @@
 //!
 //! Four verbs over the remote-source subsystem: `list` (offline, read-only),
 //! `check` (`ls-remote` only, refreshes the pending-update notice), `update`
-//! (the producer verb — fetches, runs the update gate, rewrites the lockfile),
-//! and `prune` (sweeps unreferenced checkouts).
+//! (the producer verb that fetches, runs the update gate, and rewrites the
+//! lockfile), and `prune` (sweeps unreferenced checkouts).
 //!
 //! The engine owns the semantics: [`patina_core::remote::update`] computes a
 //! proposal per remote and [`patina_core::remote::gate`] decides. This module
-//! is control flow, lock acquisition, prompting, and output — all of it through
+//! is control flow, lock acquisition, prompting, and output, all of it through
 //! the [`Reporter`].
 //!
 //! Locking follows the read/write split the rest of the CLI uses. `update` and
 //! `prune` mutate (the working-tree lockfile, the cache) and take the exclusive
 //! lock; `list` and `check` take the shared lock with the read-only escape
 //! hatch, since `check` writes only the per-machine notice files it alone owns
-//! — a shell hook must never contend with a running apply.
+//! A shell hook must never contend with a running apply.
 //!
 //! See `docs/REMOTE_SOURCES.md` "Commands", "The update gate", and
 //! "Shell integration".
@@ -103,7 +103,7 @@ fn declared_remotes() -> Result<RemoteInventory> {
     update::inventory().context("failed to enumerate the declared remotes")
 }
 
-/// Acquire the shared lock, warning and proceeding on a timeout — the read-only
+/// Acquire the shared lock, warning and proceeding on a timeout: the read-only
 /// escape hatch `patina status` and `patina doctor` also use.
 fn shared_lock(
     lock_path: &camino::Utf8Path,
@@ -118,7 +118,7 @@ fn shared_lock(
     }
 }
 
-/// `patina remote list` — the pins as recorded, with the pending state the last
+/// Report the pins as recorded, with the pending state the last
 /// `check` observed.
 fn run_list(inventory: &RemoteInventory, json: bool, reporter: &mut impl Reporter) -> i32 {
     let pending = notice::read_pending(&inventory.state_dir);
@@ -164,7 +164,7 @@ fn run_list(inventory: &RemoteInventory, json: bool, reporter: &mut impl Reporte
     ExitCode::Success.code()
 }
 
-/// `patina remote check` — `ls-remote` every remote and refresh the notice.
+/// Run `ls-remote` against every remote and refresh the notice.
 fn run_check(
     inventory: &RemoteInventory,
     hook: bool,
@@ -173,8 +173,7 @@ fn run_check(
 ) -> i32 {
     let now = patina_core::current_epoch_seconds();
     if hook && !notice::hook_check_due(notice::last_check_epoch(&inventory.state_dir), now) {
-        // Inside the throttle window: no network, no output. The notice already
-        // on disk stays as it is, so the shell still prints it.
+        // The notice already on disk stays as it is, so the shell still prints it.
         return ExitCode::Success.code();
     }
 
@@ -251,7 +250,7 @@ struct UpdateFlags {
     json: bool,
 }
 
-/// `patina remote update` — fetch, gate, and bump pins in the working-tree
+/// Fetch, gate, and bump pins in the working-tree
 /// lockfile.
 fn run_update(
     inventory: &mut RemoteInventory,
@@ -485,7 +484,7 @@ fn confirm(
     matches!(reader.read_line().unwrap_or_default().trim(), "y" | "Y")
 }
 
-/// `patina remote prune` — the reachability sweep, run by hand.
+/// Run the reachability sweep by hand.
 fn run_prune(
     state_dir: &camino::Utf8Path,
     json: bool,

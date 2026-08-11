@@ -213,8 +213,8 @@ git pull && patina apply
 ```
 
 One diff-and-prompt covers the accumulated changes. No gate math runs
-on the consumer path — a pinned rev is a decision you already made and
-committed. Running `apply --update` on such a machine is safe (the
+on the consumer path, because a pinned rev is a decision you already
+made and committed. Running `apply --update` on such a machine is safe (the
 gate is machine-independent) but usually unwanted: it may bump pins
 and strand an uncommitted lockfile change on a box you rarely touch.
 Produce updates where you commit; consume everywhere else.
@@ -292,8 +292,8 @@ planting files over another entry's target. An upstream repository
 can grow files you never anticipated into a tree you deploy.
 
 Patina validates the plan before showing a diff, over the active
-entry set — after `when` filtering, so two entries targeting the same
-path under mutually exclusive `when` guards are legal:
+entry set. Validation runs after `when` filtering, so two entries
+targeting the same path under mutually exclusive `when` guards are legal:
 
 - Two active entries resolving to the same canonical target is an
   error.

@@ -32,7 +32,7 @@ pub fn current_timestamp() -> String {
 ///
 /// The remote update gate compares a candidate commit's committer time against
 /// "now" and against a lockfile timestamp, all in Unix seconds. Reading the
-/// clock here — rather than at each comparison site — keeps every time read in
+/// clock here, rather than at each comparison site, keeps every time read in
 /// this one module, so the gate's own logic stays a pure function of its inputs
 /// and is unit-testable without touching the clock.
 ///

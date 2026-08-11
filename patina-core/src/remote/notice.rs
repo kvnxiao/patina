@@ -1,8 +1,8 @@
 //! The notify-only pending-update notice and the background-check throttle.
 //!
 //! `<state>/remotes/notice` holds plain text a shell startup can print with
-//! builtins alone — no `patina` process on the prompt path. It distinguishes
-//! two situations:
+//! builtins alone, with no `patina` process on the prompt path. It
+//! distinguishes two situations:
 //!
 //! - upstream tips have moved past your pins, so `patina apply --update` is the
 //!   next step;

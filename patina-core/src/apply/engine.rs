@@ -335,7 +335,7 @@ pub fn plan(
         }
 
         // A remote-backed module's sources live in the checkout of its pinned
-        // rev, which is fetched here — before any entry resolves — so a cold
+        // rev, which is fetched here, before any entry resolves, so a cold
         // cache fails planning rather than half-way through a diff.
         let origin = module_origin(
             module,
@@ -428,7 +428,7 @@ enum CachePolicy {
 /// For a local module this is simply the module directory, exactly as before
 /// remotes existed. For a remote-backed module it is the immutable checkout of
 /// the rev `patina.lock` pins, so the module directory itself contributes only
-/// its manifest — which is also why a `patina.toml` inside a checkout is inert:
+/// its manifest. That is also why a `patina.toml` inside a checkout is inert:
 /// module discovery walks the repository, never the cache.
 struct ModuleOrigin {
     /// The module's directory name, which doubles as the remote's name in the
@@ -447,8 +447,8 @@ struct ModuleOrigin {
 /// Under [`CachePolicy::Fetch`], returns an [`EngineError`] when a
 /// remote-backed module has no lock entry (the message points at
 /// `patina remote update <name>`) or when its pinned rev is neither cached nor
-/// fetchable — the specced cold-cache failure, raised at plan time so nothing
-/// is partially applied.
+/// fetchable. That is the specced cold-cache failure, raised at plan time so
+/// nothing is partially applied.
 fn module_origin(
     module: &crate::discovery::ModuleHandle,
     remote: Option<&RemoteSpec>,

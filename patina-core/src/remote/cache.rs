@@ -14,7 +14,7 @@
 //! immutable once it exists: an update writes a *new* directory and apply
 //! re-points links at it through the ordinary journaled flow, so no content
 //! ever changes under a live symlink. That is also what lets `patina rollback`
-//! re-point links back — and why pruning is reachability-based rather than
+//! re-point links back, and why pruning is reachability-based rather than
 //! "keep the newest".
 //!
 //! See `docs/REMOTE_SOURCES.md` "The remote cache".
@@ -38,46 +38,46 @@ const PARTIAL_SUFFIX: &str = ".partial";
 /// directory is recognized.
 const SHA_LEN: usize = 40;
 
-/// `<state>/remotes/` — the root of the remote cache.
+/// `<state>/remotes/`, the root of the remote cache.
 #[must_use = "the cache root locates every checkout and the notice files"]
 pub fn remotes_root(state_dir: &Utf8Path) -> Utf8PathBuf {
     state_dir.join("remotes")
 }
 
-/// `<state>/remotes/<module>/` — one directory per remote-backed module.
+/// `<state>/remotes/<module>/`, one directory per remote-backed module.
 #[must_use = "the module cache directory holds the bare repo and its checkouts"]
 pub fn module_dir(state_dir: &Utf8Path, module: &str) -> Utf8PathBuf {
     remotes_root(state_dir).join(module)
 }
 
-/// `<state>/remotes/<module>/repo.git` — the bare repository fetches land in.
+/// `<state>/remotes/<module>/repo.git`, the bare repository fetches land in.
 #[must_use = "the bare repository is the git-dir every remote git call uses"]
 pub fn bare_repo(state_dir: &Utf8Path, module: &str) -> Utf8PathBuf {
     module_dir(state_dir, module).join(BARE_REPO_DIR)
 }
 
-/// `<state>/remotes/<module>/<rev>/` — the immutable checkout of one pinned
+/// `<state>/remotes/<module>/<rev>/`, the immutable checkout of one pinned
 /// rev.
 #[must_use = "the checkout directory is what entry sources resolve against"]
 pub fn checkout_dir(state_dir: &Utf8Path, module: &str, rev: &str) -> Utf8PathBuf {
     module_dir(state_dir, module).join(rev)
 }
 
-/// `<state>/remotes/notice` — the plain-text pending-update notice a shell
+/// `<state>/remotes/notice`, the plain-text pending-update notice a shell
 /// startup prints.
 #[must_use = "the notice path is read by the shell integration and by `patina status`"]
 pub fn notice_path(state_dir: &Utf8Path) -> Utf8PathBuf {
     remotes_root(state_dir).join("notice")
 }
 
-/// `<state>/remotes/pending` — the module names the last check found behind,
+/// `<state>/remotes/pending`, the module names the last check found behind:
 /// the machine-readable twin of the prose notice.
 #[must_use = "the pending path carries the per-remote state `remote list` reports"]
 pub fn pending_path(state_dir: &Utf8Path) -> Utf8PathBuf {
     remotes_root(state_dir).join("pending")
 }
 
-/// `<state>/remotes/last_check` — the background-check throttle stamp.
+/// `<state>/remotes/last_check`, the background-check throttle stamp.
 #[must_use = "the stamp path drives the `remote check --hook` self-throttle"]
 pub fn last_check_path(state_dir: &Utf8Path) -> Utf8PathBuf {
     remotes_root(state_dir).join("last_check")
@@ -208,7 +208,7 @@ fn is_checkout_name(name: &str) -> bool {
 ///
 /// Recorded paths went through [`crate::paths::canonicalize`] at apply time,
 /// while `checkout` is built from the state directory as the environment spells
-/// it — and the two spellings routinely differ: macOS resolves `/var` to
+/// it. The two spellings routinely differ: macOS resolves `/var` to
 /// `/private/var`, Windows hands back 8.3 short names like `RUNNER~1`, and a
 /// symlinked `HOME` or a `.` segment does the same on any host. Comparing only
 /// the raw form would find no reference and delete a checkout that is live
@@ -386,7 +386,7 @@ mod tests {
     fn a_checkout_spelled_differently_from_the_recorded_path_is_still_referenced() {
         // The recorded path is canonical; the candidate is spelled the way the
         // environment gives the state directory. A raw-only comparison would
-        // miss the reference and delete a live checkout — which is exactly what
+        // miss the reference and delete a live checkout, which is exactly what
         // macOS (`/var` -> `/private/var`) and Windows (8.3 short names like
         // `RUNNER~1`) do. A `..` hop reproduces the mismatch on every host:
         // `Path::components` preserves it, so `starts_with` fails, while

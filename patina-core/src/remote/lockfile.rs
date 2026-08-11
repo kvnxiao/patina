@@ -1,4 +1,4 @@
-//! `patina.lock` — the committed statement of which remote commit every
+//! `patina.lock` is the committed statement of which remote commit every
 //! machine applies.
 //!
 //! ```toml
@@ -17,8 +17,8 @@
 //! across machines and runs; `updated_at` exists solely for the update gate's
 //! backdating check and is written only by `patina remote update`.
 //!
-//! Serialization is deterministic — entries in name order, a fixed field order,
-//! one canonical timestamp spelling — so re-writing an unchanged lockfile
+//! Serialization is deterministic (entries in name order, a fixed field order,
+//! one canonical timestamp spelling), so re-writing an unchanged lockfile
 //! produces the same bytes and never shows up as a spurious diff.
 //!
 //! See `docs/REMOTE_SOURCES.md` "The lockfile".
@@ -241,10 +241,10 @@ fn control_escape(ch: char) -> String {
 /// Quote `value` as a TOML basic string.
 ///
 /// Hand-written so the rendered bytes are a pure function of the input rather
-/// than of a serializer's formatting choices — the determinism contract is on
-/// the exact bytes. The escape set is TOML's: backslash, quote, and the control
-/// characters, which get their short escapes where TOML defines one and a
-/// `\uXXXX` otherwise.
+/// than of a serializer's formatting choices, because the determinism contract
+/// is on the exact bytes. The escape set is TOML's: backslash, quote, and the
+/// control characters, which get their short escapes where TOML defines one and
+/// a `\uXXXX` otherwise.
 fn toml_string(value: &str) -> String {
     let mut out = String::with_capacity(value.len() + 2);
     out.push('"');

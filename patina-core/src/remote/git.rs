@@ -1,8 +1,8 @@
 //! The `git` subprocess layer.
 //!
 //! Patina shells out to the `git` on `PATH` rather than linking a git library,
-//! so a user's existing authentication — SSH agent, credential helper,
-//! insteadOf rewrites, proxy config — applies untouched. `patina doctor`
+//! so a user's existing authentication (SSH agent, credential helper,
+//! insteadOf rewrites, proxy config) applies untouched. `patina doctor`
 //! reports when the binary is missing. See `docs/REMOTE_SOURCES.md` "The remote
 //! cache".
 //!
@@ -24,7 +24,7 @@ const SHA_LEN: usize = 40;
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum GitError {
-    /// `git` could not be spawned — most often it is not installed or not on
+    /// `git` could not be spawned. Most often it is not installed or not on
     /// `PATH`.
     #[error("failed to run `git {args}`: {source}. Is git installed and on PATH?")]
     Spawn {
@@ -147,7 +147,7 @@ pub fn ls_remote(url: &str, git_ref: Option<&str>) -> Result<String, GitError> {
 /// `ls-remote <url> <name>` can answer with several lines: a branch and a tag
 /// may share a name, and an annotated tag also reports its peeled commit as
 /// `refs/tags/<name>^{}`. The preference order is peeled tag, then branch, then
-/// plain tag, then any single remaining line — so the returned SHA is always a
+/// plain tag, then any single remaining line, so the returned SHA is always a
 /// commit and never depends on git's output ordering.
 fn select_ls_remote_sha(text: &str, wanted: &str) -> Option<String> {
     let rows: Vec<(&str, &str)> = text
@@ -196,7 +196,7 @@ pub fn ensure_bare_repo(git_dir: &Utf8Path) -> Result<(), GitError> {
 /// # Errors
 ///
 /// Returns [`GitError::Spawn`] when `git` cannot start. A `git` exit signalling
-/// "no such object" is not an error — it is reported as `false`.
+/// "no such object" is not an error; it is reported as `false`.
 pub fn has_commit(git_dir: &Utf8Path, rev: &str) -> Result<bool, GitError> {
     // `cat-file -e <rev>^{commit}` exits 0 when the object exists and is (or
     // peels to) a commit, and non-zero otherwise. Only a spawn failure is a
@@ -285,7 +285,7 @@ pub fn fetch_commit(
 /// The update gate's ancestry check asks whether the pinned rev is an ancestor
 /// of the candidate tip, and `merge-base` can only answer that if the commits
 /// between the two are present. A depth-1 fetch leaves the two as disconnected
-/// shallow roots, where the question is unanswerable rather than merely false —
+/// shallow roots, where the question is unanswerable rather than merely false.
 /// so the producer path (`patina remote update`) pays for real history while
 /// the consumer path (`apply` filling a cold cache for an already-decided pin)
 /// stays on [`fetch_commit`]'s shallow fetch.
@@ -319,7 +319,7 @@ pub fn fetch_history(git_dir: &Utf8Path, url: &str, git_ref: Option<&str>) -> Re
 /// beside the checkout and is removed afterwards.
 ///
 /// Line-ending translation is switched off for the write. A user with
-/// `core.autocrlf = true` — the Windows default in many setups — would
+/// `core.autocrlf = true`, the Windows default in many setups, would
 /// otherwise get CRLF-converted bytes in the checkout, so the same pinned
 /// commit would deploy different content on different machines and hash
 /// differently in the journal. A checkout is a cache of the commit, so it holds
@@ -495,7 +495,7 @@ pub fn resolve_commit(git_dir: &Utf8Path, rev: &str) -> Result<String, GitError>
 /// Answered with `ls-remote` only, so it downloads no objects: the remote tip
 /// is compared to the local `HEAD`. That makes it a "differs from origin" test
 /// rather than a strict "is behind" one, which is the right signal for the
-/// notice — either way the user's next move is `git pull`.
+/// notice, since either way the user's next move is `git pull`.
 ///
 /// Every failure reads as "not behind": the repository may not be a git
 /// repository at all, may have no configured remote, or the network may be

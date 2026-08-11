@@ -94,9 +94,8 @@ fn json_of(output: &std::process::Output) -> serde_json::Value {
 
 #[test]
 fn update_creates_the_first_pin_without_waiting_out_the_age_gate() {
-    // Adopting a remote is a deliberate act whose content the user is about to
-    // review in the consent diff, so the first pin is exempt from the age gate —
-    // here proven with a commit made "now" under the default 72-hour floor.
+    // The commit is made "now" and the floor is the default 72 hours, so only
+    // the first-pin exemption can let this through.
     let f = Fixture::new();
     let origin = Origin::new(&f, "humanizer");
     let now = patina_core::current_epoch_seconds();

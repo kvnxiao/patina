@@ -17,7 +17,7 @@
 //! Rather than mutate the checked-in source tree (which would race with other
 //! parallel tests and risk leaving the tree dirty on failure), each scenario
 //! compiles a throwaway crate in a tempdir that reuses the *real* workspace
-//! `clippy.toml` — the artifact under test — so the assertion exercises the
+//! `clippy.toml`, the artifact under test, so the assertion exercises the
 //! same config CI enforces. Asserting that the config *lists* the four macros
 //! is deliberately absent: it would only prove two copies of the same list
 //! agree, whereas a missing entry shows up here as the gate not firing.
@@ -28,7 +28,7 @@ use serde_json::Value;
 use std::process::Command;
 use tempfile::TempDir;
 
-/// Absolute path to the workspace `clippy.toml` — the artifact under test.
+/// Absolute path to the workspace `clippy.toml`, the artifact under test.
 /// `CARGO_MANIFEST_DIR` is the `patina-cli` crate dir; the workspace root is
 /// its parent.
 fn workspace_clippy_toml() -> Utf8PathBuf {
@@ -61,8 +61,8 @@ fn scratch_crate(temp: &TempDir, body: &str) -> Utf8PathBuf {
     // `mod` would make them dead code and `-D warnings` would fail for that
     // reason instead of the one under test.
     fs_err::write(root.join("src/lib.rs"), "pub mod plan;\n").expect("write lib.rs");
-    // Reuse the real workspace clippy.toml verbatim — this is the artifact
-    // whose behaviour we are asserting.
+    // Reuse the real workspace clippy.toml verbatim: it is the artifact whose
+    // behaviour we are asserting.
     let clippy_toml = fs_err::read_to_string(workspace_clippy_toml()).expect("read clippy.toml");
     fs_err::write(root.join("clippy.toml"), clippy_toml).expect("write scratch clippy.toml");
     root
@@ -139,8 +139,8 @@ fn tracing_macro_and_scoped_expect_stay_clean() {
     // Sibling scenarios: replacing the offending line with a non-listed macro
     // (a `tracing`-style `info!`, stubbed locally so the scratch crate needs no
     // dependency) does not fire the lint, and a module-scoped
-    // `#[expect(clippy::disallowed_macros, ...)]` carve-out — the same shape
-    // the `output` module / lock_helper example use — suppresses it cleanly
+    // `#[expect(clippy::disallowed_macros, ...)]` carve-out (the same shape the
+    // `output` module and the lock_helper example use) suppresses it cleanly
     // without leaving an unfulfilled-expectation warning.
     let temp = TempDir::new().expect("tempdir");
     let crate_root = scratch_crate(

@@ -1,7 +1,7 @@
 //! Plan-time target-collision validation, end to end through the CLI.
 //!
-//! Two active entries claiming one target — or a directory-mode entry whose
-//! target contains another entry's target — must fail planning before a diff
+//! Two active entries claiming one target, or a directory-mode entry whose
+//! target contains another entry's target, must fail planning before a diff
 //! is rendered and before anything is written. Two entries claiming one target
 //! under mutually exclusive `when` guards must plan cleanly, because
 //! validation runs over the post-`when` active set.

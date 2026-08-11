@@ -2,8 +2,8 @@
 //!
 //! A module carrying a `[remote]` table is remote-backed: every entry source
 //! in it resolves against a cached checkout of another repository instead of
-//! the module directory. The table itself is small — a URL, an optional ref,
-//! and an optional per-remote update-gate floor — because everything else
+//! the module directory. The table itself is small (a URL, an optional ref,
+//! and an optional per-remote update-gate floor) because everything else
 //! about the module (entries, hooks, variables) stays exactly as it is for a
 //! local module. See `docs/REMOTE_SOURCES.md` "Remote-backed modules".
 //!
@@ -106,7 +106,7 @@ pub fn parse_duration(key: &'static str, value: &str) -> Result<Duration, Remote
         return Err(invalid());
     }
     // Digits-only and non-empty is already established, so the only remaining
-    // parse failure is a count too large for `u64` — an invalid duration too.
+    // parse failure is a count too large for `u64`, which is also invalid.
     let count: u64 = digits.parse().map_err(|_overflow| invalid())?;
     count
         .checked_mul(per_unit)
@@ -234,7 +234,7 @@ mod tests {
     #[test]
     fn a_blank_ref_reads_as_the_default_branch() {
         // An author who writes `ref = ""` means "no opinion", not "a branch
-        // whose name is the empty string" — the latter would be handed to git
+        // whose name is the empty string": the latter would be handed to git
         // verbatim and fail obscurely later.
         let raw = RawRemote {
             url: "https://example.invalid/r".to_owned(),

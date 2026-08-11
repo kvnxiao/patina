@@ -4,21 +4,21 @@
 //! Bumping a pin is the moment third-party code changes what lands on your
 //! machines, so it is the moment Patina slows down. In evaluation order:
 //!
-//! 1. **Future check** — a committer time more than an hour ahead of the local
+//! 1. **Future check.** A committer time more than an hour ahead of the local
 //!    clock is a hard reject.
-//! 2. **Ancestry check** — a tip that does not descend from the pinned rev
-//!    means upstream history was rewritten; that needs explicit confirmation.
-//! 3. **Backdating floor** — a committer time earlier than the pin's
+//! 2. **Ancestry check.** A tip that does not descend from the pinned rev means
+//!    upstream history was rewritten; that needs explicit confirmation.
+//! 3. **Backdating floor.** A committer time earlier than the pin's
 //!    `updated_at` is anomalous, but one honest workflow trips it (a maintainer
 //!    fast-forwarding a long-lived branch whose commits carry old committer
 //!    dates), so it prompts rather than rejects.
-//! 4. **Age gate** — the tip must be at least `min_age` old.
+//! 4. **Age gate.** The tip must be at least `min_age` old.
 //!
 //! [`evaluate`] is pure over [`GateInputs`], so every branch is testable
 //! without a clock, a network, or a repository.
 //!
 //! One limit, stated plainly: committer timestamps are authored by whoever
-//! makes the commit. These checks stop untargeted, fast-moving compromises —
+//! makes the commit. These checks stop untargeted, fast-moving compromises:
 //! the common case, where attackers race detection windows and publish with
 //! honest timestamps. An attacker who backdates a commit specifically to defeat
 //! the gate will pass it. Plain git offers no unforgeable, machine-independent
@@ -133,8 +133,8 @@ pub fn effective_min_age(spec: &RemoteSpec, global: Option<Duration>) -> Duratio
 /// The concerns surface on the run where the candidate is actually eligible.
 #[must_use = "the outcome decides whether the pin moves"]
 pub fn evaluate(inputs: GateInputs) -> GateOutcome {
-    // 1. Future check — a hard reject, before anything else, because a nonsensical
-    //    timestamp makes every later comparison meaningless.
+    // The future check runs first because a nonsensical timestamp makes every
+    // later comparison meaningless.
     let tolerance = i64::try_from(FUTURE_TOLERANCE.as_secs()).unwrap_or(i64::MAX);
     if inputs.candidate_epoch.saturating_sub(inputs.now_epoch) > tolerance {
         return GateOutcome::RejectedFuture {
@@ -145,12 +145,10 @@ pub fn evaluate(inputs: GateInputs) -> GateOutcome {
 
     let mut concerns = Vec::new();
 
-    // 2. Ancestry check. Only meaningful against an existing pin.
     if inputs.descends_from_pin == Some(false) {
         concerns.push(GateConcern::HistoryRewritten);
     }
 
-    // 3. Backdating floor.
     if let Some(pinned_updated_at) = inputs.pinned_updated_at
         && inputs.candidate_epoch < pinned_updated_at
     {
@@ -160,8 +158,6 @@ pub fn evaluate(inputs: GateInputs) -> GateOutcome {
         });
     }
 
-    // 4. Age gate. Exempt for a remote's first pin, and skippable for one run with
-    //    `--now`.
     if !inputs.first_pin && !inputs.bypass_age {
         let floor = i64::try_from(inputs.min_age.as_secs()).unwrap_or(i64::MAX);
         let eligible_at = inputs.candidate_epoch.saturating_add(floor);

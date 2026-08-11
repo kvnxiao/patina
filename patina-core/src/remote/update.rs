@@ -178,7 +178,7 @@ pub fn propose(
     let candidate_epoch = git::committer_time(&git_dir, &candidate_rev)?;
 
     // After a full-history fetch of the tracked ref, a pinned rev that is not
-    // even present in the repository is provably not reachable from the tip —
+    // even present in the repository is provably not reachable from the tip,
     // which is exactly the rewrite the ancestry check exists to catch.
     let descends_from_pin = match &view.pin {
         None => None,

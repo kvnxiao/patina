@@ -227,7 +227,7 @@ fn a_patina_toml_inside_the_checkout_contributes_nothing() {
         "the hostile manifest must not break the apply; stderr: {}",
         String::from_utf8_lossy(&out.stderr)
     );
-    // The checkout really does contain the hostile manifest — otherwise this
+    // The checkout really does contain the hostile manifest; otherwise this
     // test would pass for the wrong reason.
     assert!(
         checkout(&f, "hostile", &rev).join("patina.toml").is_file(),
@@ -438,7 +438,7 @@ fn bumping_the_pin_re_points_the_link_and_rollback_restores_the_prior_checkout()
 
     // Journal files are keyed by a one-second-resolution timestamp, so two
     // applies inside the same second share a `<ts>.COMMIT` and the earlier
-    // record is overwritten — which would leave the prior checkout unreferenced
+    // record is overwritten, which would leave the prior checkout unreferenced
     // and swept, and rollback with a dangling link. Cross a second boundary so
     // the two applies get distinct journal cycles.
     wait_for_next_second();

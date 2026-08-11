@@ -2,7 +2,7 @@
 //!
 //! A `[remote]` table makes a module remote-backed. The parse-level
 //! consequences are that the table itself is validated and that every entry in
-//! the module loses the implicit `.tmpl` template render — third-party bytes
+//! the module loses the implicit `.tmpl` template render: third-party bytes
 //! are never handed to `MiniJinja`. See `docs/REMOTE_SOURCES.md`
 //! "Remote-backed modules" and "Trust boundaries".
 
@@ -76,9 +76,7 @@ fn a_remote_tmpl_source_is_plain_bytes_not_a_template() {
 #[test]
 fn a_remote_tmpl_source_may_declare_an_explicit_mode() {
     // The implicit-template rule forbids `mode` beside a local `.tmpl` source.
-    // With no implicit render there is nothing to conflict with, so the
-    // declaration must be accepted rather than rejected for a rule that no
-    // longer applies.
+    // With no implicit render there is nothing for it to conflict with.
     let config = parse_module_config_str(
         "[remote]\nurl = \"https://example.invalid/r\"\n\n\
          [[file]]\nsource = \"a.tmpl\"\ntarget = \"~/.a\"\nmode = \"copy\"\n",
