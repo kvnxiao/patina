@@ -93,6 +93,11 @@ pub enum EngineError {
     #[error(transparent)]
     Collision(#[from] crate::apply::CollisionError),
 
+    /// A remote git source could not be fetched, checked out, pinned, or
+    /// pruned.
+    #[error(transparent)]
+    Remote(#[from] crate::remote::RemoteError),
+
     /// Hook shell resolution, `when` evaluation, or execution failed.
     #[error(transparent)]
     Hook(#[from] crate::apply::HookError),
