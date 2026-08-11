@@ -350,6 +350,50 @@ fn a_warm_cache_applies_fully_with_the_remote_unreachable() {
 }
 
 #[test]
+fn a_checkout_holds_the_commit_bytes_even_under_autocrlf() {
+    // `core.autocrlf = true` is a common Windows setting. If it reached the
+    // checkout, the same pinned commit would deploy CRLF on one machine and LF
+    // on another and hash differently in the journal, so a checkout must hold
+    // the commit's bytes verbatim.
+    let f = Fixture::new();
+    let origin = Origin::new(&f, "crlf");
+    let rev = origin.commit(&[("a.md", "one\ntwo\n")]);
+    f.module(
+        "crlf",
+        &format!(
+            "[remote]\nurl = \"{}\"\nref = \"main\"\n\n\
+             [[file]]\nsource = \"a.md\"\ntarget = \"~/.a.md\"\nmode = \"copy\"\n",
+            origin.url()
+        ),
+    );
+    write_lock(&f, "crlf", &origin, &rev);
+
+    let hostile_config = f.home.join("hostile.gitconfig");
+    fs_err::write(
+        hostile_config.as_std_path(),
+        "[core]\n\tautocrlf = true\n\teol = crlf\n",
+    )
+    .expect("write a hostile global git config");
+
+    let out = f.apply_with_env(
+        &["--yes"],
+        &[("GIT_CONFIG_GLOBAL", hostile_config.as_str())],
+    );
+    assert_eq!(
+        code(&out),
+        0,
+        "apply must succeed; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let deployed =
+        fs_err::read(f.home.join(".a.md").as_std_path()).expect("the deployed file is readable");
+    assert!(
+        !deployed.contains(&b'\r'),
+        "the deployed bytes must match the commit, but carry CR: {deployed:?}"
+    );
+}
+
+#[test]
 fn re_applying_an_unchanged_pin_is_a_byte_identical_no_op() {
     let f = Fixture::new();
     let origin = Origin::new(&f, "stable");

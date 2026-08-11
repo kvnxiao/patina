@@ -205,8 +205,22 @@ fn is_checkout_name(name: &str) -> bool {
 }
 
 /// Whether any recorded source path lies inside `checkout`.
+///
+/// Recorded paths went through [`crate::paths::canonicalize`] at apply time,
+/// while `checkout` is built from the state directory as the environment spells
+/// it — and the two spellings routinely differ: macOS resolves `/var` to
+/// `/private/var`, Windows hands back 8.3 short names like `RUNNER~1`, and a
+/// symlinked `HOME` or a `.` segment does the same on any host. Comparing only
+/// the raw form would find no reference and delete a checkout that is live
+/// under a symbolic link, so both spellings are tested.
 fn is_referenced(checkout: &Utf8Path, referenced: &BTreeSet<Utf8PathBuf>) -> bool {
-    referenced.iter().any(|path| path.starts_with(checkout))
+    let canonical = crate::paths::canonicalize(checkout);
+    referenced.iter().any(|path| {
+        path.starts_with(checkout)
+            || canonical
+                .as_ref()
+                .is_ok_and(|canonical| path.starts_with(canonical))
+    })
 }
 
 /// Every source path named by any committed apply record in `journal_dir`, or
@@ -309,6 +323,7 @@ fn remove_any(path: &Utf8Path) -> Result<(), RemoteError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::TempDir;
 
     #[test]
     fn the_layout_nests_every_path_under_the_cache_root() {
@@ -364,6 +379,40 @@ mod tests {
         assert!(
             !is_referenced(&Utf8PathBuf::from("/state/remotes/m/bbbb"), &referenced),
             "an unrelated checkout must not be kept alive by another's reference"
+        );
+    }
+
+    #[test]
+    fn a_checkout_spelled_differently_from_the_recorded_path_is_still_referenced() {
+        // The recorded path is canonical; the candidate is spelled the way the
+        // environment gives the state directory. A raw-only comparison would
+        // miss the reference and delete a live checkout — which is exactly what
+        // macOS (`/var` -> `/private/var`) and Windows (8.3 short names like
+        // `RUNNER~1`) do. A `..` hop reproduces the mismatch on every host:
+        // `Path::components` preserves it, so `starts_with` fails, while
+        // canonicalization resolves it away.
+        let temp = TempDir::new().expect("tempdir");
+        let real = Utf8Path::from_path(temp.path()).expect("utf8 temp path");
+        let checkout = real.join("remotes").join("m").join("aaaa");
+        fs_err::create_dir_all(checkout.as_std_path()).expect("mkdir checkout");
+
+        let canonical = crate::paths::canonicalize(&checkout).expect("canonicalize the checkout");
+        let mut referenced = BTreeSet::new();
+        referenced.insert(canonical.join("SKILL.md"));
+
+        let hopped = real
+            .join("remotes")
+            .join("m")
+            .join("..")
+            .join("m")
+            .join("aaaa");
+        assert!(
+            !referenced.iter().any(|path| path.starts_with(&hopped)),
+            "the fixture must actually produce two different spellings"
+        );
+        assert!(
+            is_referenced(&hopped, &referenced),
+            "a reference recorded under the canonical spelling must keep the checkout"
         );
     }
 }

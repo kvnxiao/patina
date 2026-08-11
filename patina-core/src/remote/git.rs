@@ -318,6 +318,13 @@ pub fn fetch_history(git_dir: &Utf8Path, url: &str, git_ref: Option<&str>) -> Re
 /// repository backs every checkout of that remote. The scratch index lives
 /// beside the checkout and is removed afterwards.
 ///
+/// Line-ending translation is switched off for the write. A user with
+/// `core.autocrlf = true` — the Windows default in many setups — would
+/// otherwise get CRLF-converted bytes in the checkout, so the same pinned
+/// commit would deploy different content on different machines and hash
+/// differently in the journal. A checkout is a cache of the commit, so it holds
+/// the commit's bytes.
+///
 /// # Errors
 ///
 /// Returns [`GitError::CacheDir`] when `dest` cannot be created, or a `git`
@@ -330,24 +337,26 @@ pub fn checkout_commit(git_dir: &Utf8Path, rev: &str, dest: &Utf8Path) -> Result
     let index = dest.with_extension("index");
     let git_dir_arg = git_dir.as_str();
     let work_tree_arg = format!("--work-tree={dest}");
+    // Beats setting these in the bare repo's config: the override travels with
+    // the invocation, so it cannot be lost if the cache repo is ever re-created.
+    let verbatim = [
+        "-c",
+        "core.autocrlf=false",
+        "-c",
+        "core.eol=lf",
+        "-c",
+        "core.safecrlf=false",
+    ];
     let result = (|| -> Result<(), GitError> {
-        run_with_index(
-            &["--git-dir", git_dir_arg, &work_tree_arg, "read-tree", rev],
-            dest,
-            &index,
-        )?;
-        run_with_index(
-            &[
-                "--git-dir",
-                git_dir_arg,
-                &work_tree_arg,
-                "checkout-index",
-                "--all",
-                "--force",
-            ],
-            dest,
-            &index,
-        )?;
+        let mut read_tree = vec!["--git-dir", git_dir_arg, &work_tree_arg];
+        read_tree.extend_from_slice(&verbatim);
+        read_tree.extend_from_slice(&["read-tree", rev]);
+        run_with_index(&read_tree, dest, &index)?;
+
+        let mut checkout = vec!["--git-dir", git_dir_arg, &work_tree_arg];
+        checkout.extend_from_slice(&verbatim);
+        checkout.extend_from_slice(&["checkout-index", "--all", "--force"]);
+        run_with_index(&checkout, dest, &index)?;
         Ok(())
     })();
     // The scratch index is derivable state; drop it whether or not the checkout
