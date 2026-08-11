@@ -2,30 +2,12 @@
 //! moves.
 //!
 //! Bumping a pin is the moment third-party code changes what lands on your
-//! machines, so it is the moment Patina slows down. In evaluation order:
-//!
-//! 1. **Future check.** A committer time more than an hour ahead of the local
-//!    clock is a hard reject.
-//! 2. **Ancestry check.** A tip that does not descend from the pinned rev means
-//!    upstream history was rewritten; that needs explicit confirmation.
-//! 3. **Backdating floor.** A committer time earlier than the pin's
-//!    `updated_at` is anomalous, but one honest workflow trips it (a maintainer
-//!    fast-forwarding a long-lived branch whose commits carry old committer
-//!    dates), so it prompts rather than rejects.
-//! 4. **Age gate.** The tip must be at least `min_age` old.
+//! machines, so it is the moment Patina slows down. `docs/REMOTE_SOURCES.md`
+//! "The update gate" specifies the four checks, their order, which ones reject
+//! outright versus prompt, and what the gate cannot stop.
 //!
 //! [`evaluate`] is pure over [`GateInputs`], so every branch is testable
 //! without a clock, a network, or a repository.
-//!
-//! One limit, stated plainly: committer timestamps are authored by whoever
-//! makes the commit. These checks stop untargeted, fast-moving compromises:
-//! the common case, where attackers race detection windows and publish with
-//! honest timestamps. An attacker who backdates a commit specifically to defeat
-//! the gate will pass it. Plain git offers no unforgeable, machine-independent
-//! time source; the diff-and-prompt loop remains the hard boundary in front of
-//! every byte.
-//!
-//! See `docs/REMOTE_SOURCES.md` "The update gate".
 
 use crate::config::DEFAULT_MIN_AGE;
 use crate::config::RemoteSpec;

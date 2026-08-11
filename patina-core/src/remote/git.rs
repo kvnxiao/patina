@@ -331,26 +331,17 @@ pub fn fetch_history(git_dir: &Utf8Path, url: &str, git_ref: Option<&str>) -> Re
 /// repository backs every checkout of that remote. The scratch index lives
 /// beside the checkout and is removed afterwards.
 ///
-/// Line-ending translation is switched off for the write. A user with
-/// `core.autocrlf = true`, the Windows default in many setups, would
-/// otherwise get CRLF-converted bytes in the checkout, so the same pinned
-/// commit would deploy different content on different machines and hash
-/// differently in the journal. A checkout is a cache of the commit, so it holds
-/// the commit's bytes.
-///
-/// External attribute sources are neutralized for the same reason: a per-user
-/// `core.attributesFile` or a system gitattributes file differs machine to
-/// machine, so an `eol` or `filter` rule there would make the same pinned
-/// commit materialize differently across machines. An in-tree `.gitattributes`
-/// is committed content and so is identical everywhere, but it can still make a
-/// checkout diverge from the raw committed bytes; fully attribute-blind
+/// A checkout is a cache of the commit, so it must hold the commit's bytes on
+/// every machine. Anything machine-local that could rewrite them on the way out
+/// is switched off for the write: line-ending translation (`core.autocrlf`),
+/// the per-user and system attribute files, and real symlinks. An in-tree
+/// `.gitattributes` is committed content and identical everywhere, but can
+/// still make a checkout diverge from the raw bytes; attribute-blind
 /// materialization is a post-1.0 item (see `REMOTE_SOURCES.md`).
 ///
-/// `core.symlinks=false` makes git write a symlink as a small regular file
-/// holding its target text rather than a real link. That both keeps the
-/// checkout materialization identical on every platform (Windows already
-/// defaults it off) and denies a malicious remote a symlink the resolver could
-/// follow out of the checkout.
+/// `core.symlinks=false` also denies a malicious remote a symlink the resolver
+/// could follow out of the checkout, writing the target text as a regular file
+/// instead.
 ///
 /// # Errors
 ///
