@@ -105,6 +105,38 @@ flowchart LR
 `patina debug journal <path>` decodes a journal back into
 human-readable form for post-mortem inspection.
 
+## Remote cache
+
+A module carrying a `[remote]` table resolves its entry sources against a
+checkout of another repository rather than against its own directory. The
+subsystem is four small pieces under `patina-core/src/remote/`:
+
+- **`git`** wraps the `git` binary on `PATH` via `std::process::Command`.
+  Patina links no git library, so a user's SSH agent, credential helpers,
+  and `insteadOf` rewrites apply untouched. The layer captures `stderr`
+  into typed errors and prints nothing itself.
+- **`cache`** owns the layout under `<state>/remotes/`: one bare fetch
+  repository per module plus one immutable directory per pinned rev. A
+  checkout is written into a `<sha>.partial` sibling and renamed into
+  place, so a directory's existence means it is complete. Because a new
+  rev gets a *new* directory, an update never mutates content under a
+  live symbolic link — apply re-points the link through the ordinary
+  journaled flow, and rollback can re-point it back.
+- **`lockfile`** reads and writes `patina.lock`. Rendering is
+  deterministic (module-name order, fixed field order), so re-writing
+  unchanged pins produces identical bytes.
+- **`gate`** is a pure function deciding whether a candidate tip may
+  become a pin, so every branch is unit-testable without a clock, a
+  network, or a repository.
+
+Pruning is reachability-based over every journal commit sentinel on disk,
+not "keep the newest": rollback walks back through older records, so a
+checkout an older record still names must survive. When any sentinel
+cannot be decoded, the sweep is suspended rather than risking a stranded
+rollback.
+
+`docs/REMOTE_SOURCES.md` is the normative behavioural spec.
+
 ## Apply phases
 
 `patina apply` runs three phases in order. The first two are read-only;

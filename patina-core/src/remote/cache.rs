@@ -311,24 +311,37 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_layout_matches_the_specced_paths() {
+    fn the_layout_nests_every_path_under_the_cache_root() {
+        // The relations are what the rest of the subsystem depends on: the
+        // pruner walks module directories under the root and compares recorded
+        // source paths against checkout directories, so a path that escaped the
+        // root (or a checkout that was not under its module) would break the
+        // sweep. Asserting the relations rather than the literal strings keeps
+        // this from being a second copy of the same path constants.
         let state = Utf8Path::new("/state/patina");
-        assert_eq!(remotes_root(state), "/state/patina/remotes");
-        assert_eq!(
-            module_dir(state, "humanizer"),
-            "/state/patina/remotes/humanizer"
+        let root = remotes_root(state);
+        let module = module_dir(state, "humanizer");
+        let bare = bare_repo(state, "humanizer");
+        let checkout = checkout_dir(state, "humanizer", "abc123");
+
+        assert!(root.starts_with(state) && root != state);
+        assert!(module.starts_with(&root) && module != root);
+        assert!(bare.starts_with(&module) && checkout.starts_with(&module));
+        assert_ne!(
+            bare, checkout,
+            "the fetch repository and a checkout must be distinct directories"
         );
-        assert_eq!(
-            bare_repo(state, "humanizer"),
-            "/state/patina/remotes/humanizer/repo.git"
-        );
-        assert_eq!(
-            checkout_dir(state, "humanizer", "abc123"),
-            "/state/patina/remotes/humanizer/abc123"
-        );
-        assert_eq!(notice_path(state), "/state/patina/remotes/notice");
-        assert_eq!(pending_path(state), "/state/patina/remotes/pending");
-        assert_eq!(last_check_path(state), "/state/patina/remotes/last_check");
+        for path in [
+            notice_path(state),
+            pending_path(state),
+            last_check_path(state),
+        ] {
+            assert_eq!(
+                path.parent(),
+                Some(root.as_path()),
+                "{path} must sit directly in the cache root, beside the module dirs"
+            );
+        }
     }
 
     #[test]

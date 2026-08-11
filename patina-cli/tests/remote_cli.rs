@@ -103,7 +103,7 @@ fn update_creates_the_first_pin_without_waiting_out_the_age_gate() {
     let rev = origin.commit("first\n", now);
     declare(&f, "humanizer", &origin, None);
 
-    let out = f.run(&["remote", "update"], &[]);
+    let out = f.run(&["remote", "update", "--json"], &[]);
     assert_eq!(
         code(&out),
         0,
@@ -115,9 +115,17 @@ fn update_creates_the_first_pin_without_waiting_out_the_age_gate() {
         lock.contains(&rev) && lock.contains("[remotes.humanizer]"),
         "the lockfile must record the first pin:\n{lock}"
     );
-    assert!(
-        lock.contains("version = 1"),
-        "the lockfile must declare its version:\n{lock}"
+    let doc = json_of(&out);
+    assert_eq!(
+        doc.pointer("/remotes/0/action")
+            .and_then(serde_json::Value::as_str),
+        Some("updated"),
+        "the envelope must report the pin as bumped: {doc}"
+    );
+    assert_eq!(
+        doc.pointer("/remotes/0/rev")
+            .and_then(serde_json::Value::as_str),
+        Some(rev.as_str())
     );
 }
 

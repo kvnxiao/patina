@@ -350,7 +350,12 @@ mod tests {
 
     #[test]
     fn an_empty_lockfile_renders_only_its_version() {
-        assert_eq!(Lockfile::default().render(), "version = 1\n");
+        // Derived from the constant rather than re-typed, so this cannot pass by
+        // someone editing both sites in step.
+        assert_eq!(
+            Lockfile::default().render(),
+            format!("version = {LOCKFILE_VERSION}\n")
+        );
     }
 
     #[test]

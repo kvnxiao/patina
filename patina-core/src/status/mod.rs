@@ -73,6 +73,10 @@ pub struct StatusReport {
     /// Human-readable warnings (e.g. the lock-timeout escape hatch). The
     /// CLI routes these to stderr.
     pub warnings: Vec<String>,
+    /// The remotes the last `patina remote check` found behind their upstream,
+    /// in module-name order. Read from the per-machine notice state, so this is
+    /// as fresh as the last check and never triggers network work of its own.
+    pub remotes_pending: Vec<String>,
 }
 
 impl StatusReport {
@@ -125,6 +129,12 @@ pub fn report(current_plan_targets: &BTreeSet<Utf8PathBuf>) -> Result<StatusRepo
     let record = read_latest_commit(&journal_dir)?;
     let mut report = StatusReport {
         warnings,
+        // Surfaced here rather than left to the shell notice alone, so a user
+        // who runs `patina status` learns about a pending remote update in the
+        // same place they learn about drift.
+        remotes_pending: crate::remote::notice::read_pending(&state_dir)
+            .into_iter()
+            .collect(),
         ..StatusReport::default()
     };
     let Some(record) = record else {

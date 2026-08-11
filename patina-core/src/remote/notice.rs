@@ -276,16 +276,20 @@ mod tests {
     }
 
     #[test]
-    fn the_hook_throttle_admits_a_first_check_and_then_holds_for_a_day() {
+    fn the_hook_throttle_admits_a_first_check_then_holds_for_one_window() {
+        // The window is derived from `HOOK_THROTTLE` rather than re-typed, so the
+        // assertion is about the boundary behaviour, not about two copies of the
+        // same number agreeing.
+        let window = i64::try_from(HOOK_THROTTLE.as_secs()).expect("the throttle fits in i64");
         let now = 1_800_000_000;
         assert!(hook_check_due(None, now), "no stamp means a check is due");
         assert!(
-            !hook_check_due(Some(now - 60 * 60), now),
-            "an hour after the last check is inside the throttle window"
+            !hook_check_due(Some(now - window + 1), now),
+            "one second short of the window must still be throttled"
         );
         assert!(
-            hook_check_due(Some(now - 24 * 60 * 60), now),
-            "a full day later a check is due again"
+            hook_check_due(Some(now - window), now),
+            "exactly one window later a check is due again"
         );
     }
 

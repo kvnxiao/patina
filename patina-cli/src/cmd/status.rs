@@ -79,6 +79,7 @@ fn json_envelope(report: &StatusReport) -> String {
         "drifted": report.drifted,
         "missing": report.missing,
         "orphaned": report.orphaned,
+        "remotes_pending": report.remotes_pending,
     });
     serde_json::to_string_pretty(&envelope).unwrap_or_else(|_| "{}".to_owned())
 }
@@ -88,6 +89,7 @@ fn json_envelope(report: &StatusReport) -> String {
 fn render_human(report: &StatusReport, reporter: &mut impl Reporter) {
     if report.last_apply.is_none() {
         reporter.line("No apply has been recorded yet; nothing to report.");
+        render_remotes_pending(report, reporter);
         return;
     }
     for entry in &report.files {
@@ -96,6 +98,19 @@ fn render_human(report: &StatusReport, reporter: &mut impl Reporter) {
     reporter.line(&format!(
         "clean: {}  drifted: {}  missing: {}  orphaned: {}",
         report.clean, report.drifted, report.missing, report.orphaned
+    ));
+    render_remotes_pending(report, reporter);
+}
+
+/// Report the remotes whose upstream has moved past their pin, as of the last
+/// `patina remote check`.
+fn render_remotes_pending(report: &StatusReport, reporter: &mut impl Reporter) {
+    if report.remotes_pending.is_empty() {
+        return;
+    }
+    reporter.line(&format!(
+        "remotes with pending updates: {}. Run `patina apply --update`.",
+        report.remotes_pending.join(", ")
     ));
 }
 

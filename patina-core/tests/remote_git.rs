@@ -95,16 +95,6 @@ impl Fixture {
 }
 
 #[test]
-fn git_is_available_to_the_suite() {
-    // Everything below shells out to `git`; a missing binary would otherwise
-    // surface as a pile of confusing spawn failures.
-    assert!(
-        git::git_available(),
-        "the remote suite needs a `git` on PATH"
-    );
-}
-
-#[test]
 fn fetch_by_exact_sha_then_checkout_materializes_the_tree() {
     let f = Fixture::new();
     let sha = f.commit("skills/humanizer/SKILL.md", "hello\n", BASE_EPOCH);

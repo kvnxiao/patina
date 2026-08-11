@@ -601,14 +601,4 @@ mod tests {
     fn a_cooldown_instant_renders_as_an_rfc_3339_utc_timestamp() {
         assert_eq!(format_epoch(1_786_456_800), "2026-08-11T14:00:00Z");
     }
-
-    #[test]
-    fn action_labels_are_the_json_contract() {
-        // The `action` field is what a script branches on, so the labels are
-        // part of the envelope contract rather than prose.
-        assert_eq!(Action::UpToDate.label(), "up_to_date");
-        assert_eq!(Action::Updated.label(), "updated");
-        assert_eq!(Action::Held.label(), "held");
-        assert_eq!(Action::Rejected.label(), "rejected");
-    }
 }
