@@ -2,9 +2,17 @@
 //!
 //! Two shapes are rejected, both before a diff is rendered and therefore
 //! before anything is written: two active entries resolving to the same
-//! canonical target, and an active directory-mode entry whose target contains
-//! another active entry's target. See `docs/REMOTE_SOURCES.md` under
+//! canonical target, and an active whole-directory `symlink` entry whose target
+//! contains another active entry's target. See `docs/REMOTE_SOURCES.md` under
 //! "Target collision validation" for the normative rules.
+//!
+//! Only a whole-directory `symlink` owns a subtree, because that is the one
+//! mode that plants a single object over the entire target path. A
+//! `symlink-tree` or `copy` `[[directory]]` materializes one object per source
+//! leaf and the journal records each leaf as its own target, so its footprint
+//! is those leaves — which is what the planner hands this module, already
+//! expanded. Two entries filling different parts of one directory are therefore
+//! legal, and two entries writing one leaf of it are not.
 //!
 //! Validation runs over the **active** set, after `when` filtering, so two
 //! entries aimed at one path under mutually exclusive guards are legal. Every
@@ -15,7 +23,6 @@ use crate::config::FileMode;
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
 use std::collections::BTreeMap;
-use unicode_normalization::UnicodeNormalization;
 
 /// One active entry's claim on the filesystem, as the collision check sees it.
 ///
@@ -25,13 +32,19 @@ use unicode_normalization::UnicodeNormalization;
 pub struct TargetClaim<'a> {
     /// Name of the module directory that declared the entry.
     pub module: &'a str,
-    /// The entry's declared source, relative to its module directory: the
-    /// string the author wrote, so the error text points at something
-    /// greppable in the manifest.
+    /// The entry's declared source, relative to its module directory (or to the
+    /// checkout of the remote it names): the string the author wrote, so the
+    /// error text points at something greppable in the manifest.
     pub source: &'a Utf8Path,
     /// The entry's resolved executor mode.
     pub mode: FileMode,
-    /// The entry's canonical targets, one element per declared target.
+    /// The declared directory target [`targets`](Self::targets) are the leaves
+    /// of, for a tree-mode entry the planner expanded; `None` when the targets
+    /// are the declared targets themselves. Reported so an error over a leaf
+    /// names the directory the author actually wrote.
+    pub tree_target: Option<&'a Utf8Path>,
+    /// The entry's canonical targets: one element per declared target, or one
+    /// per materialized leaf for an expanded tree-mode entry.
     pub targets: &'a [Utf8PathBuf],
 }
 
@@ -39,10 +52,7 @@ impl TargetClaim<'_> {
     /// Whether this claim plants a whole directory at each of its targets, so
     /// every path beneath one of those targets falls inside its footprint.
     fn owns_a_directory(&self) -> bool {
-        matches!(
-            self.mode,
-            FileMode::SymlinkDir | FileMode::SymlinkTree | FileMode::CopyTree
-        )
+        matches!(self.mode, FileMode::SymlinkDir)
     }
 }
 
@@ -70,8 +80,9 @@ enum CollisionRepr {
     /// second would silently overwrite the first, so the plan is refused.
     #[error(
         "two entries resolve to the same target {target}: `{first_source}` in module \
-         `{first_module}` and `{second_source}` in module `{second_module}`. Give them \
-         distinct targets, or guard them with mutually exclusive `when` predicates"
+         `{first_module}`{} and `{second_source}` in module `{second_module}`{}. Give them \
+         distinct targets, or guard them with mutually exclusive `when` predicates",
+        leaf_of(.first_tree_target.as_deref()), leaf_of(.second_tree_target.as_deref())
     )]
     SameTarget {
         /// The canonical target both entries claim.
@@ -80,35 +91,55 @@ enum CollisionRepr {
         first_module: String,
         /// Declared source of the entry declared first.
         first_source: Utf8PathBuf,
+        /// Directory target the first entry's claim was expanded from, when it
+        /// is a tree-mode entry.
+        first_tree_target: Option<Utf8PathBuf>,
         /// Module of the entry declared second.
         second_module: String,
         /// Declared source of the entry declared second.
         second_source: Utf8PathBuf,
+        /// Directory target the second entry's claim was expanded from, when it
+        /// is a tree-mode entry.
+        second_tree_target: Option<Utf8PathBuf>,
     },
 
-    /// An active directory-mode entry's target directory contains another
-    /// active entry's target. The directory entry owns everything under its
-    /// target, so the inner entry's output would be planted over or replaced.
+    /// An active whole-directory `symlink` entry's target contains another
+    /// active entry's target. That entry replaces the whole target path with a
+    /// single link, so the inner entry's output would be planted over or
+    /// swallowed.
     #[error(
-        "the directory entry `{outer_source}` in module `{outer_module}` deploys to \
-         {outer_target}, which contains the target {inner_target} of `{inner_source}` in \
-         module `{inner_module}`. A directory entry owns every path under its target, so \
-         move one of the two"
+        "the directory entry `{outer_source}` in module `{outer_module}` links its whole \
+         target {outer_target}, which contains the target {inner_target} of \
+         `{inner_source}` in module `{inner_module}`{}. A `[[directory]]` `mode = \"symlink\"` \
+         replaces its target path outright, so move one of the two — or switch it to \
+         `symlink-tree`, which owns only the leaves it materializes",
+        leaf_of(.inner_tree_target.as_deref())
     )]
     ContainedTarget {
-        /// Module of the directory-mode entry.
+        /// Module of the whole-directory `symlink` entry.
         outer_module: String,
-        /// Declared source of the directory-mode entry.
+        /// Declared source of the whole-directory `symlink` entry.
         outer_source: Utf8PathBuf,
-        /// The directory-mode entry's canonical target.
+        /// That entry's canonical target.
         outer_target: Utf8PathBuf,
         /// Module of the entry whose target falls inside.
         inner_module: String,
         /// Declared source of the entry whose target falls inside.
         inner_source: Utf8PathBuf,
+        /// Directory target the inner claim was expanded from, when it is a
+        /// tree-mode entry.
+        inner_tree_target: Option<Utf8PathBuf>,
         /// The contained canonical target.
         inner_target: Utf8PathBuf,
     },
+}
+
+/// The parenthetical naming the directory target an expanded leaf came from,
+/// or nothing at all for an entry whose targets are as declared.
+fn leaf_of(tree_target: Option<&Utf8Path>) -> String {
+    tree_target.map_or_else(String::new, |target| {
+        format!(" (under its target {target})")
+    })
 }
 
 /// Reject both collision shapes over the active entry set.
@@ -200,21 +231,8 @@ fn comparison_key(target: &Utf8Path) -> Utf8PathBuf {
 /// host, so the collision verdict belongs to the manifest and not the machine.
 /// `docs/REMOTE_SOURCES.md` under "Target collision validation" carries the
 /// rule and what it costs on Linux.
-///
-/// Normalizing on both sides of the case mapping is Unicode's canonical
-/// caseless match: the mapping can leave its own output unnormalized, so a
-/// single trailing pass would not converge. Lowercase mapping rather than true
-/// case folding, because APFS applies simple case folding and likewise leaves
-/// `ß` alone; full folding maps it to `ss` and merges two names macOS keeps
-/// apart.
 fn case_fold(key: &Utf8Path) -> Utf8PathBuf {
-    let key = key.as_str();
-    // ASCII has no decompositions, so the tables cannot change it.
-    if key.is_ascii() {
-        return Utf8PathBuf::from(key.to_lowercase());
-    }
-    let normalized: String = key.nfc().collect();
-    Utf8PathBuf::from(normalized.to_lowercase().nfc().collect::<String>())
+    Utf8PathBuf::from(crate::caseless::fold(key.as_str()))
 }
 
 /// Reject two claims resolving to the same target.
@@ -226,8 +244,10 @@ fn reject_duplicate_targets(staked: &[StakedTarget<'_>]) -> Result<(), Collision
                 target: stake.target.to_path_buf(),
                 first_module: first.claim.module.to_owned(),
                 first_source: first.claim.source.to_path_buf(),
+                first_tree_target: first.claim.tree_target.map(Utf8Path::to_path_buf),
                 second_module: stake.claim.module.to_owned(),
                 second_source: stake.claim.source.to_path_buf(),
+                second_tree_target: stake.claim.tree_target.map(Utf8Path::to_path_buf),
             }
             .into());
         }
@@ -254,6 +274,7 @@ fn reject_contained_targets(staked: &[StakedTarget<'_>]) -> Result<(), Collision
                 outer_target: outer.target.to_path_buf(),
                 inner_module: inner.claim.module.to_owned(),
                 inner_source: inner.claim.source.to_path_buf(),
+                inner_tree_target: inner.claim.tree_target.map(Utf8Path::to_path_buf),
                 inner_target: inner.target.to_path_buf(),
             }
             .into());
@@ -280,7 +301,23 @@ mod tests {
             module,
             source: Utf8Path::new(source),
             mode,
+            tree_target: None,
             targets,
+        }
+    }
+
+    /// The claim the planner produces for a tree-mode entry: leaf targets, plus
+    /// the directory target they were expanded from.
+    fn leaf_claim<'a>(
+        module: &'a str,
+        source: &'a str,
+        mode: FileMode,
+        tree_target: &'a str,
+        targets: &'a [Utf8PathBuf],
+    ) -> TargetClaim<'a> {
+        TargetClaim {
+            tree_target: Some(Utf8Path::new(tree_target)),
+            ..claim(module, source, mode, targets)
         }
     }
 
@@ -319,14 +356,14 @@ mod tests {
     }
 
     #[test]
-    fn a_target_nested_under_a_directory_target_collides() {
+    fn a_target_nested_under_a_whole_directory_symlink_collides() {
         let outer = targets(&["/home/u/.config/nvim"]);
         let inner = targets(&["/home/u/.config/nvim/init.lua"]);
         let claims = [
-            claim("nvim", "nvim", FileMode::CopyTree, &outer),
+            claim("nvim", "nvim", FileMode::SymlinkDir, &outer),
             claim("nvim-extra", "init.lua", FileMode::Symlink, &inner),
         ];
-        let err = validate_targets(&claims).expect_err("nested under a directory target");
+        let err = validate_targets(&claims).expect_err("nested under a whole-directory symlink");
         assert!(
             matches!(
                 err.0.as_ref(),
@@ -345,9 +382,51 @@ mod tests {
         let outer = targets(&["/home/u/.config/nvim"]);
         let claims = [
             claim("nvim-extra", "init.lua", FileMode::Symlink, &inner),
-            claim("nvim", "nvim", FileMode::SymlinkTree, &outer),
+            claim("nvim", "nvim", FileMode::SymlinkDir, &outer),
         ];
         validate_targets(&claims).expect_err("order must not hide containment");
+    }
+
+    #[test]
+    fn a_tree_entry_does_not_own_the_paths_between_its_leaves() {
+        // A `symlink-tree` / `copy` `[[directory]]` materializes one object per
+        // leaf, so another entry may fill a different part of the same
+        // directory. The planner hands the leaves over already expanded, and
+        // none of them is `/home/u/.config/nvim/lua/extra.lua`.
+        let leaves = targets(&["/home/u/.config/nvim/init.lua"]);
+        let other = targets(&["/home/u/.config/nvim/lua/extra.lua"]);
+        let claims = [
+            leaf_claim(
+                "nvim",
+                "nvim",
+                FileMode::CopyTree,
+                "/home/u/.config/nvim",
+                &leaves,
+            ),
+            claim("nvim-extra", "extra.lua", FileMode::Symlink, &other),
+        ];
+        validate_targets(&claims).expect("a tree entry owns only the leaves it materializes");
+    }
+
+    #[test]
+    fn a_tree_leaf_colliding_with_another_entry_is_refused() {
+        let leaves = targets(&["/home/u/.config/nvim/init.lua"]);
+        let other = targets(&["/home/u/.config/nvim/init.lua"]);
+        let claims = [
+            leaf_claim(
+                "nvim",
+                "nvim",
+                FileMode::SymlinkTree,
+                "/home/u/.config/nvim",
+                &leaves,
+            ),
+            claim("nvim-extra", "init.lua", FileMode::Symlink, &other),
+        ];
+        let err = validate_targets(&claims).expect_err("one leaf, two entries");
+        assert!(
+            err.to_string().contains("/home/u/.config/nvim"),
+            "the error must name the directory target the leaf came from, got: {err}"
+        );
     }
 
     #[test]
@@ -358,8 +437,8 @@ mod tests {
         let outer = targets(&["/home/u/.config/nvim"]);
         let sibling = targets(&["/home/u/.config/nvim-backup"]);
         let claims = [
-            claim("nvim", "nvim", FileMode::CopyTree, &outer),
-            claim("backup", "nvim-backup", FileMode::CopyTree, &sibling),
+            claim("nvim", "nvim", FileMode::SymlinkDir, &outer),
+            claim("backup", "nvim-backup", FileMode::SymlinkDir, &sibling),
         ];
         validate_targets(&claims).expect("a prefix-sharing sibling is not contained");
     }
@@ -401,10 +480,10 @@ mod tests {
 
     #[test]
     fn a_fan_out_containing_its_own_sibling_target_collides() {
-        // One entry declaring both a directory and something inside it is the
-        // same hazard as two entries doing so.
+        // One entry declaring both a whole-directory link and something inside
+        // it is the same hazard as two entries doing so.
         let fan_out = targets(&["/home/u/d", "/home/u/d/inner"]);
-        let claims = [claim("m", "d", FileMode::CopyTree, &fan_out)];
+        let claims = [claim("m", "d", FileMode::SymlinkDir, &fan_out)];
         validate_targets(&claims).expect_err("a self-contained fan-out collides");
     }
 
@@ -438,7 +517,7 @@ mod tests {
         let outer = vec![outer_target];
         let inner = vec![inner_target];
         let claims = [
-            claim("skills", "skills", FileMode::CopyTree, &outer),
+            claim("skills", "skills", FileMode::SymlinkDir, &outer),
             claim("extra", "note.md", FileMode::Copy, &inner),
         ];
         validate_targets(&claims)
@@ -566,10 +645,16 @@ mod tests {
     #[test]
     fn contained_target_error_renders_both_entries() {
         let outer = targets(&["/home/u/.claude/skills"]);
-        let inner = targets(&["/home/u/.claude/skills/humanizer"]);
+        let inner = targets(&["/home/u/.claude/skills/humanizer/SKILL.md"]);
         let claims = [
-            claim("skills", "skills", FileMode::SymlinkTree, &outer),
-            claim("humanizer", "skills/humanizer", FileMode::CopyTree, &inner),
+            claim("skills", "skills", FileMode::SymlinkDir, &outer),
+            leaf_claim(
+                "humanizer",
+                "humanizer",
+                FileMode::CopyTree,
+                "/home/u/.claude/skills/humanizer",
+                &inner,
+            ),
         ];
         let err = validate_targets(&claims).expect_err("containment");
         insta::assert_snapshot!(err.to_string());

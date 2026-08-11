@@ -368,14 +368,10 @@ pub fn plan(
     }
 
     // Refuse a plan whose active entries fight over a target before the CLI
-    // renders a diff or prompts. Only surviving (`when`-true) entries claim
-    // anything, so `flatten` drops the gated-off slots.
-    let claims: Vec<crate::apply::TargetClaim<'_>> = file_entries
-        .iter()
-        .chain(&directory_entries)
-        .flatten()
-        .map(ResolvedEntry::claim)
-        .collect();
+    // renders a diff or prompts.
+    let expanded = expand_claims(&file_entries, &directory_entries)?;
+    let claims: Vec<crate::apply::TargetClaim<'_>> =
+        expanded.iter().map(ClaimTargets::claim).collect();
     crate::apply::collisions::validate_targets(&claims)?;
 
     let (operations, resolved_ops) = assemble_plan_operations(file_entries, directory_entries);
@@ -818,16 +814,80 @@ struct ResolvedEntry {
     declared_source: Utf8PathBuf,
 }
 
-impl ResolvedEntry {
-    /// Project this entry into the claim the target-collision check consumes.
+/// One resolved entry paired with the targets it actually claims on the
+/// filesystem, owned so the borrowed [`crate::apply::TargetClaim`] can point at
+/// leaves the planner expanded rather than at a declared directory target.
+struct ClaimTargets<'a> {
+    entry: &'a ResolvedEntry,
+    /// The declared directory target `targets` are the leaves of, for a
+    /// tree-mode entry; `None` when they are the declared targets themselves.
+    tree_target: Option<&'a Utf8Path>,
+    targets: Vec<Utf8PathBuf>,
+}
+
+impl ClaimTargets<'_> {
+    /// Project this into the claim the target-collision check consumes.
     fn claim(&self) -> crate::apply::TargetClaim<'_> {
         crate::apply::TargetClaim {
-            module: &self.module,
-            source: &self.declared_source,
-            mode: self.mode,
+            module: &self.entry.module,
+            source: &self.entry.declared_source,
+            mode: self.entry.mode,
+            tree_target: self.tree_target,
             targets: &self.targets,
         }
     }
+}
+
+/// Project the active entries into what each one actually claims, expanding a
+/// tree-mode entry into the leaves it will materialize.
+///
+/// A `symlink-tree` or `copy` `[[directory]]` does not own its whole target
+/// directory: it materializes one object per source leaf, records each leaf as
+/// its own journal target, and the reap pass removes only the leaves it
+/// recorded. The collision check has to see the same footprint, or it would
+/// refuse manifests the rest of the engine handles cleanly — deploying one
+/// upstream file into a directory the repository also fills is the ordinary
+/// case once remotes exist.
+///
+/// The consequence is that the verdict depends on what the source tree holds
+/// right now, so a file appearing upstream under a tree source can newly fail a
+/// plan. That failure lands before any write, which is what a tree growing an
+/// unexpected file is supposed to do.
+///
+/// Claims come out in declaration order — every `[[file]]` entry, then every
+/// `[[directory]]` entry — so the reported pair is a function of the manifest.
+///
+/// # Errors
+///
+/// Returns an [`EngineError`] when a tree source cannot be walked. Its
+/// existence and kind were validated during resolution, so this is a live IO
+/// failure rather than a manifest error.
+fn expand_claims<'a>(
+    file_entries: &'a [Option<ResolvedEntry>],
+    directory_entries: &'a [Option<ResolvedEntry>],
+) -> Result<Vec<ClaimTargets<'a>>, EngineError> {
+    let mut expanded = Vec::new();
+    // Only surviving (`when`-true) entries claim anything, so `flatten` drops
+    // the gated-off slots.
+    for entry in file_entries.iter().chain(directory_entries).flatten() {
+        if !matches!(entry.mode, FileMode::SymlinkTree | FileMode::CopyTree) {
+            expanded.push(ClaimTargets {
+                entry,
+                tree_target: None,
+                targets: entry.targets.clone(),
+            });
+            continue;
+        }
+        let leaves = crate::apply::walk_files(&entry.source)?;
+        for target in &entry.targets {
+            expanded.push(ClaimTargets {
+                entry,
+                tree_target: Some(target.as_path()),
+                targets: leaves.iter().map(|leaf| target.join(leaf)).collect(),
+            });
+        }
+    }
+    Ok(expanded)
 }
 
 /// Impose the single deterministic order on the resolved entries and

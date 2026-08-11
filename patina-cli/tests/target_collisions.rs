@@ -1,10 +1,12 @@
 //! Plan-time target-collision validation, end to end through the CLI.
 //!
-//! Two active entries claiming one target, or a directory-mode entry whose
-//! target contains another entry's target, must fail planning before a diff
-//! is rendered and before anything is written. Two entries claiming one target
-//! under mutually exclusive `when` guards must plan cleanly, because
-//! validation runs over the post-`when` active set.
+//! Two active entries claiming one target, or a whole-directory `symlink` entry
+//! whose target contains another entry's target, must fail planning before a
+//! diff is rendered and before anything is written. Two entries claiming one
+//! target under mutually exclusive `when` guards must plan cleanly, because
+//! validation runs over the post-`when` active set. A tree-mode entry claims
+//! the leaves it materializes and nothing between them, so another entry may
+//! fill a different part of the same directory.
 //!
 //! See `docs/REMOTE_SOURCES.md` "Target collision validation".
 
@@ -85,11 +87,11 @@ fn when_disjoint_entries_on_one_target_plan_cleanly() {
 }
 
 #[test]
-fn a_target_inside_a_directory_mode_target_fails_planning() {
+fn a_target_inside_a_whole_directory_symlink_target_fails_planning() {
     let f = Fixture::new();
     let tree = f.module(
         "skills",
-        "[[directory]]\nsource = \"skills\"\ntarget = \"~/.claude/skills\"\nmode = \"copy\"\n",
+        "[[directory]]\nsource = \"skills\"\ntarget = \"~/.claude/skills\"\n",
     );
     fs_err::create_dir_all(tree.join("skills")).expect("mkdir tree source");
     fs_err::write(tree.join("skills").join("keep.md"), "keep\n").expect("write leaf");
@@ -105,7 +107,7 @@ fn a_target_inside_a_directory_mode_target_fails_planning() {
     assert_eq!(
         code(&out),
         1,
-        "a target inside a directory-mode target must fail planning; stderr: {stderr}"
+        "a target inside a whole-directory symlink must fail planning; stderr: {stderr}"
     );
     assert!(
         stderr.contains("contains the target"),
@@ -114,6 +116,84 @@ fn a_target_inside_a_directory_mode_target_fails_planning() {
     assert!(
         !f.home.join(".claude").join("skills").exists(),
         "planning must fail before any write"
+    );
+}
+
+#[test]
+fn a_tree_leaf_colliding_with_another_entry_names_the_leaf() {
+    // The tree deploys `humanizer/SKILL.md` under `~/.claude/skills`, and the
+    // other entry claims exactly that path. Only the expanded leaves make this
+    // visible: the two declared targets are a directory and a file inside it.
+    let f = Fixture::new();
+    let tree = f.module(
+        "skills",
+        "[[directory]]\nsource = \"skills\"\ntarget = \"~/.claude/skills\"\nmode = \"copy\"\n",
+    );
+    fs_err::create_dir_all(tree.join("skills").join("humanizer")).expect("mkdir tree source");
+    fs_err::write(
+        tree.join("skills").join("humanizer").join("SKILL.md"),
+        "local\n",
+    )
+    .expect("write leaf");
+    let inner = f.module(
+        "extra",
+        "[[file]]\nsource = \"SKILL.md\"\n\
+         target = \"~/.claude/skills/humanizer/SKILL.md\"\nmode = \"copy\"\n",
+    );
+    fs_err::write(inner.join("SKILL.md"), "upstream\n").expect("write inner source");
+
+    let out = f.apply(&["--yes"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+
+    assert_eq!(
+        code(&out),
+        1,
+        "two entries writing one leaf must fail planning; stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("same target") && stderr.contains("SKILL.md"),
+        "the error must name the colliding leaf; stderr: {stderr}"
+    );
+    assert!(
+        !f.home.join(".claude").join("skills").exists(),
+        "planning must fail before any write"
+    );
+}
+
+#[test]
+fn an_entry_under_a_tree_target_that_hits_no_leaf_plans_cleanly() {
+    // A tree entry owns the leaves it materializes, not the whole directory, so
+    // another entry may deploy alongside them. This is the shape a remote entry
+    // takes when it adds one upstream file to a directory the repository fills.
+    let f = Fixture::new();
+    let tree = f.module(
+        "skills",
+        "[[directory]]\nsource = \"skills\"\ntarget = \"~/.claude/skills\"\nmode = \"copy\"\n",
+    );
+    fs_err::create_dir_all(tree.join("skills")).expect("mkdir tree source");
+    fs_err::write(tree.join("skills").join("keep.md"), "keep\n").expect("write leaf");
+    let inner = f.module(
+        "extra",
+        "[[file]]\nsource = \"SKILL.md\"\n\
+         target = \"~/.claude/skills/humanizer/SKILL.md\"\nmode = \"copy\"\n",
+    );
+    fs_err::write(inner.join("SKILL.md"), "upstream\n").expect("write inner source");
+
+    let out = f.apply(&["--yes"]);
+    assert_eq!(
+        code(&out),
+        0,
+        "a path under a tree target that no leaf claims must apply; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        fs_err::read_to_string(f.home.join(".claude/skills/keep.md")).expect("the tree leaf"),
+        "keep\n"
+    );
+    assert_eq!(
+        fs_err::read_to_string(f.home.join(".claude/skills/humanizer/SKILL.md"))
+            .expect("the neighbouring entry"),
+        "upstream\n"
     );
 }
 
