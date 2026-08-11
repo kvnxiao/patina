@@ -328,15 +328,15 @@ targeting the same path under mutually exclusive `when` guards are legal:
 Both apply equally to local and remote entries, and both fail the run
 before anything is written.
 
-Both comparisons are case-insensitive on every platform. Windows and
-macOS resolve two targets differing only in case to one file, so the
-check has to fold there. Linux does not, but folding only where the
-host needs it would make one manifest plan clean on Linux and fail on
-macOS. The verdict belongs to the manifest, not the machine, so the
-collision is reported everywhere. Two targets that differ only in case
-are therefore an error even on Linux, where they would otherwise
-coexist; rename one.
+Both comparisons ignore case and Unicode normal form, on every
+platform. Windows and macOS resolve two targets differing only in case
+to one file, and APFS does the same for two differing only in NFC/NFD
+spelling. Linux resolves each pair to two files, but folding only where
+the host needs it would let one manifest plan clean on Linux and fail
+on macOS. The verdict belongs to the manifest, not the machine, so two
+targets differing only in case or normalization are an error
+everywhere; rename one.
 
 Folding applies to the comparison only. Targets are created on disk in
-the case the author wrote, because the programs that read them are
-case-sensitive about their own paths.
+the spelling the author wrote, because the programs that read them are
+exact about their own paths.

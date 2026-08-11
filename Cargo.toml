@@ -61,6 +61,11 @@ toml = "1.1"
 toml_edit = "0.25"
 tracing = "0.1"
 tracing-appender = "0.2"
+# NFC folding for the target-collision comparison key: APFS is
+# normalization-insensitive, so two targets differing only in NFC/NFD spelling
+# are one file on macOS. One transitive dep (`tinyvec`), against ~14 and
+# embedded data for `icu_normalizer`.
+unicode-normalization = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Host identity (hostname / username) via OS syscalls, not the unreliable
 # `$HOSTNAME` / `$USER` env vars — those are unset under non-login shells and

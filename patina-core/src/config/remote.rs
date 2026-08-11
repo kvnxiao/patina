@@ -310,9 +310,8 @@ mod tests {
 
     #[test]
     fn a_ref_is_stored_trimmed() {
-        // The stored ref reaches git as a bare argv element and is written into
-        // patina.lock, so surrounding whitespace would fail obscurely at fetch
-        // time and commit a ref no other machine can resolve.
+        // The stored value reaches git as a bare argv element and is committed
+        // to patina.lock, so padding is not merely cosmetic.
         let raw = RawRemote {
             url: "https://example.invalid/r".to_owned(),
             git_ref: Some("  main\n".to_owned()),

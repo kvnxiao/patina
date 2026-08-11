@@ -15,6 +15,7 @@ use crate::config::FileMode;
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
 use std::collections::BTreeMap;
+use unicode_normalization::UnicodeNormalization;
 
 /// One active entry's claim on the filesystem, as the collision check sees it.
 ///
@@ -195,30 +196,25 @@ fn comparison_key(target: &Utf8Path) -> Utf8PathBuf {
     }
 }
 
-/// Fold the comparison key to lowercase, on every host.
+/// Fold the comparison key to one case and one Unicode normal form, on every
+/// host, so the collision verdict belongs to the manifest and not the machine.
+/// `docs/REMOTE_SOURCES.md` under "Target collision validation" carries the
+/// rule and what it costs on Linux.
 ///
-/// Windows (NTFS) and the default macOS filesystem compare paths without regard
-/// to case, so two targets differing only in case name one file and the second
-/// would silently overwrite the first. Linux compares case-sensitively, so the
-/// same pair is two files there.
-///
-/// Folding only where the host needs it would make the verdict a property of
-/// the machine: one manifest would plan clean on Linux and fail on the user's
-/// laptop. Folding everywhere keeps the answer a property of the manifest,
-/// which is what a multi-machine source of truth has to guarantee.
-///
-/// The cost is a false collision between two targets that differ only in case
-/// and would coexist on Linux. That is a plan-time error the user renames
-/// around, which is the safe direction to err against silent data loss, and it
-/// is now reported identically on all three platforms. Deciding by host rather
-/// than by volume would misjudge a case-sensitive volume on macOS or Windows
-/// anyway.
-///
-/// This is a comparison key only. Targets are created on disk in the case the
-/// author wrote, since the programs that read them are case-sensitive about
-/// their own config paths.
+/// Normalizing on both sides of the case mapping is Unicode's canonical
+/// caseless match: the mapping can leave its own output unnormalized, so a
+/// single trailing pass would not converge. Lowercase mapping rather than true
+/// case folding, because APFS applies simple case folding and likewise leaves
+/// `ß` alone; full folding maps it to `ss` and merges two names macOS keeps
+/// apart.
 fn case_fold(key: &Utf8Path) -> Utf8PathBuf {
-    Utf8PathBuf::from(key.as_str().to_lowercase())
+    let key = key.as_str();
+    // ASCII has no decompositions, so the tables cannot change it.
+    if key.is_ascii() {
+        return Utf8PathBuf::from(key.to_lowercase());
+    }
+    let normalized: String = key.nfc().collect();
+    Utf8PathBuf::from(normalized.to_lowercase().nfc().collect::<String>())
 }
 
 /// Reject two claims resolving to the same target.
@@ -489,10 +485,6 @@ mod tests {
 
     #[test]
     fn case_only_targets_collide_on_every_host() {
-        // On Windows and macOS both names are one file, so the second would
-        // silently overwrite the first. On Linux they are two files, and the
-        // collision is reported anyway so that one manifest gets one verdict
-        // everywhere.
         let a = targets(&["/home/u/.config/app/config.toml"]);
         let b = targets(&["/home/u/.config/app/Config.toml"]);
         let claims = [
@@ -500,6 +492,46 @@ mod tests {
             claim("n", "Config.toml", FileMode::Copy, &b),
         ];
         validate_targets(&claims).expect_err("case-only-differing targets must collide");
+    }
+
+    #[test]
+    fn targets_differing_only_in_unicode_normalization_collide() {
+        // `café.conf` with a precomposed é, then with `e` plus a combining acute.
+        let precomposed = targets(&["/home/u/.config/caf\u{e9}.conf"]);
+        let decomposed = targets(&["/home/u/.config/cafe\u{301}.conf"]);
+        assert_ne!(
+            precomposed, decomposed,
+            "the two spellings must differ as raw paths, or the test proves nothing"
+        );
+        let claims = [
+            claim("m", "cafe.conf", FileMode::Symlink, &precomposed),
+            claim("n", "cafe.conf", FileMode::Copy, &decomposed),
+        ];
+        validate_targets(&claims).expect_err("NFC and NFD spellings of one name must collide");
+    }
+
+    #[test]
+    fn normalization_folding_survives_the_case_mapping() {
+        // Uppercase precomposed against lowercase decomposed needs both folds.
+        let upper = targets(&["/home/u/.config/CAF\u{c9}.conf"]);
+        let lower = targets(&["/home/u/.config/cafe\u{301}.conf"]);
+        let claims = [
+            claim("m", "a.conf", FileMode::Symlink, &upper),
+            claim("n", "b.conf", FileMode::Copy, &lower),
+        ];
+        validate_targets(&claims).expect_err("case and normalization must fold together");
+    }
+
+    #[test]
+    fn sharp_s_stays_distinct_from_its_two_letter_spelling() {
+        // Must not collide: APFS uses simple case folding, which leaves ß alone.
+        let sharp = targets(&["/home/u/.config/stra\u{df}e.conf"]);
+        let spelled = targets(&["/home/u/.config/strasse.conf"]);
+        let claims = [
+            claim("m", "a.conf", FileMode::Symlink, &sharp),
+            claim("n", "b.conf", FileMode::Copy, &spelled),
+        ];
+        validate_targets(&claims).expect("ß and ss name different files");
     }
 
     #[test]
