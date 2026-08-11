@@ -36,9 +36,6 @@ pub const LOCKFILE_NAME: &str = "patina.lock";
 /// The only lockfile layout this binary understands.
 pub const LOCKFILE_VERSION: u32 = 1;
 
-/// Length of a full hexadecimal commit SHA.
-const SHA_LEN: usize = 40;
-
 /// One remote's pin.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LockEntry {
@@ -131,7 +128,7 @@ impl Lockfile {
 
         let mut remotes = BTreeMap::new();
         for (module, entry) in raw.remotes {
-            if entry.rev.len() != SHA_LEN || !entry.rev.bytes().all(|b| b.is_ascii_hexdigit()) {
+            if !super::git::is_full_sha(&entry.rev) {
                 return Err(RemoteRepr::LockfileRev {
                     module,
                     value: entry.rev,

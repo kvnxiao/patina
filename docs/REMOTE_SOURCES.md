@@ -65,7 +65,7 @@ Durations accept `s`, `m`, `h`, and `d` suffixes (`"0s"`, `"30m"`,
 
 ## Trust boundaries
 
-Remote content is third-party input, and Patina holds four lines:
+Remote content is third-party input, and Patina holds these lines:
 
 - Patina never reads configuration out of a checkout. A `patina.toml`
   inside the remote repository is inert bytes. Mappings, hooks, and
@@ -74,6 +74,15 @@ Remote content is third-party input, and Patina holds four lines:
   source gets no implicit render; the file is plain bytes under the
   declared mode. Third-party files full of `{{ }}` would otherwise
   explode under strict-undefined rendering, or worse, render.
+- A remote source may supply only bytes from within its own checkout.
+  An entry whose source resolves outside the checkout, whether through
+  a `..` in the declared source or a symbolic link the checkout ships,
+  is refused at plan time. Symlinks in a checkout are materialized as
+  inert files holding their target text, so the resolver cannot follow
+  one out of the checkout.
+- A remote's `url` and `ref` are passed to `git` as positional
+  arguments and may not begin with `-`, so a manifest cannot smuggle a
+  git option (for example `--upload-pack`) into a fetch.
 - Every byte still passes the consent diff. Remote updates reach your
   filesystem only through the same diff-and-prompt loop as local
   changes.
@@ -115,6 +124,7 @@ repository:
 ```
 <state>/remotes/
 ├── notice                       plain-text pending-update notice
+├── pending                      the same, one module name per line
 ├── last_check                   background-check throttle stamp
 └── <module>/
     ├── repo.git/                bare fetch repository
@@ -129,6 +139,15 @@ update never mutates content behind a live symlink: apply re-points
 links to the new checkout under the ordinary journaled flow, and
 `patina rollback` can re-point them back.
 
+A checkout is written with line-ending translation off and external
+git attribute sources (system and per-user) neutralized, so the same
+pinned commit materializes the same bytes on every machine regardless
+of a user's `core.autocrlf` or `core.attributesFile`. This does not
+yet cover an in-tree `.gitattributes` shipped in the remote, which can
+still apply an `eol` or `filter` rule; against such a repository a
+checkout is not byte-verbatim. Fully attribute-blind materialization
+is a post-1.0 item.
+
 After each successful apply, checkouts that no journal record on disk
 references are pruned automatically: rollback always has what it
 needs, and disk stays bounded at roughly the current and previous rev
@@ -142,9 +161,9 @@ The verbs split along a producer/consumer line:
 | ---------------------------- | -------- | ----------------------------------------------------------------------- |
 | `patina apply`               | consumer | Converge this machine to the committed lock. Fetches any pinned rev missing from the cache (by exact SHA, no gate), then the normal diff-and-prompt. |
 | `patina remote update [name]`| producer | Fetch upstream, run the update gate, and bump `rev` / `updated_at` in the working-tree lockfile for you to review and commit. Touches no targets. |
-| `patina apply --update`      | producer | `remote update` for every remote, then apply, in one sitting.           |
+| `patina apply --update`      | producer | `remote update` for every remote, then apply, in one sitting. Runs only when the apply may mutate: it is skipped (with a note) on a preview, meaning a non-interactive apply without `--yes`, or any `--json` run. It never auto-accepts a gate concern, even under `--yes`. |
 | `patina remote list`         | either   | Each remote's URL, ref, pinned rev, and pending-update state. Read-only. |
-| `patina remote check`        | either   | `git ls-remote` only: compare upstream tips against the lock, refresh the notice file. No object download. |
+| `patina remote check`        | either   | `git ls-remote` only: compare upstream tips against the lock, refresh the notice file. No object download. Exits non-zero if any remote could not be reached. |
 | `patina remote prune`        | either   | Remove cached checkouts unreferenced by any journal record.              |
 
 Failure shapes worth knowing:
@@ -154,6 +173,12 @@ Failure shapes worth knowing:
   and the missing rev. Nothing is partially applied.
 - `apply --update`, offline: degrades to plain `apply` with a warning;
   pins are left unchanged.
+- `apply --update` on a preview (a non-interactive apply without
+  `--yes`, or `--json`): the producer pass is skipped with a note, so
+  the preview writes nothing; run `patina remote update` first.
+- A gate concern under `apply --update`: never waved through by the
+  apply's own `--yes`. It is prompted on a TTY or held otherwise; use
+  `patina remote update --yes` to accept one explicitly.
 - A remote still inside its cooldown window: `remote update` reports
   when the candidate becomes eligible and leaves the pin unchanged;
   the rest of the run proceeds.

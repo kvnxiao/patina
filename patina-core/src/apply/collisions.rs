@@ -156,11 +156,24 @@ struct StakedTarget<'a> {
 /// between them would go unnoticed.
 ///
 /// Anchoring both on the deepest ancestor that does exist puts every target in
-/// one spelling. The key is for comparison only; errors report the target as
-/// the planner resolved it.
+/// one spelling. The leaf itself is never canonicalized: a target already
+/// materialized as a symbolic link into the repository would otherwise resolve
+/// to its source, the same trap
+/// [`resolve_location`](crate::paths::resolve_location) exists to avoid. The
+/// key is for comparison only; errors report the target as the planner resolved
+/// it.
 fn comparison_key(target: &Utf8Path) -> Utf8PathBuf {
-    let mut missing: Vec<&str> = Vec::new();
-    let mut cursor = target;
+    let Some(leaf) = target.file_name() else {
+        return case_fold(target.to_path_buf());
+    };
+    // The leaf rides along as a to-be-appended component from the start, so only
+    // the parent chain (real directories) is ever resolved through the
+    // filesystem.
+    let mut missing: Vec<&str> = vec![leaf];
+    let mut cursor = match target.parent() {
+        Some(parent) if !parent.as_str().is_empty() => parent,
+        _ => return case_fold(target.to_path_buf()),
+    };
     loop {
         if cursor.exists() {
             let mut key = crate::paths::canonicalize(cursor)
@@ -168,7 +181,7 @@ fn comparison_key(target: &Utf8Path) -> Utf8PathBuf {
             for component in missing.iter().rev() {
                 key.push(component);
             }
-            return key;
+            return case_fold(key);
         }
         match (cursor.parent(), cursor.file_name()) {
             (Some(parent), Some(name)) if !parent.as_str().is_empty() => {
@@ -176,9 +189,25 @@ fn comparison_key(target: &Utf8Path) -> Utf8PathBuf {
                 cursor = parent;
             }
             // Nothing on the path exists, so there is nothing to anchor on and
-            // every target is already in its lexical spelling.
-            _ => return target.to_path_buf(),
+            // every component is already in its lexical spelling.
+            _ => return case_fold(target.to_path_buf()),
         }
+    }
+}
+
+/// Fold the comparison key to lowercase on case-insensitive filesystems.
+///
+/// Windows (NTFS) and the default macOS filesystem compare paths without regard
+/// to case, so two targets differing only in case name the same file and the
+/// second would silently overwrite the first. Folding the key there makes the
+/// duplicate detectable. A case-sensitive volume on those systems risks a false
+/// collision instead, but that is a plan-time error the user can rename around,
+/// which is the safe direction to err against silent data loss.
+fn case_fold(key: Utf8PathBuf) -> Utf8PathBuf {
+    if cfg!(any(target_os = "windows", target_os = "macos")) {
+        Utf8PathBuf::from(key.as_str().to_lowercase())
+    } else {
+        key
     }
 }
 
@@ -408,6 +437,72 @@ mod tests {
         ];
         validate_targets(&claims)
             .expect_err("containment must be found regardless of how each target is spelled");
+    }
+
+    #[cfg(unix)]
+    fn symlink_file(source: &Utf8Path, link: &Utf8Path) {
+        std::os::unix::fs::symlink(source.as_std_path(), link.as_std_path())
+            .expect("create symlink");
+    }
+
+    #[cfg(windows)]
+    fn symlink_file(source: &Utf8Path, link: &Utf8Path) {
+        std::os::windows::fs::symlink_file(source.as_std_path(), link.as_std_path())
+            .expect("create symlink");
+    }
+
+    #[test]
+    fn a_target_that_is_a_symlink_is_keyed_by_its_location_not_its_source() {
+        // A re-apply sees a target already materialized as a symlink into the
+        // repository. The collision key must stay at the target location;
+        // dereferencing the leaf to its source would compare the wrong paths and
+        // miss (or invent) collisions.
+        let temp = TempDir::new().expect("tempdir");
+        let dir = Utf8Path::from_path(temp.path()).expect("utf8 temp path");
+        let source = dir.join("real.conf");
+        fs_err::write(source.as_std_path(), b"x").expect("write source");
+        let link = dir.join("link.conf");
+        symlink_file(&source, &link);
+
+        let key = comparison_key(&link);
+        let canonical_source = crate::paths::canonicalize(&source).expect("canonicalize source");
+        assert_ne!(
+            key.as_str().to_lowercase(),
+            canonical_source.as_str().to_lowercase(),
+            "the key must not resolve the leaf symlink to its source"
+        );
+        assert!(
+            key.as_str().to_lowercase().ends_with("link.conf"),
+            "the key must keep the declared leaf name, got {key}"
+        );
+    }
+
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    #[test]
+    fn case_only_targets_collide_on_a_case_insensitive_host() {
+        // The two names differ only in case under a directory that does not yet
+        // exist, so both resolve to one file at apply time and the second would
+        // silently overwrite the first.
+        let a = targets(&["/home/u/.config/app/config.toml"]);
+        let b = targets(&["/home/u/.config/app/Config.toml"]);
+        let claims = [
+            claim("m", "config.toml", FileMode::Symlink, &a),
+            claim("n", "Config.toml", FileMode::Copy, &b),
+        ];
+        validate_targets(&claims)
+            .expect_err("case-only-differing targets collide on a case-insensitive filesystem");
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    #[test]
+    fn case_only_targets_are_distinct_on_a_case_sensitive_host() {
+        let a = targets(&["/home/u/.config/app/config.toml"]);
+        let b = targets(&["/home/u/.config/app/Config.toml"]);
+        let claims = [
+            claim("m", "config.toml", FileMode::Symlink, &a),
+            claim("n", "Config.toml", FileMode::Copy, &b),
+        ];
+        validate_targets(&claims).expect("case is significant on a case-sensitive filesystem");
     }
 
     #[test]

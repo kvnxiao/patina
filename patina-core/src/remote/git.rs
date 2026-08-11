@@ -90,21 +90,33 @@ fn run(args: &[&str], cwd: Option<&Utf8Path>) -> Result<Output, GitError> {
     // A prompt from a credential helper or from `ssh` would hang a command the
     // user may have launched from a shell hook. Fail fast instead.
     command.env("GIT_TERMINAL_PROMPT", "0");
-    let output = command.output().map_err(|source| GitError::Spawn {
-        args: args.join(" "),
-        source,
-    })?;
+    let output = command
+        .output()
+        .map_err(|source| spawn_error(args, source))?;
     if output.status.success() {
         return Ok(output);
     }
-    Err(GitError::Failed {
+    Err(failed_error(args, &output))
+}
+
+/// The [`GitError::Spawn`] for an invocation the OS could not start.
+fn spawn_error(args: &[&str], source: std::io::Error) -> GitError {
+    GitError::Spawn {
+        args: args.join(" "),
+        source,
+    }
+}
+
+/// The [`GitError::Failed`] for an invocation that ran and exited non-zero.
+fn failed_error(args: &[&str], output: &Output) -> GitError {
+    GitError::Failed {
         args: args.join(" "),
         status: output
             .status
             .code()
             .map_or_else(String::new, |code| format!(" (exit {code})")),
         stderr: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
-    })
+    }
 }
 
 /// Trimmed `stdout` of a completed invocation.
@@ -112,8 +124,9 @@ fn stdout_of(output: &Output) -> String {
     String::from_utf8_lossy(&output.stdout).trim().to_owned()
 }
 
-/// Whether `candidate` is a full 40-character hexadecimal commit SHA.
-fn is_full_sha(candidate: &str) -> bool {
+/// Whether `candidate` is a full 40-character hexadecimal commit SHA. Shared by
+/// the lockfile parser and the cache pruner, which key checkouts by this shape.
+pub(crate) fn is_full_sha(candidate: &str) -> bool {
     candidate.len() == SHA_LEN && candidate.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
@@ -325,6 +338,20 @@ pub fn fetch_history(git_dir: &Utf8Path, url: &str, git_ref: Option<&str>) -> Re
 /// differently in the journal. A checkout is a cache of the commit, so it holds
 /// the commit's bytes.
 ///
+/// External attribute sources are neutralized for the same reason: a per-user
+/// `core.attributesFile` or a system gitattributes file differs machine to
+/// machine, so an `eol` or `filter` rule there would make the same pinned
+/// commit materialize differently across machines. An in-tree `.gitattributes`
+/// is committed content and so is identical everywhere, but it can still make a
+/// checkout diverge from the raw committed bytes; fully attribute-blind
+/// materialization is a post-1.0 item (see `REMOTE_SOURCES.md`).
+///
+/// `core.symlinks=false` makes git write a symlink as a small regular file
+/// holding its target text rather than a real link. That both keeps the
+/// checkout materialization identical on every platform (Windows already
+/// defaults it off) and denies a malicious remote a symlink the resolver could
+/// follow out of the checkout.
+///
 /// # Errors
 ///
 /// Returns [`GitError::CacheDir`] when `dest` cannot be created, or a `git`
@@ -346,6 +373,10 @@ pub fn checkout_commit(git_dir: &Utf8Path, rev: &str, dest: &Utf8Path) -> Result
         "core.eol=lf",
         "-c",
         "core.safecrlf=false",
+        "-c",
+        "core.attributesFile=",
+        "-c",
+        "core.symlinks=false",
     ];
     let result = (|| -> Result<(), GitError> {
         let mut read_tree = vec!["--git-dir", git_dir_arg, &work_tree_arg];
@@ -366,28 +397,24 @@ pub fn checkout_commit(git_dir: &Utf8Path, rev: &str, dest: &Utf8Path) -> Result
 }
 
 /// Run `git` with `args` under a scratch `GIT_INDEX_FILE`, from `cwd`.
+///
+/// `GIT_ATTR_NOSYSTEM` drops the system gitattributes file so a machine-local
+/// attribute rule cannot rewrite the bytes a checkout materializes.
 fn run_with_index(args: &[&str], cwd: &Utf8Path, index: &Utf8Path) -> Result<(), GitError> {
     let mut command = Command::new(GIT);
     command
         .args(args)
         .current_dir(cwd.as_std_path())
         .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_ATTR_NOSYSTEM", "1")
         .env("GIT_INDEX_FILE", index.as_str());
-    let output = command.output().map_err(|source| GitError::Spawn {
-        args: args.join(" "),
-        source,
-    })?;
+    let output = command
+        .output()
+        .map_err(|source| spawn_error(args, source))?;
     if output.status.success() {
         return Ok(());
     }
-    Err(GitError::Failed {
-        args: args.join(" "),
-        status: output
-            .status
-            .code()
-            .map_or_else(String::new, |code| format!(" (exit {code})")),
-        stderr: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
-    })
+    Err(failed_error(args, &output))
 }
 
 /// Whether `ancestor` is an ancestor of `descendant` in `git_dir`.
@@ -412,24 +439,16 @@ pub fn is_ancestor(git_dir: &Utf8Path, ancestor: &str, descendant: &str) -> Resu
     ];
     let mut command = Command::new(GIT);
     command.args(args).env("GIT_TERMINAL_PROMPT", "0");
-    let output = command.output().map_err(|source| GitError::Spawn {
-        args: args.join(" "),
-        source,
-    })?;
+    let output = command
+        .output()
+        .map_err(|source| spawn_error(&args, source))?;
     if output.status.success() {
         return Ok(true);
     }
     if output.status.code() == Some(1) {
         return Ok(false);
     }
-    Err(GitError::Failed {
-        args: args.join(" "),
-        status: output
-            .status
-            .code()
-            .map_or_else(String::new, |code| format!(" (exit {code})")),
-        stderr: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
-    })
+    Err(failed_error(&args, &output))
 }
 
 /// The committer time of `rev`, as Unix seconds.
@@ -449,6 +468,9 @@ pub fn committer_time(git_dir: &Utf8Path, rev: &str) -> Result<i64, GitError> {
         git_dir.as_str(),
         "show",
         "--no-patch",
+        // A user's `log.showSignature = true` would otherwise prepend signature
+        // lines to stdout and break the integer parse for a signed commit.
+        "--no-show-signature",
         "--format=%ct",
         rev,
     ];

@@ -87,10 +87,24 @@ pub async fn run(
 ) -> Result<i32> {
     let request = build_request(args)?;
     // `--update` runs the producer pass first so a pin bump and the consent diff
-    // for its content happen in one sitting. It must precede planning, since
-    // planning reads the pins it may have just rewritten.
+    // for its content happen in one sitting. It rewrites `patina.lock`, so it
+    // runs only when this invocation is allowed to mutate: never under a
+    // zero-write preview (a non-interactive apply without `--yes`, or any
+    // `--json` run, which owns stdout as one machine-readable document).
     if args.update {
-        run_remote_updates(args, tty, reader, reporter);
+        if args.json {
+            reporter.warn(
+                "`--update` is ignored with `--json`; run `patina remote update` first, then \
+                 `patina apply --json`",
+            );
+        } else if args.yes || tty == Tty::Interactive {
+            run_remote_updates(tty, reader, reporter);
+        } else {
+            reporter.warn(
+                "`--update` skipped: a non-interactive apply without `--yes` is a preview and \
+                 must not bump pins; run `patina remote update` or add `--yes`",
+            );
+        }
     }
     let timestamp = current_timestamp();
     let resolved = plan_apply(&request, timestamp).context("failed to compute the apply plan")?;
@@ -145,17 +159,18 @@ pub async fn run(
 /// plain apply against the committed pins, with a warning, which is exactly
 /// what an offline `apply --update` should do. Whatever pins the pass did
 /// manage to bump are already written, so the apply that follows sees them.
-fn run_remote_updates(
-    args: &ApplyArgs,
-    tty: Tty,
-    reader: &mut impl PromptReader,
-    reporter: &mut impl Reporter,
-) {
+///
+/// The gate is not auto-accepted: `yes` is `false` regardless of the apply's
+/// own `--yes`. A rewritten-history or backdated bump is held (or, on a TTY,
+/// prompted) rather than waved through, so `apply --yes` never silently accepts
+/// a supply-chain concern the gate exists to surface; `patina remote update
+/// --yes` remains the explicit way to accept one.
+fn run_remote_updates(tty: Tty, reader: &mut impl PromptReader, reporter: &mut impl Reporter) {
     let remote_args = crate::cli::RemoteArgs {
         command: crate::cli::RemoteCommand::Update {
             name: None,
             now: false,
-            yes: args.yes,
+            yes: false,
         },
         json: false,
     };

@@ -19,6 +19,7 @@ use super::RemoteError;
 use super::RemoteRepr;
 use super::cache;
 use camino::Utf8Path;
+use camino::Utf8PathBuf;
 use std::time::Duration;
 
 /// How long `patina remote check --hook` waits between real checks.
@@ -34,33 +35,10 @@ pub const HOOK_THROTTLE: Duration = Duration::from_hours(24);
 /// Returns a [`RemoteError`] when the write or removal fails.
 pub fn write_notice(state_dir: &Utf8Path, message: Option<&str>) -> Result<(), RemoteError> {
     let path = cache::notice_path(state_dir);
-    let Some(message) = message else {
-        return match fs_err::remove_file(path.as_std_path()) {
-            Ok(()) => Ok(()),
-            Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(source) => Err(RemoteRepr::Cache {
-                action: "removing",
-                path,
-                source,
-            }
-            .into()),
-        };
-    };
-    if let Some(parent) = path.parent() {
-        fs_err::create_dir_all(parent.as_std_path()).map_err(|source| RemoteRepr::Cache {
-            action: "creating",
-            path: parent.to_path_buf(),
-            source,
-        })?;
+    match message {
+        Some(message) => atomic_write(&path, message.as_bytes()),
+        None => remove_if_present(&path),
     }
-    fs_err::write(path.as_std_path(), message).map_err(|source| {
-        RemoteRepr::Cache {
-            action: "writing",
-            path,
-            source,
-        }
-        .into()
-    })
 }
 
 /// The current notice, or `None` when there is nothing pending.
@@ -113,34 +91,11 @@ pub fn repo_behind_message() -> String {
 pub fn write_pending(state_dir: &Utf8Path, modules: &[String]) -> Result<(), RemoteError> {
     let path = cache::pending_path(state_dir);
     if modules.is_empty() {
-        return match fs_err::remove_file(path.as_std_path()) {
-            Ok(()) => Ok(()),
-            Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(source) => Err(RemoteRepr::Cache {
-                action: "removing",
-                path,
-                source,
-            }
-            .into()),
-        };
-    }
-    if let Some(parent) = path.parent() {
-        fs_err::create_dir_all(parent.as_std_path()).map_err(|source| RemoteRepr::Cache {
-            action: "creating",
-            path: parent.to_path_buf(),
-            source,
-        })?;
+        return remove_if_present(&path);
     }
     let mut body = modules.join("\n");
     body.push('\n');
-    fs_err::write(path.as_std_path(), body).map_err(|source| {
-        RemoteRepr::Cache {
-            action: "writing",
-            path,
-            source,
-        }
-        .into()
-    })
+    atomic_write(&path, body.as_bytes())
 }
 
 /// The remotes the last check found behind their upstream.
@@ -176,7 +131,14 @@ pub fn last_check_epoch(state_dir: &Utf8Path) -> Option<i64> {
 ///
 /// Returns a [`RemoteError`] when the write fails.
 pub fn record_check(state_dir: &Utf8Path, epoch: i64) -> Result<(), RemoteError> {
-    let path = cache::last_check_path(state_dir);
+    atomic_write(
+        &cache::last_check_path(state_dir),
+        epoch.to_string().as_bytes(),
+    )
+}
+
+/// Create `path`'s parent directory when it is missing.
+fn ensure_parent(path: &Utf8Path) -> Result<(), RemoteError> {
     if let Some(parent) = path.parent() {
         fs_err::create_dir_all(parent.as_std_path()).map_err(|source| RemoteRepr::Cache {
             action: "creating",
@@ -184,10 +146,43 @@ pub fn record_check(state_dir: &Utf8Path, epoch: i64) -> Result<(), RemoteError>
             source,
         })?;
     }
-    fs_err::write(path.as_std_path(), epoch.to_string()).map_err(|source| {
+    Ok(())
+}
+
+/// Remove `path`, treating an already-absent file as success.
+fn remove_if_present(path: &Utf8Path) -> Result<(), RemoteError> {
+    match fs_err::remove_file(path.as_std_path()) {
+        Ok(()) => Ok(()),
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(source) => Err(RemoteRepr::Cache {
+            action: "removing",
+            path: path.to_path_buf(),
+            source,
+        }
+        .into()),
+    }
+}
+
+/// Write `bytes` to `path` through a per-process temporary and an atomic
+/// rename.
+///
+/// The shell integration can spawn a `patina remote check` in every session,
+/// so several may write these files concurrently. A rename swaps the file in
+/// whole, so a concurrent reader (the shell's `test -s`, `patina status`) sees
+/// either the old file or the new one, never a half-written line. The temporary
+/// carries the writer's pid, so two writers never collide on one scratch name.
+fn atomic_write(path: &Utf8Path, bytes: &[u8]) -> Result<(), RemoteError> {
+    ensure_parent(path)?;
+    let tmp = Utf8PathBuf::from(format!("{path}.{}.tmp", std::process::id()));
+    fs_err::write(tmp.as_std_path(), bytes).map_err(|source| RemoteRepr::Cache {
+        action: "writing",
+        path: tmp.clone(),
+        source,
+    })?;
+    fs_err::rename(tmp.as_std_path(), path.as_std_path()).map_err(|source| {
         RemoteRepr::Cache {
-            action: "writing",
-            path,
+            action: "renaming into",
+            path: path.to_path_buf(),
             source,
         }
         .into()

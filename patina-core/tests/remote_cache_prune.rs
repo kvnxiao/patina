@@ -161,6 +161,31 @@ fn scratch_artifacts_are_always_removed() {
 }
 
 #[test]
+fn a_partial_or_index_with_a_non_sha_stem_is_left_alone() {
+    // The scratch sweep keys on a full-SHA stem. A `notes.partial` or
+    // `manifest.index` a user or a future version left here is not patina's
+    // staging artifact, so the pruner must not delete it.
+    let f = Fixture::new();
+    let module = cache::module_dir(&f.state, "humanizer");
+    let stray_partial = module.join("notes.partial");
+    let stray_index = module.join("manifest.index");
+    fs_err::create_dir_all(stray_partial.as_std_path()).expect("mkdir stray partial");
+    fs_err::write(stray_index.as_std_path(), b"keep").expect("write stray index");
+
+    let removed = cache::prune(&f.state).expect("prune the cache");
+
+    assert!(
+        removed.is_empty(),
+        "a non-SHA-stemmed .partial/.index must not be swept: {removed:?}"
+    );
+    assert!(
+        stray_partial.is_dir(),
+        "the stray staging-looking dir stays"
+    );
+    assert!(stray_index.exists(), "the stray index-looking file stays");
+}
+
+#[test]
 fn an_unrecognized_directory_name_is_left_alone() {
     // The pruner must not become a general-purpose deleter: anything that is
     // not a checkout, a staging dir, or a scratch index stays put.

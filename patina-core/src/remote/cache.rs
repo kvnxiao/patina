@@ -34,10 +34,6 @@ const BARE_REPO_DIR: &str = "repo.git";
 /// place. Its presence means an interrupted checkout, never a usable one.
 const PARTIAL_SUFFIX: &str = ".partial";
 
-/// Length of a full hexadecimal commit SHA, which is also how a checkout
-/// directory is recognized.
-const SHA_LEN: usize = 40;
-
 /// `<state>/remotes/`, the root of the remote cache.
 #[must_use = "the cache root locates every checkout and the notice files"]
 pub fn remotes_root(state_dir: &Utf8Path) -> Utf8PathBuf {
@@ -177,9 +173,13 @@ pub fn prune(state_dir: &Utf8Path) -> Result<Vec<Utf8PathBuf>, RemoteError> {
             if name == BARE_REPO_DIR {
                 continue;
             }
-            // A checkout directory is a bare SHA with no extension, so an
-            // extension here marks one of patina's own scratch artifacts.
-            if matches!(candidate.extension(), Some("partial" | "index")) {
+            // Patina's own scratch artifacts are a full-SHA stem plus a
+            // `.partial` / `.index` extension. Requiring the SHA stem keeps the
+            // sweep from deleting an unrelated `notes.partial` a user or a
+            // future version might place here.
+            if matches!(candidate.extension(), Some("partial" | "index"))
+                && candidate.file_stem().is_some_and(is_checkout_name)
+            {
                 remove_any(&candidate)?;
                 removed.push(candidate);
                 continue;
@@ -201,7 +201,7 @@ pub fn prune(state_dir: &Utf8Path) -> Result<Vec<Utf8PathBuf>, RemoteError> {
 /// must not become a general-purpose deleter of a directory a user or a future
 /// version put there.
 fn is_checkout_name(name: &str) -> bool {
-    name.len() == SHA_LEN && name.bytes().all(|b| b.is_ascii_hexdigit())
+    super::git::is_full_sha(name)
 }
 
 /// Whether any recorded source path lies inside `checkout`.

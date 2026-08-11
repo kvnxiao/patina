@@ -158,6 +158,114 @@ fn a_remote_copy_mode_directory_materializes_from_the_pinned_checkout() {
 }
 
 #[test]
+fn a_repository_with_no_remote_module_ignores_a_malformed_lockfile() {
+    // The lockfile is read lazily, only for a remote-backed module, so a repo
+    // with none must apply even when a stray patina.lock is unreadable.
+    let f = Fixture::new();
+    let module = f.module(
+        "shell",
+        "[[file]]\nsource = \"zshrc\"\ntarget = \"~/.zshrc\"\nmode = \"copy\"\n",
+    );
+    fs_err::write(module.join("zshrc").as_std_path(), "export X=1\n").expect("write source");
+    fs_err::write(
+        f.root.join("patina.lock").as_std_path(),
+        "this is not valid toml : : :\n",
+    )
+    .expect("write a corrupt lockfile");
+
+    let out = f.apply(&["--yes"]);
+    assert_eq!(
+        code(&out),
+        0,
+        "a non-remote repo must not fail on a malformed patina.lock; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        fs_err::read_to_string(f.home.join(".zshrc").as_std_path()).expect("deployed target"),
+        "export X=1\n"
+    );
+}
+
+#[test]
+fn apply_update_under_json_does_not_bump_the_lockfile() {
+    // A `--json` run is a single-document preview: `--update` must be ignored so
+    // it neither rewrites patina.lock nor prints human lines onto stdout.
+    let f = Fixture::new();
+    let origin = Origin::new(&f, "humanizer");
+    let rev = origin.commit(&[("skills/x/SKILL.md", "one\n")]);
+    f.module(
+        "humanizer",
+        &format!(
+            "[remote]\nurl = \"{}\"\nref = \"main\"\n\n\
+             [[directory]]\nsource = \"skills/x\"\ntarget = \"~/.claude/skills/x\"\nmode = \"copy\"\n",
+            origin.url()
+        ),
+    );
+    write_lock(&f, "humanizer", &origin, &rev);
+    // A newer upstream tip a producer pass would otherwise bump to.
+    origin.commit(&[("skills/x/SKILL.md", "two\n")]);
+    let before =
+        fs_err::read_to_string(f.root.join("patina.lock").as_std_path()).expect("read lock");
+
+    let out = f.apply(&["--update", "--json"]);
+
+    assert_eq!(
+        code(&out),
+        0,
+        "a json preview exits 0; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let after =
+        fs_err::read_to_string(f.root.join("patina.lock").as_std_path()).expect("read lock");
+    assert_eq!(
+        before, after,
+        "`--update` under `--json` must not rewrite patina.lock"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("ignored with `--json`"),
+        "the skip must be announced on stderr: {stderr}"
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    serde_json::from_str::<serde_json::Value>(stdout.trim())
+        .expect("stdout must be exactly one JSON document");
+}
+
+#[test]
+fn a_remote_source_that_escapes_its_checkout_is_refused() {
+    // A hostile manifest climbs out of the checkout with `..` to read host
+    // files. The resolver must refuse it before anything is deployed.
+    let f = Fixture::new();
+    let origin = Origin::new(&f, "evil");
+    let rev = origin.commit(&[("inside.txt", "ok\n")]);
+    f.module(
+        "evil",
+        &format!(
+            "[remote]\nurl = \"{}\"\nref = \"main\"\n\n\
+             [[file]]\nsource = \"../escape.txt\"\ntarget = \"~/.escaped\"\n",
+            origin.url()
+        ),
+    );
+    write_lock(&f, "evil", &origin, &rev);
+
+    let out = f.apply(&["--yes"]);
+    assert_ne!(
+        code(&out),
+        0,
+        "a source resolving outside the checkout must fail the apply"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("resolves outside its checkout"),
+        "the failure must name the escape, got: {stderr}"
+    );
+    assert!(
+        !f.home.join(".escaped").exists(),
+        "nothing may be deployed when the source escapes the checkout"
+    );
+}
+
+#[test]
 fn a_remote_symlink_entry_points_into_the_pinned_checkout() {
     let f = Fixture::new();
     let origin = Origin::new(&f, "prompts");

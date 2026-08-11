@@ -284,13 +284,20 @@ pub enum ApplyResult {
 }
 
 /// Resolve the repository, modules, profile, variables, and paths into a
-/// [`ResolvedPlan`] without mutating the filesystem.
+/// [`ResolvedPlan`].
+///
+/// Mutates no user target. A remote-backed module is the one exception to
+/// touching the filesystem at all: its pinned checkout is fetched and
+/// materialized under the state directory here, before any entry resolves, so a
+/// cold cache fails planning rather than half-way through a diff. Everything it
+/// writes stays inside `<state>/remotes/`; no managed target is touched.
 ///
 /// # Errors
 ///
 /// Returns an [`EngineError`] when repository discovery, module
 /// enumeration, manifest parsing, state-directory resolution, profile
-/// resolution, variable ingestion, or path canonicalization fails.
+/// resolution, variable ingestion, remote-checkout materialization, or path
+/// canonicalization fails.
 pub fn plan(
     request: &ApplyRequest,
     timestamp: impl Into<String>,
@@ -304,8 +311,10 @@ pub fn plan(
         mut resolver,
         engine,
         modules,
-        lockfile,
     } = build_planning_context(&request.cli_overrides)?;
+    // Loaded on the first remote-backed module only, so a repository with none
+    // never reads (or fails on) `patina.lock`.
+    let mut lockfile: Option<Lockfile> = None;
 
     // Resolve every managed entry into its canonical source/targets, kept
     // in two ordered buckets — `[[file]]` entries and `[[directory]]`
@@ -337,13 +346,16 @@ pub fn plan(
         // A remote-backed module's sources live in the checkout of its pinned
         // rev, which is fetched here, before any entry resolves, so a cold
         // cache fails planning rather than half-way through a diff.
-        let origin = module_origin(
-            module,
-            config.remote.as_ref(),
-            &state_dir,
-            &lockfile,
-            CachePolicy::Fetch,
-        )?;
+        let origin = match config.remote.as_ref() {
+            None => ModuleOrigin::local(module),
+            Some(remote) => module_origin(
+                module,
+                remote,
+                &state_dir,
+                ensure_lockfile(&mut lockfile, &repo_root)?,
+                CachePolicy::Fetch,
+            )?,
+        };
 
         for entry in &config.files {
             file_entries.push(gate_and_resolve_entry(
@@ -405,9 +417,6 @@ struct PlanningContext {
     resolver: Resolver,
     engine: Engine,
     modules: Vec<crate::discovery::ModuleHandle>,
-    /// The committed remote pins. Empty for a repository with no remote-backed
-    /// modules; read by [`module_origin`] to locate each remote's checkout.
-    lockfile: Lockfile,
 }
 
 /// Whether resolving a remote-backed module's source root may fill a cold
@@ -438,49 +447,56 @@ struct ModuleOrigin {
     /// remote-backed module whose checkout is not materialized on this machine
     /// (only reachable under [`CachePolicy::ReadOnly`]).
     source_root: Option<Utf8PathBuf>,
+    /// Whether the sources are third-party (a remote checkout). Drives the
+    /// containment check that keeps a remote entry's source from resolving
+    /// outside its checkout; a local module's own tree is trusted.
+    is_remote: bool,
 }
 
-/// Resolve the directory `module`'s entry sources are joined onto.
+impl ModuleOrigin {
+    /// The origin for an ordinary module, whose sources are its own directory.
+    fn local(module: &crate::discovery::ModuleHandle) -> Self {
+        Self {
+            name: module.name.clone(),
+            source_root: Some(module.path.clone()),
+            is_remote: false,
+        }
+    }
+}
+
+/// Resolve the checkout a remote-backed `module`'s entry sources join onto.
 ///
 /// # Errors
 ///
-/// Under [`CachePolicy::Fetch`], returns an [`EngineError`] when a
-/// remote-backed module has no lock entry (the message points at
-/// `patina remote update <name>`) or when its pinned rev is neither cached nor
-/// fetchable. That is the specced cold-cache failure, raised at plan time so
-/// nothing is partially applied.
+/// Under [`CachePolicy::Fetch`], returns an [`EngineError`] when the module has
+/// no lock entry (the message points at `patina remote update <name>`) or when
+/// its pinned rev is neither cached nor fetchable. That is the specced
+/// cold-cache failure, raised at plan time so nothing is partially applied.
 fn module_origin(
     module: &crate::discovery::ModuleHandle,
-    remote: Option<&RemoteSpec>,
+    remote: &RemoteSpec,
     state_dir: &Utf8Path,
     lockfile: &Lockfile,
     policy: CachePolicy,
 ) -> Result<ModuleOrigin, EngineError> {
-    let Some(remote) = remote else {
-        return Ok(ModuleOrigin {
-            name: module.name.clone(),
-            source_root: Some(module.path.clone()),
-        });
+    let origin = |source_root| ModuleOrigin {
+        name: module.name.clone(),
+        source_root,
+        is_remote: true,
     };
 
     let Some(pin) = lockfile.get(&module.name) else {
         if policy == CachePolicy::ReadOnly {
             // Status reports on what a prior apply left behind; an unpinned
             // remote simply manages nothing yet.
-            return Ok(ModuleOrigin {
-                name: module.name.clone(),
-                source_root: None,
-            });
+            return Ok(origin(None));
         }
         return Err(crate::remote::RemoteError::missing_lock_entry(&module.name).into());
     };
 
     if policy == CachePolicy::ReadOnly {
         let dir = remote_cache::checkout_dir(state_dir, &module.name, &pin.rev);
-        return Ok(ModuleOrigin {
-            name: module.name.clone(),
-            source_root: dir.is_dir().then_some(dir),
-        });
+        return Ok(origin(dir.is_dir().then_some(dir)));
     }
 
     let source_root = remote_cache::ensure_checkout(
@@ -491,10 +507,27 @@ fn module_origin(
         &pin.rev,
     )
     .map_err(|err| err.into_cold_cache(&module.name, &pin.rev))?;
-    Ok(ModuleOrigin {
-        name: module.name.clone(),
-        source_root: Some(source_root),
-    })
+    Ok(origin(Some(source_root)))
+}
+
+/// Return the lazily-loaded lockfile, reading `patina.lock` on first use.
+///
+/// A repository with no remote-backed module never calls this, so a stray or
+/// malformed `patina.lock` never fails a plain local apply or status.
+///
+/// # Errors
+///
+/// Returns an [`EngineError`] when the lockfile exists but cannot be read or
+/// parsed.
+fn ensure_lockfile<'a>(
+    slot: &'a mut Option<Lockfile>,
+    repo_root: &Utf8Path,
+) -> Result<&'a Lockfile, EngineError> {
+    let lockfile = match slot {
+        Some(lockfile) => lockfile,
+        None => slot.insert(Lockfile::load(&lockfile_path(repo_root))?),
+    };
+    Ok(lockfile)
 }
 
 /// Build the [`PlanningContext`] both [`plan`] and [`current_managed_targets`]
@@ -558,7 +591,6 @@ fn build_planning_context(
     }
 
     let modules = discover_modules(&repo_root)?;
-    let lockfile = Lockfile::load(&lockfile_path(&repo_root))?;
 
     Ok(PlanningContext {
         repo_root,
@@ -568,7 +600,6 @@ fn build_planning_context(
         resolver,
         engine,
         modules,
-        lockfile,
     })
 }
 
@@ -607,15 +638,16 @@ fn build_planning_context(
 /// `when` predicate evaluation fails.
 pub fn current_managed_targets() -> Result<BTreeSet<Utf8PathBuf>, EngineError> {
     let PlanningContext {
+        repo_root,
         state_dir,
         home,
         mut resolver,
         engine,
         modules,
-        lockfile,
         ..
     } = build_planning_context(&[])?;
 
+    let mut lockfile: Option<Lockfile> = None;
     let mut targets = BTreeSet::new();
     for module in &modules {
         let manifest = module.path.join(MANIFEST_FILENAME);
@@ -627,13 +659,16 @@ pub fn current_managed_targets() -> Result<BTreeSet<Utf8PathBuf>, EngineError> {
 
         // Read-only: status must not fetch. An unpinned or uncached remote
         // yields no source root, which costs only tree-mode leaf expansion.
-        let origin = module_origin(
-            module,
-            config.remote.as_ref(),
-            &state_dir,
-            &lockfile,
-            CachePolicy::ReadOnly,
-        )?;
+        let origin = match config.remote.as_ref() {
+            None => ModuleOrigin::local(module),
+            Some(remote) => module_origin(
+                module,
+                remote,
+                &state_dir,
+                ensure_lockfile(&mut lockfile, &repo_root)?,
+                CachePolicy::ReadOnly,
+            )?,
+        };
 
         for entry in config.files.iter().chain(&config.directories) {
             // `when`-false entries manage nothing this run: their
@@ -976,9 +1011,23 @@ fn resolve_entry(
     // logic slip surface as `SourceNotFound` rather than as a panic.
     let root = origin
         .source_root
-        .clone()
-        .unwrap_or_else(|| Utf8PathBuf::from("."));
+        .as_deref()
+        .unwrap_or_else(|| Utf8Path::new("."));
     let source = canonicalize(&root.join(&entry.source))?;
+    // A remote checkout is third-party: refuse a source that resolves outside
+    // it (a `..` in the declared source, or a symlink the checkout shipped),
+    // which would otherwise let a hostile remote read arbitrary host files. A
+    // local module is the user's own tree and keeps its existing latitude.
+    if origin.is_remote {
+        let checkout_root = canonicalize(root)?;
+        if !source.starts_with(&checkout_root) {
+            return Err(crate::remote::RemoteError::source_escapes_checkout(
+                &origin.name,
+                &entry.source,
+            )
+            .into());
+        }
+    }
     validate_source_kind(&source, entry.kind)?;
     let mut targets = Vec::with_capacity(entry.targets.len());
     for target in &entry.targets {
@@ -1406,8 +1455,20 @@ pub async fn execute(
         // after the commit and after the journal prune, so the reachability set
         // it reads is this run's, and disk settles at roughly the current and
         // previous rev per remote.
-        for removed in remote_cache::prune(&resolved.state_dir)? {
-            tracing::debug!(checkout = %removed, "pruned an unreferenced remote checkout");
+        match remote_cache::prune(&resolved.state_dir) {
+            Ok(removed) => {
+                for checkout in removed {
+                    tracing::debug!(checkout = %checkout, "pruned an unreferenced remote checkout");
+                }
+            }
+            // Pruning is best-effort cleanup after a durable commit, so a
+            // failure here is logged, not propagated: the apply already
+            // succeeded and rolling it back over a stale checkout would be worse
+            // than leaving the checkout on disk.
+            Err(error) => tracing::warn!(
+                %error,
+                "failed to prune unreferenced remote checkouts; the committed apply is unaffected"
+            ),
         }
         // A committed apply that actually flushed a plan and wrote a COMMIT is
         // not a no-op, even when some targets were `Unchanged`: the full-no-op

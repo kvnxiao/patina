@@ -583,7 +583,9 @@ pub fn compute_findings(inputs: &Inputs) -> Vec<Finding> {
         findings.push(Finding {
             code: FindingCode::NoGit,
             level: Level::Warning,
-            message: "the repository declares remote-backed modules but no `git`                       binary resolves on PATH; patina fetches remote sources by                       shelling out to git, so `apply` cannot materialize a pin                       that is not already cached."
+            message: "the repository declares remote-backed modules but no `git` binary \
+                      resolves on PATH; patina fetches remote sources by shelling out to \
+                      git, so `apply` cannot materialize a pin that is not already cached."
                 .to_owned(),
             path: None,
         });

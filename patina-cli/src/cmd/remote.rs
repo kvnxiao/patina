@@ -222,13 +222,22 @@ fn run_check(
         return ExitCode::Success.code();
     }
 
+    // A remote that could not be reached is a failed check, not a clean one, so
+    // a script can tell "nothing pending" from "checked nothing". Matches the
+    // exit `patina remote update` returns for the same failure.
+    let exit = if failures.is_empty() {
+        ExitCode::Success
+    } else {
+        ExitCode::Generic
+    };
+
     if json {
         reporter.json(&document(&serde_json::json!({
             "pending": behind,
             "repo_behind": repo_behind,
             "failed": failures,
         })));
-        return ExitCode::Success.code();
+        return exit.code();
     }
 
     for failure in &failures {
@@ -238,7 +247,7 @@ fn run_check(
         Some(text) => reporter.line(text.trim_end()),
         None => reporter.line("Every remote is at its pinned rev."),
     }
-    ExitCode::Success.code()
+    exit.code()
 }
 
 /// The parsed `patina remote update` flags, grouped so the runner does not take
@@ -387,7 +396,7 @@ fn settle(
         }
         GateOutcome::RejectedFuture { .. } => {
             reporter.warn(&format!(
-                "{}: refusing {} — its committer time is more than an hour ahead of this \
+                "{}: refusing {} because its committer time is more than an hour ahead of this \
                  machine's clock",
                 proposal.module, proposal.candidate_rev
             ));

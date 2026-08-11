@@ -66,6 +66,18 @@ impl RemoteError {
         .into()
     }
 
+    /// The plan-time failure for a remote entry whose source resolves outside
+    /// its checkout (a `..` in the declared source, or a symlink the checkout
+    /// shipped).
+    #[must_use = "the error names the source that escaped its checkout"]
+    pub fn source_escapes_checkout(module: &str, source: &Utf8Path) -> Self {
+        RemoteRepr::SourceEscapesCheckout {
+            module: module.to_owned(),
+            declared_source: source.to_path_buf(),
+        }
+        .into()
+    }
+
     /// Restate a fetch failure as the cold-cache failure, naming the module and
     /// the rev this machine could not materialize.
     ///
@@ -162,6 +174,18 @@ pub(crate) enum RemoteRepr {
         module: String,
         /// The offending value.
         value: String,
+    },
+
+    /// A remote entry's source resolved outside its checkout directory.
+    #[error(
+        "the remote-backed module `{module}` declares a source (`{declared_source}`) that \
+         resolves outside its checkout; a remote may supply only bytes from within its own tree"
+    )]
+    SourceEscapesCheckout {
+        /// The remote-backed module whose entry escaped.
+        module: String,
+        /// The declared source that resolved outside the checkout.
+        declared_source: Utf8PathBuf,
     },
 
     /// A remote-backed module has no pin, so there is nothing for `apply` to

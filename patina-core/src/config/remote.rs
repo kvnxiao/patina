@@ -40,6 +40,19 @@ pub enum RemoteConfigError {
     #[error("[remote] declares an empty `url`; a remote-backed module needs a git URL to fetch")]
     EmptyUrl,
 
+    /// A `url` or `ref` began with `-`, which git would parse as an option
+    /// rather than a positional argument.
+    #[error(
+        "[remote] `{key}` may not begin with `-` (`{value}`); git would read a leading dash as \
+         an option, so a manifest could smuggle flags like `--upload-pack` into a fetch"
+    )]
+    LeadingDash {
+        /// The key that carried the offending value (`url` or `ref`).
+        key: &'static str,
+        /// The offending value as written.
+        value: String,
+    },
+
     /// A duration string did not match the accepted shorthand.
     #[error(
         "invalid duration `{value}` for `{key}`; write a whole number followed by one of \
@@ -60,6 +73,11 @@ impl RemoteSpec {
         if url.is_empty() {
             return Err(RemoteConfigError::EmptyUrl);
         }
+        reject_leading_dash("url", &url)?;
+        let git_ref = raw.git_ref.filter(|r| !r.trim().is_empty());
+        if let Some(git_ref) = &git_ref {
+            reject_leading_dash("ref", git_ref.trim())?;
+        }
         let min_age = raw
             .min_age
             .as_deref()
@@ -67,10 +85,26 @@ impl RemoteSpec {
             .transpose()?;
         Ok(Self {
             url,
-            git_ref: raw.git_ref.filter(|r| !r.trim().is_empty()),
+            git_ref,
             min_age,
         })
     }
+}
+
+/// Reject a `url` or `ref` that begins with `-`.
+///
+/// Every git call passes these as bare positionals, so a value like
+/// `--upload-pack=...` would be parsed as an option and could run an arbitrary
+/// program. A real URL or ref never starts with a dash, so refusing one closes
+/// the injection without a false positive.
+fn reject_leading_dash(key: &'static str, value: &str) -> Result<(), RemoteConfigError> {
+    if value.starts_with('-') {
+        return Err(RemoteConfigError::LeadingDash {
+            key,
+            value: value.to_owned(),
+        });
+    }
+    Ok(())
 }
 
 /// Parse a `<whole number><unit>` duration, where the unit is one of `s`, `m`,
@@ -228,6 +262,32 @@ mod tests {
         assert!(matches!(
             raw.validate().expect_err("blank url"),
             RemoteConfigError::EmptyUrl
+        ));
+    }
+
+    #[test]
+    fn a_url_beginning_with_a_dash_is_rejected() {
+        let raw = RawRemote {
+            url: "--upload-pack=touch /tmp/pwn".to_owned(),
+            git_ref: Some("main".to_owned()),
+            min_age: None,
+        };
+        assert!(matches!(
+            raw.validate().expect_err("a dash-led url must be rejected"),
+            RemoteConfigError::LeadingDash { key: "url", .. }
+        ));
+    }
+
+    #[test]
+    fn a_ref_beginning_with_a_dash_is_rejected() {
+        let raw = RawRemote {
+            url: "https://example.invalid/r".to_owned(),
+            git_ref: Some("--output=/etc/cron.d/x".to_owned()),
+            min_age: None,
+        };
+        assert!(matches!(
+            raw.validate().expect_err("a dash-led ref must be rejected"),
+            RemoteConfigError::LeadingDash { key: "ref", .. }
         ));
     }
 
