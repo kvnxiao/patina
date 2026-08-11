@@ -164,7 +164,7 @@ struct StakedTarget<'a> {
 /// it.
 fn comparison_key(target: &Utf8Path) -> Utf8PathBuf {
     let Some(leaf) = target.file_name() else {
-        return case_fold(target.to_path_buf());
+        return case_fold(target);
     };
     // The leaf rides along as a to-be-appended component from the start, so only
     // the parent chain (real directories) is ever resolved through the
@@ -172,7 +172,7 @@ fn comparison_key(target: &Utf8Path) -> Utf8PathBuf {
     let mut missing: Vec<&str> = vec![leaf];
     let mut cursor = match target.parent() {
         Some(parent) if !parent.as_str().is_empty() => parent,
-        _ => return case_fold(target.to_path_buf()),
+        _ => return case_fold(target),
     };
     loop {
         if cursor.exists() {
@@ -181,7 +181,7 @@ fn comparison_key(target: &Utf8Path) -> Utf8PathBuf {
             for component in missing.iter().rev() {
                 key.push(component);
             }
-            return case_fold(key);
+            return case_fold(&key);
         }
         match (cursor.parent(), cursor.file_name()) {
             (Some(parent), Some(name)) if !parent.as_str().is_empty() => {
@@ -190,25 +190,35 @@ fn comparison_key(target: &Utf8Path) -> Utf8PathBuf {
             }
             // Nothing on the path exists, so there is nothing to anchor on and
             // every component is already in its lexical spelling.
-            _ => return case_fold(target.to_path_buf()),
+            _ => return case_fold(target),
         }
     }
 }
 
-/// Fold the comparison key to lowercase on case-insensitive filesystems.
+/// Fold the comparison key to lowercase, on every host.
 ///
 /// Windows (NTFS) and the default macOS filesystem compare paths without regard
-/// to case, so two targets differing only in case name the same file and the
-/// second would silently overwrite the first. Folding the key there makes the
-/// duplicate detectable. A case-sensitive volume on those systems risks a false
-/// collision instead, but that is a plan-time error the user can rename around,
-/// which is the safe direction to err against silent data loss.
-fn case_fold(key: Utf8PathBuf) -> Utf8PathBuf {
-    if cfg!(any(target_os = "windows", target_os = "macos")) {
-        Utf8PathBuf::from(key.as_str().to_lowercase())
-    } else {
-        key
-    }
+/// to case, so two targets differing only in case name one file and the second
+/// would silently overwrite the first. Linux compares case-sensitively, so the
+/// same pair is two files there.
+///
+/// Folding only where the host needs it would make the verdict a property of
+/// the machine: one manifest would plan clean on Linux and fail on the user's
+/// laptop. Folding everywhere keeps the answer a property of the manifest,
+/// which is what a multi-machine source of truth has to guarantee.
+///
+/// The cost is a false collision between two targets that differ only in case
+/// and would coexist on Linux. That is a plan-time error the user renames
+/// around, which is the safe direction to err against silent data loss, and it
+/// is now reported identically on all three platforms. Deciding by host rather
+/// than by volume would misjudge a case-sensitive volume on macOS or Windows
+/// anyway.
+///
+/// This is a comparison key only. Targets are created on disk in the case the
+/// author wrote, since the programs that read them are case-sensitive about
+/// their own config paths.
+fn case_fold(key: &Utf8Path) -> Utf8PathBuf {
+    Utf8PathBuf::from(key.as_str().to_lowercase())
 }
 
 /// Reject two claims resolving to the same target.
@@ -477,32 +487,31 @@ mod tests {
         );
     }
 
-    #[cfg(any(target_os = "windows", target_os = "macos"))]
     #[test]
-    fn case_only_targets_collide_on_a_case_insensitive_host() {
-        // The two names differ only in case under a directory that does not yet
-        // exist, so both resolve to one file at apply time and the second would
-        // silently overwrite the first.
+    fn case_only_targets_collide_on_every_host() {
+        // On Windows and macOS both names are one file, so the second would
+        // silently overwrite the first. On Linux they are two files, and the
+        // collision is reported anyway so that one manifest gets one verdict
+        // everywhere.
         let a = targets(&["/home/u/.config/app/config.toml"]);
         let b = targets(&["/home/u/.config/app/Config.toml"]);
         let claims = [
             claim("m", "config.toml", FileMode::Symlink, &a),
             claim("n", "Config.toml", FileMode::Copy, &b),
         ];
-        validate_targets(&claims)
-            .expect_err("case-only-differing targets collide on a case-insensitive filesystem");
+        validate_targets(&claims).expect_err("case-only-differing targets must collide");
     }
 
-    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     #[test]
-    fn case_only_targets_are_distinct_on_a_case_sensitive_host() {
-        let a = targets(&["/home/u/.config/app/config.toml"]);
-        let b = targets(&["/home/u/.config/app/Config.toml"]);
+    fn a_directory_entry_contains_a_target_spelled_in_another_case() {
+        let outer = targets(&["/home/u/.config/App"]);
+        let inner = targets(&["/home/u/.config/app/init.lua"]);
         let claims = [
-            claim("m", "config.toml", FileMode::Symlink, &a),
-            claim("n", "Config.toml", FileMode::Copy, &b),
+            claim("m", "App", FileMode::SymlinkDir, &outer),
+            claim("n", "init.lua", FileMode::Symlink, &inner),
         ];
-        validate_targets(&claims).expect("case is significant on a case-sensitive filesystem");
+        validate_targets(&claims)
+            .expect_err("containment must ignore case, like the same-target check");
     }
 
     #[test]
