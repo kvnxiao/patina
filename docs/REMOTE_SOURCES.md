@@ -8,10 +8,11 @@ current for you: a third-party skill or prompt library you want
 deployed like a dotfile without hand-copying it on every upstream
 change.
 
-This page describes the remote model end to end: how a module declares
-a remote, where the content is cached, how updates are gated against
-supply-chain risk, and how several machines share one deterministic
-view of it all through a committed lockfile.
+This page describes the remote model end to end: how the root manifest
+declares a remote, how an entry selects one, where the content is
+cached, how updates are gated against supply-chain risk, and how
+several machines share one deterministic view of it all through a
+committed lockfile.
 
 ## Local sources
 
@@ -19,49 +20,78 @@ A local source is what `[[file]]` and `[[directory]]` entries declare
 everywhere else in these docs: a path relative to the module directory,
 materialized as a symlink, rendered template, or byte copy. See
 `docs/USER_GUIDE.md` "Declaring dotfiles" for the entry kinds and
-modes. Everything on this page is additive; a repository with no remote
-modules behaves exactly as before.
+modes. Everything on this page is additive; a repository that declares
+no remotes behaves exactly as before.
 
-## Remote-backed modules
+## The remote registry
 
-A module becomes remote-backed by carrying a `[remote]` table in its
-`patina.toml`. Every entry source in that module then resolves against
-a cached checkout of the remote repository instead of the module
-directory:
+Every remote is declared once, in the root `patina.toml`, as a
+`[[remote]]` table:
 
 ```toml
-# humanizer/patina.toml — a remote-backed module
-[remote]
-url = "https://github.com/blader/humanizer"
-ref = "main"          # optional; defaults to the remote's default branch
-min_age = "0s"        # optional; overrides the global update gate
+# patina.toml (root)
+[patina]
+root = true
+remote_min_age = "72h"   # optional; the shipped default for the update gate
 
-[[directory]]
-source = "skills/humanizer"          # path inside the remote repository
-target = "~/.claude/skills/humanizer"
-mode = "copy"
+[[remote]]
+url = "https://github.com/blader/humanizer"
+ref = "main"             # optional; defaults to the remote's default branch
+min_age = "0s"           # optional; overrides remote_min_age for this remote
+# name = "humanizer"     # optional; derived from the URL
 ```
 
-Selecting a subset of the remote is nothing new: you declare entries
-for exactly the files and directories you want, and the rest of the
+A remote's **name** is what entries refer to it by, and what keys its
+pin in the lockfile, its directory in the cache, and every
+`patina remote` verb. Write `name` outright, or let Patina take it from
+the last path segment of the URL with any trailing `.git` removed —
+which gives `humanizer` for all of
+`https://github.com/blader/humanizer.git`,
+`git@github.com:blader/humanizer`, and `/srv/mirrors/humanizer.git`. A
+name may contain letters, digits, `.`, `_`, and `-`, because it becomes
+a directory name; a URL with no legal last segment is refused with a
+message telling you to write `name`. Two remotes may not answer to one
+name, compared ignoring case so a manifest cannot mean two things on
+Linux and one thing on macOS.
+
+Durations accept `s`, `m`, `h`, and `d` suffixes (`"0s"`, `"30m"`,
+`"72h"`, `"7d"`).
+
+## Selecting a remote from an entry
+
+A managed entry sources from a declared remote by naming it:
+
+```toml
+# agent-configs/patina.toml
+[[file]]
+source = "shared/AGENTS.md"          # no `remote` key: this module's own tree
+target = "~/.claude/CLAUDE.md"
+
+[[file]]
+source = "SKILL.md"                  # a path inside the humanizer checkout
+remote = "humanizer"
+target = "~/.claude/skills/humanizer/SKILL.md"
+```
+
+An entry with no `remote` key resolves its source against its module
+directory, exactly as before. An entry with one resolves against the
+cached checkout of that remote's pinned rev, so its module directory
+contributes only the manifest line. The two live side by side in one
+manifest, and one manifest may draw on several remotes.
+
+Selecting a subset of a remote is nothing new: you declare entries for
+exactly the files and directories you want, and the rest of the
 repository never leaves the cache. All the existing entry machinery
 works unchanged: `mode`, `when`, `target` / `targets`, module
 `[variables]`, and `[[hook]]` entries you author yourself.
 
-One module maps to one remote. To consume two repositories, declare
-two modules. The module name doubles as the remote's name in the
-lockfile and the cache.
+Naming a remote no `[[remote]]` table declares is an error at plan
+time, before anything is written.
 
-The global default for the update gate lives in the root manifest:
-
-```toml
-# patina.toml (root)
-[remotes]
-min_age = "72h"       # the shipped default when the table is absent
-```
-
-Durations accept `s`, `m`, `h`, and `d` suffixes (`"0s"`, `"30m"`,
-`"72h"`, `"7d"`).
+A module manifest may not declare a remote of its own. Patina rejects a
+module-level `[remote]` table by name rather than ignoring it, because
+ignoring it would silently resolve that module's entries against the
+module directory.
 
 ## Trust boundaries
 
@@ -70,10 +100,11 @@ Remote content is third-party input, and Patina holds these lines:
 - Patina never reads configuration out of a checkout. A `patina.toml`
   inside the remote repository is inert bytes. Mappings, hooks, and
   variables come only from manifests in your own repository.
-- Remote sources are never templates. A `.tmpl` suffix on a remote
-  source gets no implicit render; the file is plain bytes under the
-  declared mode. Third-party files full of `{{ }}` would otherwise
-  explode under strict-undefined rendering, or worse, render.
+- Remote sources are never templates. A `.tmpl` suffix on an entry that
+  names a remote gets no implicit render; the file is plain bytes under
+  the declared mode. Third-party files full of `{{ }}` would otherwise
+  explode under strict-undefined rendering, or worse, render. The rule
+  is per entry, so a local `.tmpl` still renders in the same manifest.
 - A remote source may supply only bytes from within its own checkout.
   An entry whose source resolves outside the checkout, whether through
   a `..` in the declared source or a symbolic link the checkout ships,
@@ -112,9 +143,23 @@ updated_at = "2026-08-11T14:00:00Z"
   It is written only by `patina remote update` and rides the same
   commit as the `rev` change, so the lockfile never needs a commit of
   its own. Its sole consumer is the update gate's backdating check.
-- A remote-backed module with no lock entry is an error at plan time;
+- An entry naming a remote with no lock entry is an error at plan time;
   the message points at `patina remote update <name>` to create the
   first pin.
+
+The lockfile is a statement about the root manifest's declarations, not
+about what this machine happens to use. Two consequences follow.
+`patina remote update` with no argument covers **every** declaration,
+including one no entry currently names, so the committed lock stays
+complete for machines whose active entries differ from yours. And a pin
+whose `[[remote]]` you deleted is stale by definition: a `patina apply`
+that may write drops it and says so. A preview — a non-interactive
+apply without `--yes`, or any `--json` run — reports the stale pin and
+leaves the file alone, keeping its zero-writes contract.
+
+Reading `patina.lock` is itself lazy: it happens on the first entry
+that selects a remote, so a repository that uses none never reads (or
+fails on) a stray lockfile.
 
 ## The remote cache
 
@@ -124,12 +169,17 @@ repository:
 ```
 <state>/remotes/
 ├── notice                       plain-text pending-update notice
-├── pending                      the same, one module name per line
+├── pending                      the same, one remote name per line
 ├── last_check                   background-check throttle stamp
-└── <module>/
+└── <remote name>/
     ├── repo.git/                bare fetch repository
     └── <sha>/                   immutable checkout, one per pinned rev
 ```
+
+A checkout is materialized on demand: the first entry that actually
+selects a remote on this machine fetches it, and a remote only a
+`when`-false entry names is never fetched at all. Pins are global,
+checkouts are local.
 
 Git runs as a subprocess (`git` on `PATH`, verified by
 `patina doctor`), so your existing authentication (SSH agent,
@@ -151,7 +201,10 @@ is a post-1.0 item.
 After each successful apply, checkouts that no journal record on disk
 references are pruned automatically: rollback always has what it
 needs, and disk stays bounded at roughly the current and previous rev
-per remote. `patina remote prune` runs the same sweep by hand.
+per remote. `patina remote prune` runs the same sweep by hand, and
+additionally removes the whole cache directory — bare repository
+included — of any remote the root manifest no longer declares, once no
+journal record points into it.
 
 ## Commands
 
@@ -159,12 +212,12 @@ The verbs split along a producer/consumer line:
 
 | Command                      | Role     | Purpose                                                                 |
 | ---------------------------- | -------- | ----------------------------------------------------------------------- |
-| `patina apply`               | consumer | Converge this machine to the committed lock. Fetches any pinned rev missing from the cache (by exact SHA, no gate), then the normal diff-and-prompt. |
-| `patina remote update [name]`| producer | Fetch upstream, run the update gate, and bump `rev` / `updated_at` in the working-tree lockfile for you to review and commit. Touches no targets. |
+| `patina apply`               | consumer | Converge this machine to the committed lock. Fetches any pinned rev an active entry needs and the cache lacks (by exact SHA, no gate), then the normal diff-and-prompt. |
+| `patina remote update [name]`| producer | Fetch upstream, run the update gate, and bump `rev` / `updated_at` in the working-tree lockfile for you to review and commit. With no name, covers every declaration. Touches no targets. |
 | `patina apply --update`      | producer | `remote update` for every remote, then apply, in one sitting. Runs only when the apply may mutate: it is skipped (with a note) on a preview, meaning a non-interactive apply without `--yes`, or any `--json` run. It never auto-accepts a gate concern, even under `--yes`. |
-| `patina remote list`         | either   | Each remote's URL, ref, pinned rev, and pending-update state. Read-only. |
+| `patina remote list`         | either   | Each declared remote's URL, ref, pinned rev, and pending-update state. Read-only. |
 | `patina remote check`        | either   | `git ls-remote` only: compare upstream tips against the lock, refresh the notice file. No object download. Exits non-zero if any remote could not be reached. |
-| `patina remote prune`        | either   | Remove cached checkouts unreferenced by any journal record.              |
+| `patina remote prune`        | either   | Remove cached checkouts unreferenced by any journal record, plus the cache tree of any undeclared remote. |
 
 Failure shapes worth knowing:
 
@@ -200,8 +253,8 @@ must clear four checks, evaluated after fetching it:
    maintainer fast-forwarding a long-lived branch whose commits carry
    old committer dates.
 4. **Age gate.** The tip's committer time must be at least `min_age`
-   old (per-remote override, else the `[remotes]` global, else 72
-   hours).
+   old (the remote's own override, else `[patina] remote_min_age`, else
+   72 hours).
 
 The first pin of a newly declared remote is exempt from the age gate:
 adopting a remote is a deliberate act whose content you are about to
@@ -312,9 +365,9 @@ instead, since the pending changes are already decided and gated.
 ## Target collision validation
 
 Remote trees multiply a risk that always existed: two entries
-resolving to the same target, or a directory-mode entry silently
-planting files over another entry's target. An upstream repository
-can grow files you never anticipated into a tree you deploy.
+resolving to the same target, or an entry silently planting files over
+another entry's target. An upstream repository can grow files you never
+anticipated into a tree you deploy.
 
 Patina validates the plan before showing a diff, over the active
 entry set. Validation runs after `when` filtering, so two entries
@@ -322,11 +375,27 @@ targeting the same path under mutually exclusive `when` guards are legal:
 
 - Two active entries resolving to the same canonical target is an
   error.
-- An active directory-mode entry whose target contains another active
-  entry's target is an error.
+- An active `[[directory]]` `mode = "symlink"` entry whose target
+  contains another active entry's target is an error.
 
-Both apply equally to local and remote entries, and both fail the run
-before anything is written.
+Both apply equally to local and remote-sourced entries, and both fail
+the run before anything is written.
+
+Only a whole-directory `symlink` owns everything under its target,
+because it is the one mode that replaces the target path with a single
+object. A `symlink-tree` or `copy` `[[directory]]` materializes one
+object per source leaf and journals each leaf as its own target, so it
+claims those leaves and nothing between them. Another entry may
+therefore deploy into a part of the same directory the tree does not
+fill — which is what makes "add one upstream file to a directory my
+repository also populates" expressible — while two entries writing one
+leaf is still refused, naming the leaf and the directory target it came
+from.
+
+The leaves are read from the source tree as it stands, so the verdict
+depends on what the source currently holds: a file appearing upstream
+under a tree source can newly fail a plan. That failure lands before
+any write, which is what a tree growing an unexpected file should do.
 
 Both comparisons ignore case and Unicode normal form, on every
 platform. Windows and macOS resolve two targets differing only in case

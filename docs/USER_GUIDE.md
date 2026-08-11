@@ -420,21 +420,33 @@ Resolve a drifted target either way:
 
 ## Remote sources
 
-A module can draw its sources from someone else's git repository instead
-of from your own. Give it a `[remote]` table and every entry source in
-that module resolves against a pinned checkout of that repository:
+An entry can draw its source from someone else's git repository instead
+of from your own. Declare the repository once in your root manifest, then
+name it from any entry that wants its bytes:
 
 ```toml
-# humanizer/patina.toml
-[remote]
+# patina.toml (root)
+[[remote]]
 url = "https://github.com/blader/humanizer"
 ref = "main"          # optional; defaults to the remote's default branch
-
-[[directory]]
-source = "skills/humanizer"          # a path inside the remote repository
-target = "~/.claude/skills/humanizer"
-mode = "copy"
+# name = "humanizer"  # optional; taken from the URL's last segment
 ```
+
+```toml
+# agent-configs/patina.toml
+[[file]]
+source = "shared/AGENTS.md"          # no `remote`: this module's own tree
+target = "~/.claude/CLAUDE.md"
+
+[[file]]
+source = "SKILL.md"                  # a path inside the humanizer checkout
+remote = "humanizer"
+target = "~/.claude/skills/humanizer/SKILL.md"
+```
+
+Entries with and without a `remote` key sit side by side in one manifest,
+and one manifest may draw on several remotes. An entry with no `remote`
+key resolves against its module directory exactly as it always has.
 
 The commit each machine materializes lives in `patina.lock`, next to
 your root `patina.toml`, and is committed like any other file. That is

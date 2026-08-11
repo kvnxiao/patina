@@ -25,7 +25,7 @@ V1.0 is considered complete when a user can:
 - **Recover** — `patina status` reports drift; `patina rollback` restores pre-apply state; `patina debug journal` decodes the binary journal post-mortem.
 - **Bootstrap** — `init`, `add`, `remove`, `promote`, `doctor` cover repo setup and migration; Windows symlink elevation via Developer Mode or UAC.
 - **Watch** — background service reapplies on source changes; surfaces files modified outside Patina.
-- **Consume remote sources** — a module with a `[remote]` table deploys a pinned checkout of someone else's git repository; `patina.lock` is the committed statement every machine converges to, and `patina remote list` / `check` / `update` / `prune` manage it. Normative spec: `docs/REMOTE_SOURCES.md`.
+- **Consume remote sources** — the root manifest declares each third-party git repository as a `[[remote]]`, and any entry deploys from a pinned checkout of one with `remote = "<name>"`; `patina.lock` is the committed statement every machine converges to, and `patina remote list` / `check` / `update` / `prune` manage it. Normative spec: `docs/REMOTE_SOURCES.md`.
 
 ### Quality bar
 
@@ -36,7 +36,7 @@ V1.0 is considered complete when a user can:
 - **Deterministic stdout.** Two consecutive `apply`s against unchanged source produce byte-identical output. No timestamps, PIDs, or random IDs (`--json` included).
 - **Cross-platform parity.** macOS, Linux, Windows are first-class. Two-of-three is not done.
 - **Third-party content is never trusted.** A remote checkout supplies bytes only: its `patina.toml` is never read, its `.tmpl` files are never rendered, and every byte still passes the consent diff. Pin bumps are gated (`docs/REMOTE_SOURCES.md` "The update gate"), with an honest statement of what the gate cannot stop.
-- **No two entries fight over a target.** Plan-time validation rejects duplicate canonical targets and a directory-mode target that contains another entry's target, before any diff is shown.
+- **No two entries fight over a target.** Plan-time validation rejects duplicate canonical targets and a whole-directory `symlink` target that contains another entry's target, before any diff is shown. A tree-mode entry claims the leaves it materializes, not the whole directory.
 - **No panics; tests gate truth.**
 
 ### Non-goals

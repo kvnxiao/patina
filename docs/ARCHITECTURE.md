@@ -107,23 +107,28 @@ human-readable form for post-mortem inspection.
 
 ## Remote cache
 
-A module carrying a `[remote]` table resolves its entry sources against a
-checkout of another repository rather than against its own directory. The
-subsystem is four small pieces under `patina-core/src/remote/`:
+The root manifest declares each remote once as a `[[remote]]` table; a
+managed entry naming one resolves its source against a checkout of that
+repository rather than against its own module directory. Pins are global
+and checkouts are local: the planner's remote registry reads the lockfile
+on the first entry that selects any remote, materializes a checkout on
+the first entry that selects that one, and memoizes both, so a remote no
+active entry names costs neither a read nor a fetch. The subsystem is
+four small pieces under `patina-core/src/remote/`:
 
 - The **`git`** module wraps the `git` binary on `PATH` via
   `std::process::Command`. Patina links no git library, so a user's SSH
   agent, credential helpers, and `insteadOf` rewrites apply untouched. The
   layer captures `stderr` into typed errors and prints nothing itself.
 - The **`cache`** module owns the layout under `<state>/remotes/`: one bare
-  fetch repository per module plus one immutable directory per pinned rev.
+  fetch repository per remote plus one immutable directory per pinned rev.
   A checkout is written into a `<sha>.partial` sibling and renamed into
   place, so a directory's existence means it is complete. Because a new rev
   gets a *new* directory, an update never mutates content under a live
   symbolic link. Apply re-points the link through the ordinary journaled
   flow, and rollback can re-point it back.
 - The **`lockfile`** module reads and writes `patina.lock`. Rendering is
-  deterministic (module-name order, fixed field order), so re-writing
+  deterministic (remote-name order, fixed field order), so re-writing
   unchanged pins produces identical bytes.
 - The **`gate`** module is a pure function deciding whether a candidate tip
   may become a pin, so every branch is unit-testable without a clock, a
