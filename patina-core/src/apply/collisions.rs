@@ -121,25 +121,80 @@ enum CollisionRepr {
 /// canonical target, or the first directory-mode target that contains another
 /// claim's target.
 pub fn validate_targets(claims: &[TargetClaim<'_>]) -> Result<(), CollisionError> {
-    reject_duplicate_targets(claims)?;
-    reject_contained_targets(claims)
+    let staked: Vec<StakedTarget<'_>> = claims
+        .iter()
+        .flat_map(|claim| {
+            claim.targets.iter().map(move |target| StakedTarget {
+                claim: *claim,
+                target,
+                key: comparison_key(target),
+            })
+        })
+        .collect();
+    reject_duplicate_targets(&staked)?;
+    reject_contained_targets(&staked)
 }
 
-/// Reject two claims resolving to the same canonical target.
-fn reject_duplicate_targets(claims: &[TargetClaim<'_>]) -> Result<(), CollisionError> {
-    let mut seen: BTreeMap<&Utf8Path, TargetClaim<'_>> = BTreeMap::new();
-    for claim in claims {
-        for target in claim.targets {
-            if let Some(first) = seen.insert(target.as_path(), *claim) {
-                return Err(CollisionRepr::SameTarget {
-                    target: target.clone(),
-                    first_module: first.module.to_owned(),
-                    first_source: first.source.to_path_buf(),
-                    second_module: claim.module.to_owned(),
-                    second_source: claim.source.to_path_buf(),
-                }
-                .into());
+/// One target of one claim, with the key the comparisons use.
+struct StakedTarget<'a> {
+    claim: TargetClaim<'a>,
+    target: &'a Utf8Path,
+    key: Utf8PathBuf,
+}
+
+/// Re-spell `target` so two paths under the same chain of not-yet-created
+/// directories compare against each other correctly.
+///
+/// [`resolve_location`](crate::paths::resolve_location) canonicalizes as much
+/// of the parent chain as exists on disk, so how much of a resolved target is
+/// canonical depends on how deep the missing directories start. Given
+/// `~/.claude/skills` and `~/.claude/skills/note.md` where neither `.claude`
+/// nor `skills` exists yet, the first comes back with `$HOME` canonicalized and
+/// the second stays lexical from `$HOME` down. On a host where `$HOME` is
+/// reached through a symbolic link (macOS `/var` to `/private/var`) or has a
+/// short name (Windows 8.3), those two spellings differ and the containment
+/// between them would go unnoticed.
+///
+/// Anchoring both on the deepest ancestor that does exist puts every target in
+/// one spelling. The key is for comparison only; errors report the target as
+/// the planner resolved it.
+fn comparison_key(target: &Utf8Path) -> Utf8PathBuf {
+    let mut missing: Vec<&str> = Vec::new();
+    let mut cursor = target;
+    loop {
+        if cursor.exists() {
+            let mut key = crate::paths::canonicalize(cursor)
+                .unwrap_or_else(|_uncanonicalizable| cursor.to_path_buf());
+            for component in missing.iter().rev() {
+                key.push(component);
             }
+            return key;
+        }
+        match (cursor.parent(), cursor.file_name()) {
+            (Some(parent), Some(name)) if !parent.as_str().is_empty() => {
+                missing.push(name);
+                cursor = parent;
+            }
+            // Nothing on the path exists, so there is nothing to anchor on and
+            // every target is already in its lexical spelling.
+            _ => return target.to_path_buf(),
+        }
+    }
+}
+
+/// Reject two claims resolving to the same target.
+fn reject_duplicate_targets(staked: &[StakedTarget<'_>]) -> Result<(), CollisionError> {
+    let mut seen: BTreeMap<&Utf8Path, &StakedTarget<'_>> = BTreeMap::new();
+    for stake in staked {
+        if let Some(first) = seen.insert(stake.key.as_path(), stake) {
+            return Err(CollisionRepr::SameTarget {
+                target: stake.target.to_path_buf(),
+                first_module: first.claim.module.to_owned(),
+                first_source: first.claim.source.to_path_buf(),
+                second_module: stake.claim.module.to_owned(),
+                second_source: stake.claim.source.to_path_buf(),
+            }
+            .into());
         }
     }
     Ok(())
@@ -148,29 +203,25 @@ fn reject_duplicate_targets(claims: &[TargetClaim<'_>]) -> Result<(), CollisionE
 /// Reject a directory-mode target that strictly contains another claim's
 /// target.
 ///
-/// Runs after [`reject_duplicate_targets`], so no two targets in `claims` are
-/// equal by the time this walk starts; a `starts_with` hit is therefore always
-/// a strict-descendant relation. The equality guard is kept anyway so the
-/// function is correct read on its own.
-fn reject_contained_targets(claims: &[TargetClaim<'_>]) -> Result<(), CollisionError> {
-    for outer in claims.iter().filter(|claim| claim.owns_a_directory()) {
-        for outer_target in outer.targets {
-            for inner in claims {
-                for inner_target in inner.targets {
-                    if inner_target == outer_target || !inner_target.starts_with(outer_target) {
-                        continue;
-                    }
-                    return Err(CollisionRepr::ContainedTarget {
-                        outer_module: outer.module.to_owned(),
-                        outer_source: outer.source.to_path_buf(),
-                        outer_target: outer_target.clone(),
-                        inner_module: inner.module.to_owned(),
-                        inner_source: inner.source.to_path_buf(),
-                        inner_target: inner_target.clone(),
-                    }
-                    .into());
-                }
+/// Runs after [`reject_duplicate_targets`], so no two keys are equal by the
+/// time this walk starts; a `starts_with` hit is therefore always a
+/// strict-descendant relation. The equality guard is kept anyway so the
+/// function reads correctly on its own.
+fn reject_contained_targets(staked: &[StakedTarget<'_>]) -> Result<(), CollisionError> {
+    for outer in staked.iter().filter(|stake| stake.claim.owns_a_directory()) {
+        for inner in staked {
+            if inner.key == outer.key || !inner.key.starts_with(&outer.key) {
+                continue;
             }
+            return Err(CollisionRepr::ContainedTarget {
+                outer_module: outer.claim.module.to_owned(),
+                outer_source: outer.claim.source.to_path_buf(),
+                outer_target: outer.target.to_path_buf(),
+                inner_module: inner.claim.module.to_owned(),
+                inner_source: inner.claim.source.to_path_buf(),
+                inner_target: inner.target.to_path_buf(),
+            }
+            .into());
         }
     }
     Ok(())
@@ -179,6 +230,7 @@ fn reject_contained_targets(claims: &[TargetClaim<'_>]) -> Result<(), CollisionE
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::TempDir;
 
     /// Build a claim over string literals. Targets are already-canonical
     /// absolute paths in production; the tests use POSIX-shaped absolutes,
@@ -319,6 +371,43 @@ mod tests {
         let fan_out = targets(&["/home/u/d", "/home/u/d/inner"]);
         let claims = [claim("m", "d", FileMode::CopyTree, &fan_out)];
         validate_targets(&claims).expect_err("a self-contained fan-out collides");
+    }
+
+    #[test]
+    fn containment_is_found_when_the_two_targets_are_spelled_differently() {
+        // The planner resolves a target by canonicalizing as much of its parent
+        // chain as exists, so a deeper target under the same missing directories
+        // can come back in a different spelling than its shallower neighbour.
+        // That is what happens on a host where `$HOME` is behind a symbolic link
+        // (macOS `/var` to `/private/var`) or carries an 8.3 short name.
+        // A `..` hop stands in for the divergence, since `Path::components`
+        // preserves it while canonicalization resolves it away.
+        let temp = TempDir::new().expect("tempdir");
+        let home = Utf8Path::from_path(temp.path())
+            .expect("utf8 temp path")
+            .join("home");
+        fs_err::create_dir_all(home.as_std_path()).expect("mkdir home");
+
+        let outer_target = home.join(".claude").join("skills");
+        let inner_target = home
+            .join("..")
+            .join("home")
+            .join(".claude")
+            .join("skills")
+            .join("note.md");
+        assert!(
+            !inner_target.starts_with(&outer_target),
+            "the fixture must actually produce two different spellings"
+        );
+
+        let outer = vec![outer_target];
+        let inner = vec![inner_target];
+        let claims = [
+            claim("skills", "skills", FileMode::CopyTree, &outer),
+            claim("extra", "note.md", FileMode::Copy, &inner),
+        ];
+        validate_targets(&claims)
+            .expect_err("containment must be found regardless of how each target is spelled");
     }
 
     #[test]
