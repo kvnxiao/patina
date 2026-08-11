@@ -17,6 +17,7 @@
 
 pub mod file_entry;
 pub mod hook_entry;
+pub mod remote;
 pub mod root;
 pub mod writer;
 
@@ -27,9 +28,14 @@ pub use file_entry::FileEntry;
 pub use file_entry::FileEntryError;
 pub use file_entry::FileMode;
 pub use file_entry::ManagedEntry;
+pub use file_entry::TemplatePolicy;
 pub use hook_entry::HookEntry;
 pub use hook_entry::HookEntryError;
 pub use hook_entry::HookEvent;
+pub use remote::DEFAULT_MIN_AGE;
+pub use remote::RemoteConfigError;
+pub use remote::RemoteSpec;
+pub use remote::parse_duration;
 pub use root::RootConfig;
 pub use root::RootConfigError;
 pub use root::parse_root_config;
@@ -57,6 +63,9 @@ pub struct ModuleConfig {
     /// Raw `[variables]` table for the resolver to consume. `None` when
     /// the module declares no `[variables]` table.
     pub variables: Option<toml::value::Table>,
+    /// The module's `[remote]` table when it is remote-backed. `None` for an
+    /// ordinary module whose sources live in its own directory.
+    pub remote: Option<RemoteSpec>,
 }
 
 /// Failure modes returned by [`parse_module_config`].
@@ -95,6 +104,10 @@ pub enum ConfigParseError {
     /// `patina.*` namespace.
     #[error(transparent)]
     Variable(#[from] crate::variables::VariableError),
+
+    /// The `[remote]` table violated the parse-time rules.
+    #[error(transparent)]
+    Remote(#[from] remote::RemoteConfigError),
 }
 
 /// Read and parse a module manifest at `path`, returning a fully
@@ -131,14 +144,23 @@ pub fn parse_module_config_str(text: &str) -> Result<ModuleConfig, ConfigParseEr
         source: Box::new(source),
     })?;
 
+    // A remote-backed module's sources are third-party bytes, so the implicit
+    // `.tmpl` render is off for every entry in it.
+    let remote = raw.remote.map(remote::RawRemote::validate).transpose()?;
+    let policy = if remote.is_some() {
+        TemplatePolicy::Never
+    } else {
+        TemplatePolicy::Implicit
+    };
+
     let mut files = Vec::with_capacity(raw.file.len());
     for raw_file in raw.file {
-        files.push(ManagedEntry::from_raw_file(raw_file)?);
+        files.push(ManagedEntry::from_raw_file(raw_file, policy)?);
     }
 
     let mut directories = Vec::with_capacity(raw.directory.len());
     for raw_dir in raw.directory {
-        directories.push(ManagedEntry::from_raw_directory(raw_dir)?);
+        directories.push(ManagedEntry::from_raw_directory(raw_dir, policy)?);
     }
 
     let mut hooks = Vec::with_capacity(raw.hook.len());
@@ -155,6 +177,7 @@ pub fn parse_module_config_str(text: &str) -> Result<ModuleConfig, ConfigParseEr
         directories,
         hooks,
         variables: raw.variables,
+        remote,
     })
 }
 
@@ -173,6 +196,11 @@ struct RawModule {
     /// Per-module `[variables]` table, preserved verbatim for the resolver.
     #[serde(default)]
     variables: Option<toml::value::Table>,
+
+    /// The `[remote]` table that makes this module remote-backed; validated by
+    /// [`remote::RawRemote::validate`].
+    #[serde(default)]
+    remote: Option<remote::RawRemote>,
 
     /// Raw `[[file]]` table-array entries; validated by
     /// [`ManagedEntry::from_raw_file`].

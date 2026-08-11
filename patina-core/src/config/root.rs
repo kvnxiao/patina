@@ -46,6 +46,10 @@ pub struct RootConfig {
     /// holding that profile's `[profiles.<name>.variables]` table. A
     /// profile with no `variables` table contributes an empty table.
     pub per_profile: BTreeMap<String, toml::value::Table>,
+    /// The repository-wide update-gate floor from `[remotes] min_age`. `None`
+    /// when the table (or the key) is absent, in which case the gate falls back
+    /// to [`crate::config::DEFAULT_MIN_AGE`].
+    pub remotes_min_age: Option<std::time::Duration>,
 }
 
 /// Failure modes returned by [`parse_root_config`].
@@ -77,6 +81,10 @@ pub enum RootConfigError {
     /// declared a key inside the reserved `patina.*` namespace.
     #[error(transparent)]
     Variable(#[from] VariableError),
+
+    /// The root `[remotes]` table declared a malformed duration.
+    #[error(transparent)]
+    Remote(#[from] super::remote::RemoteConfigError),
 }
 
 /// Read and parse the root manifest at `path`, returning its repo-shared
@@ -140,9 +148,12 @@ pub fn parse_root_config_str(text: &str) -> Result<RootConfig, RootConfigError> 
         per_profile.insert(name, table);
     }
 
+    let remotes_min_age = raw.remotes.unwrap_or_default().validate()?;
+
     Ok(RootConfig {
         repo_shared,
         per_profile,
+        remotes_min_age,
     })
 }
 
@@ -158,6 +169,10 @@ struct RawRoot {
     /// nested `variables` table of each is read.
     #[serde(default)]
     profiles: BTreeMap<String, RawProfile>,
+
+    /// The `[remotes]` table carrying the repository-wide update-gate floor.
+    #[serde(default)]
+    remotes: Option<super::remote::RawRemotes>,
 }
 
 /// Raw projection of a single `[profiles.<name>]` section. Only its
@@ -251,6 +266,33 @@ mod tests {
             .expect("manifest with no variable tables parses");
         assert!(config.repo_shared.is_empty());
         assert!(config.per_profile.is_empty());
+        assert_eq!(
+            config.remotes_min_age, None,
+            "an absent `[remotes]` table must leave the gate floor to the shipped default"
+        );
+    }
+
+    #[test]
+    fn reads_the_global_remote_min_age() {
+        let config = parse_root_config_str("[remotes]\nmin_age = \"7d\"\n")
+            .expect("`[remotes]` table parses");
+        assert_eq!(
+            config
+                .remotes_min_age
+                .map(|d| d.as_secs())
+                .expect("a declared min_age"),
+            7 * 24 * 60 * 60
+        );
+    }
+
+    #[test]
+    fn rejects_a_malformed_global_remote_min_age() {
+        let err = parse_root_config_str("[remotes]\nmin_age = \"soon\"\n")
+            .expect_err("a malformed duration must be rejected");
+        assert!(
+            matches!(err, RootConfigError::Remote(_)),
+            "expected a remote-config error, got {err:?}"
+        );
     }
 
     #[test]

@@ -164,10 +164,32 @@ pub enum FileEntryError {
     },
 }
 
+/// Whether a `.tmpl` suffix on an entry's source triggers the implicit
+/// template render.
+///
+/// A local source takes the render, as it always has. A source inside a remote
+/// checkout never does: third-party bytes full of `{{ }}` would either explode
+/// under strict-undefined rendering or, worse, render. Under
+/// [`TemplatePolicy::Never`] a `.tmpl` suffix is just part of a filename — the
+/// entry materializes as plain bytes under its declared mode, and a `.tmpl`
+/// directory source is an ordinary directory name rather than an error. See
+/// `docs/REMOTE_SOURCES.md` "Trust boundaries".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TemplatePolicy {
+    /// A `.tmpl` source renders, and declaring an explicit `mode` beside it is
+    /// an error.
+    Implicit,
+    /// A `.tmpl` suffix carries no meaning.
+    Never,
+}
+
 impl ManagedEntry {
     /// Build a `[[file]]`-kind [`ManagedEntry`] from a raw deserialized
     /// [`RawEntry`], applying the `[[file]]` parse-time rules.
-    pub(super) fn from_raw_file(raw: RawEntry) -> Result<Self, FileEntryError> {
+    pub(super) fn from_raw_file(
+        raw: RawEntry,
+        policy: TemplatePolicy,
+    ) -> Result<Self, FileEntryError> {
         let RawEntry {
             source,
             target,
@@ -182,7 +204,7 @@ impl ManagedEntry {
         // so a `.tmpl` source plus `mode = "..."` surfaces
         // ImplicitTemplateModeDeclared rather than an UnsupportedFileMode
         // false-positive.
-        let is_tmpl = has_tmpl_suffix(&source);
+        let is_tmpl = policy == TemplatePolicy::Implicit && has_tmpl_suffix(&source);
         if is_tmpl && let Some(declared) = mode.as_deref() {
             return Err(FileEntryError::ImplicitTemplateModeDeclared {
                 source_path: source.to_string(),
@@ -216,7 +238,10 @@ impl ManagedEntry {
     /// Build a `[[directory]]`-kind [`ManagedEntry`] from a raw
     /// deserialized [`RawEntry`], applying the `[[directory]]`
     /// parse-time rules.
-    pub(super) fn from_raw_directory(raw: RawEntry) -> Result<Self, FileEntryError> {
+    pub(super) fn from_raw_directory(
+        raw: RawEntry,
+        policy: TemplatePolicy,
+    ) -> Result<Self, FileEntryError> {
         let RawEntry {
             source,
             target,
@@ -228,8 +253,9 @@ impl ManagedEntry {
         let resolved_targets = resolve_targets(target, targets)?;
 
         // Template render is file-only: a `.tmpl` directory source is
-        // rejected outright.
-        if has_tmpl_suffix(&source) {
+        // rejected outright. Under `Never` the suffix means nothing at all, so
+        // a remote directory that happens to be named `*.tmpl` is fine.
+        if policy == TemplatePolicy::Implicit && has_tmpl_suffix(&source) {
             return Err(FileEntryError::DirectoryTemplateSource {
                 source_path: source.to_string(),
             });
