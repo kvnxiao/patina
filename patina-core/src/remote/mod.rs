@@ -50,6 +50,36 @@ impl RemoteError {
         }
         self
     }
+
+    /// The plan-time failure for a remote-backed module with no pin.
+    #[must_use = "the error tells the user which command creates the first pin"]
+    pub fn missing_lock_entry(module: &str) -> Self {
+        RemoteRepr::MissingLockEntry {
+            module: module.to_owned(),
+        }
+        .into()
+    }
+
+    /// Restate a fetch failure as the cold-cache failure, naming the module and
+    /// the rev this machine could not materialize.
+    ///
+    /// The underlying `git` error alone says a fetch failed; the user needs to
+    /// know *which pin* they cannot converge to, since that is what a `git
+    /// pull` or a network fix has to satisfy. A failure that is not a `git`
+    /// failure (a cache write, say) already names its own path and passes
+    /// through.
+    #[must_use = "the restated error is what the user sees"]
+    pub fn into_cold_cache(self, module: &str, rev: &str) -> Self {
+        match *self.0 {
+            RemoteRepr::Git(source) => RemoteRepr::ColdCache {
+                module: module.to_owned(),
+                rev: rev.to_owned(),
+                source,
+            }
+            .into(),
+            other => Self(Box::new(other)),
+        }
+    }
 }
 
 /// The remote subsystem's failure set, private so additions stay additive.

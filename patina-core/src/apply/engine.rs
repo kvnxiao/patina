@@ -39,6 +39,7 @@ use crate::config::FileMode;
 use crate::config::HookEntry;
 use crate::config::HookEvent;
 use crate::config::ManagedEntry;
+use crate::config::RemoteSpec;
 use crate::config::parse_module_config;
 use crate::config::parse_root_config;
 use crate::discovery::discover_modules;
@@ -66,6 +67,9 @@ use crate::paths::expand_tilde;
 use crate::paths::resolve_location;
 use crate::profile::load_auto_match_rules;
 use crate::profile::resolve as resolve_profile;
+use crate::remote::cache as remote_cache;
+use crate::remote::lockfile::Lockfile;
+use crate::remote::lockfile::lockfile_path;
 use crate::state_dir::HostOs;
 use crate::state_dir::resolve as resolve_state_dir;
 use crate::template::Engine;
@@ -300,6 +304,7 @@ pub fn plan(
         mut resolver,
         engine,
         modules,
+        lockfile,
     } = build_planning_context(&request.cli_overrides)?;
 
     // Resolve every managed entry into its canonical source/targets, kept
@@ -329,14 +334,25 @@ pub fn plan(
             resolver = resolver.with_per_module(table_to_layer(table))?;
         }
 
+        // A remote-backed module's sources live in the checkout of its pinned
+        // rev, which is fetched here — before any entry resolves — so a cold
+        // cache fails planning rather than half-way through a diff.
+        let origin = module_origin(
+            module,
+            config.remote.as_ref(),
+            &state_dir,
+            &lockfile,
+            CachePolicy::Fetch,
+        )?;
+
         for entry in &config.files {
             file_entries.push(gate_and_resolve_entry(
-                entry, module, &home, &engine, &resolver,
+                entry, &origin, &home, &engine, &resolver,
             )?);
         }
         for entry in &config.directories {
             directory_entries.push(gate_and_resolve_entry(
-                entry, module, &home, &engine, &resolver,
+                entry, &origin, &home, &engine, &resolver,
             )?);
         }
 
@@ -389,6 +405,96 @@ struct PlanningContext {
     resolver: Resolver,
     engine: Engine,
     modules: Vec<crate::discovery::ModuleHandle>,
+    /// The committed remote pins. Empty for a repository with no remote-backed
+    /// modules; read by [`module_origin`] to locate each remote's checkout.
+    lockfile: Lockfile,
+}
+
+/// Whether resolving a remote-backed module's source root may fill a cold
+/// cache.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CachePolicy {
+    /// Fetch the pinned rev when it is missing. The planning path: `apply` must
+    /// converge this machine to the committed lock.
+    Fetch,
+    /// Never touch the network. The `patina status` path, which is read-only
+    /// and must not stall on an unreachable remote; an unmaterialized
+    /// checkout is reported as no source root at all.
+    ReadOnly,
+}
+
+/// Where one module's entry sources resolve from.
+///
+/// For a local module this is simply the module directory, exactly as before
+/// remotes existed. For a remote-backed module it is the immutable checkout of
+/// the rev `patina.lock` pins, so the module directory itself contributes only
+/// its manifest — which is also why a `patina.toml` inside a checkout is inert:
+/// module discovery walks the repository, never the cache.
+struct ModuleOrigin {
+    /// The module's directory name, which doubles as the remote's name in the
+    /// lockfile and the cache.
+    name: String,
+    /// The directory entry sources are joined onto, or `None` for a
+    /// remote-backed module whose checkout is not materialized on this machine
+    /// (only reachable under [`CachePolicy::ReadOnly`]).
+    source_root: Option<Utf8PathBuf>,
+}
+
+/// Resolve the directory `module`'s entry sources are joined onto.
+///
+/// # Errors
+///
+/// Under [`CachePolicy::Fetch`], returns an [`EngineError`] when a
+/// remote-backed module has no lock entry (the message points at
+/// `patina remote update <name>`) or when its pinned rev is neither cached nor
+/// fetchable — the specced cold-cache failure, raised at plan time so nothing
+/// is partially applied.
+fn module_origin(
+    module: &crate::discovery::ModuleHandle,
+    remote: Option<&RemoteSpec>,
+    state_dir: &Utf8Path,
+    lockfile: &Lockfile,
+    policy: CachePolicy,
+) -> Result<ModuleOrigin, EngineError> {
+    let Some(remote) = remote else {
+        return Ok(ModuleOrigin {
+            name: module.name.clone(),
+            source_root: Some(module.path.clone()),
+        });
+    };
+
+    let Some(pin) = lockfile.get(&module.name) else {
+        if policy == CachePolicy::ReadOnly {
+            // Status reports on what a prior apply left behind; an unpinned
+            // remote simply manages nothing yet.
+            return Ok(ModuleOrigin {
+                name: module.name.clone(),
+                source_root: None,
+            });
+        }
+        return Err(crate::remote::RemoteError::missing_lock_entry(&module.name).into());
+    };
+
+    if policy == CachePolicy::ReadOnly {
+        let dir = remote_cache::checkout_dir(state_dir, &module.name, &pin.rev);
+        return Ok(ModuleOrigin {
+            name: module.name.clone(),
+            source_root: dir.is_dir().then_some(dir),
+        });
+    }
+
+    let source_root = remote_cache::ensure_checkout(
+        state_dir,
+        &module.name,
+        &remote.url,
+        remote.git_ref.as_deref(),
+        &pin.rev,
+    )
+    .map_err(|err| err.into_cold_cache(&module.name, &pin.rev))?;
+    Ok(ModuleOrigin {
+        name: module.name.clone(),
+        source_root: Some(source_root),
+    })
 }
 
 /// Build the [`PlanningContext`] both [`plan`] and [`current_managed_targets`]
@@ -452,6 +558,7 @@ fn build_planning_context(
     }
 
     let modules = discover_modules(&repo_root)?;
+    let lockfile = Lockfile::load(&lockfile_path(&repo_root))?;
 
     Ok(PlanningContext {
         repo_root,
@@ -461,6 +568,7 @@ fn build_planning_context(
         resolver,
         engine,
         modules,
+        lockfile,
     })
 }
 
@@ -499,10 +607,12 @@ fn build_planning_context(
 /// `when` predicate evaluation fails.
 pub fn current_managed_targets() -> Result<BTreeSet<Utf8PathBuf>, EngineError> {
     let PlanningContext {
+        state_dir,
         home,
         mut resolver,
         engine,
         modules,
+        lockfile,
         ..
     } = build_planning_context(&[])?;
 
@@ -515,6 +625,16 @@ pub fn current_managed_targets() -> Result<BTreeSet<Utf8PathBuf>, EngineError> {
             resolver = resolver.with_per_module(table_to_layer(table))?;
         }
 
+        // Read-only: status must not fetch. An unpinned or uncached remote
+        // yields no source root, which costs only tree-mode leaf expansion.
+        let origin = module_origin(
+            module,
+            config.remote.as_ref(),
+            &state_dir,
+            &lockfile,
+            CachePolicy::ReadOnly,
+        )?;
+
         for entry in config.files.iter().chain(&config.directories) {
             // `when`-false entries manage nothing this run: their
             // prior targets fall out of the set and classify ORPHANED.
@@ -523,7 +643,7 @@ pub fn current_managed_targets() -> Result<BTreeSet<Utf8PathBuf>, EngineError> {
             {
                 continue;
             }
-            insert_managed_targets(entry, &module.path, &home, &mut targets);
+            insert_managed_targets(entry, origin.source_root.as_deref(), &home, &mut targets);
         }
     }
     Ok(targets)
@@ -536,9 +656,14 @@ pub fn current_managed_targets() -> Result<BTreeSet<Utf8PathBuf>, EngineError> {
 /// executor materializes them (`target.join(rel)`); a missing source
 /// contributes no leaves. Every other mode contributes its declared targets
 /// directly.
+///
+/// `source_root` is `None` for a remote-backed module whose checkout is not on
+/// this machine, which is indistinguishable from a missing source: the tree
+/// expansion yields no leaves, and every other mode is unaffected because it
+/// never reads the source here.
 fn insert_managed_targets(
     entry: &ManagedEntry,
-    module_path: &Utf8Path,
+    source_root: Option<&Utf8Path>,
     home: &Utf8Path,
     targets: &mut BTreeSet<Utf8PathBuf>,
 ) {
@@ -551,7 +676,10 @@ fn insert_managed_targets(
     // next apply — the reap pass would delete it (and `copy-tree`'s journal
     // hashing would then fail on the just-reaped file).
     if matches!(entry.mode, FileMode::SymlinkTree | FileMode::CopyTree) {
-        let source = module_path.join(&entry.source);
+        let Some(source_root) = source_root else {
+            return;
+        };
+        let source = source_root.join(&entry.source);
         // The executor walks the live source for leaves; a source that no
         // longer exists yields none, so every recorded leaf is then orphaned.
         let Ok(leaves) = crate::apply::walk_files(&source) else {
@@ -697,7 +825,7 @@ fn assemble_plan_operations(
 /// validated.
 fn gate_and_resolve_entry(
     entry: &ManagedEntry,
-    module: &crate::discovery::ModuleHandle,
+    origin: &ModuleOrigin,
     home: &Utf8Path,
     engine: &Engine,
     resolver: &Resolver,
@@ -707,7 +835,7 @@ fn gate_and_resolve_entry(
     {
         return Ok(None);
     }
-    Ok(Some(resolve_entry(entry, module, home, engine, resolver)?))
+    Ok(Some(resolve_entry(entry, origin, home, engine, resolver)?))
 }
 
 /// Classify each declared target of one resolved entry against live
@@ -837,12 +965,20 @@ fn classify_target(
 /// [`EngineError::Template`].
 fn resolve_entry(
     entry: &ManagedEntry,
-    module: &crate::discovery::ModuleHandle,
+    origin: &ModuleOrigin,
     home: &Utf8Path,
     engine: &Engine,
     resolver: &Resolver,
 ) -> Result<ResolvedEntry, EngineError> {
-    let source = canonicalize(&module.path.join(&entry.source))?;
+    // A `Fetch`-policy origin always carries a source root (a remote-backed
+    // module with no materialized checkout failed earlier), and planning is the
+    // only caller. Falling back to the entry's own relative source would make a
+    // logic slip surface as `SourceNotFound` rather than as a panic.
+    let root = origin
+        .source_root
+        .clone()
+        .unwrap_or_else(|| Utf8PathBuf::from("."));
+    let source = canonicalize(&root.join(&entry.source))?;
     validate_source_kind(&source, entry.kind)?;
     let mut targets = Vec::with_capacity(entry.targets.len());
     for target in &entry.targets {
@@ -865,7 +1001,7 @@ fn resolve_entry(
         source,
         targets,
         dispositions,
-        module: module.name.clone(),
+        module: origin.name.clone(),
         declared_source: entry.source.clone(),
     })
 }
@@ -1264,6 +1400,15 @@ pub async fn execute(
         // rolling back to it correctly deletes its fresh targets.
         let pruned = gc_retain(&backups_dir, crate::backups::RETENTION_COUNT)?;
         prune_cycles(&journal_dir, &pruned)?;
+        // Remote checkouts follow the same retain-what-recovery-needs rule as
+        // backups, and for the same reason: a checkout an on-disk journal record
+        // still names is what `patina rollback` re-points links back to. Runs
+        // after the commit and after the journal prune, so the reachability set
+        // it reads is this run's, and disk settles at roughly the current and
+        // previous rev per remote.
+        for removed in remote_cache::prune(&resolved.state_dir)? {
+            tracing::debug!(checkout = %removed, "pruned an unreferenced remote checkout");
+        }
         // A committed apply that actually flushed a plan and wrote a COMMIT is
         // not a no-op, even when some targets were `Unchanged`: the full-no-op
         // short-circuit above is the only path that sets `up_to_date`.
@@ -2212,7 +2357,7 @@ mod tests {
         };
 
         let mut got = BTreeSet::new();
-        insert_managed_targets(&entry, &module, &root, &mut got);
+        insert_managed_targets(&entry, Some(&module), &root, &mut got);
 
         let expected: BTreeSet<Utf8PathBuf> = [
             manage_key(&target.join("a.conf")),
@@ -2229,7 +2374,7 @@ mod tests {
         // recorded target leaf would now classify ORPHANED.
         fs_err::remove_file(source.join("sub").join("b.conf")).expect("delete leaf");
         let mut after = BTreeSet::new();
-        insert_managed_targets(&entry, &module, &root, &mut after);
+        insert_managed_targets(&entry, Some(&module), &root, &mut after);
         assert_eq!(
             after,
             [manage_key(&target.join("a.conf"))].into_iter().collect(),
@@ -2260,7 +2405,7 @@ mod tests {
         };
 
         let mut got = BTreeSet::new();
-        insert_managed_targets(&entry, &module, &root, &mut got);
+        insert_managed_targets(&entry, Some(&module), &root, &mut got);
 
         let expected: BTreeSet<Utf8PathBuf> =
             [manage_key(&t1), manage_key(&t2)].into_iter().collect();
