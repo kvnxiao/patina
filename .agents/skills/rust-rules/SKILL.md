@@ -1,7 +1,6 @@
 ---
 name: rust-rules
 description: "Use for Rust implementation, review, API design, testing, error handling, dependencies, documentation, linting, formatting, performance, and workspace structure."
-paths: "**/*.rs,**/Cargo.toml"
 ---
 
 # Rust Rules
