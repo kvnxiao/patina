@@ -1,11 +1,12 @@
 //! `patina remove <path>` command logic.
 //!
 //! `patina remove <path>` unmanages a target. It removes the target's
-//! `[[file]]` entry from its module's `patina.toml`, replaces the target on
-//! disk with a regular file holding the last-applied content (so the user's
-//! system stays functional), and re-journals the new managed set so
-//! `patina status` treats the path as deliberately unmanaged (absent from
-//! the report) rather than as an ORPHANED leftover. With `--purge` the
+//! `[[file]]` entry from its module's `patina.toml`, and replaces the target
+//! on disk with a regular file holding the last-applied content, so the
+//! user's system stays functional. It then re-journals the new managed set.
+//! `patina status` therefore treats the path as deliberately unmanaged, and
+//! leaves it out of the report, rather than reporting an ORPHANED leftover.
+//! With `--purge` the
 //! target is deleted from disk entirely instead of replaced.
 //!
 //! This is the first command to drive the engine re-apply under
@@ -19,11 +20,12 @@
 //! The committed apply record maps each target to its
 //! canonical journaled source path. For a symlink or copy target the
 //! last-applied content is the bytes of that source, read from the
-//! repository. For a template-rendered target (the journaled source ends in
-//! `.tmpl`) the journal records only a blake3 hash of the rendered bytes, so
-//! the content is reconstructed by re-rendering the source through `MiniJinja`
-//! against the variable context resolved at remove time — the deliberate
-//! "reset to current source intent" semantics.
+//! repository. For a template-rendered target the journal records only a
+//! blake3 hash of the rendered bytes; such a target has a journaled source
+//! ending in `.tmpl`. The content is therefore reconstructed by re-rendering
+//! the source through `MiniJinja`, against the variable context resolved at
+//! remove time. That is the
+//! deliberate "reset to current source intent" semantics.
 //!
 //! Module-level engine semantics (planning, journaling, manifest editing,
 //! repo discovery, template rendering) live in `patina_core`; this module is

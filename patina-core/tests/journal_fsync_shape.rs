@@ -182,7 +182,7 @@ fn after_flush_plan_exists_with_no_commit_sentinel() {
         Disposition::Create,
     )]);
     // Simulate the crash window: flush, then drop the handle without
-    // recording any progress or committing — as if SIGKILL'd here.
+    // recording any progress or committing, as if SIGKILL'd here.
     let handle = Journal::flush_plan_and_fsync(&dir, "20260528T130000Z", &plan, &syncer)
         .expect("flush plan");
     drop(handle);
@@ -205,7 +205,7 @@ fn after_flush_plan_exists_with_no_commit_sentinel() {
         "no COMMIT sentinel exists in the crash window before commit"
     );
 
-    // The plan bytes on disk decode back to the same plan — proving the
+    // The plan bytes on disk decode back to the same plan, which proves the
     // flush is durable, not a partial write.
     let bytes = fs_err::read(dir.join("20260528T130000Z.plan")).expect("read plan");
     assert_eq!(

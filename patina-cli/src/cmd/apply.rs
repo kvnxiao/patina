@@ -1,7 +1,7 @@
 //! `patina apply` command logic.
 //!
-//! This module owns the decision tree — TTY prompt vs
-//! non-TTY preview, `--yes`, `--json`, `--pager` — and maps the engine's
+//! This module owns the decision tree (TTY prompt vs non-TTY preview,
+//! `--yes`, `--json`, `--pager`) and maps the engine's
 //! [`ApplyResult`] onto the process exit code. The engine semantics
 //! (planning, journaling, executors, hooks, rollback) live in
 //! `patina_core`; this module is presentation and control flow only, all
@@ -292,7 +292,7 @@ enum Confirmation {
 /// prompt or reading a line from `reader`: the short-circuit precedes the
 /// diff-and-prompt branch, so a fully-satisfied repo is never asked to
 /// confirm and `execute_plan` then writes nothing. This is the core
-/// observable — the interactive-TTY prompt-skip — and is exercised directly
+/// observable, the interactive-TTY prompt-skip, exercised directly
 /// by the unit tests below with a recording reader that counts stdin reads.
 fn confirm_apply(
     is_full_noop: bool,
@@ -333,7 +333,7 @@ fn confirm_apply(
 ///
 /// On macOS / Linux [`decide_symlink_gate`] reports `Proceed` (the probe is
 /// `NotWindows`), so this never reads the registry and never spawns the
-/// helper — proving the cross-platform guarantee.
+/// helper, which is what proves the cross-platform guarantee.
 fn drive_dev_mode_gate(
     resolved: &ResolvedPlan,
     reporter: &mut impl Reporter,
@@ -385,7 +385,7 @@ fn drive_elevation(reporter: &mut impl Reporter) -> Result<Option<i32>> {
 /// site. The `_reporter` is unused here.
 // The `Result` is never an `Err` on this platform, but the return type must
 // match the Windows variant above (which genuinely is fallible) so the
-// single call site compiles on every platform — hence the allow.
+// single call site compiles on every platform, hence the allow.
 #[cfg(not(windows))]
 #[expect(
     clippy::unnecessary_wraps,
@@ -438,17 +438,17 @@ async fn run_json(
 /// `result`.
 ///
 /// Each plan row carries a `state` field whose value is the target's
-/// [`Disposition`](patina_core::Disposition) label (`create` / `update` /
-/// `unchanged`), derived purely from the plan-time classification and reusing
-/// the canonical [`Disposition::label`](patina_core::Disposition::label)
-/// mapping. For tree modes the array lists
-/// per-leaf rows with per-leaf `state`, mirroring the
-/// per-leaf routing the human diff uses, so a drifted tree reports each leaf's
-/// own state rather than the per-op aggregate. The `state` field is a pure
+/// [`Disposition`](patina_core::Disposition) label: `create`, `update`, or
+/// `unchanged`. It is derived purely from the plan-time classification, and
+/// reuses the canonical
+/// [`Disposition::label`](patina_core::Disposition::label) mapping. For tree
+/// modes the array lists per-leaf rows with per-leaf `state`, mirroring the
+/// per-leaf routing the human diff uses. A drifted tree therefore reports each
+/// leaf's own state, not the per-op aggregate. The `state` field is a pure
 /// function of the disposition, so it inherits the deterministic-stdout
 /// contract.
 ///
-/// `reaped` lists the target paths this run would remove — orphans of a prior
+/// `reaped` lists the target paths this run would remove: orphans of a prior
 /// apply the current plan no longer manages. They are not plan operations, so
 /// they are reported in their own array rather than as `plan` rows; the human
 /// diff renders the same set as `remove` blocks. `plan_orphans` sorted them,
@@ -479,9 +479,9 @@ fn json_envelope(resolved: &ResolvedPlan, reaped: &[camino::Utf8PathBuf], result
 /// plan array.
 ///
 /// A single-target mode (empty `leaves`) yields one row carrying the target's
-/// own disposition label. A tree mode yields one row per materialized leaf,
-/// each carrying that leaf's path (under the declared target) and its per-leaf
-/// disposition label — the same per-leaf routing the human
+/// own disposition label. A tree mode yields one row per materialized leaf.
+/// Each row carries that leaf's path, under the declared target, and its
+/// per-leaf disposition label. That is the same per-leaf routing the human
 /// diff renderer uses, so the two surfaces agree on what an entry expands to.
 fn plan_rows(
     op: &patina_core::ResolvedOperation,
@@ -691,7 +691,7 @@ mod tests {
     fn non_noop_interactive_does_prompt_and_reads_the_answer(/* guards the skip */) {
         // Counterpart to the no-op test: when the plan is NOT a no-op, the
         // interactive path MUST prompt and read the answer. This is the red
-        // guard — if `confirm_apply` skipped the prompt unconditionally, the
+        // guard: if `confirm_apply` skipped the prompt unconditionally, the
         // `Apply?` text would be absent and the decline answer ignored.
         let mut reader = ScriptedReader {
             lines: std::collections::VecDeque::from(["n\n".to_owned()]),

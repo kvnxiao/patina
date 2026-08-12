@@ -86,9 +86,9 @@ pub fn read_notice(state_dir: &Utf8Path) -> Option<String> {
 
 /// The notice for remotes whose upstream tip has moved past the pin.
 ///
-/// `modules` is expected in a stable order (the caller iterates the lockfile,
-/// which is name-ordered), so the file's bytes are a function of which remotes
-/// are behind and not of iteration order.
+/// `modules` is expected in a stable order, because the caller iterates the
+/// name-ordered lockfile. The file's bytes are therefore a function of which
+/// remotes are behind, not of iteration order.
 #[must_use = "the message is the notice body"]
 pub fn pending_updates_message(modules: &[&str]) -> String {
     let names = modules.join(", ");

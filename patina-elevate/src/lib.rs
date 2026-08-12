@@ -1,4 +1,4 @@
-//! `patina-elevate` — a standalone Windows-only privilege helper.
+//! `patina-elevate`, a standalone Windows-only privilege helper.
 //!
 //! This crate builds the only binary in the workspace meant to run
 //! *elevated*. The main `patina.exe` re-invokes it via `ShellExecuteEx`
@@ -9,9 +9,9 @@
 //! It exposes two elevated actions. `enable-developer-mode` sets the Developer
 //! Mode registry switch (`AllowDevelopmentWithoutDevLicense` under
 //! `AppModelUnlock` in `HKLM`) to `1`. `apply-defender-exclusions` reads a
-//! request file naming Windows Defender path exclusions to add and remove,
-//! independently re-validates every path, and applies them through the
-//! `Defender` PowerShell module with a mandatory re-read verification. Keeping
+//! request file naming Windows Defender path exclusions to add and remove. It
+//! independently re-validates every path, then applies them through the
+//! `Defender` PowerShell module, with a mandatory re-read verification. Keeping
 //! this a separate, dependency-light binary (no `patina-core` / `patina-cli`)
 //! keeps the surface UAC must trust as small as possible.
 //!
@@ -19,10 +19,10 @@
 //!
 //! The command surface ([`Cli`], [`run`]) lives here in the library so it
 //! can be unit-tested on any host without depending on the binary
-//! artifact. The binary itself is gated behind the `windows` feature
-//! and is therefore absent from non-Windows release
-//! builds — but the parsing contract it relies on is exercised by the
-//! library's own cross-platform tests regardless.
+//! artifact. The binary itself is gated behind the `windows` feature, and is
+//! therefore absent from non-Windows release builds. The parsing contract it
+//! relies on is exercised by the library's own cross-platform tests
+//! regardless.
 //!
 //! ## Exit codes
 //!
@@ -42,7 +42,7 @@ use std::process::ExitCode;
 pub mod defender;
 pub mod devmode;
 
-/// `patina-elevate` — perform one elevated action and exit.
+/// `patina-elevate`: perform one elevated action and exit.
 #[derive(Debug, Parser)]
 #[command(name = "patina-elevate", version, about)]
 pub struct Cli {
@@ -58,15 +58,14 @@ pub struct Cli {
 /// intercepts the unknown-subcommand path: clap's default
 /// [`ErrorKind::InvalidSubcommand`] message reports only the offending
 /// token and the bare `Usage:` line, and does *not* enumerate the
-/// available subcommands. The exit-2 usage
-/// message must *list the supported subcommands*, so on that one error
-/// kind we print clap's own rendered error to stderr, follow it with a
-/// line listing the supported subcommands (derived from the command
-/// definition, not hard-coded), and exit with clap's usage exit code
-/// (`2`).
+/// available subcommands. The exit-2 usage message must *list the supported
+/// subcommands*. On that one error kind we therefore print clap's own
+/// rendered error to stderr, and follow it with a line listing the supported
+/// subcommands. That line is derived from the command definition, not
+/// hard-coded. We then exit with clap's usage exit code (`2`).
 ///
-/// All other error kinds — including the no-subcommand path, which clap
-/// already renders with the subcommand listing — are left to clap's own
+/// All other error kinds, including the no-subcommand path, which clap
+/// already renders with the subcommand listing, are left to clap's own
 /// [`clap::Error::exit`], preserving its exit codes and stream choice.
 ///
 /// # Examples
@@ -97,7 +96,7 @@ pub fn parse_or_exit() -> Cli {
             let rendered = write!(stderr, "{error}")
                 .and_then(|()| writeln!(stderr, "Supported subcommands: {listing}"));
             // Exit 2 (clap's usage code) regardless of whether the stderr
-            // write itself succeeded — there is no better channel to
+            // write itself succeeded, because there is no better channel to
             // report a stderr failure on, and the usage error stands.
             drop(rendered);
             std::process::exit(2);
@@ -140,7 +139,7 @@ pub enum Command {
 /// A recognised subcommand runs its action and maps the outcome to an
 /// [`ExitCode`]: `0` on success, or `1` after writing the typed failure to
 /// stderr. The argument-parsing / unknown-subcommand path (exit `2`) is
-/// handled by clap before this function is reached — see [`parse_or_exit`].
+/// handled by clap before this function is reached. See [`parse_or_exit`].
 #[must_use = "the returned code is the process's terminal exit status"]
 pub fn run(command: &Command) -> ExitCode {
     match command {
@@ -157,10 +156,10 @@ pub fn run(command: &Command) -> ExitCode {
 /// Map an action's result to an [`ExitCode`], writing the typed failure to
 /// stderr on the exit-1 path.
 ///
-/// User-facing output normally routes through `output::Reporter`, but this
-/// helper deliberately has no `patina-core` dependency and therefore no
-/// Reporter, and pulling in `tracing` for one error line would widen the
-/// surface UAC must trust. A raw stderr write is the right primitive here, so
+/// User-facing output normally routes through `output::Reporter`. This helper
+/// deliberately has no `patina-core` dependency, and therefore no Reporter.
+/// Pulling in `tracing` for one error line would widen the surface UAC must
+/// trust. A raw stderr write is the right primitive here, so
 /// the workspace `disallowed-macros` gate is suppressed at this one documented
 /// site (clippy.toml sanctions exactly this carve-out).
 fn report_result<E: std::error::Error>(action: &str, result: Result<(), E>) -> ExitCode {
@@ -215,7 +214,7 @@ mod tests {
     #[test]
     fn unknown_subcommand_is_a_usage_error() {
         // An unrecognised subcommand is a clap usage error.
-        // clap maps this to a non-zero exit via `Error::exit` — exit code 2 —
+        // clap maps this to a non-zero exit via `Error::exit`, exit code 2,
         // which the real process exercises in `tests/cli.rs`.
         let err = Cli::try_parse_from(["patina-elevate", "frobnicate"])
             .expect_err("an unknown subcommand must be rejected");
@@ -253,7 +252,7 @@ mod tests {
     #[test]
     fn enable_on_non_windows_reports_not_windows() {
         // On a non-Windows build the action takes the NotWindows path rather
-        // than touching any registry — this is what keeps the dispatch
+        // than touching any registry. That is what keeps the dispatch
         // exercisable off Windows.
         let err = devmode::enable_developer_mode()
             .expect_err("enable-developer-mode is unsupported off Windows");
@@ -274,7 +273,7 @@ mod tests {
     #[test]
     fn run_dispatches_apply_defender_exclusions_to_a_failure_exit() {
         // The `run` dispatch arm for the Defender action: off Windows the action
-        // resolves to NotWindows, which `run` maps to a failure exit — distinct
+        // resolves to NotWindows, which `run` maps to a failure exit, distinct
         // from the success code the Ok arm produces.
         let code = run(&Command::ApplyDefenderExclusions {
             request: PathBuf::from("/tmp/patina-defender-request.txt"),

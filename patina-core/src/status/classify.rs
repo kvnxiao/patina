@@ -3,10 +3,10 @@
 //! [`classify`] is the pure decision function: given the recorded
 //! expectation for one target and whether the *current* repository plan
 //! still manages that target, it reads the live filesystem and returns the
-//! [`TargetState`]. Keeping it free of IO orchestration lets the status
-//! module ([`super`]) own the journal read and the current-plan
-//! computation while this function owns the four-way comparison of
-//! CLEAN / DRIFTED / MISSING / ORPHANED.
+//! [`TargetState`]. Keeping it free of IO orchestration splits the work. The
+//! status module ([`super`]) owns the journal read and the current-plan
+//! computation. This function owns the four-way comparison of CLEAN /
+//! DRIFTED / MISSING / ORPHANED.
 
 use crate::journal::ExpectedTarget;
 use crate::journal::content_hash;
@@ -46,7 +46,7 @@ impl TargetState {
 /// `still_managed` is `true` when the freshly-computed current plan still
 /// manages this target's path. A target the current plan has dropped is
 /// ORPHANED while it still exists on disk; once it is gone there is
-/// nothing left to report, so it classifies MISSING — but the status
+/// nothing left to report, so it classifies MISSING. The status
 /// module filters dropped-and-absent targets out before display, since a
 /// no-longer-managed, no-longer-present target is simply done.
 ///

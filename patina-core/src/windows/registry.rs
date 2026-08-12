@@ -8,17 +8,17 @@
 //!
 //! Three IO-free reads live here:
 //!
-//! - [`read_dev_mode_flag`] — the `AllowDevelopmentWithoutDevLicense` DWORD
+//! - [`read_dev_mode_flag`]: the `AllowDevelopmentWithoutDevLicense` DWORD
 //!   under `AppModelUnlock` (the Developer Mode switch).
-//! - [`process_is_elevated`] — the current process token's `TokenIsElevated`
+//! - [`process_is_elevated`]: the current process token's `TokenIsElevated`
 //!   flag.
-//! - [`build_number`] — the OS build number, read from the `CurrentBuildNumber`
+//! - [`build_number`]: the OS build number, read from the `CurrentBuildNumber`
 //!   registry string rather than `GetVersionEx`, which under-reports the build
 //!   for unmanifested processes.
 //!
 //! The registry key path and value name are held as constants here. The
 //! standalone `patina-elevate` helper crate duplicates these
-//! constants deliberately — it must not depend on `patina-core` — so they
+//! constants deliberately, because it must not depend on `patina-core`, so they
 //! are intentionally not shared across a crate boundary.
 
 use super::WindowsError;
@@ -51,10 +51,10 @@ fn win_err(call: &'static str, err: co::ERROR) -> WindowsError {
 
 /// Read the Developer Mode DWORD flag from `HKLM`.
 ///
-/// Returns `Ok(Some(value))` when the value exists and is a DWORD,
-/// `Ok(None)` when the key or value is absent (Developer Mode was never
-/// toggled on this machine), or `Err` when the registry call itself fails
-/// for a reason other than "not found".
+/// Returns `Ok(Some(value))` when the value exists and is a DWORD. Returns
+/// `Ok(None)` when the key or value is absent, which means Developer Mode was
+/// never toggled on this machine. Returns `Err` when the registry call itself
+/// fails for a reason other than "not found".
 ///
 /// # Errors
 ///
@@ -108,8 +108,8 @@ pub(crate) fn process_is_elevated() -> Result<bool, WindowsError> {
 
 /// Open `HKLM\{sub_key}` read-only and read `{value}` as a DWORD.
 ///
-/// A missing key or value is reported as `Ok(None)` rather than an error
-/// — Developer Mode being un-toggled is a normal state, not a failure.
+/// A missing key or value is reported as `Ok(None)` rather than an error;
+/// Developer Mode being un-toggled is a normal state, not a failure.
 /// (`co::ERROR` is a newtype over an integer and cannot appear in a match
 /// pattern, so the not-found case is checked with `==`.)
 fn read_dword(sub_key: &str, value: &str) -> Result<Option<u32>, WindowsError> {
@@ -138,12 +138,12 @@ mod tests {
     /// The elevation read must *succeed*, whatever it reports.
     ///
     /// [`super::super::is_elevated`] maps any error to "not elevated", so a
-    /// broken read is indistinguishable from an unelevated process, which is
-    /// how a `winsafe` release that rejected the `ERROR_BAD_LENGTH` answer from
-    /// the fixed-size `TokenElevation` class went unnoticed while every
-    /// elevated process was reported as unelevated. Asserting the call
-    /// itself succeeds catches that; the boolean depends on how the suite
-    /// was launched and is deliberately not asserted.
+    /// broken read is indistinguishable from an unelevated process. A
+    /// `winsafe` release that rejected the `ERROR_BAD_LENGTH` answer from the
+    /// fixed-size `TokenElevation` class can therefore report every elevated
+    /// process as unelevated, unnoticed. Asserting that the call itself
+    /// succeeds catches that. The boolean depends on how the suite was
+    /// launched, and is deliberately not asserted.
     #[test]
     fn the_elevation_read_succeeds_whatever_it_reports() {
         process_is_elevated().expect("querying the process token's elevation must succeed");

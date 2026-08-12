@@ -13,18 +13,18 @@
 #
 # The cross-platform `cargo test` matrix is `just test`, kept separate
 # because it exercises behaviour rather than lints. `just check` runs both
-# (`lint` then `test`) — the full local gate, and what the pre-push hook runs.
+# (`lint` then `test`): the full local gate, and what the pre-push hook runs.
 #
 # CI runs clippy natively on each OS (the `Clippy (<os>)` matrix). `just`
 # runs on one OS, so `lint-clippy` instead CROSS-compiles the non-host
-# targets — the only way to catch a `#[cfg(windows)]` lint/compile error
+# targets, the only way to catch a `#[cfg(windows)]` lint/compile error
 # from this Mac/Linux box before pushing. Caveat: the macOS target compiles
 # Objective-C (`mac-notification-sys`), so it can only be cross-linted from a
 # macOS host; off a Mac, `lint-clippy` skips it and CI's macos-latest leg is
 # the backstop. CI-only gates `just` cannot reproduce on one dev box: the
 # per-OS test *behaviour* matrix (clippy proves the cfg code compiles and
 # lints, not that it runs correctly), the MSRV (Rust 1.95) build, and
-# coverage. A green `just check` is necessary, not sufficient — watch the PR
+# coverage. A green `just check` is necessary, not sufficient. Watch the PR
 # checks after pushing.
 #
 # One-time tooling the lints assume:
@@ -36,7 +36,7 @@
 default:
     @just --list
 
-# Full local gate (lint + test) — what the pre-push hook runs; stops at first failure.
+# Full local gate (lint + test), what the pre-push hook runs; stops at first failure.
 check: lint test
 
 # Run every CI lint/quality gate locally, in CI's order (stops at first failure).
@@ -52,7 +52,7 @@ lint-clippy:
     cargo clippy --workspace --all-targets --all-features --locked --target x86_64-pc-windows-gnu -- -D warnings
     {{ if os() == "macos" { "cargo clippy --workspace --all-targets --all-features --locked --target aarch64-apple-darwin -- -D warnings" } else { "echo 'lint-clippy: skipping aarch64-apple-darwin (compiles Objective-C; needs a macOS host - CI lints it on macos-latest)'" } }}
 
-# Rustdoc with warnings denied — broken/private doc links fail (CI "Docs").
+# Rustdoc with warnings denied; broken/private doc links fail (CI "Docs").
 lint-docs:
     RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features
 

@@ -75,7 +75,7 @@ impl Scene {
 #[test]
 fn a_successful_apply_prunes_to_exactly_ten_keeping_the_newest() {
     // 15 timestamped subdirectories; after the just-completed
-    // apply's GC, exactly 10 remain — the 10 most recent — and the 5 oldest
+    // apply's GC, exactly 10 remain, the 10 most recent, and the 5 oldest
     // are gone.
     let scene = Scene::new();
     let names = scene.seed_cycles(15);
@@ -98,8 +98,8 @@ fn a_successful_apply_prunes_to_exactly_ten_keeping_the_newest() {
 #[test]
 fn a_failed_apply_leaves_historical_backups_untouched() {
     // An apply that fails before COMMIT never runs GC.
-    // We model that by *not* calling gc_retain — the failed attempt's
-    // caller short-circuits — and assert the three historical cycles plus
+    // We model that by *not* calling gc_retain, because the failed attempt's
+    // caller short-circuits, and assert the three historical cycles plus
     // the partial attempt directory all survive.
     let scene = Scene::new();
     let historical = scene.seed_cycles(3);

@@ -259,7 +259,7 @@ fn add_json_emits_deterministic_document() {
 /// exclusive lock at `<state>/lock` (the same path `patina add` resolves
 /// from the fixture env) and holds it for a fixed window. Process B is
 /// `patina add`, launched once A is observed to hold the lock. B must not
-/// finish before A releases — its completion proves it waited on the lock.
+/// finish before A releases; its completion proves it waited on the lock.
 #[test]
 fn add_serializes_behind_a_held_exclusive_lock() {
     let fx = Fixture::new();

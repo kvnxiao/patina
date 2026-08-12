@@ -32,13 +32,13 @@ most.
 Two acceptable pinning forms:
 
 ```yaml
-# Floating major tag — preferred for low-blast-radius CI work.
+# Floating major tag: preferred for low-blast-radius CI work.
 - uses: actions/checkout@v5
 - uses: Swatinem/rust-cache@v2
 ```
 
 ```yaml
-# Commit SHA — preferred when the workflow handles secrets, deploys,
+# Commit SHA: preferred when the workflow handles secrets, deploys,
 # or otherwise has a wider blast radius. Comment the version it
 # corresponds to so future bumps stay legible.
 - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v5.0.0
@@ -52,7 +52,7 @@ When upgrading:
 1. Check the action's repo for the current latest major (`gh release
    list --repo <owner>/<action>` or the README badge).
 2. Bump the tag (or update the SHA + version comment).
-3. Read the upstream changelog for the major bump — breaking changes
+3. Read the upstream changelog for the major bump, because breaking changes
    between majors are real and skip-reading them is how surprises
    land.
 4. Run the workflow on the bump branch before merging.
@@ -67,7 +67,7 @@ This rule applies to any `uses:` reference. It includes:
 - Reusable workflows from other repos.
 
 It does **not** apply to `dtolnay/rust-toolchain@stable` /
-`@nightly` style channel references — those are deliberately
+`@nightly` style channel references; those are deliberately
 floating-by-channel rather than version-pinned, and the upstream
 contract is that they track the named Rust channel.
 

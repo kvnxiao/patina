@@ -16,7 +16,7 @@
 //! 3. `[bans].wildcards` is set to `"deny"`, so a `some-crate = "*"` dependency
 //!    is rejected.
 //!
-//! The test gates the *policy* encoded in `deny.toml` — table presence by key
+//! The test gates the *policy* encoded in `deny.toml`: table presence by key
 //! and the allow/deny decisions that determine `cargo deny` outcomes. It does
 //! not substring-match the file's comments or re-assert a production constant:
 //! `deny.toml` is the policy artifact itself, and each assertion would fail for

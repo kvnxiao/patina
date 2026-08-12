@@ -10,7 +10,7 @@
 //! reproduce:
 //!
 //! - **Exclusive serialization.** Two processes that both want the exclusive
-//!   lock run sequentially — the second's acquire/release window starts only
+//!   lock run sequentially: the second's acquire/release window starts only
 //!   after the first's window ends. Each process drops a `<nanos>.plan` marker,
 //!   so the union numbers exactly two and the timestamp windows are
 //!   non-overlapping.
@@ -167,8 +167,8 @@ fn spawn(
 /// holds the lock, then keep draining the rest of its stdout on a
 /// background thread so the helper never blocks (or hits a broken pipe) on
 /// a later `println!` such as its `RELEASED` line. Gating a contender on
-/// this observed acquisition — rather than a fixed head-start sleep —
-/// makes the contention deterministic under machine load (F2).
+/// this observed acquisition, rather than a fixed head-start sleep,
+/// makes the contention deterministic under machine load.
 fn wait_for_acquired(child: &mut Child) {
     let stdout = child.stdout.take().expect("holder stdout piped");
     let mut reader = BufReader::new(stdout);
@@ -257,10 +257,10 @@ fn blocked_exclusive_exits_with_lock_timeout_code() {
     // Holder keeps the lock for 1.5s; the blocked process caps at 200ms.
     let mut holder = spawn(&helper, &state.dir, "exclusive", 1_500, 5_000, false);
     // Start the contender only after the holder has *observably* acquired
-    // the lock (its `ACQUIRED` stdout marker), not after a fixed sleep — a
+    // the lock (its `ACQUIRED` stdout marker), not after a fixed sleep. A
     // cold-starting holder binary can take longer than any hardcoded
-    // head-start under load, which previously let the contender win the
-    // still-free lock and exit 0 instead of timing out (F2).
+    // head-start under load, which would let the contender win the
+    // still-free lock and exit 0 instead of timing out.
     wait_for_acquired(&mut holder);
     let blocked = spawn(&helper, &state.dir, "exclusive", 0, 200, false);
 
@@ -288,7 +288,7 @@ fn blocked_exclusive_exits_with_lock_timeout_code() {
 #[test]
 fn os_releases_lock_when_holder_aborts() {
     // A process that aborts while holding the exclusive lock must leave
-    // the lock free for the next acquirer — the OS releases on death.
+    // the lock free for the next acquirer: the OS releases on death.
     ensure_helper_built();
     let helper = helper_path();
     let state = State::new();
@@ -305,7 +305,7 @@ fn os_releases_lock_when_holder_aborts() {
         "aborter should have acquired the lock before aborting"
     );
 
-    // The next acquirer must get in cleanly with a short cap — if the OS
+    // The next acquirer must get in cleanly with a short cap. If the OS
     // had not released the dead holder's lock, this would time out.
     let next = spawn(&helper, &state.dir, "exclusive", 0, 1_000, false);
     let next_out = next.wait_with_output().expect("wait next");

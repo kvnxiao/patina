@@ -8,23 +8,23 @@ use camino::Utf8Path;
 /// Back up the pre-existing entry at `target` into the per-apply backup
 /// root `<backups_dir>/<ts>/` before the executor overwrites it.
 ///
-/// The original is copied to [`mirror_backup_path`]'s mirrored location —
-/// the same map crash recovery reads to restore an overwrite — and the
+/// The original is copied to [`mirror_backup_path`]'s mirrored location,
+/// the same map crash recovery reads to restore an overwrite. The
 /// returned `bool` reports whether a backup was actually written:
 ///
-/// - **`Ok(true)`** — the target pre-existed and its bytes were copied to the
+/// - **`Ok(true)`**: the target pre-existed and its bytes were copied to the
 ///   backup tree. The caller may now safely overwrite the target.
-/// - **`Ok(false)`** — the target did not exist, so there was nothing to back
-///   up (a freshly created target produces no backup entry). The caller
-///   proceeds to create the target.
+/// - **`Ok(false)`**: the target did not exist, so there was nothing to back up
+///   (a freshly created target produces no backup entry). The caller proceeds
+///   to create the target.
 ///
 /// Existence is probed with `symlink_metadata`, so a pre-existing symlink
 /// at the target counts as present. The stash itself is kind-preserving via
-/// the crate-internal `fsx::clone_entry` — the same primitive recovery and
-/// rollback restore through — so a regular file round-trips byte-for-byte, a
-/// symlink round-trips as a symlink (not flattened to its destination's
-/// bytes), and a directory is captured recursively rather than aborting the
-/// copy.
+/// the crate-internal `fsx::clone_entry`, the same primitive recovery and
+/// rollback restore through. A regular file therefore round-trips
+/// byte-for-byte, and a symlink round-trips as a symlink rather than being
+/// flattened to its destination's bytes. A directory is captured recursively
+/// rather than aborting the copy.
 ///
 /// This writes only under `backups_dir`; it never touches the dotfiles
 /// repository.
@@ -55,8 +55,8 @@ pub fn backup_before_overwrite(
     let target = target.as_ref();
 
     // Probe with symlink_metadata so a pre-existing symlink is "present"
-    // (matching recovery's probe). A missing target — the fresh-creation
-    // case — yields no backup entry.
+    // (matching recovery's probe). A missing target, the fresh-creation
+    // case, yields no backup entry.
     if !crate::fsx::entry_present(target) {
         return Ok(false);
     }
@@ -153,9 +153,9 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn pre_existing_symlink_target_is_backed_up_as_a_symlink() {
-        // C1 regression: a pre-existing symlink target must be stashed as a
-        // symlink, not flattened to its destination's bytes — otherwise
-        // rollback/recovery would restore a regular file where a link stood.
+        // A pre-existing symlink target must be stashed as a symlink, not
+        // flattened to its destination's bytes. Otherwise rollback and
+        // recovery would restore a regular file where a link stood.
         let f = fixture();
         let target = f.root.join("home").join("u").join(".zshrc");
         fs_err::create_dir_all(target.parent().expect("target parent")).expect("mkdir target dir");

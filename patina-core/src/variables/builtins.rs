@@ -5,7 +5,7 @@
 //! is constructed. The `patina.profile` field is left **unresolved**
 //! (`None`) by [`Builtins::current`] and filled in by
 //! [`crate::variables::Resolver::with_profile`] once the active profile
-//! is resolved — `Some(name)`, where the no-profile fallback is
+//! is resolved, to `Some(name)`, where the no-profile fallback is
 //! `Some("")`. While it is `None`, a `patina.profile` lookup is
 //! undefined: profile resolution itself evaluates `[[auto_match]]`
 //! predicates *before* the profile exists, so a rule referencing
@@ -102,9 +102,9 @@ fn normalized_os(raw: &str) -> String {
     }
 }
 
-/// Host name from the OS, via `whoami` (a `gethostname` /
-/// `GetComputerNameExW` syscall) rather than the `$HOSTNAME` env var, which
-/// is a non-exported bash shell variable on Unix and is absent under the
+/// Host name from the OS, via `whoami`, which is a `gethostname` /
+/// `GetComputerNameExW` syscall. The `$HOSTNAME` env var is not used: it is a
+/// non-exported bash shell variable on Unix, and it is absent under the
 /// systemd/launchd watcher services. Empty when the query fails.
 fn current_hostname() -> String {
     whoami::hostname().unwrap_or_default()

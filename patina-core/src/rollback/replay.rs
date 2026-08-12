@@ -2,12 +2,12 @@
 //!
 //! [`replay_entry`] reverts every target of one `[[file]]` entry to its
 //! pre-apply state as an atomic unit. The inverse-operation rule mirrors
-//! crash recovery and has three outcomes, in evaluation order: a target the
-//! apply recorded as `Unchanged` is left in place — filtered out of
-//! the snapshot/roll-forward set before either branch below is reached, since
-//! the apply touched neither its bytes nor its backup; a target with a backup
-//! is restored from it (the apply overwrote a pre-existing file); a target
-//! with no backup is deleted (the apply created it fresh).
+//! crash recovery and has three outcomes, in evaluation order. A target the
+//! apply recorded as `Unchanged` is left in place, and is filtered out of the
+//! snapshot/roll-forward set before either branch below is reached; the apply
+//! touched neither its bytes nor its backup. A target with a backup is
+//! restored from it, because the apply overwrote a pre-existing file. A target
+//! with no backup is deleted, because the apply created it fresh.
 //!
 //! ## Atomicity mechanism
 //!
@@ -15,8 +15,8 @@
 //! current post-apply state into a temporary staging directory beside the
 //! backup root. It then reverts the targets in order. If any revert fails,
 //! every target reverted so far is rolled forward from its snapshot to the
-//! post-apply state it had on entry, so the whole `[[file]]` entry is left
-//! exactly as the last apply left it — no partial restore. The
+//! post-apply state it had on entry. The whole `[[file]]` entry is therefore
+//! left exactly as the last apply left it, with no partial restore. The
 //! staging directory is removed on both the success and failure paths.
 
 use super::RollbackError;
@@ -27,7 +27,7 @@ use camino::Utf8PathBuf;
 
 /// One commit-recorded target to revert: its canonical absolute path paired
 /// with the disposition the apply classified it as. The
-/// disposition decides whether the target is reverted at all — an
+/// disposition decides whether the target is reverted at all: an
 /// [`Disposition::Unchanged`] target is left in place.
 #[derive(Debug, Clone, Copy)]
 pub struct RevertTarget<'a> {
@@ -101,7 +101,7 @@ pub fn replay_entry(
                 // Roll forward to the post-apply state so the entry is left
                 // atomically untouched. `revert_target` removes the in-flight
                 // target before restoring it, so a copy failure can leave that
-                // target deleted/partial — include it in the roll-forward set
+                // target deleted/partial, so include it in the roll-forward set
                 // alongside the already-reverted targets.
                 reverted.push(snapshot);
                 roll_forward(&reverted);
@@ -164,9 +164,9 @@ fn snapshot_targets(stage: &Utf8Path, targets: &[&str]) -> std::io::Result<Vec<S
             // A target whose parent is not a directory reports `ENOTDIR`
             // (`NotADirectory`) on Unix and `NotFound` on Windows; either way
             // the target genuinely cannot exist, so there is nothing to
-            // snapshot. Treating both alike lets the real restore failure —
+            // snapshot. Treating both alike lets the real restore failure,
             // `create_dir_all` over the non-directory parent in
-            // `revert_target` — drive the per-entry `RollbackPartial` path
+            // `revert_target`, drive the per-entry `RollbackPartial` path
             // identically on every platform.
             Err(err)
                 if matches!(
@@ -196,7 +196,7 @@ fn revert_target(
 ) -> std::io::Result<()> {
     let backup = mirror_backup_path(backups_dir, timestamp, target);
     if crate::fsx::entry_present(&backup) {
-        // Overwrite case: restore the original entry, kind-preserving — a
+        // Overwrite case: restore the original entry, kind-preserving. A
         // symlink comes back a symlink, a directory a directory, a file a
         // file. Presence is probed with `entry_present` rather than
         // `exists`, so a backed-up symlink whose destination is gone is
@@ -210,10 +210,10 @@ fn revert_target(
 }
 
 /// Intentionally discard an IO result on a best-effort recovery path. The
-/// entry is already being abandoned and there is no better state to
-/// converge on than a best-effort restore, so a secondary failure here is
-/// deliberately swallowed (and keeps the `must_use` lint satisfied without
-/// a bare `let _`).
+/// entry is already being abandoned, and there is no better state to converge
+/// on than a best-effort restore. A secondary failure here is therefore
+/// deliberately swallowed. This also keeps the `must_use` lint satisfied
+/// without a bare `let _`.
 fn ignore_io<T>(_result: std::io::Result<T>) {}
 
 /// Roll already-reverted targets forward to the post-apply state captured in
@@ -383,7 +383,7 @@ mod tests {
     fn mixed_entry_reverts_create_and_update_but_leaves_unchanged() {
         // An entry mixing all three dispositions: the Create target is
         // deleted, the Update target is restored from its backup, and the
-        // Unchanged target is untouched — even though it, like the Create
+        // Unchanged target is untouched, even though it, like the Create
         // target, has no backup.
         let e = env();
         let ts = "TS";

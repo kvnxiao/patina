@@ -11,10 +11,10 @@
 //! [`SHARED_TIMEOUT`] expiry warns and proceeds
 //! rather than blocking the user.
 //!
-//! The `--fix` path is mutating: it acquires the EXCLUSIVE lock,
-//! then walks the fixable findings — Developer Mode missing on Windows and a
-//! missing `default_repo` pointer — prompting per finding (or auto-accepting
-//! under `--yes`) and remediating on accept. Non-fixable findings (UNC paths,
+//! The `--fix` path is mutating. It acquires the EXCLUSIVE lock, then walks
+//! the fixable findings: Developer Mode missing on Windows, and a missing
+//! `default_repo` pointer. It prompts per finding, or auto-accepts under
+//! `--yes`, and remediates on accept. Non-fixable findings (UNC paths,
 //! OS-too-old) are still surfaced with their warning. A non-TTY `--fix`
 //! without `--yes` cannot prompt, so it refuses with exit 1 naming the missing
 //! flag. Each remediation that runs emits a structured `tracing` event
@@ -27,9 +27,9 @@
 //! Output: human findings to stderr, `--json` emits a single
 //! deterministic document on stdout (no timestamps / PIDs / random ids), so
 //! two runs against unchanged state are byte-identical. The findings
-//! computation ([`compute_findings`]) is pure over its inputs so the whole
-//! finding set is unit-testable on the macOS/Linux CI, with the
-//! Windows-specific reads gated behind the [`Inputs`] struct the caller fills.
+//! computation ([`compute_findings`]) is pure over its inputs, so the whole
+//! finding set is unit-testable on the macOS/Linux CI. The Windows-specific
+//! reads sit behind the [`Inputs`] struct the caller fills.
 
 use crate::cli::DoctorArgs;
 use crate::cmd::apply::PromptReader;
@@ -191,9 +191,10 @@ pub struct Inputs {
 /// and treats an unresolvable repository as "no repository-scoped findings"
 /// rather than aborting; a shared-lock timeout is downgraded to a stderr
 /// warning (the read-only escape hatch). On the `--fix` path an
-/// exclusive-lock timeout maps to exit 4 via the engine-error chain, and a
-/// remediation failure (the persisted-default write, or the Windows helper
-/// running but leaving the flag off) is a hard error (exit 1).
+/// exclusive-lock timeout maps to exit 4 via the engine-error chain. A
+/// remediation failure is a hard error (exit 1). That covers the
+/// persisted-default write, and the Windows helper running but leaving the
+/// flag off.
 pub fn run(
     args: &DoctorArgs,
     tty: Tty,
@@ -211,7 +212,7 @@ pub fn run(
 
 /// The read-only diagnostic path (no `--fix`).
 ///
-/// Acquires only the SHARED lock, with the read-only escape hatch — a timeout
+/// Acquires only the SHARED lock, with the read-only escape hatch: a timeout
 /// warns and proceeds rather than blocking the user behind a concurrent
 /// mutating apply.
 fn run_report(args: &DoctorArgs, state: &Utf8Path, reporter: &mut impl Reporter) -> Result<i32> {
@@ -265,7 +266,7 @@ fn run_fix(
         return Ok(ExitCode::Generic.code());
     }
 
-    // Take the EXCLUSIVE lock before any mutation — distinct from the
+    // Take the EXCLUSIVE lock before any mutation, distinct from the
     // read-only path's shared lock. A contention timeout reaches the exit-4
     // mapping through the engine-error chain.
     let lock_path = state.join("lock");
@@ -308,8 +309,8 @@ fn run_fix(
 /// Remediate the `DOC-NO-DEFAULT-REPO` finding by writing the current working
 /// directory's canonical absolute path as the persisted default.
 ///
-/// The CWD is validated as a repository root — an existing directory holding a
-/// `patina.toml` with `[patina].root = true` — via
+/// The CWD is validated as a repository root (an existing directory holding a
+/// `patina.toml` with `[patina].root = true`) via
 /// [`patina_core::validate_repo_root`], the same predicate repository
 /// discovery uses. A non-repository CWD (or a canonicalization failure) is a
 /// hard error (exit 1) so `doctor --fix` cannot record a directory that is not
@@ -550,7 +551,7 @@ pub fn compute_findings(inputs: &Inputs) -> Vec<Finding> {
         // repository already resolves (env var or walk-up), `patina init`
         // refuses on the existing manifest, so point at `doctor --fix`, which
         // records the pointer for an existing repository. The message also
-        // says why the pointer matters — this invocation found the repository
+        // says why the pointer matters: this invocation found the repository
         // through its own working directory or PATINA_REPO, and invocations
         // with neither (the background watch service in particular) fall back
         // to the recorded default.
@@ -726,7 +727,7 @@ mod tests {
     #[test]
     fn fix_in_non_tty_without_yes_refuses_exit_one() {
         // A non-TTY --fix without --yes cannot prompt, so it refuses
-        // with exit 1 naming the missing --yes flag — before any lock or
+        // with exit 1 naming the missing --yes flag, before any lock or
         // mutation. The state path is never touched because we return first.
         let mut reader = ScriptedReader::new(&[]);
         let mut reporter = BufferReporter::new();
@@ -986,7 +987,7 @@ mod tests {
     #[test]
     fn finding_order_is_stable() {
         // All four findings present at once: order is UNC, DevMode, OSOld,
-        // NoDefaultRepo — fixed so the rendered output is deterministic.
+        // NoDefaultRepo, fixed so the rendered output is deterministic.
         let inputs = Inputs {
             is_windows: true,
             dev_mode: DevModeStatus::Disabled,

@@ -1,16 +1,16 @@
 //! `patina promote <target>` command logic.
 //!
 //! `patina promote <target>` reconciles a copy-mode target that the user
-//! edited outside Patina: it copies the target's current bytes back into the
-//! repository source the target was materialized from, then re-applies so the
-//! fresh `<ts>.COMMIT` records the new content's hash as the expected hash and
-//! `patina status` classifies the target CLEAN again.
+//! edited outside Patina. It copies the target's current bytes back into the
+//! repository source the target was materialized from, then re-applies. The
+//! fresh `<ts>.COMMIT` therefore records the new content's hash as the
+//! expected hash, and `patina status` classifies the target CLEAN again.
 //!
 //! Two target shapes are refused (exit 1):
 //!
 //! - **Symbolic-link targets** ([`ExpectedTarget::Symlink`]). A symlink IS its
-//!   source — the bytes the user sees through the link are the repository bytes
-//!   — so there is nothing to copy back and promotion is meaningless.
+//!   source: the bytes the user sees through the link are the repository bytes,
+//!   so there is nothing to copy back and promotion is meaningless.
 //! - **Template-rendered targets** (the journaled source ends in `.tmpl`).
 //!   Templating is non-invertible: the rendered bytes cannot be turned back
 //!   into a template, so promotion cannot recover the source.
@@ -20,7 +20,7 @@
 //! the lookup resolves the single leaf and only its source is rewritten.
 //!
 //! Like `remove`, `promote` holds ONE exclusive advisory lock for the whole
-//! command and re-journals under
+//! command. It re-journals under
 //! [`LockPolicy::Held`](patina_core::LockPolicy) via the shared
 //! [`crate::cmd::managed`] scaffolding, so the re-apply reuses the held guard
 //! instead of self-contending.

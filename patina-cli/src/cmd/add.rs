@@ -1,16 +1,16 @@
 //! `patina add <path>` command logic.
 //!
 //! `patina add <path>` brings an existing dotfile under management. It
-//! resolves the repository root, stages the target's bytes into a module
-//! subdirectory (`<repo>/<module>/<source>`), appends the table-array entry
-//! matching the source kind — a `[[file]]` for a file source, a
-//! `[[directory]]` for a directory source — to that module's
-//! `patina.toml` (creating it if absent), and leaves the original target in
-//! place. The command does NOT drive the engine apply path —
-//! materialization (turning the target into a symlink / copy / rendered
-//! template) is deferred to a later `patina apply` (copy-on-add, resolved
-//! open-question (a): the bytes are copied into the repo, while the target
-//! stays in place so apply converges it).
+//! resolves the repository root, and stages the target's bytes into a module
+//! subdirectory (`<repo>/<module>/<source>`). It then appends the table-array
+//! entry matching the source kind to that module's `patina.toml`, creating
+//! the manifest if absent. A file source gets a `[[file]]` entry, a directory
+//! source a `[[directory]]` entry. The original target is left in place. The
+//! command does NOT drive the engine apply path.
+//! Materialization (turning the target into a symlink / copy / rendered
+//! template) is deferred to a later `patina apply`: `add` copies the bytes
+//! into the repository and leaves the target where it is, so the next apply
+//! converges it.
 //!
 //! `add` is a mutating command: it acquires the engine's
 //! exclusive advisory lock at `<state>/lock` before any filesystem
@@ -353,11 +353,11 @@ fn find_managed(
 /// Stage the target into the repository at `to`, leaving the original
 /// `from` in place.
 ///
-/// `add` brings a dotfile under management without materializing it: the
-/// repository gets the source bytes, and the target stays in place so a
-/// subsequent `patina apply` converges it into the declared mode
-/// (`~/.zshrc` is still a regular file with the original bytes,
-/// apply has not run). A directory source is copied recursively;
+/// `add` brings a dotfile under management without materializing it. The
+/// repository gets the source bytes, and the target stays in place. A
+/// subsequent `patina apply` then converges it into the declared mode. Until
+/// that apply runs, `~/.zshrc` is still a regular file with the original
+/// bytes. A directory source is copied recursively;
 /// a file source is a single byte copy. The bytes are copied (not renamed
 /// away) precisely so the original target survives.
 fn stage_into_repo(from: &Utf8Path, to: &Utf8Path, kind: SourceKind) -> Result<()> {
@@ -377,7 +377,7 @@ fn stage_into_repo(from: &Utf8Path, to: &Utf8Path, kind: SourceKind) -> Result<(
 
 /// Recursively copy the directory at `from` into a freshly-created `to`,
 /// mirroring the tree (subdirectories and regular files). Symbolic links
-/// inside the tree are followed and copied as their target bytes — `add`
+/// inside the tree are followed and copied as their target bytes. `add`
 /// stages source content, not link structure.
 fn copy_dir_recursive(from: &Utf8Path, to: &Utf8Path) -> Result<()> {
     fs_err::create_dir_all(to.as_std_path()).with_context(|| format!("failed to create {to}"))?;

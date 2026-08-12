@@ -9,7 +9,7 @@ description: "Rustdoc requirements; public-API and module docs, the module skele
 
 Every public item must have documentation. Clippy enforces `# Errors`
 and `# Panics` sections (`missing_errors_doc` / `missing_panics_doc`);
-this rule covers the rest — the prose summary, `# Arguments`, and
+this rule covers the rest: the prose summary, `# Arguments`, and
 `# Examples`.
 
 ```rust
@@ -83,7 +83,7 @@ For a substantial module, follow a three-part skeleton: an **Overview** (bullete
 
 The crate root is where a new user lands. Make it earn that:
 
-- List what the crate supports, and — explicitly — what it does **not**, linking each gap to a tracking issue.
+- List what the crate supports, and explicitly what it does **not**, linking each gap to a tracking issue.
 - State the panic policy ("APIs that panic by design are few and clearly documented as such").
 - Embed a short cookbook of runnable, task-oriented examples.
 

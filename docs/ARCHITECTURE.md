@@ -1,4 +1,4 @@
-# Patina Architecture
+# Patina architecture
 
 This document orients contributors to how Patina is built: the crate
 boundaries, the on-disk journal format, the phases an `apply` moves
@@ -40,11 +40,11 @@ flowchart TD
 ```
 
 - **`patina-core`** is the library crate. It owns repository discovery,
-  the flat `patina.toml` module model, the `[[file]]` / `[[directory]]`
-  entry kinds and their materialization modes, template
-  rendering, path canonicalization, the journal and progress cursor,
-  crash recovery, backups, and the per-machine state directory. It never
-  prints user-facing output directly.
+  the flat `patina.toml` module model, and the `[[file]]` /
+  `[[directory]]` entry kinds with their materialization modes. It also
+  owns template rendering, path canonicalization, the journal and
+  progress cursor, crash recovery, backups, and the per-machine state
+  directory. It never prints user-facing output directly.
 - **`patina-cli`** is the binary crate. It parses arguments with
   `clap`, drives the engine, and renders results through the
   `output::Reporter` abstraction: human-readable by default, JSON under
@@ -63,9 +63,9 @@ flowchart TD
   withholds the exclusion list from an unelevated caller. Its verdict
   reaches the launching `patina.exe` through a result file rather than an
   exit code. `ShellExecuteEx` is the only way to raise the UAC dialog
-  without `unsafe`, and it returns as soon as the process is created,
-  keeping no handle to wait on, so both launch sites poll for the helper's
-  effect instead of reading a status.
+  without `unsafe`. It returns as soon as the process is created and
+  keeps no handle to wait on. Both launch sites therefore poll for the
+  helper's effect instead of reading a status.
 
 User-facing output never uses `println!` / `eprintln!` outside the
 `Reporter` layer; everything else logs through `tracing`. See
@@ -74,16 +74,16 @@ AGENTS.md "Hard rules" for the enforcement detail.
 ## Journal format
 
 Before Patina mutates any file, it writes the entire plan to a journal
-in the per-machine state directory and `fsync`s it up front, both the
-plan file and its parent directory. The journal is the source of truth a
+in the per-machine state directory. It then `fsync`s both the plan file
+and its parent directory, up front. The journal is the source of truth a
 later recovery run reads to converge the filesystem.
 
 The plan file and the commit record are encoded with `postcard`; the
-progress cursor is a raw fixed-width byte log. Because `postcard` makes no
-wire-format-stability promise across versions, every journal carries a
-version envelope so a future Patina can detect and reject a journal it
-cannot decode rather than misread it (see the product north star's
-Known-Unknowns note in AGENTS.md).
+progress cursor is a raw fixed-width byte log. `postcard` makes no
+wire-format-stability promise across versions, so every journal carries a
+version envelope. A future Patina can then detect and reject a journal it
+cannot decode, rather than misread it. See the product north star's
+Known-Unknowns note in AGENTS.md.
 
 ```mermaid
 flowchart LR
@@ -110,11 +110,11 @@ human-readable form for post-mortem inspection.
 The root manifest declares each remote once as a `[[remote]]` table; a
 managed entry naming one resolves its source against a checkout of that
 repository rather than against its own module directory. Pins are global
-and checkouts are local: the planner's remote registry reads the lockfile
-on the first entry that selects any remote, materializes a checkout on
-the first entry that selects that one, and memoizes both, so a remote no
-active entry names costs neither a read nor a fetch. The subsystem is
-four small pieces under `patina-core/src/remote/`:
+and checkouts are local. The planner's remote registry reads the lockfile
+on the first entry that selects any remote. It materializes a checkout
+on the first entry that selects that remote, and memoizes both. A remote
+that no active entry names therefore costs neither a read nor a fetch. The
+subsystem is four small pieces under `patina-core/src/remote/`:
 
 - The **`git`** module wraps the `git` binary on `PATH` via
   `std::process::Command`. Patina links no git library, so a user's SSH
@@ -130,9 +130,9 @@ four small pieces under `patina-core/src/remote/`:
 - The **`lockfile`** module reads and writes `patina.lock`. Rendering is
   deterministic (remote-name order, fixed field order), so re-writing
   unchanged pins produces identical bytes.
-- The **`gate`** module is a pure function deciding whether a candidate tip
-  may become a pin, so every branch is unit-testable without a clock, a
-  network, or a repository.
+- The **`gate`** module is a pure function. It decides whether a
+  candidate tip may become a pin, so every branch is unit-testable
+  without a clock, a network, or a repository.
 
 Pruning is reachability-based over every journal commit sentinel on disk,
 not "keep the newest": rollback walks back through older records, so a
@@ -164,8 +164,8 @@ sequenceDiagram
     M->>U: COMMIT sentinel, exit 0
 ```
 
-1. **Plan.** Resolve the repository, parse `patina.toml`, resolve the
-   variable precedence chain and profile, render templates, canonicalize
+1. **Plan.** Resolve the repository, parse `patina.toml`, and resolve the
+   variable precedence chain and profile. Render templates, canonicalize
    paths, and produce an ordered list of operations across the
    `[[file]]` / `[[directory]]` entry kinds and their materialization
    modes.
@@ -186,9 +186,9 @@ Crash safety is the engine's headline guarantee: a `kill -9` mid-apply
 leaves the filesystem in either the pre-apply or post-apply state,
 never an intermediate one. This holds for process termination, where
 the page cache survives. Backups are copied but not `fsync`ed before an
-overwrite, so power loss or a kernel panic mid-apply can leave an
-overwrite durable while its backup is not, a genuinely intermediate
-state. Full power-loss durability (atomic temp+rename target writes plus
+overwrite. Power loss or a kernel panic mid-apply can therefore leave an
+overwrite durable while its backup is not. That is a genuinely
+intermediate state. Full power-loss durability (atomic temp+rename target writes plus
 `fsync` of backups and parent directories) is a post-1.0 hardening item.
 
 On the next run, before computing a fresh plan, recovery reads each
@@ -198,8 +198,8 @@ journal envelope and converges deterministically:
   the journal became durable but before it committed. Recovery reverses
   it backward to the pre-apply state, deciding per operation from the
   recorded disposition and whether a backup exists. An `Unchanged`
-  target is left alone, a target with a backup is restored from it, and
-  a target with no backup was a fresh creation and is deleted. The
+  target is left alone. A target with a backup is restored from it. A
+  target with no backup was a fresh creation, so it is deleted. The
   decision reads the filesystem and the backup directory, never the
   progress cursor. The engine then computes and applies a fresh plan.
 - Backups taken before an overwrite are retained for the last ten apply
@@ -207,11 +207,12 @@ journal envelope and converges deterministically:
   right after its COMMIT. Backups live in the per-machine state
   directory and never inside the repository.
 
-`patina rollback` reverses the last successful apply by reading the
-journal and restoring the recorded pre-apply bytes; afterwards the
+`patina rollback` reverses the last successful apply. It reads the
+journal and restores the recorded pre-apply bytes. Afterwards the
 filesystem matches the pre-apply state in content and entry kind (file,
-symlink, or directory), modulo mode/timestamp bits and files the user
-touched outside Patina. `patina status` reports drift between the
+symlink, or directory). Mode and timestamp bits are excluded, as are
+files the user touched outside Patina. `patina status` reports drift
+between the
 declared end-state and the live filesystem. The per-machine state
 directory that holds journal, backups, lock, and drift cache uses
 OS-appropriate locations and must not live on a cloud-sync mount. See

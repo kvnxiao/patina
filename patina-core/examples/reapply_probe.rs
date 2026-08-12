@@ -6,15 +6,15 @@
 //! [`patina_core::watch::reapply::run_reapply`] in a separate process while the
 //! test process holds the exclusive advisory lock. Running the re-apply in a
 //! child (rather than in-process) is required because the crate forbids
-//! `unsafe`, so a test cannot mutate its own process environment — and
+//! `unsafe`, so a test cannot mutate its own process environment, and
 //! `run_reapply` resolves the repo and state dir from that environment.
 //!
 //! It is wired as an `examples/` target so it ships only with the crate's test
 //! build and never pollutes the public binary surface. The integration test
 //! locates the compiled artifact at `target/<profile>/examples/reapply_probe`.
 //!
-//! It prints exactly one outcome word on stdout — `SKIPPED`, `APPLIED`, or
-//! `FAILED` — and exits 0, or prints `ERROR <msg>` on stderr and exits 2 if the
+//! It prints exactly one outcome word on stdout (`SKIPPED`, `APPLIED`, or
+//! `FAILED`) and exits 0, or prints `ERROR <msg>` on stderr and exits 2 if the
 //! async runtime cannot be built.
 
 use patina_core::watch::reapply::ReapplyOutcome;

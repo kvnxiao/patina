@@ -5,7 +5,7 @@
 //! the `toml` crate). The `init` / `add` / `remove` commands must
 //! also *write* and *edit* manifests, and they must do so without
 //! disturbing the user's hand-written comments, key ordering, or
-//! whitespace — a one-entry delete may not rewrite sibling `[[file]]`
+//! whitespace: a one-entry delete may not rewrite sibling `[[file]]`
 //! entries. We select `toml_edit` (format/comment-preserving) for
 //! exactly that reason; this module is the write side.
 //!
@@ -103,11 +103,11 @@ pub fn scaffold_root_manifest(created_at: &str) -> String {
 
 /// Append one `[[file]]` array-of-tables element to a module manifest.
 ///
-/// Parses `doc_text` as a [`DocumentMut`] (an empty string yields an
-/// empty document), pushes a single `[[file]]` element carrying
-/// `source`, `target`, and (for the four user-declarable modes) `mode`,
-/// and returns the serialized text with every pre-existing table,
-/// comment, key ordering, and whitespace intact.
+/// Parses `doc_text` as a [`DocumentMut`]; an empty string yields an empty
+/// document. Pushes a single `[[file]]` element carrying `source`, `target`,
+/// and, for the four user-declarable modes, `mode`. Returns the serialized
+/// text with every pre-existing table, comment, key ordering, and whitespace
+/// intact.
 ///
 /// [`FileMode::TemplateRender`] never emits a `mode` key: templating is
 /// implied by a `.tmpl` source suffix and the parser rejects an explicit
@@ -174,7 +174,7 @@ pub fn append_file_entry(
 /// and `mode`, preserving every pre-existing table, comment, key ordering,
 /// and whitespace.
 ///
-/// `mode` must be one of the three directory-table executor modes —
+/// `mode` must be one of the three directory-table executor modes:
 /// [`FileMode::SymlinkDir`] (rendered `symlink`), [`FileMode::SymlinkTree`]
 /// (rendered `symlink-tree`), or [`FileMode::CopyTree`] (rendered `copy`).
 /// A file-only mode ([`FileMode::Symlink`], [`FileMode::Copy`],
@@ -191,11 +191,11 @@ pub fn append_file_entry(
 ///
 /// # Errors
 ///
-/// Returns [`ConfigWriteError::Parse`] when `doc_text` is not a
-/// well-formed TOML document, [`ConfigWriteError::MalformedDirectoryArray`]
-/// when `doc_text` already declares a `directory` key that is not an array
-/// of tables, and [`ConfigWriteError::ModeNotDirectoryValid`] when `mode`
-/// is not a directory-table mode.
+/// Returns [`ConfigWriteError::Parse`] when `doc_text` is not a well-formed
+/// TOML document. Returns [`ConfigWriteError::MalformedDirectoryArray`] when
+/// `doc_text` already declares a `directory` key that is not an array of
+/// tables. Returns [`ConfigWriteError::ModeNotDirectoryValid`] when `mode` is
+/// not a directory-table mode.
 ///
 /// # Examples
 ///
@@ -304,7 +304,7 @@ fn parse_document(doc_text: &str) -> Result<DocumentMut, ConfigWriteError> {
 /// never declares a `mode`. The collapsed spellings mirror the
 /// per-table allowlists in
 /// [`ManagedEntry`](super::ManagedEntry): the redundant `symlink-dir` /
-/// `copy-tree` strings no longer exist — a `[[directory]]` `symlink`
+/// `copy-tree` strings are never emitted: a `[[directory]]` `symlink`
 /// renders as `symlink` and a `[[directory]]` `copy` as `copy`, the table
 /// supplying the directory context.
 fn mode_manifest_str(mode: FileMode) -> Option<&'static str> {
@@ -399,8 +399,8 @@ editor = \"vim\"
     #[test]
     fn append_each_mode_uses_the_collapsed_parser_accepted_spelling() {
         // The table supplies the file/dir context, so the executor modes
-        // collapse onto the parser-accepted strings — the removed
-        // `symlink-dir` / `copy-tree` spellings must never appear.
+        // collapse onto the parser-accepted strings: the `symlink-dir` /
+        // `copy-tree` spellings must never appear.
         for (mode, spelling) in [
             (FileMode::Symlink, "symlink"),
             (FileMode::SymlinkDir, "symlink"),

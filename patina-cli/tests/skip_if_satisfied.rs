@@ -8,8 +8,8 @@
 //! ## Per-entry skip
 //!
 //! A re-apply over a partially-drifted repo must leave the already-satisfied
-//! (`Unchanged`) entry completely untouched — same inode/mtime, no backup
-//! entry — while mutating the drifted entry and backing up its prior bytes.
+//! (`Unchanged`) entry completely untouched (same inode/mtime, no backup
+//! entry) while mutating the drifted entry and backing up its prior bytes.
 //! The skipped entry must still be recorded in the commit so
 //! `patina status` reports it `Clean` and a later reap never removes it.
 //!
@@ -18,7 +18,7 @@
 //! When *every* entry is `Unchanged` and there is nothing to reap, the whole
 //! apply is a full no-op: it writes no new journal record and creates no new
 //! backup cycle, leaving the prior commit authoritative,
-//! and it skips the diff-and-prompt confirmation entirely — presenting no
+//! and it skips the diff-and-prompt confirmation entirely, presenting no
 //! prompt and reading no stdin. The interactive prompt-skip
 //! itself is unit-tested in `patina-cli/src/cmd/apply.rs` (the subprocess
 //! fixture here pins stdin to a non-TTY); this suite covers the no-write
@@ -35,7 +35,7 @@
 //!
 //! Each `--json` plan entry carries a `state` field equal to the target's
 //! classified disposition label (`create` / `update` / `unchanged`), and a
-//! fully-satisfied repo still emits the standard envelope shape — every entry
+//! fully-satisfied repo still emits the standard envelope shape: every entry
 //! `unchanged` (zero create/update change counts), not a reduced or
 //! special-cased document.
 
@@ -139,7 +139,7 @@ fn sole_commit_file(journal_dir: &Utf8Path) -> Utf8PathBuf {
 }
 
 /// Resolve a materialized target to the absolute, symlink-and-prefix-folded
-/// form the engine records — and therefore the form `mirror_backup_path`
+/// form the engine records, and therefore the form `mirror_backup_path`
 /// mirrors under the backup cycle. The engine resolves every target through
 /// `resolve_location`, which canonicalizes the parent and strips the Windows
 /// `\\?\` verbatim prefix; on macOS the fixture tempdir's `/var/...` resolves
@@ -164,7 +164,7 @@ fn fully_satisfied_reapply_writes_no_new_journal_or_backup() {
     //
     // A basename-set compare alone is NOT enough: `current_timestamp()` is
     // second-resolution, so two back-to-back applies usually share a `<ts>`,
-    // and a full write cycle would overwrite `<ts>.COMMIT` in place — leaving
+    // and a full write cycle would overwrite `<ts>.COMMIT` in place, leaving
     // the basename set identical. The collision-proof signal is the commit
     // file's own identity (mtime + bytes): a write cycle changes at least one,
     // so disabling the no-op short-circuit turns this test red regardless of
@@ -218,7 +218,7 @@ target = "~/.rc"
 
     // The journal directory gained no `*.plan` / `*.COMMIT` entry, and the
     // backups directory gained no new cycle. Comparing the full
-    // entry set — not just counts — also catches a stray `.progress` file.
+    // entry set, not just counts, also catches a stray `.progress` file.
     // (Necessary but, on its own, collision-blind; the identity asserts below
     // are what make removing the feature turn this test red.)
     assert_eq!(
@@ -259,7 +259,7 @@ fn fully_satisfied_apply_without_yes_skips_prompt_and_reports_up_to_date() {
     // the diff-and-prompt branch: it prints the deterministic up-to-date line
     // and completes exit 0 without reading stdin and without rendering a diff.
     // The no-op branch precedes the `(yes, tty)` prompt decision in the human
-    // path, so neither the prompt nor a stdin read is ever reached — feeding a
+    // path, so neither the prompt nor a stdin read is ever reached. Feeding a
     // decline answer on stdin therefore changes nothing.
     let f = Fixture::new();
     let m = f.module(
@@ -280,8 +280,8 @@ mode = "copy"
     );
 
     // Re-apply without `--yes`. If the no-op short-circuit did NOT fire, the
-    // human path would either preview the diff (non-interactive) or prompt —
-    // both of which omit the up-to-date line and emit a diff body. Asserting
+    // human path would either preview the diff (non-interactive) or prompt,
+    // and both of those omit the up-to-date line and emit a diff body. Asserting
     // the up-to-date line is present and no `Apply?` prompt text reached
     // stderr proves the prompt/stdin branch was skipped entirely.
     let out = f.apply(&[]);
@@ -406,10 +406,10 @@ mode = "copy"
 fn copy_tree_re_apply_restores_drift_and_backs_up_the_tree_as_a_unit() {
     // Tree path through the real engine: a `copy-tree` with three
     // leaves, one drifted out of band, re-applies to restore the drifted leaf.
-    // The whole target directory is backed up as a unit (today's
-    // `backup_before_overwrite(<dir>)` model), so every leaf's prior bytes —
-    // including the clean ones — land in the backup cycle. (The per-leaf
-    // write-skip itself — that a clean leaf's link/file is not re-created — is
+    // The whole target directory is backed up as a unit (the
+    // `backup_before_overwrite(<dir>)` model), so every leaf's prior bytes,
+    // including the clean ones, land in the backup cycle. (The per-leaf
+    // write-skip itself, that a clean leaf's link/file is not re-created, is
     // asserted exactly by the `copy_tree` / `tree_symlink` executor unit
     // tests, which observe that an unselected leaf is never written.)
     let f = Fixture::new();
@@ -736,7 +736,7 @@ fn fully_satisfied_json_emits_standard_envelope_all_unchanged() {
     // A fully-satisfied repo applied with `--json` must emit the STANDARD
     // envelope shape (same top-level keys as a changing apply), not a reduced
     // or special-cased document. Its plan array lists every managed entry with
-    // `state: "unchanged"` — the realization of "zero change counts" against an
+    // `state: "unchanged"`, the realization of "zero change counts" against an
     // envelope that reports state per entry rather than via a separate counter.
     let f = Fixture::new();
     let m = f.module(

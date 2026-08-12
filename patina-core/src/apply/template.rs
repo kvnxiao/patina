@@ -1,12 +1,12 @@
 //! Implicit template-render executor.
 //!
-//! Templating keys off the **source** `.tmpl` suffix: a source
-//! file ending in `.tmpl` is rendered through the shared `MiniJinja`
-//! [`Engine`] **exactly once** against the resolved variable context, and
-//! the same rendered bytes are written to each declared target. The target
+//! Templating keys off the **source** `.tmpl` suffix. A source file ending in
+//! `.tmpl` is rendered through the shared `MiniJinja` [`Engine`] **exactly
+//! once**, against the resolved variable context. The same rendered bytes are
+//! then written to each declared target. The target
 //! is declared as its final, suffix-less path (`source = "gitconfig.tmpl"`,
 //! `target = "~/.gitconfig"`), so the executor writes to the target
-//! verbatim — it does not strip anything from the target. The materialized
+//! verbatim; it does not strip anything from the target. The materialized
 //! object is a regular file, never a symlink. Rendering once (rather than
 //! per target) is the guarantee a multi-target `.tmpl` entry must
 //! honour.
@@ -67,7 +67,7 @@ pub(super) fn render(
 }
 
 /// Whether `source` carries a trailing `.tmpl` (case-insensitive)
-/// extension — the marker that makes an entry an implicit template render.
+/// extension, the marker that makes an entry an implicit template render.
 fn has_tmpl_suffix(source: &Utf8Path) -> bool {
     source
         .extension()

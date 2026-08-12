@@ -80,7 +80,7 @@ impl ProgressCursor {
         bytes
             .chunks_exact(RECORD_LEN)
             // `chunks_exact(RECORD_LEN=5)` only ever yields 5-byte slices, so
-            // this slice pattern is irrefutable — mirroring the
+            // this slice pattern is irrefutable, mirroring the
             // `let [b0, b1, b2, b3] = ...` idiom in `record` above. The
             // trailing partial chunk (a torn record) is left in
             // `chunks_exact`'s remainder and never produced here.

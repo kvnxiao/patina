@@ -69,12 +69,12 @@ tracing-appender = "0.2"
 unicode-normalization = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Host identity (hostname / username) via OS syscalls, not the unreliable
-# `$HOSTNAME` / `$USER` env vars — those are unset under non-login shells and
+# `$HOSTNAME` / `$USER` env vars: those are unset under non-login shells and
 # the systemd/launchd watcher services Patina ships.
 whoami = "2.1"
 # Windows-only: registry (Developer Mode flag) + process-token elevation
 # read. `advapi` covers registry + tokens; `kernel` covers the
-# base handle types. `taskschd` is deliberately NOT enabled — that surface
+# base handle types. `taskschd` is deliberately NOT enabled. That surface
 # belongs to the watcher service install, and enabling an unused
 # feature now violates the enable-only-needed-features rule.
 # 0.0.28 is the floor. Earlier releases only tolerate ERROR_INSUFFICIENT_BUFFER
@@ -94,11 +94,11 @@ all = { level = "deny", priority = -1 }
 pedantic = { level = "deny", priority = -1 }
 cargo = { level = "deny", priority = -1 }
 
-# Cargo group escape hatch — multiple versions inflate compile time but are
+# Cargo group escape hatch: multiple versions inflate compile time but are
 # rarely actionable for transitive deps; tighten once the dep graph stabilises.
 multiple_crate_versions = "allow"
 
-# Restriction lints — opt-in individually.
+# Restriction lints, opt-in individually.
 
 # Don't panic
 unwrap_used = "deny"

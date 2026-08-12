@@ -11,16 +11,17 @@
 //! paths (only the repo-relative-ish source and the target the user
 //! declared). The byte-identical-stdout property is built on this.
 //!
-//! Content that cannot be line-diffed — a present-but-non-UTF-8 (binary)
-//! source or target, or an unreadable file — renders as a compact
+//! Some content cannot be line-diffed: a present-but-non-UTF-8 (binary)
+//! source or target, or an unreadable file. It renders as a compact
 //! deterministic placeholder (`(binary content, N bytes)`) rather than an
 //! empty/full-insert diff. A binary copy source is legitimate, so it is a
 //! placeholder, not an error; the misleading "empty target" render would
 //! otherwise distort the apply consent decision.
 //!
-//! Removals are shown too: a target a prior apply materialized but the
-//! current plan no longer manages (an entry dropped from a `patina.toml`, a
-//! `when` flipped false) is reaped by the engine on the next apply. Those
+//! Removals are shown too. The engine reaps a target a prior apply
+//! materialized but the current plan no longer manages, on the next apply.
+//! That covers an entry dropped from a `patina.toml`, and a `when` flipped
+//! false. Those
 //! orphan targets are not [`ResolvedPlan`] operations, so the CLI passes them
 //! in alongside; each renders as a `remove <target>` block whose deleted body
 //! is the link it pointed at or its current content, so the reap is never
@@ -181,7 +182,7 @@ fn render_leaf(
 /// up and delete. A symlink shows the link it pointed at (reading *through*
 /// it would show the linked file's bytes, not the link being removed); any
 /// other target shows its current content as a full deletion, falling back to
-/// the compact placeholder for binary / unreadable bytes — the same
+/// the compact placeholder for binary / unreadable bytes, the same
 /// never-imply-empty rule [`content_diff`] uses.
 fn render_removal(out: &mut String, target: &Utf8Path, styles: &Styles) {
     if let Some(link) = current_link_target(target) {
@@ -208,8 +209,8 @@ enum DiffContent {
     /// Valid UTF-8 text, line-diffable.
     Text(String),
     /// Present but not valid UTF-8, or otherwise unreadable. Rendered as a
-    /// compact deterministic placeholder instead of a misleading empty diff —
-    /// the preview must never imply a binary target is empty, because the diff
+    /// compact deterministic placeholder instead of a misleading empty diff.
+    /// The preview must never imply a binary target is empty, because the diff
     /// drives the apply consent decision.
     Opaque(String),
 }
@@ -226,8 +227,8 @@ impl DiffContent {
     }
 
     /// A compact, deterministic one-line descriptor for the opaque-diff
-    /// fallback. Carries only byte counts and fixed words — never OS error
-    /// strings — so byte-identical stdout is preserved.
+    /// fallback. Carries only byte counts and fixed words, never OS error
+    /// strings, so byte-identical stdout is preserved.
     fn describe(&self) -> String {
         match self {
             DiffContent::Absent => "(absent)".to_owned(),
@@ -278,9 +279,9 @@ fn content_diff(
             };
             // `similar` yields one line per change (with its own trailing
             // newline, if any). Strip it so the style reset lands before the
-            // newline, then re-append exactly one — matching the prior
-            // unstyled shape, which appended a newline to an unterminated
-            // final line.
+            // newline, then re-append exactly one, so every rendered line ends
+            // with exactly one newline even when the final line arrives
+            // unterminated.
             let value = change.value();
             let line = value.strip_suffix('\n').unwrap_or(value);
             paint_line(out, style, sign, line);
@@ -291,7 +292,7 @@ fn content_diff(
     }
 }
 
-/// Write one styled line — `<style><prefix><text><reset>\n` — to `out`. An
+/// Write one styled line, `<style><prefix><text><reset>\n`, to `out`. An
 /// empty style renders to zero bytes on both the opening code and the reset,
 /// so a plain style produces exactly `<prefix><text>\n`, byte-identical to
 /// the unstyled form.
@@ -468,7 +469,7 @@ mod tests {
     #[test]
     fn render_removal_of_a_symlink_shows_the_link_target_not_the_linked_bytes() {
         // A reaped symlink must show the link it pointed at, not read *through*
-        // it to the linked file's content — the link is what is being removed.
+        // it to the linked file's content: the link is what is being removed.
         let (_td, dir) = tempdir();
         let linked = dir.join("real.conf");
         fs_err::write(&linked, "linked-bytes\n").expect("write link destination");

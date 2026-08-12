@@ -51,7 +51,7 @@ pub(super) fn copy_file(
 /// leaf is copied as before; on a partially-drifted tree it passes
 /// [`LeafWrite::Only`] with the plan-time `Update`/`Create` leaves so the
 /// clean leaves keep their inode/mtime and are not rewritten. A skipped leaf
-/// produces no [`CompletionRecord`] — only the leaves this executor actually
+/// produces no [`CompletionRecord`]: only the leaves this executor actually
 /// wrote are returned, so the orchestrator's progress cursor and hook-failure
 /// reversal act solely on real writes.
 pub(super) fn copy_tree(

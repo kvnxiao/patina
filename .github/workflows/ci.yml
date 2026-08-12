@@ -52,7 +52,7 @@ jobs:
       - run: cargo +nightly fmt --all --check
 
   # Cross-platform lint gate. Clippy runs natively on each OS runner so every
-  # `#[cfg(...)]`-gated path is type-checked and linted on its real target —
+  # `#[cfg(...)]`-gated path is type-checked and linted on its real target,
   # the MSVC Windows target, not a `gnu` proxy, and the macOS target with its
   # native toolchain (`notify-rust` -> `mac-notification-sys` compiles
   # Objective-C in a build script, so it cannot be cross-compiled from Linux).

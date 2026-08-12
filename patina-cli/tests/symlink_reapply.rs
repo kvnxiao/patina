@@ -5,15 +5,15 @@
 
 //! Idempotency / migration safety for the default per-file
 //! [`Symlink`](patina_core::FileMode::Symlink) mode: applying a `[[file]]`
-//! symlink entry must never destroy its repository source — neither on a
+//! symlink entry must never destroy its repository source, neither on a
 //! re-apply over patina's own link, nor on a first apply over a *foreign*
 //! tool's pre-existing symlink that already points into this repository (the
 //! dotfile-manager migration case).
 //!
 //! Both reduce to one hazard: the engine must resolve a target by its declared
 //! location and must not follow a symbolic link occupying the leaf back to the
-//! repository source. If it did, the per-file executor — which removes the
-//! target before re-linking — would delete the source and leave a
+//! repository source. If it did, the per-file executor, which removes the
+//! target before re-linking, would delete the source and leave a
 //! self-referential link.
 
 mod common;
@@ -50,7 +50,7 @@ fn canonical(path: &Utf8Path) -> Utf8PathBuf {
 }
 
 /// Assert the repository source is still a regular file holding its original
-/// bytes — i.e. the apply did not delete or relink it.
+/// bytes, so the apply did not delete or relink it.
 fn assert_source_intact(source: &Utf8Path) {
     let meta = fs_err::symlink_metadata(source.as_std_path()).expect("stat source");
     assert!(
@@ -98,8 +98,9 @@ fn single_file_symlink_re_apply_preserves_source() {
         String::from_utf8_lossy(&second.stderr)
     );
 
-    // The regression: before the fix the re-apply canonicalized the target
-    // through its own link to the source, and the executor deleted the source.
+    // The failure this guards: a re-apply that canonicalized the target
+    // through its own link to the source would have the executor delete the
+    // source.
     assert_source_intact(&source);
     assert_eq!(
         read_link_canonical(&target),

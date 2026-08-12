@@ -2,7 +2,7 @@
 //!
 //! Patina never clobbers a pre-existing user file without first stashing
 //! the original. Before the executor overwrites any target that already
-//! exists on disk — including replacing a regular file with a symlink —
+//! exists on disk, including replacing a regular file with a symlink,
 //! it calls [`backup_before_overwrite`], which copies the original bytes
 //! to `<state>/patina/backups/<ts>/<mirrored-target-path>`. The mirrored
 //! path is the inverse map crash recovery reads back, so both
@@ -20,13 +20,13 @@
 //! ## Retention
 //!
 //! Backups accumulate one timestamped subdirectory per apply. After an
-//! apply *commits* — i.e. once the `<ts>.COMMIT` sentinel is durable —
+//! apply *commits*, once the `<ts>.COMMIT` sentinel is durable,
 //! the engine calls [`gc_retain`] to keep only the [`RETENTION_COUNT`]
 //! most recent cycles and remove the rest. Retention runs only
 //! on a successful apply; a failed apply (no commit) never triggers GC,
 //! so its caller simply does not invoke [`gc_retain`].
 //!
-//! There is no `patina gc` subcommand — this housekeeping is implicit and
+//! There is no `patina gc` subcommand; this housekeeping is implicit and
 //! has no CLI surface.
 //!
 //! # Examples

@@ -1,13 +1,15 @@
 //! The Windows per-user Scheduled Task service backend.
 //!
-//! `install` registers a per-user Scheduled Task named `Patina Watcher` with a
-//! logon trigger, `RunLevel = Limited` (non-elevated), and an action pointing
-//! at the canonical `patina` binary invoked with `watch --foreground`, through
-//! `winsafe`'s `taskschd` COM surface — the same HKCU-scoped API that
-//! `schtasks /create /sc onlogon` drives. `start` runs the task, `stop` ends
-//! it, `restart` is stop-then-start, `uninstall` deletes it; `status` queries
-//! the registered task for liveness, last-run time, and last-exit code, and
-//! recovers the watcher's log counters from the rotated structured log.
+//! `install` registers a per-user Scheduled Task named `Patina Watcher`. The
+//! task carries a logon trigger, `RunLevel = Limited` (non-elevated), and an
+//! action pointing at the canonical `patina` binary invoked with
+//! `watch --foreground`. Registration goes through `winsafe`'s `taskschd` COM
+//! surface, the same HKCU-scoped API that `schtasks /create /sc onlogon`
+//! drives. `start` runs the task, `stop` ends
+//! it, `restart` is stop-then-start, and `uninstall` deletes it. `status`
+//! queries the registered task for liveness, last-run time, and last-exit
+//! code, and recovers the watcher's log counters from the rotated structured
+//! log.
 //!
 //! None of these paths require admin: the task is registered in the current
 //! user's folder (`\`) with `TASK_LOGON_INTERACTIVE_TOKEN` and a
@@ -19,8 +21,8 @@
 //! The task definition is built as Task Scheduler 2.0 registration XML
 //! (`render_task_xml`) and handed to `ITaskService` via `put_XmlText` +
 //! `RegisterTaskDefinition`. Building the descriptor as a pure string mirrors
-//! the `launchd` plist and `systemd` unit siblings and lets the
-//! trigger / run-level assertions be unit-tested as a string property on any
+//! the `launchd` plist and `systemd` unit siblings. It also lets the trigger
+//! and run-level assertions be unit-tested as a string property on any
 //! platform, with no live Task Scheduler in the loop.
 
 use super::FOREGROUND_ARGS;
@@ -147,7 +149,7 @@ fn connect_service()
     )
     .map_err(|err| supervisor_err("CoCreateInstance(TaskScheduler)", err))?;
     // Connect to the local scheduler under the current user (all `None` args =
-    // local machine, current credentials — the HKCU-scoped, non-elevated path).
+    // local machine, current credentials: the HKCU-scoped, non-elevated path).
     service
         .Connect(None, None, None, None)
         .map_err(|err| supervisor_err("ITaskService::Connect", err))?;
@@ -186,7 +188,7 @@ fn register_task(xml: &str) -> Result<(), ServiceError> {
         .map_err(|err| supervisor_err("ITaskDefinition::put_XmlText", err))?;
 
     // Register under the current interactive user's token (no stored password,
-    // non-elevated). CREATE refuses to clobber an existing task — but `install`
+    // non-elevated). CREATE refuses to clobber an existing task, but `install`
     // has already screened for that with `task_exists`, so the AlreadyInstalled
     // error is surfaced before we get here.
     folder
@@ -272,7 +274,7 @@ fn query_task_status() -> Result<TaskStatus, ServiceError> {
 }
 
 /// The supervisor-derived fields mapped out of a registered task's three COM
-/// reads — `get_State`, `get_LastTaskResult`, and `get_LastRunTime`.
+/// reads: `get_State`, `get_LastTaskResult`, and `get_LastRunTime`.
 struct TaskReadout {
     /// Whether the task's state is `RUNNING`.
     running: bool,
@@ -285,9 +287,9 @@ struct TaskReadout {
 /// Map a registered task's `(get_State, get_LastTaskResult, get_LastRunTime)`
 /// triple to the liveness / last-fired / last-exit-code status fields.
 ///
-/// This is the pure value-mapping half of [`query_task_status`], extracted —
+/// This is the pure value-mapping half of [`query_task_status`], split out,
 /// mirroring the launchd / systemd siblings' `parse_launchctl_print` /
-/// `parse_systemctl_show` — so the three predicates are unit-testable without a
+/// `parse_systemctl_show`, so the three predicates are unit-testable without a
 /// live Task Scheduler:
 ///
 /// - `state == RUNNING` is the liveness test; every other state is stopped.
@@ -319,7 +321,7 @@ const SCHED_S_TASK_HAS_NOT_RUN: i32 = 0x0004_1303;
 /// Scheduler also surfaces `ERROR_PATH_NOT_FOUND` (`0x8007_0003`) for a missing
 /// task path. Treating both as not-found keeps a never-installed task off the
 /// error path. Taking the raw `u32` (the caller passes `err.raw()`) keeps this
-/// classification pure and unit-testable without constructing an `HRESULT` —
+/// classification pure and unit-testable without constructing an `HRESULT`:
 /// the workspace forbids `unsafe`, and `HRESULT::from_raw` is `unsafe`.
 fn is_not_found(raw: u32) -> bool {
     const FILE_NOT_FOUND: u32 = 0x8007_0002;
@@ -363,9 +365,9 @@ fn schtasks(args: &[&str]) -> Result<std::process::Output, ServiceError> {
 /// `OnLogon` trigger, a least-privilege (`RunLevel = Limited`) principal, and
 /// an `Exec` action of the canonical `binary` plus `watch --foreground`.
 ///
-/// Each path / argument is XML-escaped through [`xml_escape`] so a binary path
-/// containing `&`, `<`, `>`, `"`, or `'` produces a well-formed document,
-/// mirroring how the `launchd` sibling escapes the same path for its plist.
+/// Each path and argument is XML-escaped through [`xml_escape`]. A binary path
+/// containing `&`, `<`, `>`, `"`, or `'` therefore produces a well-formed
+/// document. The `launchd` sibling escapes the same path for its plist.
 fn render_task_xml(binary: &Utf8Path) -> String {
     // The Exec action splits the command (the binary) from its arguments; the
     // foreground tokens join into a single space-separated `<Arguments>`.
@@ -410,10 +412,10 @@ fn render_task_xml(binary: &Utf8Path) -> String {
 /// Escape the five XML special characters so a binary path or argument
 /// containing `&`, `<`, `>`, `"`, or `'` produces a well-formed task document.
 ///
-/// Mirrors the `launchd` sibling's `xml_escape`; the two are not shared because
-/// each is `#[cfg]`-gated to its own target OS and a cross-OS `pub(super)`
-/// helper would have to compile (and be reachable) on the platform whose
-/// backend is excluded.
+/// Mirrors the `launchd` sibling's `xml_escape`. The two are not shared
+/// because each is `#[cfg]`-gated to its own target OS. A cross-OS
+/// `pub(super)` helper would have to compile, and be reachable, on the
+/// platform whose backend is excluded.
 fn xml_escape(raw: &str) -> String {
     raw.replace('&', "&amp;")
         .replace('<', "&lt;")

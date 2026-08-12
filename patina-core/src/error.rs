@@ -123,13 +123,13 @@ pub enum EngineError {
 
     /// A managed entry's declared kind does not match the kind of its
     /// source on disk: a `[[file]]` entry whose source is a directory, or a
-    /// `[[directory]]` entry whose source is a file. Raised at plan time —
-    /// after the entry survives `when`-gating and its source is
-    /// canonicalized, but before the advisory lock, the
-    /// journal flush, or any mutation — so a mismatched entry mutates
-    /// nothing. The message names the offending source path and directs the
-    /// author to the table the source kind actually belongs under. The
-    /// executor retains its own check as a materialize-time TOCTOU backstop.
+    /// `[[directory]]` entry whose source is a file. Raised at plan time,
+    /// after the entry survives `when`-gating and its source is canonicalized.
+    /// It is raised before the advisory lock, the journal flush, and any
+    /// mutation, so a mismatched entry mutates nothing. The message names the
+    /// offending source path and directs the author to the table the source
+    /// kind actually belongs under. The executor retains its own check as a
+    /// materialize-time TOCTOU backstop.
     #[error(
         "the source {path} is a {found}, but it is declared under a \
          {declared_table} table; move it to a {expected_table} entry"
@@ -148,8 +148,8 @@ pub enum EngineError {
     },
 
     /// A managed entry survived `when`-gating but its source does not exist
-    /// on disk. Raised at plan time — before
-    /// the advisory lock, the journal flush, or any mutation — rather than
+    /// on disk. Raised at plan time, before
+    /// the advisory lock, the journal flush, or any mutation, rather than
     /// surfacing later from the executor. Because `paths::canonicalize`
     /// falls back to lexical resolution for a non-existent path, a missing
     /// source does not fail at canonicalization; this is an explicit

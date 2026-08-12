@@ -17,7 +17,7 @@
 //!   removed, filesystem unchanged.
 //! - "recovery is idempotent": a second pass is a clean no-op.
 //! - "recovery never proceeds forward": an un-started op's target is left
-//!   absent — recovery rolls back, it does not finish the apply.
+//!   absent. Recovery rolls back; it does not finish the apply.
 //! - probe-over-cursor: a lying progress cursor does not change the reversal,
 //!   because recovery probes the filesystem.
 
@@ -193,7 +193,7 @@ fn interrupted_before_any_op_touches_nothing_and_clears_orphan() {
     assert!(!scene.progress_exists(), "orphan progress removed");
 }
 
-// Recovery is idempotent — running it twice yields
+// Recovery is idempotent: running it twice yields
 // the same final state as running it once, with no error on the second
 // pass.
 #[test]
@@ -234,8 +234,8 @@ fn recovery_is_idempotent() {
 }
 
 // Recovery never proceeds forward. An operation that
-// never started (fresh target absent, no backup) is left absent — recovery
-// rolls back, it does not finish the half-done apply by creating it.
+// never started (fresh target absent, no backup) is left absent. Recovery
+// rolls back; it does not finish the half-done apply by creating it.
 #[test]
 fn recovery_rolls_back_and_never_completes_an_unstarted_op() {
     let scene = Scene::new();
@@ -255,7 +255,7 @@ fn recovery_rolls_back_and_never_completes_an_unstarted_op() {
     );
     assert!(
         !scene.target("never").exists(),
-        "the un-started op is NOT completed forward — it stays absent"
+        "the un-started op is NOT completed forward; it stays absent"
     );
 }
 

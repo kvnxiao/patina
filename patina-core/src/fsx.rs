@@ -5,7 +5,7 @@
 //! pre-existing target and later restoring it round-trips the target's
 //! *kind*: a symbolic link must come back a symbolic link, a directory a
 //! directory, a regular file a regular file. A plain `fs::copy` cannot do
-//! this — it follows symlinks (so a backed-up symlink would be flattened to
+//! this: it follows symlinks (so a backed-up symlink would be flattened to
 //! a regular file) and errors outright on a directory (so a pre-existing
 //! directory target would abort the whole apply). Both directions of the
 //! contract therefore route through [`clone_entry`], the single kind-aware
@@ -23,8 +23,8 @@ use camino::Utf8Path;
 use camino::Utf8PathBuf;
 
 /// Whether an entry exists at `path`, detected with `symlink_metadata` so a
-/// symbolic link — including a dangling one whose destination no longer
-/// exists — is reported present rather than followed.
+/// symbolic link, including a dangling one whose destination no longer
+/// exists, is reported present rather than followed.
 ///
 /// Callers deciding "is there a backup to restore from here?" must use this
 /// rather than [`Utf8Path::exists`]: `exists` follows the link and would
@@ -73,7 +73,7 @@ pub(crate) fn remove_entry(path: &Utf8Path) -> std::io::Result<()> {
 /// On Unix a single `remove_file` deletes a link to either a file or a
 /// directory. On Windows the call must match the link flavour: a directory
 /// symlink requires `remove_dir` (`remove_file` fails with Access Denied), a
-/// file symlink requires `remove_file`. Either way only the link is removed —
+/// file symlink requires `remove_file`. Either way only the link is removed;
 /// the destination is left untouched.
 #[cfg(unix)]
 fn remove_symlink(path: &Utf8Path, _file_type: std::fs::FileType) -> std::io::Result<()> {
@@ -194,14 +194,15 @@ pub(crate) fn symlink_to(link: &Utf8Path, target: &Utf8Path) -> std::io::Result<
 /// Replace the file at `path` with `bytes` through a same-directory temporary
 /// and a rename, creating `path`'s parent chain if it is missing.
 ///
-/// The rename is the atomic point: POSIX `rename(2)` and Windows `MoveFileEx`
-/// both swap the destination in one operation, so a concurrent reader, or a
-/// process killed mid-write, observes either the previous file whole or the
-/// new one whole, never a truncated one. Writing to the destination directly
+/// The rename is the atomic point. POSIX `rename(2)` and Windows `MoveFileEx`
+/// both swap the destination in one operation. A concurrent reader, or a
+/// process killed mid-write, therefore observes either the previous file whole
+/// or the new one whole, never a truncated one. Writing to the destination
+/// directly
 /// would leave neither on a kill between the truncate and the last byte.
 ///
 /// The temporary is a sibling, so it shares a filesystem with the destination
-/// and the rename cannot degrade into a cross-device copy, and it carries the
+/// and the rename cannot degrade into a cross-device copy. It also carries the
 /// writer's pid, so two processes writing the same file never collide on one
 /// scratch name.
 ///

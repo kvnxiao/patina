@@ -2,10 +2,10 @@
 //! journal and backups.
 //!
 //! Rollback is the inverse of apply. It finds the most recent committed
-//! apply that has not already been rolled back, replays each operation's
-//! inverse using the per-apply backup directory the apply stashed
-//! originals in, and marks the apply rolled back so it no longer
-//! participates in `patina status`'s "last apply" computation.
+//! apply that has not already been rolled back, and replays each operation's
+//! inverse using the per-apply backup directory the apply stashed originals
+//! in. It then marks the apply rolled back, so it no longer participates in
+//! `patina status`'s "last apply" computation.
 //!
 //! ## Inverse-operation rule
 //!
@@ -97,11 +97,11 @@ pub enum RollbackError {
 /// Roll back the most recent committed apply to its pre-apply filesystem
 /// state, using the journaled backups under `<state>/patina/backups/<ts>/`.
 ///
-/// Resolves the state directory, takes the exclusive lock, finds the most
-/// recent committed-and-not-rolled-back apply, replays each `[[file]]`
-/// entry's inverse operations (atomically per entry), then writes and
-/// fsyncs a `<ts>.ROLLED_BACK` sentinel so the apply drops out of status's
-/// last-apply computation and recovery never re-reverses it.
+/// Resolves the state directory and takes the exclusive lock. Finds the most
+/// recent committed-and-not-rolled-back apply, and replays each `[[file]]`
+/// entry's inverse operations, atomically per entry. Then writes and fsyncs a
+/// `<ts>.ROLLED_BACK` sentinel. The apply therefore drops out of status's
+/// last-apply computation, and recovery never re-reverses it.
 ///
 /// # Errors
 ///

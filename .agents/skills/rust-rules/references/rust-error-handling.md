@@ -7,12 +7,12 @@ description: "Rust error handling; anyhow for apps versus thiserror for librarie
 
 ## `anyhow` for applications, `thiserror` for libraries
 
-Choose by whether the *caller* branches on the failure — not by taste.
+Choose by whether the *caller* branches on the failure, not by taste.
 
 - **Applications** that just propagate failures toward a human (CLIs, services): use `anyhow`. One `anyhow::Error`, `?` everywhere, `.context()` for breadcrumbs. The caller never matches on the error, so a bespoke type buys nothing.
 - **Libraries** whose callers need to *react differently* to different failures: define your own error type, usually with `thiserror`. The caller can `match` a variant or call an `is_*` predicate.
 
-The error crate is an implementation detail. Switching between a hand-written `impl std::error::Error`, `thiserror`, and back is **not** a breaking change — `thiserror` never appears in your public API. Start with `anyhow`; introduce a typed error only once a caller actually needs to branch.
+The error crate is an implementation detail. Switching between a hand-written `impl std::error::Error`, `thiserror`, and back is **not** a breaking change; `thiserror` never appears in your public API. Start with `anyhow`; introduce a typed error only once a caller actually needs to branch.
 
 ## Typed errors: opaque wrapper over a private repr
 
@@ -58,7 +58,7 @@ pub enum Error {
 }
 ```
 
-A source must be `'static` — `std::error::Error::source` returns `&(dyn Error + 'static)`, so a source field carrying a borrowed lifetime will not compile.
+A source must be `'static`: `std::error::Error::source` returns `&(dyn Error + 'static)`, so a source field carrying a borrowed lifetime will not compile.
 
 ## One error type per crate (the "God error")
 
@@ -113,7 +113,7 @@ fn load(path: &Utf8Path) -> Result<Config> {
     // Good: the closure runs only on failure.
     let text = fs_err::read_to_string(path).with_context(|| format!("reading {path}"))?;
 
-    // A bare string literal is free to build — eager is fine.
+    // A bare string literal is free to build, so eager is fine.
     toml::from_str(&text).context("parsing config")
 }
 ```

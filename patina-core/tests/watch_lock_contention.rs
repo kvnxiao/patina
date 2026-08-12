@@ -8,8 +8,8 @@
 //! The watcher re-applies under [`LockPolicy::NonBlocking`]: the engine
 //! self-acquires the exclusive advisory lock with a single non-blocking attempt
 //! and, on contention, returns having mutated nothing. This test holds the
-//! exclusive lock in the test process — exactly as a concurrent CLI `apply` /
-//! `rollback` would in another process — and drives `run_reapply` in the
+//! exclusive lock in the test process, exactly as a concurrent CLI `apply` /
+//! `rollback` would in another process, and drives `run_reapply` in the
 //! `reapply_probe` child. It asserts the child reports `SKIPPED` and creates no
 //! target, then releases the lock and re-runs the child, asserting the cycle
 //! now reports `APPLIED` and materializes. The re-apply runs in a child because

@@ -45,7 +45,7 @@ use std::collections::BTreeSet;
 /// `[variables]` table.
 #[derive(Debug, Clone, Default)]
 pub struct RootConfig {
-    /// The root `[variables]` table — the repo-shared layer. Empty when
+    /// The root `[variables]` table, the repo-shared layer. Empty when
     /// the manifest declares no `[variables]` table.
     pub repo_shared: toml::value::Table,
     /// One entry per declared profile, keyed by profile name, each
