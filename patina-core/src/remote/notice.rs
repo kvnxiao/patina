@@ -37,8 +37,39 @@ pub fn write_notice(state_dir: &Utf8Path, message: Option<&str>) -> Result<(), R
     let path = cache::notice_path(state_dir);
     match message {
         Some(message) => atomic_write(&path, message.as_bytes()),
-        None => remove_if_present(&path),
+        None => cache::remove_any(&path),
     }
+}
+
+/// Publish the pending-update state whole: the machine-readable `pending`
+/// file from `pending`, and the prose `notice` from `message` when one is
+/// given, or rendered from `pending` (cleared when nothing is pending)
+/// otherwise.
+///
+/// Every writer of this state goes through here so the two files can never
+/// disagree. `message` is how `remote check` applies the precedence rule that
+/// a behind repository outranks pending updates.
+///
+/// # Errors
+///
+/// Returns the first [`RemoteError`] from a write or removal.
+pub fn publish(
+    state_dir: &Utf8Path,
+    pending: &[String],
+    message: Option<&str>,
+) -> Result<(), RemoteError> {
+    let refs: Vec<&str> = pending.iter().map(String::as_str).collect();
+    let rendered;
+    let body = match message {
+        Some(body) => Some(body),
+        None if refs.is_empty() => None,
+        None => {
+            rendered = pending_updates_message(&refs);
+            Some(rendered.as_str())
+        }
+    };
+    write_pending(state_dir, pending)?;
+    write_notice(state_dir, body)
 }
 
 /// The current notice, or `None` when there is nothing pending.
@@ -91,11 +122,43 @@ pub fn repo_behind_message() -> String {
 pub fn write_pending(state_dir: &Utf8Path, modules: &[String]) -> Result<(), RemoteError> {
     let path = cache::pending_path(state_dir);
     if modules.is_empty() {
-        return remove_if_present(&path);
+        return cache::remove_any(&path);
     }
     let mut body = modules.join("\n");
     body.push('\n');
     atomic_write(&path, body.as_bytes())
+}
+
+/// Drop `names` from the pending-update state, rewriting the machine-readable
+/// `pending` file and the prose `notice` to match, and clearing both when
+/// nothing remains.
+///
+/// This is the notice side of a settled pin: whoever bumps a pin (or finds it
+/// already at its tip) calls this, so a stale announcement never outlives the
+/// update it asked for. Only `remote check` otherwise rewrites these files,
+/// and its `--hook` form self-throttles for a day.
+///
+/// A repo-behind notice is left in place: it outranks pending updates (the
+/// user's next move is `git pull` regardless), and only a `check` can learn
+/// whether the repository has caught up.
+///
+/// # Errors
+///
+/// Returns a [`RemoteError`] when a write or removal fails.
+pub fn settle(state_dir: &Utf8Path, names: &[&str]) -> Result<(), RemoteError> {
+    let mut pending = read_pending(state_dir);
+    let mut changed = false;
+    for name in names {
+        changed |= pending.remove(*name);
+    }
+    if !changed {
+        return Ok(());
+    }
+    let remaining: Vec<String> = pending.into_iter().collect();
+    if read_notice(state_dir).is_some_and(|body| body == repo_behind_message().trim()) {
+        return write_pending(state_dir, &remaining);
+    }
+    publish(state_dir, &remaining, None)
 }
 
 /// The remotes the last check found behind their upstream.
@@ -147,20 +210,6 @@ fn ensure_parent(path: &Utf8Path) -> Result<(), RemoteError> {
         })?;
     }
     Ok(())
-}
-
-/// Remove `path`, treating an already-absent file as success.
-fn remove_if_present(path: &Utf8Path) -> Result<(), RemoteError> {
-    match fs_err::remove_file(path.as_std_path()) {
-        Ok(()) => Ok(()),
-        Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(source) => Err(RemoteRepr::Cache {
-            action: "removing",
-            path: path.to_path_buf(),
-            source,
-        }
-        .into()),
-    }
 }
 
 /// Write `bytes` to `path` through a per-process temporary and an atomic
@@ -288,6 +337,45 @@ mod tests {
     fn clearing_an_absent_pending_set_is_a_no_op() {
         let (_keep, dir) = state();
         write_pending(&dir, &[]).expect("clearing when nothing is pending is fine");
+    }
+
+    #[test]
+    fn settling_one_remote_rewrites_the_notice_and_settling_the_last_clears_it() {
+        let (_keep, dir) = state();
+        write_pending(&dir, &["humanizer".to_owned(), "prompts".to_owned()])
+            .expect("record the pending set");
+        write_notice(
+            &dir,
+            Some(&pending_updates_message(&["humanizer", "prompts"])),
+        )
+        .expect("write the notice");
+
+        settle(&dir, &["humanizer"]).expect("settle one remote");
+        assert!(!read_pending(&dir).contains("humanizer"));
+        let body = read_notice(&dir).expect("a notice remains for the other remote");
+        assert!(
+            body.contains("prompts") && !body.contains("humanizer"),
+            "the notice must be rewritten to the remaining set: {body}"
+        );
+
+        settle(&dir, &["prompts"]).expect("settle the last remote");
+        assert!(read_pending(&dir).is_empty());
+        assert_eq!(
+            read_notice(&dir),
+            None,
+            "settling the last pending remote must clear the notice"
+        );
+    }
+
+    #[test]
+    fn settling_a_remote_that_was_never_pending_touches_nothing() {
+        let (_keep, dir) = state();
+        write_pending(&dir, &["humanizer".to_owned()]).expect("record the pending set");
+        settle(&dir, &["prompts"]).expect("a no-op settle succeeds");
+        assert!(
+            read_pending(&dir).contains("humanizer"),
+            "an unrelated settle must leave the pending set alone"
+        );
     }
 
     #[test]

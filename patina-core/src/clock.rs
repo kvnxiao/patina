@@ -55,6 +55,30 @@ pub fn current_rfc3339() -> String {
     crate::journal::timestamp_to_rfc3339(&current_timestamp())
 }
 
+/// Render Unix seconds as an RFC 3339 UTC instant, falling back to the raw
+/// integer for a value outside the representable range.
+///
+/// The one spelling Patina renders an epoch in, so the cooldown message, the
+/// watch drift report, and the lockfile timestamps can never disagree on
+/// format.
+///
+/// # Examples
+///
+/// ```
+/// // 2026-08-11T14:00:00Z, the epoch the remote-update tests pin.
+/// assert_eq!(
+///     patina_core::clock::epoch_to_rfc3339(1_786_456_800),
+///     "2026-08-11T14:00:00Z"
+/// );
+/// ```
+#[must_use = "the rendered instant is user-facing output"]
+pub fn epoch_to_rfc3339(epoch: i64) -> String {
+    jiff::Timestamp::from_second(epoch).map_or_else(
+        |_out_of_range| epoch.to_string(),
+        |ts| ts.strftime("%Y-%m-%dT%H:%M:%SZ").to_string(),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

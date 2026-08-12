@@ -150,3 +150,79 @@ impl Fixture {
 pub fn code(output: &Output) -> i32 {
     output.status.code().expect("process exited with a code")
 }
+
+/// Create a file symlink with the right platform primitive.
+#[cfg(unix)]
+pub fn symlink_file(source: &Utf8Path, link: &Utf8Path) {
+    std::os::unix::fs::symlink(source.as_std_path(), link.as_std_path()).expect("create symlink");
+}
+
+/// Create a file symlink with the right platform primitive.
+#[cfg(windows)]
+pub fn symlink_file(source: &Utf8Path, link: &Utf8Path) {
+    std::os::windows::fs::symlink_file(source.as_std_path(), link.as_std_path())
+        .expect("create symlink");
+}
+
+/// Run `git` in `cwd` with a pinned identity and committer/author date,
+/// independent of the developer's global git config, so fixture commits have
+/// stable, clock-independent SHAs.
+pub fn git_in(cwd: &Utf8Path, epoch: i64, args: &[&str]) -> String {
+    let date = format!("{epoch} +0000");
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(cwd.as_std_path())
+        .env("GIT_AUTHOR_NAME", "Fixture")
+        .env("GIT_AUTHOR_EMAIL", "fixture@example.invalid")
+        .env("GIT_COMMITTER_NAME", "Fixture")
+        .env("GIT_COMMITTER_EMAIL", "fixture@example.invalid")
+        .env("GIT_AUTHOR_DATE", &date)
+        .env("GIT_COMMITTER_DATE", &date)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .output()
+        .expect("spawn git");
+    assert!(
+        output.status.success(),
+        "git {args:?} failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout).trim().to_owned()
+}
+
+/// A throwaway origin repository living outside the dotfiles repo, so module
+/// discovery never sees it.
+pub struct Origin {
+    pub dir: Utf8PathBuf,
+}
+
+impl Origin {
+    pub fn new(f: &Fixture, name: &str, epoch: i64) -> Self {
+        let dir = f.home.join(".origins").join(name);
+        fs_err::create_dir_all(dir.as_std_path()).expect("mkdir origin");
+        git_in(&dir, epoch, &["init", "--quiet", "-b", "main"]);
+        Self { dir }
+    }
+
+    /// The origin path spelled so it can be embedded in a TOML basic string:
+    /// on Windows a native path's backslashes would read as escape sequences.
+    /// Git accepts the forward-slash form of a Windows path.
+    pub fn url(&self) -> String {
+        self.dir.as_str().replace('\\', "/")
+    }
+
+    /// Write `files` into the origin and commit them at `epoch`, returning the
+    /// commit SHA.
+    pub fn commit_files(&self, files: &[(&str, &str)], epoch: i64) -> String {
+        for (path, body) in files {
+            let full = self.dir.join(path);
+            if let Some(parent) = full.parent() {
+                fs_err::create_dir_all(parent.as_std_path()).expect("mkdir origin subdir");
+            }
+            fs_err::write(full.as_std_path(), body).expect("write origin file");
+        }
+        git_in(&self.dir, epoch, &["add", "-A"]);
+        git_in(&self.dir, epoch, &["commit", "--quiet", "-m", "fixture"]);
+        git_in(&self.dir, epoch, &["rev-parse", "HEAD"])
+    }
+}

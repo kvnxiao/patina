@@ -88,6 +88,26 @@ impl RemoteError {
         .into()
     }
 
+    /// The plan-time failure for a remote checkout that holds a symbolic link.
+    #[must_use = "the error names the link that would dereference outside the checkout"]
+    pub fn symlink_in_checkout(name: &str, path: &Utf8Path) -> Self {
+        RemoteRepr::SymlinkInCheckout {
+            name: name.to_owned(),
+            path: path.to_path_buf(),
+        }
+        .into()
+    }
+
+    /// The plan-time failure for a remote whose checkout was expected on this
+    /// machine but is not materialized.
+    #[must_use = "the error names the remote whose checkout is missing"]
+    pub fn checkout_not_materialized(name: &str) -> Self {
+        RemoteRepr::CheckoutNotMaterialized {
+            name: name.to_owned(),
+        }
+        .into()
+    }
+
     /// Restate a fetch failure as the cold-cache failure, naming the remote and
     /// the rev this machine could not materialize.
     ///
@@ -206,6 +226,31 @@ pub(crate) enum RemoteRepr {
         name: String,
         /// The declared source that resolved outside the checkout.
         declared_source: Utf8PathBuf,
+    },
+
+    /// A remote checkout holds a symbolic link, which the executors would
+    /// dereference and which could therefore read or plant paths outside the
+    /// checkout. Patina's own materialization writes with `core.symlinks=false`
+    /// and never produces one, so the checkout was made or altered by something
+    /// else.
+    #[error(
+        "the checkout for remote `{name}` contains a symbolic link ({path}); refusing to deploy \
+         from it — remove the cache directory and re-run `patina apply` to re-materialize"
+    )]
+    SymlinkInCheckout {
+        /// The remote whose checkout holds the link.
+        name: String,
+        /// The link itself.
+        path: Utf8PathBuf,
+    },
+
+    /// A remote's checkout was expected to be materialized but is not.
+    #[error(
+        "the checkout for remote `{name}` is not materialized on this machine; run `patina apply`"
+    )]
+    CheckoutNotMaterialized {
+        /// The remote with no checkout.
+        name: String,
     },
 
     /// A declared remote has no pin, so there is nothing for `apply` to

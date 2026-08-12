@@ -15,60 +15,13 @@
 
 mod common;
 
-use camino::Utf8Path;
-use camino::Utf8PathBuf;
 use common::Fixture;
+use common::Origin;
 use common::code;
-use std::process::Command;
+use common::git_in;
 
 /// A committer epoch far enough in the past that any age floor is satisfied.
 const OLD_EPOCH: i64 = 1_700_000_000;
-
-fn git_in(cwd: &Utf8Path, epoch: i64, args: &[&str]) -> String {
-    let date = format!("{epoch} +0000");
-    let output = Command::new("git")
-        .args(args)
-        .current_dir(cwd.as_std_path())
-        .env("GIT_AUTHOR_NAME", "Fixture")
-        .env("GIT_AUTHOR_EMAIL", "fixture@example.invalid")
-        .env("GIT_COMMITTER_NAME", "Fixture")
-        .env("GIT_COMMITTER_EMAIL", "fixture@example.invalid")
-        .env("GIT_AUTHOR_DATE", &date)
-        .env("GIT_COMMITTER_DATE", &date)
-        .output()
-        .expect("spawn git");
-    assert!(
-        output.status.success(),
-        "git {args:?} failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    String::from_utf8_lossy(&output.stdout).trim().to_owned()
-}
-
-struct Origin {
-    dir: Utf8PathBuf,
-}
-
-impl Origin {
-    fn new(f: &Fixture, name: &str) -> Self {
-        let dir = f.home.join(".origins").join(name);
-        fs_err::create_dir_all(dir.as_std_path()).expect("mkdir origin");
-        git_in(&dir, OLD_EPOCH, &["init", "--quiet", "-b", "main"]);
-        Self { dir }
-    }
-
-    /// The origin path spelled for a TOML basic string (see `remote_apply.rs`).
-    fn url(&self) -> String {
-        self.dir.as_str().replace('\\', "/")
-    }
-
-    fn commit(&self, body: &str, epoch: i64) -> String {
-        fs_err::write(self.dir.join("a.md").as_std_path(), body).expect("write origin file");
-        git_in(&self.dir, epoch, &["add", "-A"]);
-        git_in(&self.dir, epoch, &["commit", "--quiet", "-m", "fixture"]);
-        git_in(&self.dir, epoch, &["rev-parse", "HEAD"])
-    }
-}
 
 /// Declare a remote in the root manifest, optionally with a per-remote
 /// `min_age`, plus a module entry that sources from it.
@@ -112,9 +65,9 @@ fn update_creates_the_first_pin_without_waiting_out_the_age_gate() {
     // The commit is made "now" and the floor is the default 72 hours, so only
     // the first-pin exemption can let this through.
     let f = Fixture::new();
-    let origin = Origin::new(&f, "humanizer");
+    let origin = Origin::new(&f, "humanizer", OLD_EPOCH);
     let now = patina_core::current_epoch_seconds();
-    let rev = origin.commit("first\n", now);
+    let rev = origin.commit_files(&[("a.md", "first\n")], now);
     declare(&f, "humanizer", &origin, None);
 
     let out = f.run(&["remote", "update", "--json"], &[]);
@@ -146,8 +99,8 @@ fn update_creates_the_first_pin_without_waiting_out_the_age_gate() {
 #[test]
 fn update_is_a_no_op_when_the_pin_is_already_the_upstream_tip() {
     let f = Fixture::new();
-    let origin = Origin::new(&f, "humanizer");
-    origin.commit("first\n", OLD_EPOCH);
+    let origin = Origin::new(&f, "humanizer", OLD_EPOCH);
+    origin.commit_files(&[("a.md", "first\n")], OLD_EPOCH);
     declare(&f, "humanizer", &origin, Some("0s"));
     assert_eq!(code(&f.run(&["remote", "update"], &[])), 0, "first pin");
     let before = lockfile(&f);
@@ -169,15 +122,17 @@ fn update_is_a_no_op_when_the_pin_is_already_the_upstream_tip() {
 #[test]
 fn a_candidate_inside_its_cooldown_window_is_held_and_reports_when_it_is_eligible() {
     let f = Fixture::new();
-    let origin = Origin::new(&f, "humanizer");
-    origin.commit("first\n", OLD_EPOCH);
-    // A 7-day floor with the first pin already in place.
+    let origin = Origin::new(&f, "humanizer", OLD_EPOCH);
+    origin.commit_files(&[("a.md", "first\n")], OLD_EPOCH);
     declare(&f, "humanizer", &origin, Some("7d"));
     assert_eq!(code(&f.run(&["remote", "update"], &[])), 0, "first pin");
     let pinned = lockfile(&f);
 
     // A brand-new second commit cannot be a week old.
-    origin.commit("second\n", patina_core::current_epoch_seconds());
+    origin.commit_files(
+        &[("a.md", "second\n")],
+        patina_core::current_epoch_seconds(),
+    );
     let out = f.run(&["remote", "update"], &[]);
     let stdout = String::from_utf8_lossy(&out.stdout);
 
@@ -196,12 +151,15 @@ fn a_candidate_inside_its_cooldown_window_is_held_and_reports_when_it_is_eligibl
 #[test]
 fn now_bypasses_the_age_gate_and_warns() {
     let f = Fixture::new();
-    let origin = Origin::new(&f, "humanizer");
-    origin.commit("first\n", OLD_EPOCH);
+    let origin = Origin::new(&f, "humanizer", OLD_EPOCH);
+    origin.commit_files(&[("a.md", "first\n")], OLD_EPOCH);
     declare(&f, "humanizer", &origin, Some("7d"));
     assert_eq!(code(&f.run(&["remote", "update"], &[])), 0, "first pin");
 
-    let second = origin.commit("second\n", patina_core::current_epoch_seconds());
+    let second = origin.commit_files(
+        &[("a.md", "second\n")],
+        patina_core::current_epoch_seconds(),
+    );
     let out = f.run(&["remote", "update", "--now"], &[]);
     let stderr = String::from_utf8_lossy(&out.stderr);
 
@@ -220,8 +178,8 @@ fn now_bypasses_the_age_gate_and_warns() {
 #[test]
 fn a_rewritten_history_is_not_bumped_without_confirmation() {
     let f = Fixture::new();
-    let origin = Origin::new(&f, "humanizer");
-    origin.commit("first\n", OLD_EPOCH);
+    let origin = Origin::new(&f, "humanizer", OLD_EPOCH);
+    origin.commit_files(&[("a.md", "first\n")], OLD_EPOCH);
     declare(&f, "humanizer", &origin, Some("0s"));
     assert_eq!(code(&f.run(&["remote", "update"], &[])), 0, "first pin");
     let pinned = lockfile(&f);
@@ -233,7 +191,7 @@ fn a_rewritten_history_is_not_bumped_without_confirmation() {
         OLD_EPOCH,
         &["checkout", "--quiet", "--orphan", "rewritten"],
     );
-    let rewritten = origin.commit("rewritten\n", OLD_EPOCH);
+    let rewritten = origin.commit_files(&[("a.md", "rewritten\n")], OLD_EPOCH);
     git_in(&origin.dir, OLD_EPOCH, &["branch", "-M", "main"]);
 
     // The subprocess has no TTY, so the confirmation cannot be answered.
@@ -249,7 +207,6 @@ fn a_rewritten_history_is_not_bumped_without_confirmation() {
         "a rewrite must not be bumped without confirmation"
     );
 
-    // With `--yes` the same bump is accepted.
     let confirmed = f.run(&["remote", "update", "--yes"], &[]);
     assert_eq!(code(&confirmed), 0);
     assert!(
@@ -262,8 +219,8 @@ fn a_rewritten_history_is_not_bumped_without_confirmation() {
 #[test]
 fn update_of_an_unknown_remote_name_fails_without_touching_the_lockfile() {
     let f = Fixture::new();
-    let origin = Origin::new(&f, "humanizer");
-    origin.commit("first\n", OLD_EPOCH);
+    let origin = Origin::new(&f, "humanizer", OLD_EPOCH);
+    origin.commit_files(&[("a.md", "first\n")], OLD_EPOCH);
     declare(&f, "humanizer", &origin, Some("0s"));
 
     let out = f.run(&["remote", "update", "nope"], &[]);
@@ -278,8 +235,8 @@ fn update_of_an_unknown_remote_name_fails_without_touching_the_lockfile() {
 #[test]
 fn list_reports_each_remote_and_its_pin() {
     let f = Fixture::new();
-    let origin = Origin::new(&f, "humanizer");
-    origin.commit("first\n", OLD_EPOCH);
+    let origin = Origin::new(&f, "humanizer", OLD_EPOCH);
+    origin.commit_files(&[("a.md", "first\n")], OLD_EPOCH);
     declare(&f, "humanizer", &origin, Some("0s"));
 
     let unpinned = f.run(&["remote", "list", "--json"], &[]);
@@ -322,8 +279,8 @@ fn list_says_so_when_no_remote_is_declared() {
 #[test]
 fn check_reports_a_moved_upstream_and_writes_the_notice() {
     let f = Fixture::new();
-    let origin = Origin::new(&f, "humanizer");
-    origin.commit("first\n", OLD_EPOCH);
+    let origin = Origin::new(&f, "humanizer", OLD_EPOCH);
+    origin.commit_files(&[("a.md", "first\n")], OLD_EPOCH);
     declare(&f, "humanizer", &origin, Some("0s"));
     assert_eq!(code(&f.run(&["remote", "update"], &[])), 0, "first pin");
 
@@ -340,7 +297,7 @@ fn check_reports_a_moved_upstream_and_writes_the_notice() {
         "nothing pending must leave no notice for the shell to print"
     );
 
-    origin.commit("second\n", OLD_EPOCH + 60);
+    origin.commit_files(&[("a.md", "second\n")], OLD_EPOCH + 60);
     let behind = f.run(&["remote", "check"], &[]);
     assert_eq!(code(&behind), 0);
     let body = fs_err::read_to_string(notice.as_std_path()).expect("the notice is written");
@@ -355,10 +312,42 @@ fn check_reports_a_moved_upstream_and_writes_the_notice() {
 }
 
 #[test]
+fn a_successful_update_clears_the_pending_notice() {
+    // Only `remote check` otherwise rewrites the notice files, and its hook
+    // form self-throttles for a day, so a bump that leaves them in place keeps
+    // announcing an update the user already accepted.
+    let f = Fixture::new();
+    let origin = Origin::new(&f, "humanizer", OLD_EPOCH);
+    origin.commit_files(&[("a.md", "first\n")], OLD_EPOCH);
+    declare(&f, "humanizer", &origin, Some("0s"));
+    assert_eq!(code(&f.run(&["remote", "update"], &[])), 0, "first pin");
+
+    origin.commit_files(&[("a.md", "second\n")], OLD_EPOCH + 60);
+    assert_eq!(code(&f.run(&["remote", "check"], &[])), 0);
+    assert!(
+        patina_core::remote::notice::read_pending(&f.state_root()).contains("humanizer"),
+        "the fixture must start with a pending update"
+    );
+
+    // `--yes`: the fixture commit is backdated against the pin's fresh
+    // `updated_at`, so the gate flags it and a bare update would hold.
+    assert_eq!(code(&f.run(&["remote", "update", "--yes"], &[])), 0);
+
+    assert!(
+        patina_core::remote::notice::read_pending(&f.state_root()).is_empty(),
+        "the pending set must be cleared by the bump"
+    );
+    assert!(
+        !patina_core::remote::cache::notice_path(&f.state_root()).exists(),
+        "the shell notice must be cleared by the bump"
+    );
+}
+
+#[test]
 fn check_json_reports_the_pending_set() {
     let f = Fixture::new();
-    let origin = Origin::new(&f, "humanizer");
-    origin.commit("first\n", OLD_EPOCH);
+    let origin = Origin::new(&f, "humanizer", OLD_EPOCH);
+    origin.commit_files(&[("a.md", "first\n")], OLD_EPOCH);
     declare(&f, "humanizer", &origin, Some("0s"));
 
     let out = f.run(&["remote", "check", "--json"], &[]);
@@ -375,8 +364,8 @@ fn check_json_reports_the_pending_set() {
 #[test]
 fn check_hook_is_silent_and_self_throttles() {
     let f = Fixture::new();
-    let origin = Origin::new(&f, "humanizer");
-    origin.commit("first\n", OLD_EPOCH);
+    let origin = Origin::new(&f, "humanizer", OLD_EPOCH);
+    origin.commit_files(&[("a.md", "first\n")], OLD_EPOCH);
     declare(&f, "humanizer", &origin, Some("0s"));
 
     let first = f.run(&["remote", "check", "--hook"], &[]);
@@ -407,8 +396,8 @@ fn check_hook_is_silent_and_self_throttles() {
 #[test]
 fn prune_removes_an_unreferenced_checkout() {
     let f = Fixture::new();
-    let origin = Origin::new(&f, "humanizer");
-    origin.commit("first\n", OLD_EPOCH);
+    let origin = Origin::new(&f, "humanizer", OLD_EPOCH);
+    origin.commit_files(&[("a.md", "first\n")], OLD_EPOCH);
     declare(&f, "humanizer", &origin, Some("0s"));
 
     let orphan = patina_core::remote::cache::checkout_dir(
@@ -440,8 +429,8 @@ fn prune_removes_the_whole_cache_tree_of_an_undeclared_remote() {
     // remote's own directory and its bare fetch repository would survive
     // deleting the declaration for good.
     let f = Fixture::new();
-    let origin = Origin::new(&f, "humanizer");
-    origin.commit("first\n", OLD_EPOCH);
+    let origin = Origin::new(&f, "humanizer", OLD_EPOCH);
+    origin.commit_files(&[("a.md", "first\n")], OLD_EPOCH);
     declare(&f, "humanizer", &origin, Some("0s"));
     assert_eq!(code(&f.run(&["remote", "update"], &[])), 0, "first pin");
     let cached = patina_core::remote::cache::module_dir(&f.state_root(), "humanizer");
@@ -450,7 +439,6 @@ fn prune_removes_the_whole_cache_tree_of_an_undeclared_remote() {
         "the update must have filled the fetch repository at {cached}"
     );
 
-    // Drop both the declaration and the entry that named it.
     fs_err::write(
         f.root.join("patina.toml").as_std_path(),
         "[patina]\nroot = true\n",
@@ -474,13 +462,12 @@ fn prune_removes_the_whole_cache_tree_of_an_undeclared_remote() {
 #[test]
 fn a_mutating_apply_drops_a_pin_no_declaration_names() {
     let f = Fixture::new();
-    let origin = Origin::new(&f, "humanizer");
-    origin.commit("first\n", OLD_EPOCH);
+    let origin = Origin::new(&f, "humanizer", OLD_EPOCH);
+    origin.commit_files(&[("a.md", "first\n")], OLD_EPOCH);
     declare(&f, "humanizer", &origin, Some("0s"));
     assert_eq!(code(&f.apply(&["--update", "--yes"])), 0, "priming run");
     assert!(lockfile(&f).contains("[remotes.humanizer]"), "pin recorded");
 
-    // The remote is no longer declared, but its pin is still committed.
     fs_err::write(
         f.root.join("patina.toml").as_std_path(),
         "[patina]\nroot = true\n",
@@ -510,8 +497,8 @@ fn a_mutating_apply_drops_a_pin_no_declaration_names() {
 #[test]
 fn a_preview_apply_reports_a_stale_pin_without_rewriting_the_lockfile() {
     let f = Fixture::new();
-    let origin = Origin::new(&f, "humanizer");
-    origin.commit("first\n", OLD_EPOCH);
+    let origin = Origin::new(&f, "humanizer", OLD_EPOCH);
+    origin.commit_files(&[("a.md", "first\n")], OLD_EPOCH);
     declare(&f, "humanizer", &origin, Some("0s"));
     assert_eq!(code(&f.apply(&["--update", "--yes"])), 0, "priming run");
 
@@ -543,11 +530,11 @@ fn update_pins_every_declaration_not_only_the_ones_in_use() {
     // The committed lock has to be complete for every machine, so a remote no
     // entry currently names is still pinned here.
     let f = Fixture::new();
-    let used = Origin::new(&f, "used");
-    used.commit("first\n", OLD_EPOCH);
+    let used = Origin::new(&f, "used", OLD_EPOCH);
+    used.commit_files(&[("a.md", "first\n")], OLD_EPOCH);
     declare(&f, "used", &used, Some("0s"));
-    let unused = Origin::new(&f, "unused");
-    let unused_rev = unused.commit("first\n", OLD_EPOCH);
+    let unused = Origin::new(&f, "unused", OLD_EPOCH);
+    let unused_rev = unused.commit_files(&[("a.md", "first\n")], OLD_EPOCH);
     declare_only(&f, "unused", &unused, Some("0s"));
 
     let out = f.run(&["remote", "update"], &[]);
@@ -578,8 +565,8 @@ fn prune_says_so_when_there_is_nothing_to_remove() {
 #[test]
 fn apply_update_pins_and_applies_in_one_run() {
     let f = Fixture::new();
-    let origin = Origin::new(&f, "humanizer");
-    let rev = origin.commit("first\n", OLD_EPOCH);
+    let origin = Origin::new(&f, "humanizer", OLD_EPOCH);
+    let rev = origin.commit_files(&[("a.md", "first\n")], OLD_EPOCH);
     declare(&f, "humanizer", &origin, Some("0s"));
 
     let out = f.apply(&["--update", "--yes"]);
@@ -603,13 +590,11 @@ fn apply_update_pins_and_applies_in_one_run() {
 #[test]
 fn apply_update_degrades_to_a_plain_apply_when_the_remote_is_unreachable() {
     let f = Fixture::new();
-    let origin = Origin::new(&f, "humanizer");
-    let rev = origin.commit("first\n", OLD_EPOCH);
+    let origin = Origin::new(&f, "humanizer", OLD_EPOCH);
+    let rev = origin.commit_files(&[("a.md", "first\n")], OLD_EPOCH);
     declare(&f, "humanizer", &origin, Some("0s"));
     assert_eq!(code(&f.apply(&["--update", "--yes"])), 0, "priming run");
 
-    // Offline, warm cache: the update pass fails but the committed pin still
-    // applies.
     fs_err::remove_dir_all(origin.dir.as_std_path()).expect("delete the origin");
     fs_err::remove_file(f.home.join(".a.md").as_std_path()).expect("delete the deployed file");
 

@@ -22,8 +22,8 @@ use tempfile::TempDir;
 const BASE_EPOCH: i64 = 1_700_000_000;
 
 /// Run `git` in `cwd` with a pinned identity and committer/author date, so the
-/// commits the fixtures produce have stable SHAs-independent timestamps and do
-/// not depend on the developer's global git config.
+/// commits the fixtures produce have stable, clock-independent SHAs and do not
+/// depend on the developer's global git config.
 fn git_in(cwd: &Utf8Path, epoch: i64, args: &[&str]) -> String {
     let date = format!("{epoch} +0000");
     let output = Command::new("git")

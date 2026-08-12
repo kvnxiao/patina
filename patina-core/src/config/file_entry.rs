@@ -183,7 +183,7 @@ pub enum FileEntryError {
 /// Whether a `.tmpl` suffix on an entry's source triggers the implicit
 /// template render.
 ///
-/// A local source takes the render, as it always has. A source inside a remote
+/// A local source takes the render. A source inside a remote
 /// checkout never does: third-party bytes full of `{{ }}` would either explode
 /// under strict-undefined rendering or, worse, render. Under
 /// [`TemplatePolicy::Never`] a `.tmpl` suffix is just part of a filename: the

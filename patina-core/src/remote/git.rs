@@ -160,8 +160,15 @@ pub fn ls_remote(url: &str, git_ref: Option<&str>) -> Result<String, GitError> {
 /// `ls-remote <url> <name>` can answer with several lines: a branch and a tag
 /// may share a name, and an annotated tag also reports its peeled commit as
 /// `refs/tags/<name>^{}`. The preference order is peeled tag, then branch, then
-/// plain tag, then any single remaining line, so the returned SHA is always a
-/// commit and never depends on git's output ordering.
+/// plain tag, then the exact name as written (which covers `HEAD` and a
+/// fully-qualified ref), so the returned SHA is always a commit and never
+/// depends on git's output ordering.
+///
+/// Nothing else is accepted: `ls-remote` pattern-matches trailing path
+/// components, so when the named ref is gone its output can still carry a
+/// suffix-matching stranger like `refs/pull/42/main` for `main`. Selecting that
+/// would silently pin a ref the user never named; refusing it surfaces as
+/// [`GitError::Unparseable`], which names what the remote actually answered.
 fn select_ls_remote_sha(text: &str, wanted: &str) -> Option<String> {
     let rows: Vec<(&str, &str)> = text
         .lines()
@@ -178,7 +185,6 @@ fn select_ls_remote_sha(text: &str, wanted: &str) -> Option<String> {
         .or_else(|| pick(&format!("refs/heads/{wanted}")))
         .or_else(|| pick(&format!("refs/tags/{wanted}")))
         .or_else(|| pick(wanted))
-        .or_else(|| rows.first().map(|(sha, _)| (*sha).to_owned()))
 }
 
 /// Create the bare fetch repository at `git_dir` if it does not exist yet.
@@ -298,7 +304,7 @@ pub fn fetch_commit(
 /// The update gate's ancestry check asks whether the pinned rev is an ancestor
 /// of the candidate tip, and `merge-base` can only answer that if the commits
 /// between the two are present. A depth-1 fetch leaves the two as disconnected
-/// shallow roots, where the question is unanswerable rather than merely false.
+/// shallow roots, where the question is unanswerable rather than merely false,
 /// so the producer path (`patina remote update`) pays for real history while
 /// the consumer path (`apply` filling a cold cache for an already-decided pin)
 /// stays on [`fetch_commit`]'s shallow fetch.
@@ -352,7 +358,10 @@ pub fn checkout_commit(git_dir: &Utf8Path, rev: &str, dest: &Utf8Path) -> Result
         path: dest.to_path_buf(),
         source,
     })?;
-    let index = dest.with_extension("index");
+    // Appended rather than substituted for the extension: `dest` is a staging
+    // directory whose name is unique per process, and the index must be too, or
+    // two concurrent materializations would corrupt each other's checkout.
+    let index = camino::Utf8PathBuf::from(format!("{dest}.index"));
     let git_dir_arg = git_dir.as_str();
     let work_tree_arg = format!("--work-tree={dest}");
     // Beats setting these in the bare repo's config: the override travels with
@@ -527,8 +536,12 @@ fn try_repo_differs_from_origin(repo_root: &Utf8Path) -> Option<bool> {
         run(&full, None).ok().map(|output| stdout_of(&output))
     };
 
-    let head = in_repo(&["rev-parse", "HEAD"])?;
-    let branch = in_repo(&["rev-parse", "--abbrev-ref", "HEAD"])?;
+    // One spawn answers both questions: the SHA on the first line, the
+    // abbreviated ref name on the second.
+    let answer = in_repo(&["rev-parse", "HEAD", "--abbrev-ref", "HEAD"])?;
+    let mut lines = answer.lines();
+    let head = lines.next()?.trim().to_owned();
+    let branch = lines.next()?.trim().to_owned();
     // A detached HEAD tracks nothing, so there is nothing to be behind.
     if branch == "HEAD" {
         return Some(false);
@@ -595,5 +608,14 @@ mod tests {
             None,
             "a malformed SHA column must not be accepted as a rev"
         );
+    }
+
+    #[test]
+    fn ls_remote_refuses_a_suffix_matching_stranger() {
+        // `ls-remote` pattern-matches trailing path components, so with
+        // `refs/heads/main` gone this is a real answer for `main`. Pinning it
+        // would track a ref the user never named.
+        let text = "1111111111111111111111111111111111111111\trefs/pull/42/main";
+        assert_eq!(select_ls_remote_sha(text, "main"), None);
     }
 }

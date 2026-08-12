@@ -103,15 +103,14 @@ fn render_human(report: &StatusReport, reporter: &mut impl Reporter) {
 }
 
 /// Report the remotes whose upstream has moved past their pin, as of the last
-/// `patina remote check`.
+/// `patina remote check`. The wording is the notice subsystem's own, so status
+/// and the shell notice can never phrase the same fact two ways.
 fn render_remotes_pending(report: &StatusReport, reporter: &mut impl Reporter) {
     if report.remotes_pending.is_empty() {
         return;
     }
-    reporter.line(&format!(
-        "remotes with pending updates: {}. Run `patina apply --update`.",
-        report.remotes_pending.join(", ")
-    ));
+    let names: Vec<&str> = report.remotes_pending.iter().map(String::as_str).collect();
+    reporter.line(patina_core::remote::notice::pending_updates_message(&names).trim_end());
 }
 
 /// Stable lowercase label for a target state, shared by both renderers.

@@ -3,8 +3,8 @@
 //!
 //! A remote is declared once in the root manifest and named by any entry that
 //! wants its bytes. The parse-level consequences are that each declaration is
-//! validated and named, that a module manifest may no longer declare a remote
-//! of its own, and that an entry naming one loses the implicit `.tmpl` template
+//! validated and named, that a module manifest may not declare a remote
+//! of its own, and that an entry naming one gets no implicit `.tmpl` template
 //! render — third-party bytes are never handed to `MiniJinja` — while its local
 //! neighbours in the same manifest keep it. See `docs/REMOTE_SOURCES.md` "The
 //! remote registry" and "Trust boundaries".
@@ -83,9 +83,6 @@ fn two_declarations_may_not_share_a_name() {
 
 #[test]
 fn names_differing_only_in_case_are_one_name() {
-    // The name becomes a cache directory name, which macOS and Windows treat
-    // case-insensitively; accepting both would let two remotes overwrite each
-    // other's checkouts on those hosts and not on Linux.
     parse_root_config_str(
         "[[remote]]\nname = \"Humanizer\"\nurl = \"https://a.invalid/r\"\n\n\
          [[remote]]\nname = \"humanizer\"\nurl = \"https://b.invalid/r\"\n",
@@ -114,9 +111,6 @@ fn a_declaration_with_a_malformed_min_age_is_rejected() {
 
 #[test]
 fn a_module_level_remote_table_points_at_the_root_manifest() {
-    // The parser accepts unknown keys, so a manifest written for the old format
-    // would otherwise parse clean and resolve its entries against the module
-    // directory — the silent wrong answer this rejection exists to prevent.
     let err = parse_module_config_str(
         "[remote]\nurl = \"https://github.com/blader/humanizer\"\n\n\
          [[file]]\nsource = \"SKILL.md\"\ntarget = \"~/.claude/skills/humanizer/SKILL.md\"\n",

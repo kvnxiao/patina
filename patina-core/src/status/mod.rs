@@ -54,6 +54,39 @@ pub struct StatusEntry {
     pub state: TargetState,
 }
 
+/// The current plan's managed-target set, plus the regions it cannot see.
+///
+/// A tree-mode entry backed by a remote expands into one managed key per
+/// checkout leaf, but read-only passes (status, the orphan reap) must not
+/// fetch, so when the pinned checkout is not materialized the entry's leaves
+/// are unknowable rather than absent. Treating them as absent would report
+/// every previously-applied leaf ORPHANED — and let the reap delete it — so
+/// those entries' declared target roots are carried separately and a recorded
+/// target under one still counts as managed.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ManagedTargets {
+    /// The managed keys ([`manage_key`] form) of every enumerable target.
+    pub targets: BTreeSet<Utf8PathBuf>,
+    /// Declared target roots ([`manage_key`] form) of tree-mode entries whose
+    /// remote checkout is not materialized on this machine.
+    pub indeterminate_roots: BTreeSet<Utf8PathBuf>,
+    /// The remotes whose checkouts those roots are waiting on, for reporting.
+    pub unmaterialized_remotes: BTreeSet<String>,
+}
+
+impl ManagedTargets {
+    /// Whether the current plan manages `key` — either enumerably, or as part
+    /// of a tree whose remote checkout is not on this machine.
+    #[must_use = "the answer decides ORPHANED classification and the reap"]
+    pub fn governs(&self, key: &camino::Utf8Path) -> bool {
+        self.targets.contains(key)
+            || self
+                .indeterminate_roots
+                .iter()
+                .any(|root| key.starts_with(root))
+    }
+}
+
 /// The full result of a `patina status` run.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct StatusReport {
@@ -105,7 +138,7 @@ impl StatusReport {
 /// the current-plan computation, or the journal read fails. A shared-lock
 /// *timeout* is not an error: it is downgraded to a warning and the read
 /// proceeds.
-pub fn report(current_plan_targets: &BTreeSet<Utf8PathBuf>) -> Result<StatusReport, EngineError> {
+pub fn report(managed: &ManagedTargets) -> Result<StatusReport, EngineError> {
     let state_dir = resolve_state_dir()?;
     let journal_dir = state_dir.join("journal");
     let lock_path = state_dir.join("lock");
@@ -125,13 +158,22 @@ pub fn report(current_plan_targets: &BTreeSet<Utf8PathBuf>) -> Result<StatusRepo
         }
         Err(other) => return Err(EngineError::Lock(other)),
     };
+    if !managed.unmaterialized_remotes.is_empty() {
+        let names: Vec<&str> = managed
+            .unmaterialized_remotes
+            .iter()
+            .map(String::as_str)
+            .collect();
+        warnings.push(format!(
+            "the pinned checkout for remote(s) {} is not materialized on this machine; drift \
+             for their directory entries cannot be assessed until `patina apply` runs",
+            names.join(", ")
+        ));
+    }
 
     let record = read_latest_commit(&journal_dir)?;
     let mut report = StatusReport {
         warnings,
-        // Surfaced here rather than left to the shell notice alone, so a user
-        // who runs `patina status` learns about a pending remote update in the
-        // same place they learn about drift.
         remotes_pending: crate::remote::notice::read_pending(&state_dir)
             .into_iter()
             .collect(),
@@ -146,7 +188,7 @@ pub fn report(current_plan_targets: &BTreeSet<Utf8PathBuf>) -> Result<StatusRepo
     report.last_apply = Some(record.last_apply);
     for expected in &record.targets {
         let path = Utf8PathBuf::from(expected.target());
-        let still_managed = current_plan_targets.contains(&manage_key(&path));
+        let still_managed = managed.governs(&manage_key(&path));
         let state = classify(expected, still_managed);
         // A target the current plan dropped *and* that is already gone from
         // disk is fully done — nothing to surface (it would classify
@@ -182,7 +224,7 @@ pub fn report(current_plan_targets: &BTreeSet<Utf8PathBuf>) -> Result<StatusRepo
 /// Returns an [`EngineError`] when repository discovery, profile resolution,
 /// module enumeration, manifest parsing, or a `when` predicate evaluation
 /// fails.
-pub fn current_plan_targets() -> Result<BTreeSet<Utf8PathBuf>, EngineError> {
+pub fn current_plan_targets() -> Result<ManagedTargets, EngineError> {
     crate::apply::engine::current_managed_targets()
 }
 

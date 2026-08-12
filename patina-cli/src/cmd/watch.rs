@@ -25,7 +25,6 @@ use anyhow::Context;
 use anyhow::Result;
 use patina_core::LifecycleResult;
 use patina_core::LockKind;
-use patina_core::SHARED_TIMEOUT;
 use patina_core::ServiceBackend;
 use patina_core::ServiceError;
 use patina_core::ServiceStatus;
@@ -89,13 +88,7 @@ fn run_lifecycle(command: &WatchCommand, json: bool, reporter: &mut impl Reporte
     // service registration and acquires the exclusive lock, mapping a timeout
     // to exit code 4 via the error-chain funnel.
     if let WatchCommand::Status = command {
-        let _guard = match acquire_lock(&lock_path, LockKind::Shared, SHARED_TIMEOUT) {
-            Ok(guard) => Some(guard),
-            Err(error) => {
-                reporter.warn(&format!("proceeding without the shared lock: {error}"));
-                None
-            }
-        };
+        let _guard = crate::cmd::shared_lock(&lock_path, false, reporter);
         return Ok(render_status(backend.status(), json, reporter));
     }
 

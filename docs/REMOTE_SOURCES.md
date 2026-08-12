@@ -51,8 +51,13 @@ which gives `humanizer` for all of
 name may contain letters, digits, `.`, `_`, and `-`, because it becomes
 a directory name; a URL with no legal last segment is refused with a
 message telling you to write `name`. Two remotes may not answer to one
-name, compared ignoring case so a manifest cannot mean two things on
-Linux and one thing on macOS.
+name, compared ignoring case and Unicode normalization so a manifest
+cannot mean two things on Linux and one thing on macOS — and every
+reference is matched the same way: an entry's `remote` key, a
+`patina remote update <name>` argument, and a `patina.lock` key all
+find a declaration whose spelling differs only in case. The names
+`notice`, `pending`, and `last_check` are reserved (in any case): they
+name Patina's own files beside the per-remote cache directories.
 
 Durations accept `s`, `m`, `h`, and `d` suffixes (`"0s"`, `"30m"`,
 `"72h"`, `"7d"`).
@@ -110,7 +115,10 @@ Remote content is third-party input, and Patina holds these lines:
   a `..` in the declared source or a symbolic link the checkout ships,
   is refused at plan time. Symlinks in a checkout are materialized as
   inert files holding their target text, so the resolver cannot follow
-  one out of the checkout.
+  one out of the checkout. Should a cached checkout hold a real
+  symbolic link anyway — Patina never writes one, so it means the
+  cache was made or altered by something else — a directory source
+  containing one fails the plan rather than deploying through it.
 - A remote's `url` and `ref` are passed to `git` as positional
   arguments and may not begin with `-`, so a manifest cannot smuggle a
   git option (for example `--upload-pack`) into a fetch.
@@ -198,13 +206,15 @@ still apply an `eol` or `filter` rule; against such a repository a
 checkout is not byte-verbatim. Fully attribute-blind materialization
 is a post-1.0 item.
 
-After each successful apply, checkouts that no journal record on disk
-references are pruned automatically: rollback always has what it
-needs, and disk stays bounded at roughly the current and previous rev
-per remote. `patina remote prune` runs the same sweep by hand, and
-additionally removes the whole cache directory — bare repository
-included — of any remote the root manifest no longer declares, once no
-journal record points into it.
+After each successful apply, the cache is swept automatically:
+checkouts that no journal record on disk references are removed, and a
+remote the root manifest no longer declares loses its whole cache
+directory — bare repository included — once no journal record points
+into it. Rollback always has what it needs, and disk stays bounded at
+roughly the current and previous rev per remote. The checkout of each
+declared remote's currently pinned rev always survives, referenced or
+not: a pin bumped but not yet applied is the warm cache an offline
+apply depends on. `patina remote prune` runs the same sweep by hand.
 
 ## Commands
 
@@ -217,7 +227,7 @@ The verbs split along a producer/consumer line:
 | `patina apply --update`      | producer | `remote update` for every remote, then apply, in one sitting. Runs only when the apply may mutate: it is skipped (with a note) on a preview, meaning a non-interactive apply without `--yes`, or any `--json` run. It never auto-accepts a gate concern, even under `--yes`. |
 | `patina remote list`         | either   | Each declared remote's URL, ref, pinned rev, and pending-update state. Read-only. |
 | `patina remote check`        | either   | `git ls-remote` only: compare upstream tips against the lock, refresh the notice file. No object download. Exits non-zero if any remote could not be reached. |
-| `patina remote prune`        | either   | Remove cached checkouts unreferenced by any journal record, plus the cache tree of any undeclared remote. |
+| `patina remote prune`        | either   | Remove cached checkouts unreferenced by any journal record (currently pinned revs always stay), plus the cache tree of any undeclared remote. |
 
 Failure shapes worth knowing:
 
@@ -360,7 +370,10 @@ past your pins, it names the remotes and suggests
 its origin (the stale-server case: another machine already bumped the
 pins), it says so and suggests `git pull && patina apply`
 instead, since the pending changes are already decided and gated.
-`patina status` surfaces the same pending-update state.
+`patina status` surfaces the same pending-update state. A successful
+`remote update` (including the one inside `apply --update`) drops the
+remotes it settled from the notice on the spot, so a stale
+announcement never outlives the bump it asked for.
 
 ## Target collision validation
 

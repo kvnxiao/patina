@@ -90,9 +90,14 @@ pub fn checkout_present(state_dir: &Utf8Path, module: &str, rev: &str) -> bool {
 ///
 /// A present checkout directory short-circuits with no `git` call at all, which
 /// is what makes a plain `apply` against a warm cache fully offline. A fresh
-/// checkout is written into a `<rev>.partial` sibling and renamed into place,
-/// so the directory's existence is proof it is complete rather than a
-/// half-written tree from an interrupted run.
+/// checkout is written into a `<rev>.partial.<pid>` sibling and renamed into
+/// place, so the directory's existence is proof it is complete rather than a
+/// half-written tree from an interrupted run. The staging name carries the
+/// writer's pid because materialization runs without the process lock (plan
+/// time precedes the consent prompt), so two processes may stage the same rev
+/// concurrently; each writes its own directory, and whichever renames second
+/// finds the destination already present and discards its copy — both staged
+/// the same immutable commit.
 ///
 /// Returns the checkout directory.
 ///
@@ -117,45 +122,72 @@ pub fn ensure_checkout(
     }
 
     let staging = staging_dir(&final_dir);
-    // A leftover staging directory from an interrupted run would otherwise mix
-    // its files into this checkout.
-    remove_dir(&staging)?;
+    // A leftover staging directory from an interrupted run (same recycled pid)
+    // would otherwise mix its files into this checkout.
+    remove_any(&staging)?;
     git::checkout_commit(&git_dir, rev, &staging)?;
-    fs_err::rename(staging.as_std_path(), final_dir.as_std_path()).map_err(|source| {
-        RemoteRepr::Cache {
+    if let Err(source) = fs_err::rename(staging.as_std_path(), final_dir.as_std_path()) {
+        if final_dir.is_dir() {
+            remove_any(&staging)?;
+            return Ok(final_dir);
+        }
+        return Err(RemoteRepr::Cache {
             action: "renaming the staged checkout into",
             path: final_dir.clone(),
             source,
         }
-    })?;
+        .into());
+    }
     Ok(final_dir)
 }
 
-/// The `<rev>.partial` sibling a checkout is staged in.
+/// The `<rev>.partial.<pid>` sibling a checkout is staged in.
 fn staging_dir(final_dir: &Utf8Path) -> Utf8PathBuf {
-    Utf8PathBuf::from(format!("{final_dir}{PARTIAL_SUFFIX}"))
+    Utf8PathBuf::from(format!(
+        "{final_dir}{PARTIAL_SUFFIX}.{}",
+        std::process::id()
+    ))
 }
 
-/// Remove the checkouts under `<state>/remotes/` that no journal record on disk
-/// references, returning what was removed, sorted.
+/// Sweep the cache: remove the whole tree of every remote `declared` does not
+/// name, then every checkout no journal record references and no `keep` pin
+/// names. Returns what was removed, sorted.
 ///
 /// Reachability is read from every `<ts>.COMMIT` sentinel in the journal
 /// directory, not just the newest: `patina rollback` walks back through them,
 /// so a checkout an older commit still names must survive. A recorded source
-/// path that falls inside a checkout directory keeps that directory; everything
-/// else under a module's cache directory that looks like a checkout goes.
+/// path that falls inside a checkout (or an undeclared remote's tree) keeps
+/// it; everything else under a module's cache directory that looks like a
+/// checkout goes, and an undeclared remote loses its directory whole, bare
+/// fetch repository included.
+///
+/// `keep` carries the `(name, rev)` of every current pin, which must survive
+/// even when no journal record names it: a pin bumped but not yet applied is
+/// the warm cache an offline apply depends on, and a plan another process has
+/// materialized but not yet confirmed points at a pinned rev by construction.
+///
+/// Names are compared under [`crate::config::remote::name_key`], because on a
+/// case-insensitive filesystem the on-disk directory keeps the spelling the
+/// remote was first declared under.
 ///
 /// When any sentinel fails to decode, nothing is pruned. Deleting on partial
 /// knowledge could strand a rollback, and a stale checkout only costs disk.
 ///
-/// Staging leftovers (`<rev>.partial`) and scratch index files are always
-/// removed: both are derivable, and neither is ever referenced.
+/// Staging leftovers (`<rev>.partial.<pid>`) and scratch index files are
+/// always removed: both are derivable, and neither is ever referenced.
 ///
 /// # Errors
 ///
 /// Returns a [`RemoteError`] when the cache directory cannot be read or a
 /// removal fails.
-pub fn prune(state_dir: &Utf8Path) -> Result<Vec<Utf8PathBuf>, RemoteError> {
+pub fn prune(
+    state_dir: &Utf8Path,
+    declared: &BTreeSet<&str>,
+    keep: &[(String, String)],
+) -> Result<Vec<Utf8PathBuf>, RemoteError> {
+    use crate::config::remote::name_key;
+    use crate::config::remote::same_name;
+
     let root = remotes_root(state_dir);
     if !root.is_dir() {
         return Ok(Vec::new());
@@ -163,9 +195,23 @@ pub fn prune(state_dir: &Utf8Path) -> Result<Vec<Utf8PathBuf>, RemoteError> {
     let Some(referenced) = referenced_paths(&state_dir.join("journal"))? else {
         return Ok(Vec::new());
     };
+    let declared: BTreeSet<String> = declared.iter().map(|name| name_key(name)).collect();
 
     let mut removed = Vec::new();
     for module in read_subdirectories(&root)? {
+        let Some(module_name) = module.file_name() else {
+            continue;
+        };
+        if !declared.contains(&name_key(module_name)) {
+            // An undeclared tree goes whole once nothing points into it; while
+            // a journal record still does, it degrades to the per-checkout
+            // sweep below so rollback keeps what it needs and nothing more.
+            if !is_referenced(&module, &referenced) {
+                remove_any(&module)?;
+                removed.push(module);
+                continue;
+            }
+        }
         for candidate in read_dir_entries(&module)? {
             let Some(name) = candidate.file_name() else {
                 continue;
@@ -173,21 +219,20 @@ pub fn prune(state_dir: &Utf8Path) -> Result<Vec<Utf8PathBuf>, RemoteError> {
             if name == BARE_REPO_DIR {
                 continue;
             }
-            // Patina's own scratch artifacts are a full-SHA stem plus a
-            // `.partial` / `.index` extension. Requiring the SHA stem keeps the
-            // sweep from deleting an unrelated `notes.partial` a user or a
-            // future version might place here.
-            if matches!(candidate.extension(), Some("partial" | "index"))
-                && candidate.file_stem().is_some_and(is_checkout_name)
-            {
+            if is_scratch_name(name) {
                 remove_any(&candidate)?;
                 removed.push(candidate);
                 continue;
             }
-            if !is_checkout_name(name) || is_referenced(&candidate, &referenced) {
+            if !is_checkout_name(name)
+                || keep
+                    .iter()
+                    .any(|(kept, rev)| rev == name && same_name(kept, module_name))
+                || is_referenced(&candidate, &referenced)
+            {
                 continue;
             }
-            remove_dir(&candidate)?;
+            remove_any(&candidate)?;
             removed.push(candidate);
         }
     }
@@ -195,44 +240,20 @@ pub fn prune(state_dir: &Utf8Path) -> Result<Vec<Utf8PathBuf>, RemoteError> {
     Ok(removed)
 }
 
-/// Remove the whole cache directory of every remote `declared` does not name,
-/// returning what was removed, sorted.
-///
-/// [`prune`] sweeps checkouts within a remote's directory but never the
-/// directory itself or its bare fetch repository, so deleting a `[[remote]]`
-/// declaration would otherwise leave its entire tree behind for good. A
-/// directory a journal record still points into is left to [`prune`], which
-/// keeps the reachable checkouts a `patina rollback` would re-point links at.
-///
-/// # Errors
-///
-/// Returns a [`RemoteError`] when the cache directory cannot be read or a
-/// removal fails.
-pub fn prune_undeclared(
-    state_dir: &Utf8Path,
-    declared: &BTreeSet<&str>,
-) -> Result<Vec<Utf8PathBuf>, RemoteError> {
-    let root = remotes_root(state_dir);
-    if !root.is_dir() {
-        return Ok(Vec::new());
-    }
-    let Some(referenced) = referenced_paths(&state_dir.join("journal"))? else {
-        return Ok(Vec::new());
-    };
-
-    let mut removed = Vec::new();
-    for module in read_subdirectories(&root)? {
-        let Some(name) = module.file_name() else {
-            continue;
-        };
-        if declared.contains(name) || is_referenced(&module, &referenced) {
-            continue;
-        }
-        remove_dir(&module)?;
-        removed.push(module);
-    }
-    removed.sort();
-    Ok(removed)
+/// Whether `name` is one of Patina's own scratch artifacts: a full-SHA stem
+/// plus a staging or `.index` suffix. Requiring the SHA stem keeps the sweep
+/// from deleting an unrelated `notes.partial` a user or a future version might
+/// place here.
+fn is_scratch_name(name: &str) -> bool {
+    let partial = PARTIAL_SUFFIX.trim_start_matches('.');
+    name.split_once('.').is_some_and(|(stem, rest)| {
+        is_checkout_name(stem)
+            && (rest == "index"
+                || rest == partial
+                || rest
+                    .strip_prefix(partial)
+                    .is_some_and(|tail| tail.starts_with('.')))
+    })
 }
 
 /// Whether `name` is shaped like a checkout directory (a full commit SHA).
@@ -329,35 +350,16 @@ fn read_dir_entries(dir: &Utf8Path) -> Result<Vec<Utf8PathBuf>, RemoteError> {
     Ok(paths)
 }
 
-/// Remove a directory tree, tolerating its absence.
-fn remove_dir(path: &Utf8Path) -> Result<(), RemoteError> {
-    match fs_err::remove_dir_all(path.as_std_path()) {
-        Ok(()) => Ok(()),
-        Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(source) => Err(RemoteRepr::Cache {
+/// Remove a file, symlink, or directory tree, tolerating absence.
+pub(super) fn remove_any(path: &Utf8Path) -> Result<(), RemoteError> {
+    crate::fsx::remove_entry(path).map_err(|source| {
+        RemoteRepr::Cache {
             action: "removing",
             path: path.to_path_buf(),
             source,
         }
-        .into()),
-    }
-}
-
-/// Remove a file or a directory tree, tolerating absence.
-fn remove_any(path: &Utf8Path) -> Result<(), RemoteError> {
-    if path.is_dir() {
-        return remove_dir(path);
-    }
-    match fs_err::remove_file(path.as_std_path()) {
-        Ok(()) => Ok(()),
-        Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(source) => Err(RemoteRepr::Cache {
-            action: "removing",
-            path: path.to_path_buf(),
-            source,
-        }
-        .into()),
-    }
+        .into()
+    })
 }
 
 #[cfg(test)]
@@ -424,11 +426,7 @@ mod tests {
 
     #[test]
     fn a_checkout_spelled_differently_from_the_recorded_path_is_still_referenced() {
-        // The recorded path is canonical; the candidate is spelled the way the
-        // environment gives the state directory. A raw-only comparison would
-        // miss the reference and delete a live checkout, which is exactly what
-        // macOS (`/var` -> `/private/var`) and Windows (8.3 short names like
-        // `RUNNER~1`) do. A `..` hop reproduces the mismatch on every host:
+        // A `..` hop reproduces the spelling mismatch on every host:
         // `Path::components` preserves it, so `starts_with` fails, while
         // canonicalization resolves it away.
         let temp = TempDir::new().expect("tempdir");

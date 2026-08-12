@@ -171,9 +171,7 @@ pub fn parse_root_config_str(text: &str) -> Result<RootConfig, RootConfigError> 
     let mut claimed: BTreeSet<String> = BTreeSet::new();
     for table in raw.remote {
         let spec = table.validate()?;
-        // Folded, because the name is a cache directory name on filesystems
-        // that would treat two spellings of it as one directory.
-        if !claimed.insert(crate::caseless::fold(&spec.name)) {
+        if !claimed.insert(super::remote::name_key(&spec.name)) {
             return Err(super::remote::RemoteConfigError::DuplicateName { name: spec.name }.into());
         }
         remotes.push(spec);
@@ -374,9 +372,6 @@ mod tests {
 
     #[test]
     fn rejects_names_that_differ_only_in_case() {
-        // The name is a cache directory name; on macOS and Windows these two
-        // spellings address one directory, so accepting both would let two
-        // remotes overwrite each other's checkouts.
         let err = parse_root_config_str(
             "[[remote]]\nname = \"Humanizer\"\nurl = \"https://a.invalid/r\"\n\n\
              [[remote]]\nname = \"humanizer\"\nurl = \"https://b.invalid/r\"\n",

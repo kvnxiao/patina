@@ -25,13 +25,19 @@ use std::time::Duration;
 /// One declared remote: what the root manifest says, and what it is pinned to.
 #[derive(Debug, Clone)]
 pub struct RemoteView {
-    /// The remote's name, which entries select it by and which keys its pin,
-    /// its cache directory, and every `patina remote` verb.
-    pub name: String,
     /// The root manifest's `[[remote]]` table.
     pub spec: RemoteSpec,
     /// The current pin, or `None` when the remote has never been pinned.
     pub pin: Option<LockEntry>,
+}
+
+impl RemoteView {
+    /// The remote's name, which entries select it by and which keys its pin,
+    /// its cache directory, and every `patina remote` verb.
+    #[must_use = "the name keys the pin, the cache directory, and every verb"]
+    pub fn name(&self) -> &str {
+        &self.spec.name
+    }
 }
 
 /// Everything the `patina remote` commands operate over.
@@ -71,7 +77,6 @@ pub fn inventory() -> Result<RemoteInventory, EngineError> {
         .into_iter()
         .map(|spec| RemoteView {
             pin: lockfile.get(&spec.name).cloned(),
-            name: spec.name.clone(),
             spec,
         })
         .collect();
@@ -86,10 +91,13 @@ pub fn inventory() -> Result<RemoteInventory, EngineError> {
 }
 
 impl RemoteInventory {
-    /// The view for the remote called `name`, if the root manifest declares it.
+    /// The view for the remote called `name` (compared under
+    /// [`crate::config::remote::name_key`]), if the root manifest declares it.
     #[must_use = "the view carries the spec and pin a command operates on"]
     pub fn find(&self, name: &str) -> Option<&RemoteView> {
-        self.remotes.iter().find(|view| view.name == name)
+        self.remotes
+            .iter()
+            .find(|view| crate::config::remote::same_name(view.name(), name))
     }
 }
 
@@ -122,7 +130,7 @@ impl CheckResult {
 pub fn check_upstream(view: &RemoteView) -> Result<CheckResult, RemoteError> {
     let upstream_rev = git::ls_remote(&view.spec.url, view.spec.git_ref.as_deref())?;
     Ok(CheckResult {
-        name: view.name.clone(),
+        name: view.name().to_owned(),
         pinned_rev: view.pin.as_ref().map(|pin| pin.rev.clone()),
         upstream_rev,
     })
@@ -135,9 +143,6 @@ pub struct Proposal {
     pub name: String,
     /// The rev the tracked ref points at upstream.
     pub candidate_rev: String,
-    /// The candidate's committer time, Unix seconds. Zero when the gate
-    /// answered [`GateOutcome::AlreadyPinned`] and no object was fetched.
-    pub candidate_epoch: i64,
     /// The rev currently pinned, or `None` when unpinned.
     pub current_rev: Option<String>,
     /// What the gate decided.
@@ -165,17 +170,14 @@ pub fn propose(
 
     if current_rev.as_deref() == Some(candidate_rev.as_str()) {
         return Ok(Proposal {
-            name: view.name.clone(),
+            name: view.name().to_owned(),
             candidate_rev,
-            candidate_epoch: 0,
             current_rev,
             outcome: GateOutcome::AlreadyPinned,
         });
     }
 
-    // Real history, not a depth-1 fetch: the ancestry check below is only
-    // answerable when the commits between the pin and the candidate are present.
-    let git_dir = cache::bare_repo(&inventory.state_dir, &view.name);
+    let git_dir = cache::bare_repo(&inventory.state_dir, view.name());
     git::fetch_history(&git_dir, &view.spec.url, view.spec.git_ref.as_deref())?;
     let candidate_epoch = git::committer_time(&git_dir, &candidate_rev)?;
 
@@ -201,9 +203,8 @@ pub fn propose(
     });
 
     Ok(Proposal {
-        name: view.name.clone(),
+        name: view.name().to_owned(),
         candidate_rev,
-        candidate_epoch,
         current_rev,
         outcome,
     })
@@ -218,13 +219,14 @@ pub fn propose(
 ///
 /// Returns a [`RemoteError`] when the lockfile cannot be written.
 pub fn accept(
-    inventory: &mut RemoteInventory,
+    lockfile: &mut Lockfile,
+    repo_root: &camino::Utf8Path,
     view: &RemoteView,
     proposal: &Proposal,
     now_rfc3339: &str,
 ) -> Result<(), RemoteError> {
-    inventory.lockfile.insert(
-        view.name.clone(),
+    lockfile.insert(
+        view.name().to_owned(),
         LockEntry {
             url: view.spec.url.clone(),
             git_ref: view.spec.git_ref.clone(),
@@ -232,7 +234,5 @@ pub fn accept(
             updated_at: now_rfc3339.to_owned(),
         },
     );
-    inventory
-        .lockfile
-        .save(&lockfile_path(&inventory.repo_root))
+    lockfile.save(&lockfile_path(repo_root))
 }

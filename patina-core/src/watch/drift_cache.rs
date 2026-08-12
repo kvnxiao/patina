@@ -339,8 +339,7 @@ pub(super) fn hex_encode(bytes: &[u8; 32]) -> String {
 /// integer for a timestamp outside `jiff`'s representable range, so the
 /// value is surfaced rather than dropped.
 fn render_detected_at(detected_at_unix: i64) -> String {
-    jiff::Timestamp::from_second(detected_at_unix)
-        .map_or_else(|_| detected_at_unix.to_string(), |ts| ts.to_string())
+    crate::clock::epoch_to_rfc3339(detected_at_unix)
 }
 
 /// Reformat a compact journal timestamp the way the journal renderer does,

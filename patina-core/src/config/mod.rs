@@ -101,8 +101,8 @@ pub enum ConfigParseError {
     #[error(transparent)]
     Variable(#[from] crate::variables::VariableError),
 
-    /// The manifest carries a module-level `[remote]` table, which the root
-    /// registry replaced.
+    /// The manifest carries a module-level `[remote]` table; remotes are
+    /// declared only in the root manifest.
     #[error(transparent)]
     Remote(#[from] remote::RemoteConfigError),
 }
@@ -141,9 +141,9 @@ pub fn parse_module_config_str(text: &str) -> Result<ModuleConfig, ConfigParseEr
         source: Box::new(source),
     })?;
 
-    // The parser accepts unknown keys, so a manifest left over from when a
-    // module carried its own `[remote]` table would otherwise parse clean and
-    // resolve every one of its entries against the module directory.
+    // The parser accepts unknown keys, so a module-level `[remote]` table
+    // would otherwise parse clean and resolve every one of its entries against
+    // the module directory.
     if raw.remote.is_some() {
         return Err(remote::RemoteConfigError::ModuleRemoteTable.into());
     }
@@ -191,8 +191,8 @@ struct RawModule {
     #[serde(default)]
     variables: Option<toml::value::Table>,
 
-    /// A module-level `[remote]` table (or `[[remote]]` array) from before the
-    /// root registry existed. Captured only so it can be rejected by name.
+    /// A module-level `[remote]` table (or `[[remote]]` array), captured only
+    /// so it can be rejected by name.
     #[serde(default)]
     remote: Option<toml::Value>,
 

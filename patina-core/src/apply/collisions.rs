@@ -153,16 +153,20 @@ fn leaf_of(tree_target: Option<&Utf8Path>) -> String {
 /// canonical target, or the first directory-mode target that contains another
 /// claim's target.
 pub fn validate_targets(claims: &[TargetClaim<'_>]) -> Result<(), CollisionError> {
-    let staked: Vec<StakedTarget<'_>> = claims
-        .iter()
-        .flat_map(|claim| {
-            claim.targets.iter().map(move |target| StakedTarget {
+    // Tree-mode leaves share parent directories, so the anchored respelling of
+    // each parent is computed once and reused rather than re-resolved through
+    // the filesystem per leaf.
+    let mut anchors = BTreeMap::new();
+    let mut staked: Vec<StakedTarget<'_>> = Vec::new();
+    for claim in claims {
+        for target in claim.targets {
+            staked.push(StakedTarget {
                 claim: *claim,
                 target,
-                key: comparison_key(target),
-            })
-        })
-        .collect();
+                key: comparison_key(target, &mut anchors),
+            });
+        }
+    }
     reject_duplicate_targets(&staked)?;
     reject_contained_targets(&staked)
 }
@@ -194,43 +198,56 @@ struct StakedTarget<'a> {
 /// [`resolve_location`](crate::paths::resolve_location) exists to avoid. The
 /// key is for comparison only; errors report the target as the planner resolved
 /// it.
-fn comparison_key(target: &Utf8Path) -> Utf8PathBuf {
+fn comparison_key(
+    target: &Utf8Path,
+    anchors: &mut BTreeMap<Utf8PathBuf, Utf8PathBuf>,
+) -> Utf8PathBuf {
     let Some(leaf) = target.file_name() else {
         return case_fold(target);
     };
     // The leaf rides along as a to-be-appended component from the start, so only
     // the parent chain (real directories) is ever resolved through the
-    // filesystem.
-    let mut missing: Vec<&str> = vec![leaf];
-    let mut cursor = match target.parent() {
+    // filesystem — and each distinct parent only once per validation pass.
+    let parent = match target.parent() {
         Some(parent) if !parent.as_str().is_empty() => parent,
         _ => return case_fold(target),
     };
+    if let Some(anchored) = anchors.get(parent) {
+        return case_fold(&anchored.join(leaf));
+    }
+    let anchored = anchor(parent).unwrap_or_else(|| parent.to_path_buf());
+    let key = case_fold(&anchored.join(leaf));
+    anchors.insert(parent.to_path_buf(), anchored);
+    key
+}
+
+/// Re-spell `parent` on the deepest ancestor of it that exists, or `None` when
+/// nothing on the path exists and every component is therefore already in its
+/// lexical spelling.
+fn anchor(parent: &Utf8Path) -> Option<Utf8PathBuf> {
+    let mut missing: Vec<&str> = Vec::new();
+    let mut cursor = parent;
     loop {
         if cursor.exists() {
-            let mut key = crate::paths::canonicalize(cursor)
+            let mut anchored = crate::paths::canonicalize(cursor)
                 .unwrap_or_else(|_uncanonicalizable| cursor.to_path_buf());
             for component in missing.iter().rev() {
-                key.push(component);
+                anchored.push(component);
             }
-            return case_fold(&key);
+            return Some(anchored);
         }
         match (cursor.parent(), cursor.file_name()) {
-            (Some(parent), Some(name)) if !parent.as_str().is_empty() => {
+            (Some(up), Some(name)) if !up.as_str().is_empty() => {
                 missing.push(name);
-                cursor = parent;
+                cursor = up;
             }
-            // Nothing on the path exists, so there is nothing to anchor on and
-            // every component is already in its lexical spelling.
-            _ => return case_fold(target),
+            _ => return None,
         }
     }
 }
 
-/// Fold the comparison key to one case and one Unicode normal form, on every
-/// host, so the collision verdict belongs to the manifest and not the machine.
-/// `docs/REMOTE_SOURCES.md` under "Target collision validation" carries the
-/// rule and what it costs on Linux.
+/// Fold the comparison key through [`crate::caseless::fold`], which owns the
+/// case-and-normalization contract.
 fn case_fold(key: &Utf8Path) -> Utf8PathBuf {
     Utf8PathBuf::from(crate::caseless::fold(key.as_str()))
 }
@@ -489,12 +506,7 @@ mod tests {
 
     #[test]
     fn containment_is_found_when_the_two_targets_are_spelled_differently() {
-        // The planner resolves a target by canonicalizing as much of its parent
-        // chain as exists, so a deeper target under the same missing directories
-        // can come back in a different spelling than its shallower neighbour.
-        // That is what happens on a host where `$HOME` is behind a symbolic link
-        // (macOS `/var` to `/private/var`) or carries an 8.3 short name.
-        // A `..` hop stands in for the divergence, since `Path::components`
+        // A `..` hop stands in for the spelling divergence, since `Path::components`
         // preserves it while canonicalization resolves it away.
         let temp = TempDir::new().expect("tempdir");
         let home = Utf8Path::from_path(temp.path())
@@ -524,17 +536,7 @@ mod tests {
             .expect_err("containment must be found regardless of how each target is spelled");
     }
 
-    #[cfg(unix)]
-    fn symlink_file(source: &Utf8Path, link: &Utf8Path) {
-        std::os::unix::fs::symlink(source.as_std_path(), link.as_std_path())
-            .expect("create symlink");
-    }
-
-    #[cfg(windows)]
-    fn symlink_file(source: &Utf8Path, link: &Utf8Path) {
-        std::os::windows::fs::symlink_file(source.as_std_path(), link.as_std_path())
-            .expect("create symlink");
-    }
+    use crate::test_util::symlink_file;
 
     #[test]
     fn a_target_that_is_a_symlink_is_keyed_by_its_location_not_its_source() {
@@ -549,7 +551,7 @@ mod tests {
         let link = dir.join("link.conf");
         symlink_file(&source, &link);
 
-        let key = comparison_key(&link);
+        let key = comparison_key(&link, &mut BTreeMap::new());
         let canonical_source = crate::paths::canonicalize(&source).expect("canonicalize source");
         assert_ne!(
             key.as_str().to_lowercase(),
@@ -591,7 +593,6 @@ mod tests {
 
     #[test]
     fn normalization_folding_survives_the_case_mapping() {
-        // Uppercase precomposed against lowercase decomposed needs both folds.
         let upper = targets(&["/home/u/.config/CAF\u{c9}.conf"]);
         let lower = targets(&["/home/u/.config/cafe\u{301}.conf"]);
         let claims = [
@@ -603,7 +604,6 @@ mod tests {
 
     #[test]
     fn sharp_s_stays_distinct_from_its_two_letter_spelling() {
-        // Must not collide: APFS uses simple case folding, which leaves ß alone.
         let sharp = targets(&["/home/u/.config/stra\u{df}e.conf"]);
         let spelled = targets(&["/home/u/.config/strasse.conf"]);
         let claims = [

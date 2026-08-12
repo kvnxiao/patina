@@ -194,14 +194,30 @@ impl Lockfile {
     }
 
     /// The pin for the remote called `name`, if any.
+    ///
+    /// Names are compared under [`crate::config::remote::name_key`], so a pin
+    /// written under one spelling still answers to a declaration respelled
+    /// only in case.
     #[must_use = "the pin is the rev apply materializes"]
     pub fn get(&self, name: &str) -> Option<&LockEntry> {
-        self.remotes.get(name)
+        if let Some(entry) = self.remotes.get(name) {
+            return Some(entry);
+        }
+        self.remotes
+            .iter()
+            .find(|(key, _)| crate::config::remote::same_name(key, name))
+            .map(|(_, entry)| entry)
     }
 
     /// Record (or replace) the pin for the remote called `name`.
+    ///
+    /// A pin recorded under a spelling that differs only in case is replaced
+    /// rather than joined, so the file never carries two keys for one remote.
     pub fn insert(&mut self, name: impl Into<String>, entry: LockEntry) {
-        self.remotes.insert(name.into(), entry);
+        let name = name.into();
+        self.remotes
+            .retain(|key, _| !crate::config::remote::same_name(key, &name));
+        self.remotes.insert(name, entry);
     }
 
     /// Drop the pin for the remote called `name`, returning it when one was
@@ -211,7 +227,7 @@ impl Lockfile {
     }
 
     /// Drop every pin `declared` does not name, returning the dropped names in
-    /// order.
+    /// order. Names are compared under [`crate::config::remote::name_key`].
     ///
     /// The lockfile is a statement about the root manifest's declarations, so a
     /// pin whose declaration was deleted is stale by definition: it would keep
@@ -222,11 +238,14 @@ impl Lockfile {
         &mut self,
         declared: impl IntoIterator<Item = &'a str>,
     ) -> Vec<String> {
-        let declared: BTreeSet<&str> = declared.into_iter().collect();
+        let declared: BTreeSet<String> = declared
+            .into_iter()
+            .map(crate::config::remote::name_key)
+            .collect();
         let stale: Vec<String> = self
             .remotes
             .keys()
-            .filter(|name| !declared.contains(name.as_str()))
+            .filter(|name| !declared.contains(&crate::config::remote::name_key(name)))
             .cloned()
             .collect();
         for name in &stale {
@@ -345,6 +364,32 @@ mod tests {
         lock.insert("humanizer", entry(REV));
         let parsed = Lockfile::parse(&lock.render()).expect("the rendered document parses");
         assert_eq!(parsed, lock);
+    }
+
+    #[test]
+    fn a_pin_answers_to_a_name_respelled_in_case() {
+        // The registry compares declarations ignoring case, so a pin written
+        // under one spelling must keep answering after a case-only respell of
+        // its declaration — for reads, replacement, and the stale sweep alike.
+        let mut lock = Lockfile::default();
+        lock.insert("Humanizer", entry(REV));
+
+        assert!(lock.get("humanizer").is_some(), "a folded get must hit");
+        assert!(
+            lock.retain_declared(["humanizer"]).is_empty(),
+            "a case-respelled declaration must not read its own pin as stale"
+        );
+
+        lock.insert("humanizer", entry(&"b".repeat(40)));
+        assert_eq!(
+            lock.iter().count(),
+            1,
+            "an insert under a respelling must replace, not join"
+        );
+        assert_eq!(
+            lock.get("Humanizer").expect("still answers").rev,
+            "b".repeat(40)
+        );
     }
 
     #[test]

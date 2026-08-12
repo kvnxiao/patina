@@ -24,6 +24,8 @@ pub mod rollback;
 pub mod state_dir;
 pub mod status;
 pub mod template;
+#[cfg(test)]
+mod test_util;
 pub mod variables;
 pub mod version_envelope;
 pub mod watch;
@@ -268,8 +270,8 @@ pub async fn apply(options: ApplyOptions) -> Result<ApplyResult, EngineError> {
     reason = "An async signature is required; the status read itself is synchronous."
 )]
 pub async fn status(_options: StatusOptions) -> Result<StatusReport, EngineError> {
-    let targets = current_plan_targets()?;
-    status_report(&targets)
+    let managed = current_plan_targets()?;
+    status_report(&managed)
 }
 
 /// Roll back the most recent committed apply to its pre-apply filesystem

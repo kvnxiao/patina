@@ -52,8 +52,6 @@ mod tests {
 
     #[test]
     fn sharp_s_stays_distinct_from_its_two_letter_spelling() {
-        // Must not fold together: APFS uses simple case folding, which leaves ß
-        // alone, so the two name different files there.
         assert_ne!(fold("stra\u{df}e"), fold("strasse"));
     }
 }

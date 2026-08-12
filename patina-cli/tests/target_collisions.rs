@@ -1,14 +1,6 @@
-//! Plan-time target-collision validation, end to end through the CLI.
-//!
-//! Two active entries claiming one target, or a whole-directory `symlink` entry
-//! whose target contains another entry's target, must fail planning before a
-//! diff is rendered and before anything is written. Two entries claiming one
-//! target under mutually exclusive `when` guards must plan cleanly, because
-//! validation runs over the post-`when` active set. A tree-mode entry claims
-//! the leaves it materializes and nothing between them, so another entry may
-//! fill a different part of the same directory.
-//!
-//! See `docs/REMOTE_SOURCES.md` "Target collision validation".
+//! Target-collision validation exercised through the CLI, so the failure lands
+//! before any diff or write. The rules live in `patina_core::apply::collisions`
+//! and `docs/REMOTE_SOURCES.md` "Target collision validation".
 
 mod common;
 
@@ -162,9 +154,8 @@ fn a_tree_leaf_colliding_with_another_entry_names_the_leaf() {
 
 #[test]
 fn an_entry_under_a_tree_target_that_hits_no_leaf_plans_cleanly() {
-    // A tree entry owns the leaves it materializes, not the whole directory, so
-    // another entry may deploy alongside them. This is the shape a remote entry
-    // takes when it adds one upstream file to a directory the repository fills.
+    // This is the shape a remote entry takes when it adds one upstream file to
+    // a directory the repository fills.
     let f = Fixture::new();
     let tree = f.module(
         "skills",
@@ -199,8 +190,6 @@ fn an_entry_under_a_tree_target_that_hits_no_leaf_plans_cleanly() {
 
 #[test]
 fn a_multi_target_fan_out_element_collides() {
-    // The collision is on the second element of the fan-out, so a check that
-    // only considered the first declared target would let this through.
     let f = Fixture::new();
     let module = f.module(
         "shared",

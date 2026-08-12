@@ -23,12 +23,12 @@ use crate::cli::RemoteArgs;
 use crate::cli::RemoteCommand;
 use crate::cmd::apply::PromptReader;
 use crate::cmd::apply::Tty;
+use crate::cmd::shared_lock;
 use crate::exit_code::ExitCode;
 use crate::output::reporter::Reporter;
 use anyhow::Context;
 use anyhow::Result;
 use patina_core::LockKind;
-use patina_core::SHARED_TIMEOUT;
 use patina_core::acquire_lock;
 use patina_core::exclusive_timeout;
 use patina_core::remote::cache;
@@ -61,36 +61,27 @@ pub fn run(
 
     match &args.command {
         RemoteCommand::List => {
-            let _guard = shared_lock(&lock_path, reporter);
+            let _guard = shared_lock(&lock_path, false, reporter);
             let inventory = declared_remotes()?;
             Ok(run_list(&inventory, args.json, reporter))
         }
         RemoteCommand::Check { hook } => {
-            let _guard = shared_lock(&lock_path, reporter);
+            let _guard = shared_lock(&lock_path, *hook, reporter);
             let inventory = declared_remotes()?;
             Ok(run_check(&inventory, *hook, args.json, reporter))
         }
-        RemoteCommand::Update { name, now, yes } => {
-            let _guard = acquire_lock(&lock_path, LockKind::Exclusive, exclusive_timeout())
-                .context("failed to acquire the exclusive lock for `patina remote update`")?;
-            // Read the lockfile only once the exclusive lock is held: this is a
-            // read-modify-write of a file another `patina remote update` may be
-            // rewriting, so a read taken before the lock could silently drop a
-            // concurrent bump.
-            let mut inventory = declared_remotes()?;
-            run_update(
-                &mut inventory,
-                &UpdateFlags {
-                    name: name.clone(),
-                    bypass_age: *now,
-                    yes: *yes,
-                    json: args.json,
-                },
-                tty,
-                reader,
-                reporter,
-            )
-        }
+        RemoteCommand::Update { name, now, yes } => run_update_locked(
+            &lock_path,
+            &UpdateFlags {
+                name: name.clone(),
+                bypass_age: *now,
+                yes: *yes,
+                json: args.json,
+            },
+            tty,
+            reader,
+            reporter,
+        ),
         RemoteCommand::Prune => {
             let _guard = acquire_lock(&lock_path, LockKind::Exclusive, exclusive_timeout())
                 .context("failed to acquire the exclusive lock for `patina remote prune`")?;
@@ -100,24 +91,57 @@ pub fn run(
     }
 }
 
+/// Run `patina remote update` over every declared remote, with the default
+/// flags and the exclusive lock. The producer pass `patina apply --update`
+/// drives, so the two spell one operation rather than the apply synthesizing a
+/// command line.
+///
+/// # Errors
+///
+/// Returns an error under the same conditions as [`run`].
+pub fn run_update_all(
+    tty: Tty,
+    reader: &mut impl PromptReader,
+    reporter: &mut impl Reporter,
+) -> Result<i32> {
+    let state_dir =
+        patina_core::resolve_state_dir().context("failed to resolve the state directory")?;
+    run_update_locked(
+        &state_dir.join("lock"),
+        &UpdateFlags {
+            name: None,
+            bypass_age: false,
+            yes: false,
+            json: false,
+        },
+        tty,
+        reader,
+        reporter,
+    )
+}
+
+/// Acquire the exclusive lock, read the inventory under it, and run the update
+/// pass.
+fn run_update_locked(
+    lock_path: &camino::Utf8Path,
+    flags: &UpdateFlags,
+    tty: Tty,
+    reader: &mut impl PromptReader,
+    reporter: &mut impl Reporter,
+) -> Result<i32> {
+    let _guard = acquire_lock(lock_path, LockKind::Exclusive, exclusive_timeout())
+        .context("failed to acquire the exclusive lock for `patina remote update`")?;
+    // Read the lockfile only once the exclusive lock is held: this is a
+    // read-modify-write of a file another `patina remote update` may be
+    // rewriting, so a read taken before the lock could silently drop a
+    // concurrent bump.
+    let mut inventory = declared_remotes()?;
+    run_update(&mut inventory, flags, tty, reader, reporter)
+}
+
 /// Enumerate the root manifest's declared remotes and their pins.
 fn declared_remotes() -> Result<RemoteInventory> {
     update::inventory().context("failed to enumerate the declared remotes")
-}
-
-/// Acquire the shared lock, warning and proceeding on a timeout: the read-only
-/// escape hatch `patina status` and `patina doctor` also use.
-fn shared_lock(
-    lock_path: &camino::Utf8Path,
-    reporter: &mut impl Reporter,
-) -> Option<patina_core::LockGuard> {
-    match acquire_lock(lock_path, LockKind::Shared, SHARED_TIMEOUT) {
-        Ok(guard) => Some(guard),
-        Err(error) => {
-            reporter.warn(&format!("proceeding without the shared lock: {error}"));
-            None
-        }
-    }
 }
 
 /// Report the pins as recorded, with the pending state the last
@@ -130,12 +154,12 @@ fn run_list(inventory: &RemoteInventory, json: bool, reporter: &mut impl Reporte
             .iter()
             .map(|view| {
                 serde_json::json!({
-                    "name": view.name,
+                    "name": view.name(),
                     "url": view.spec.url,
                     "ref": view.spec.git_ref,
                     "rev": view.pin.as_ref().map(|pin| pin.rev.clone()),
                     "updated_at": view.pin.as_ref().map(|pin| pin.updated_at.clone()),
-                    "pending": pending.contains(&view.name),
+                    "pending": pending.contains(view.name()),
                 })
             })
             .collect();
@@ -153,14 +177,18 @@ fn run_list(inventory: &RemoteInventory, json: bool, reporter: &mut impl Reporte
             .pin
             .as_ref()
             .map_or("(unpinned)", |pin| pin.rev.as_str());
-        let state = if pending.contains(&view.name) {
+        let state = if pending.contains(view.name()) {
             "  update pending"
         } else {
             ""
         };
         reporter.line(&format!(
             "{}  {}  {}  {}{}",
-            view.name, view.spec.url, git_ref, rev, state
+            view.name(),
+            view.spec.url,
+            git_ref,
+            rev,
+            state
         ));
     }
     ExitCode::Success.code()
@@ -185,7 +213,7 @@ fn run_check(
         match update::check_upstream(view) {
             Ok(result) if result.has_update() => behind.push(result.name),
             Ok(_) => {}
-            Err(error) => failures.push(format!("{}: {error}", view.name)),
+            Err(error) => failures.push(format!("{}: {error}", view.name())),
         }
     }
 
@@ -205,8 +233,7 @@ fn run_check(
     // A write failure here must not fail a shell hook, so it is reported and the
     // command still succeeds.
     for error in [
-        notice::write_notice(&inventory.state_dir, message.as_deref()).err(),
-        notice::write_pending(&inventory.state_dir, &behind).err(),
+        notice::publish(&inventory.state_dir, &behind, message.as_deref()).err(),
         notice::record_check(&inventory.state_dir, now).err(),
     ]
     .into_iter()
@@ -277,41 +304,51 @@ fn run_update(
         );
     }
 
-    let views: Vec<RemoteView> = if let Some(name) = &flags.name {
-        let Some(view) = inventory.find(name) else {
+    let selected: Vec<usize> = if let Some(name) = &flags.name {
+        let Some(index) = inventory
+            .remotes
+            .iter()
+            .position(|view| patina_core::config::remote::same_name(view.name(), name))
+        else {
             reporter.warn(&format!(
                 "no remote named `{name}` is declared in this repository's root patina.toml"
             ));
             return Ok(ExitCode::Generic.code());
         };
-        vec![view.clone()]
+        vec![index]
     } else {
-        inventory.remotes.clone()
+        (0..inventory.remotes.len()).collect()
     };
 
-    if views.is_empty() {
+    if selected.is_empty() {
         reporter.line("No remotes are declared.");
         return Ok(ExitCode::Success.code());
     }
 
     let now_epoch = patina_core::current_epoch_seconds();
     let now_rfc3339 = patina_core::current_rfc3339();
-    let mut rows = Vec::new();
-    let mut rejected = false;
+    let mut outcomes: Vec<Outcome> = Vec::new();
 
-    for view in &views {
+    for index in selected {
+        let Some(view) = inventory.remotes.get(index) else {
+            continue;
+        };
         let proposal = match update::propose(inventory, view, now_epoch, flags.bypass_age) {
             Ok(proposal) => proposal,
             Err(error) => {
                 // One unreachable remote must not stop the others.
-                reporter.warn(&format!("could not update remote {}: {error}", view.name));
-                rows.push(row(&view.name, "failed", None));
-                rejected = true;
+                reporter.warn(&format!("could not update remote {}: {error}", view.name()));
+                outcomes.push(Outcome {
+                    name: view.name().to_owned(),
+                    action: Action::Failed,
+                    rev: None,
+                });
                 continue;
             }
         };
         let action = settle(
-            inventory,
+            &mut inventory.lockfile,
+            &inventory.repo_root,
             view,
             &proposal,
             &now_rfc3339,
@@ -320,24 +357,72 @@ fn run_update(
             reader,
             reporter,
         )?;
-        if action == Action::Rejected {
-            rejected = true;
-        }
-        rows.push(row(
-            &view.name,
-            action.label(),
-            Some(&proposal.candidate_rev),
-        ));
+        outcomes.push(Outcome {
+            name: view.name().to_owned(),
+            action,
+            rev: Some(proposal.candidate_rev),
+        });
     }
 
+    reconcile_notice(&inventory.state_dir, &outcomes, reporter);
+
     if flags.json {
+        let rows: Vec<serde_json::Value> = outcomes.iter().map(Outcome::row).collect();
         reporter.json(&document(&serde_json::json!({ "remotes": rows })));
     }
-    Ok(if rejected {
+    let failed = outcomes
+        .iter()
+        .any(|outcome| matches!(outcome.action, Action::Failed | Action::Rejected));
+    Ok(if failed {
         ExitCode::Generic.code()
     } else {
         ExitCode::Success.code()
     })
+}
+
+/// What one remote's update pass amounted to, for the JSON envelope, the exit
+/// code, and the notice reconciliation.
+struct Outcome {
+    name: String,
+    action: Action,
+    rev: Option<String>,
+}
+
+impl Outcome {
+    /// One `remotes` row of the `remote update` JSON envelope.
+    fn row(&self) -> serde_json::Value {
+        serde_json::json!({
+            "name": self.name,
+            "action": self.action.label(),
+            "rev": self.rev,
+        })
+    }
+}
+
+/// Settle the notice state for every remote this run bumped or found already
+/// at its tip, so the shell stops announcing an update the user just acted on.
+///
+/// A failure to rewrite notification state must not fail a command whose real
+/// work (the lockfile bump) is already durable, so it is reported and
+/// swallowed.
+fn reconcile_notice(
+    state_dir: &camino::Utf8Path,
+    outcomes: &[Outcome],
+    reporter: &mut impl Reporter,
+) {
+    let names: Vec<&str> = outcomes
+        .iter()
+        .filter(|outcome| matches!(outcome.action, Action::Updated | Action::UpToDate))
+        .map(|outcome| outcome.name.as_str())
+        .collect();
+    if names.is_empty() {
+        return;
+    }
+    if let Err(error) = notice::settle(state_dir, &names) {
+        reporter.warn(&format!(
+            "failed to update the remote notice state: {error}"
+        ));
+    }
 }
 
 /// What happened to one remote's proposal.
@@ -351,6 +436,8 @@ enum Action {
     Held,
     /// A hard reject.
     Rejected,
+    /// The remote could not even be proposed (unreachable, missing ref).
+    Failed,
 }
 
 impl Action {
@@ -360,6 +447,7 @@ impl Action {
             Self::Updated => "updated",
             Self::Held => "held",
             Self::Rejected => "rejected",
+            Self::Failed => "failed",
         }
     }
 }
@@ -373,7 +461,8 @@ impl Action {
               struct would move the same fields without removing any."
 )]
 fn settle(
-    inventory: &mut RemoteInventory,
+    lockfile: &mut patina_core::remote::lockfile::Lockfile,
+    repo_root: &camino::Utf8Path,
     view: &RemoteView,
     proposal: &Proposal,
     now_rfc3339: &str,
@@ -393,7 +482,15 @@ fn settle(
             Ok(Action::UpToDate)
         }
         GateOutcome::Allowed => {
-            bump(inventory, view, proposal, now_rfc3339, flags.json, reporter)?;
+            bump(
+                lockfile,
+                repo_root,
+                view,
+                proposal,
+                now_rfc3339,
+                flags.json,
+                reporter,
+            )?;
             Ok(Action::Updated)
         }
         GateOutcome::RejectedFuture { .. } => {
@@ -410,14 +507,22 @@ fn settle(
                     "{}: holding {} until {} (min_age not yet met); the pin is unchanged",
                     proposal.name,
                     proposal.candidate_rev,
-                    format_epoch(*eligible_at)
+                    patina_core::clock::epoch_to_rfc3339(*eligible_at)
                 ));
             }
             Ok(Action::Held)
         }
         GateOutcome::NeedsConfirmation(concerns) => {
             if confirm(&proposal.name, concerns, flags.yes, tty, reader, reporter) {
-                bump(inventory, view, proposal, now_rfc3339, flags.json, reporter)?;
+                bump(
+                    lockfile,
+                    repo_root,
+                    view,
+                    proposal,
+                    now_rfc3339,
+                    flags.json,
+                    reporter,
+                )?;
                 Ok(Action::Updated)
             } else {
                 if !flags.json {
@@ -445,14 +550,15 @@ fn settle(
 
 /// Write one accepted proposal into the lockfile and report it.
 fn bump(
-    inventory: &mut RemoteInventory,
+    lockfile: &mut patina_core::remote::lockfile::Lockfile,
+    repo_root: &camino::Utf8Path,
     view: &RemoteView,
     proposal: &Proposal,
     now_rfc3339: &str,
     json: bool,
     reporter: &mut impl Reporter,
 ) -> Result<()> {
-    update::accept(inventory, view, proposal, now_rfc3339)
+    update::accept(lockfile, repo_root, view, proposal, now_rfc3339)
         .map_err(patina_core::EngineError::from)
         .context("failed to write patina.lock")?;
     if !json {
@@ -496,23 +602,28 @@ fn confirm(
 }
 
 /// Run the cache sweep by hand: whole trees for remotes the root manifest no
-/// longer declares, then unreferenced checkouts of the ones it does.
+/// longer declares, then unreferenced checkouts of the ones it does. The
+/// currently pinned checkouts are kept regardless of journal reachability: a
+/// pin bumped but not yet applied is the warm cache an offline apply depends
+/// on.
 fn run_prune(inventory: &RemoteInventory, json: bool, reporter: &mut impl Reporter) -> Result<i32> {
-    let state_dir = &inventory.state_dir;
     let declared = inventory
         .remotes
         .iter()
-        .map(|view| view.name.as_str())
+        .map(patina_core::remote::update::RemoteView::name)
         .collect();
-    let mut removed = cache::prune_undeclared(state_dir, &declared)
+    let keep: Vec<(String, String)> = inventory
+        .remotes
+        .iter()
+        .filter_map(|view| {
+            view.pin
+                .as_ref()
+                .map(|pin| (view.name().to_owned(), pin.rev.clone()))
+        })
+        .collect();
+    let removed = cache::prune(&inventory.state_dir, &declared, &keep)
         .map_err(patina_core::EngineError::from)
-        .context("failed to prune the cache of undeclared remotes")?;
-    removed.extend(
-        cache::prune(state_dir)
-            .map_err(patina_core::EngineError::from)
-            .context("failed to prune the remote checkout cache")?,
-    );
-    removed.sort();
+        .context("failed to prune the remote checkout cache")?;
     if json {
         let paths: Vec<&str> = removed.iter().map(|path| path.as_str()).collect();
         reporter.json(&document(&serde_json::json!({ "removed": paths })));
@@ -526,23 +637,10 @@ fn run_prune(inventory: &RemoteInventory, json: bool, reporter: &mut impl Report
     Ok(ExitCode::Success.code())
 }
 
-/// One `remotes` row of the `remote update` JSON envelope.
-fn row(name: &str, action: &str, rev: Option<&str>) -> serde_json::Value {
-    serde_json::json!({ "name": name, "action": action, "rev": rev })
-}
-
 /// Serialize a JSON envelope, falling back to an empty object so a
 /// serialization failure cannot abort a command whose real work is done.
 fn document(value: &serde_json::Value) -> String {
     serde_json::to_string_pretty(value).unwrap_or_else(|_| "{}".to_owned())
-}
-
-/// Render Unix seconds as an RFC 3339 UTC instant for the cooldown message.
-fn format_epoch(epoch: i64) -> String {
-    jiff::Timestamp::from_second(epoch).map_or_else(
-        |_| epoch.to_string(),
-        |ts| ts.strftime("%Y-%m-%dT%H:%M:%SZ").to_string(),
-    )
 }
 
 #[cfg(test)]
@@ -579,7 +677,6 @@ mod tests {
             global_min_age: None,
             lockfile: patina_core::remote::lockfile::Lockfile::default(),
             remotes: vec![RemoteView {
-                name: "humanizer".to_owned(),
                 spec: patina_core::RemoteSpec {
                     name: "humanizer".to_owned(),
                     url: "https://example.invalid/r".to_owned(),
@@ -595,7 +692,6 @@ mod tests {
         Proposal {
             name: "humanizer".to_owned(),
             candidate_rev: "b".repeat(40),
-            candidate_epoch: 1_786_456_800,
             current_rev: current.map(str::to_owned),
             outcome,
         }
@@ -653,7 +749,8 @@ mod tests {
         let mut reader = ScriptedReader(None);
         let mut reporter = BufferReporter::new();
         let action = settle(
-            &mut inv,
+            &mut inv.lockfile,
+            &inv.repo_root.clone(),
             &view,
             &proposal(GateOutcome::AlreadyPinned, None),
             "2026-08-11T14:00:00Z",
@@ -678,7 +775,8 @@ mod tests {
         let mut reader = ScriptedReader(None);
         let mut reporter = BufferReporter::new();
         let action = settle(
-            &mut inv,
+            &mut inv.lockfile,
+            &inv.repo_root.clone(),
             &view,
             &proposal(
                 GateOutcome::Cooldown {
@@ -712,7 +810,8 @@ mod tests {
         let mut reader = ScriptedReader(None);
         let mut reporter = BufferReporter::new();
         let action = settle(
-            &mut inv,
+            &mut inv.lockfile,
+            &inv.repo_root.clone(),
             &view,
             &proposal(
                 GateOutcome::RejectedFuture {
@@ -744,7 +843,8 @@ mod tests {
         let mut reader = ScriptedReader(None);
         let mut reporter = BufferReporter::new();
         let action = settle(
-            &mut inv,
+            &mut inv.lockfile,
+            &inv.repo_root.clone(),
             &view,
             &proposal(
                 GateOutcome::NeedsConfirmation(concerns()),
@@ -845,7 +945,26 @@ mod tests {
     }
 
     #[test]
-    fn a_cooldown_instant_renders_as_an_rfc_3339_utc_timestamp() {
-        assert_eq!(format_epoch(1_786_456_800), "2026-08-11T14:00:00Z");
+    fn a_failed_shared_lock_warns_normally_and_stays_silent_for_a_hook() {
+        // A lock path whose parent directory does not exist fails acquisition,
+        // exercising the same fallthrough a timeout takes. The hook contract is
+        // zero stderr, so the quiet flag must gate the warning.
+        let lock_path = camino::Utf8PathBuf::from("/does/not/exist/anywhere/lock");
+
+        let mut reporter = BufferReporter::new();
+        assert!(shared_lock(&lock_path, false, &mut reporter).is_none());
+        assert!(
+            reporter.err.contains("proceeding without the shared lock"),
+            "the non-hook path must warn: {}",
+            reporter.err
+        );
+
+        let mut reporter = BufferReporter::new();
+        assert!(shared_lock(&lock_path, true, &mut reporter).is_none());
+        assert!(
+            reporter.err.is_empty(),
+            "the hook path must stay silent, got: {}",
+            reporter.err
+        );
     }
 }

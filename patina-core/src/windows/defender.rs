@@ -1121,6 +1121,8 @@ mod tests {
             host_os: HostOs::current(),
             timestamp: "fixed".to_owned(),
             resolver: Resolver::new(Builtins::current()),
+            remote_names: Vec::new(),
+            remote_pins: Vec::new(),
         }
     }
 

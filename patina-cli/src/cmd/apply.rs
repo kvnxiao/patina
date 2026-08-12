@@ -89,8 +89,6 @@ pub async fn run(
 ) -> Result<i32> {
     let request = build_request(args)?;
     let mutating = rewrites_the_lockfile(args, tty);
-    // `--update` runs the producer pass first so a pin bump and the consent diff
-    // for its content happen in one sitting.
     if args.update {
         if args.json {
             reporter.warn(
@@ -108,7 +106,7 @@ pub async fn run(
     }
     let timestamp = current_timestamp();
     let resolved = plan_apply(&request, timestamp).context("failed to compute the apply plan")?;
-    prune_stale_pins(&resolved.repo_root, mutating, reporter)?;
+    prune_stale_pins(&resolved, mutating, reporter)?;
 
     if args.json {
         return run_json(&resolved, &request, args.yes, reporter).await;
@@ -166,44 +164,51 @@ fn rewrites_the_lockfile(args: &ApplyArgs, tty: Tty) -> bool {
 
 /// Drop `patina.lock` pins the root manifest no longer declares.
 ///
-/// The lockfile states what every machine applies for the declarations the root
-/// manifest carries, so a pin whose `[[remote]]` was deleted is stale by
-/// definition — it would keep its checkout alive and reappear in `patina
-/// remote` output forever. Like `--update`, the rewrite lands before the
-/// consent prompt: it edits the repository, not a managed target, and a
-/// declined diff leaves it correctly pruned either way. A preview writes
-/// nothing and names the stale pins instead.
+/// Like `--update`, the rewrite lands before the consent prompt: it edits the
+/// repository, not a managed target, and a declined diff leaves it correctly
+/// pruned either way. A preview writes nothing and names the stale pins
+/// instead.
+///
+/// The common case — nothing stale — is decided from an unlocked read and
+/// costs no lock. A mutating pass then redoes the read-modify-write under the
+/// exclusive lock: `Lockfile::save` rewrites the whole file, so a snapshot
+/// taken outside the lock would silently revert whatever a concurrent
+/// `patina remote update` bumped in between.
 fn prune_stale_pins(
-    repo_root: &camino::Utf8Path,
+    resolved: &patina_core::ResolvedPlan,
     mutating: bool,
     reporter: &mut impl Reporter,
 ) -> Result<()> {
-    let root = patina_core::parse_root_config(&repo_root.join(crate::cmd::MANIFEST_FILENAME))
-        .map_err(patina_core::EngineError::from)
-        .context("failed to read the root patina.toml")?;
-    let path = lockfile_path(repo_root);
-    // Planning has already succeeded, so no entry needed the lockfile this run.
-    // Refusing to apply over one that will not parse would break the guarantee
-    // that a stray `patina.lock` costs a repository nothing until an entry
-    // actually selects a remote; the engine's own read raises it when one does.
-    let mut lockfile = match Lockfile::load(&path) {
-        Ok(lockfile) => lockfile,
-        Err(error) => {
-            reporter.warn(&format!("leaving patina.lock alone: {error}"));
-            return Ok(());
-        }
+    let path = lockfile_path(&resolved.repo_root);
+    let Some(stale) = stale_pins(&path, resolved, reporter) else {
+        return Ok(());
     };
-    let stale = lockfile.retain_declared(root.remotes.iter().map(|remote| remote.name.as_str()));
     if stale.is_empty() {
         return Ok(());
     }
 
-    let names = stale.join(", ");
     if !mutating {
         reporter.warn(&format!(
-            "patina.lock pins {names}, which no [[remote]] table declares; an apply that may \
-             write will drop the entries"
+            "patina.lock pins {}, which no [[remote]] table declares; an apply that may \
+             write will drop the entries",
+            stale.join(", ")
         ));
+        return Ok(());
+    }
+
+    let _guard = patina_core::acquire_lock(
+        &resolved.state_dir.join("lock"),
+        patina_core::LockKind::Exclusive,
+        patina_core::exclusive_timeout(),
+    )
+    .context("failed to acquire the exclusive lock to prune stale patina.lock pins")?;
+    // Re-read under the lock: a `patina remote update` may have rewritten the
+    // file since the unlocked probe.
+    let Ok(mut lockfile) = Lockfile::load(&path) else {
+        return Ok(());
+    };
+    let stale = lockfile.retain_declared(resolved.remote_names.iter().map(String::as_str));
+    if stale.is_empty() {
         return Ok(());
     }
     lockfile
@@ -211,9 +216,33 @@ fn prune_stale_pins(
         .map_err(patina_core::EngineError::from)
         .context("failed to write patina.lock")?;
     reporter.warn(&format!(
-        "dropped patina.lock pins no [[remote]] table declares: {names}"
+        "dropped patina.lock pins no [[remote]] table declares: {}",
+        stale.join(", ")
     ));
     Ok(())
+}
+
+/// The names of the pins the root manifest no longer declares, from an
+/// unlocked read, or `None` when the lockfile does not parse.
+///
+/// Planning has already succeeded, so no entry needed the lockfile this run.
+/// Refusing to apply over one that will not parse would break the guarantee
+/// that a stray `patina.lock` costs a repository nothing until an entry
+/// actually selects a remote; the engine's own read raises it when one does.
+fn stale_pins(
+    path: &camino::Utf8Path,
+    resolved: &patina_core::ResolvedPlan,
+    reporter: &mut impl Reporter,
+) -> Option<Vec<String>> {
+    match Lockfile::load(path) {
+        Ok(mut lockfile) => {
+            Some(lockfile.retain_declared(resolved.remote_names.iter().map(String::as_str)))
+        }
+        Err(error) => {
+            reporter.warn(&format!("leaving patina.lock alone: {error}"));
+            None
+        }
+    }
 }
 
 /// Run `patina remote update` over every remote before the apply proper.
@@ -229,15 +258,7 @@ fn prune_stale_pins(
 /// a supply-chain concern the gate exists to surface; `patina remote update
 /// --yes` remains the explicit way to accept one.
 fn run_remote_updates(tty: Tty, reader: &mut impl PromptReader, reporter: &mut impl Reporter) {
-    let remote_args = crate::cli::RemoteArgs {
-        command: crate::cli::RemoteCommand::Update {
-            name: None,
-            now: false,
-            yes: false,
-        },
-        json: false,
-    };
-    match crate::cmd::remote::run(&remote_args, tty, reader, reporter) {
+    match crate::cmd::remote::run_update_all(tty, reader, reporter) {
         Ok(code) if code == ExitCode::Success.code() => {}
         Ok(_) => reporter.warn(
             "some remotes could not be updated; applying the pins already committed \

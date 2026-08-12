@@ -765,8 +765,6 @@ mod tests {
 
     #[test]
     fn missing_git_fires_only_when_a_remote_is_declared() {
-        // A repository with no remote-backed module never shells out to git, so
-        // a missing binary is not its problem.
         let no_remotes = Inputs {
             repo_declares_remote: false,
             git_available: false,
@@ -790,8 +788,6 @@ mod tests {
 
     #[test]
     fn a_declared_remote_with_git_present_raises_nothing() {
-        // The guard for the test above: the finding must key on git's absence,
-        // not on the presence of a remote.
         let inputs = Inputs {
             repo_declares_remote: true,
             git_available: true,

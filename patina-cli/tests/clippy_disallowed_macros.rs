@@ -18,9 +18,7 @@
 //! parallel tests and risk leaving the tree dirty on failure), each scenario
 //! compiles a throwaway crate in a tempdir that reuses the *real* workspace
 //! `clippy.toml`, the artifact under test, so the assertion exercises the
-//! same config CI enforces. Asserting that the config *lists* the four macros
-//! is deliberately absent: it would only prove two copies of the same list
-//! agree, whereas a missing entry shows up here as the gate not firing.
+//! same config CI enforces.
 
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
@@ -113,24 +111,32 @@ fn run_clippy(crate_root: &Utf8Path) -> (bool, Vec<String>) {
 }
 
 #[test]
-fn raw_println_outside_output_module_fails_clippy_naming_the_file() {
-    // A fresh `println!("hi")` in a non-`output` file (here `plan.rs`,
-    // mirroring `patina-core/src/plan.rs`) makes clippy
-    // exit non-zero with a `disallowed_macros` diagnostic that names the file.
+fn each_raw_print_macro_outside_output_module_fails_clippy_naming_the_file() {
+    // One use of each denied macro in a non-`output` file (here `plan.rs`,
+    // mirroring `patina-core/src/plan.rs`) makes clippy exit non-zero with one
+    // `disallowed_macros` diagnostic per use, so a macro missing from the
+    // workspace list shows up as the count dropping.
     let temp = TempDir::new().expect("tempdir");
-    let crate_root = scratch_crate(&temp, "pub fn shout() {\n    println!(\"hi\");\n}\n");
+    let crate_root = scratch_crate(
+        &temp,
+        "pub fn shout() {\n    println!(\"a\");\n    eprintln!(\"b\");\n    print!(\"c\");\n    \
+         eprint!(\"d\");\n}\n",
+    );
 
     let (success, files) = run_clippy(&crate_root);
 
     assert!(
         !success,
-        "clippy must reject a raw println! outside the output module"
+        "clippy must reject the raw print macros outside the output module"
     );
-    assert!(
-        files
-            .iter()
-            .any(|f| f.replace('\\', "/").ends_with("src/plan.rs")),
-        "the disallowed_macros diagnostic must name plan.rs; named {files:?}"
+    let in_plan = files
+        .iter()
+        .filter(|f| f.replace('\\', "/").ends_with("src/plan.rs"))
+        .count();
+    assert_eq!(
+        in_plan, 4,
+        "each of println!, eprintln!, print!, and eprint! must raise its own \
+         disallowed_macros diagnostic naming plan.rs; named {files:?}"
     );
 }
 

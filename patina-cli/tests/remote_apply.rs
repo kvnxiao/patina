@@ -16,73 +16,13 @@
 
 mod common;
 
-use camino::Utf8Path;
 use camino::Utf8PathBuf;
 use common::Fixture;
+use common::Origin;
 use common::code;
-use std::process::Command;
 
 /// A fixed committer epoch, so nothing in these fixtures depends on the clock.
 const EPOCH: i64 = 1_700_000_000;
-
-/// Run `git` in `cwd` with a pinned identity and date, independent of the
-/// developer's global git config.
-fn git_in(cwd: &Utf8Path, args: &[&str]) -> String {
-    let date = format!("{EPOCH} +0000");
-    let output = Command::new("git")
-        .args(args)
-        .current_dir(cwd.as_std_path())
-        .env("GIT_AUTHOR_NAME", "Fixture")
-        .env("GIT_AUTHOR_EMAIL", "fixture@example.invalid")
-        .env("GIT_COMMITTER_NAME", "Fixture")
-        .env("GIT_COMMITTER_EMAIL", "fixture@example.invalid")
-        .env("GIT_AUTHOR_DATE", &date)
-        .env("GIT_COMMITTER_DATE", &date)
-        .output()
-        .expect("spawn git");
-    assert!(
-        output.status.success(),
-        "git {args:?} failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    String::from_utf8_lossy(&output.stdout).trim().to_owned()
-}
-
-/// An origin repository living outside the dotfiles repo, so module discovery
-/// never sees it.
-struct Origin {
-    dir: Utf8PathBuf,
-}
-
-impl Origin {
-    fn new(f: &Fixture, name: &str) -> Self {
-        let dir = f.home.join(".origins").join(name);
-        fs_err::create_dir_all(dir.as_std_path()).expect("mkdir origin");
-        git_in(&dir, &["init", "--quiet", "-b", "main"]);
-        Self { dir }
-    }
-
-    /// The origin path spelled so it can be embedded in a TOML basic string: on
-    /// Windows a native path's backslashes would read as escape sequences. Git
-    /// accepts the forward-slash form of a Windows path.
-    fn url(&self) -> String {
-        self.dir.as_str().replace('\\', "/")
-    }
-
-    /// Write `files` into the origin and commit them, returning the commit SHA.
-    fn commit(&self, files: &[(&str, &str)]) -> String {
-        for (path, body) in files {
-            let full = self.dir.join(path);
-            if let Some(parent) = full.parent() {
-                fs_err::create_dir_all(parent.as_std_path()).expect("mkdir origin subdir");
-            }
-            fs_err::write(full.as_std_path(), body).expect("write origin file");
-        }
-        git_in(&self.dir, &["add", "-A"]);
-        git_in(&self.dir, &["commit", "--quiet", "-m", "fixture"]);
-        git_in(&self.dir, &["rev-parse", "HEAD"])
-    }
-}
 
 /// Write the `patina.lock` a producer machine would have committed.
 fn write_lock(f: &Fixture, name: &str, origin: &Origin, rev: &str) {
@@ -124,11 +64,14 @@ fn checkout(f: &Fixture, name: &str, rev: &str) -> Utf8PathBuf {
 #[test]
 fn a_remote_copy_mode_directory_materializes_from_the_pinned_checkout() {
     let f = Fixture::new();
-    let origin = Origin::new(&f, "humanizer");
-    let rev = origin.commit(&[
-        ("skills/humanizer/SKILL.md", "humanize\n"),
-        ("README.md", "unrelated\n"),
-    ]);
+    let origin = Origin::new(&f, "humanizer", EPOCH);
+    let rev = origin.commit_files(
+        &[
+            ("skills/humanizer/SKILL.md", "humanize\n"),
+            ("README.md", "unrelated\n"),
+        ],
+        EPOCH,
+    );
     declare(&f, "humanizer", &origin);
     f.module(
         "agents",
@@ -160,12 +103,127 @@ fn a_remote_copy_mode_directory_materializes_from_the_pinned_checkout() {
 }
 
 #[test]
-fn one_module_mixes_its_own_files_with_a_remotes() {
-    // The shape the root registry exists for: a manifest that deploys the
-    // repository's own file beside a single file from someone else's repo.
+fn a_checkout_holding_a_real_symlink_fails_the_apply_plan() {
+    // Patina materializes checkouts with `core.symlinks=false`, so a real link
+    // in the cache means it was made or altered by something else. The plan
+    // must refuse to deploy through it: the executors dereference links, which
+    // would read (copy) or plant (symlink-tree) paths outside the checkout.
     let f = Fixture::new();
-    let origin = Origin::new(&f, "humanizer");
-    let rev = origin.commit(&[("SKILL.md", "humanize\n")]);
+    let origin = Origin::new(&f, "humanizer", EPOCH);
+    let rev = origin.commit_files(&[("skills/humanizer/SKILL.md", "humanize\n")], EPOCH);
+    declare(&f, "humanizer", &origin);
+    f.module(
+        "agents",
+        "[[directory]]\nsource = \"skills/humanizer\"\nremote = \"humanizer\"\n\
+         target = \"~/.claude/skills/humanizer\"\nmode = \"copy\"\n",
+    );
+    write_lock(&f, "humanizer", &origin, &rev);
+
+    // Fabricate the checkout the way an attacker (not Patina) would leave it:
+    // a plain leaf plus a link pointing at a file outside the checkout.
+    let source_dir = checkout(&f, "humanizer", &rev).join("skills/humanizer");
+    fs_err::create_dir_all(source_dir.as_std_path()).expect("mkdir fabricated checkout");
+    fs_err::write(source_dir.join("SKILL.md").as_std_path(), "humanize\n")
+        .expect("write plain leaf");
+    let outside = f.home.join("secret");
+    fs_err::write(outside.as_std_path(), "key material\n").expect("write outside file");
+    common::symlink_file(&outside, &source_dir.join("creds"));
+
+    let out = f.apply(&["--yes"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_ne!(code(&out), 0, "the plan must refuse; stderr: {stderr}");
+    assert!(
+        stderr.contains("symbolic link") && stderr.contains("humanizer"),
+        "the error must say what was found and where: {stderr}"
+    );
+    assert!(
+        !f.home.join(".claude/skills/humanizer/creds").exists(),
+        "nothing may be deployed from a checkout that failed the plan"
+    );
+}
+
+#[test]
+fn status_reports_applied_leaves_clean_when_the_pin_moved_but_its_checkout_is_absent() {
+    // The multi-machine flow: a `git pull` bumps the pin before the next
+    // apply. Status must not fetch, so the new rev's leaves are unknowable —
+    // and the previously applied, still-correct leaves must read CLEAN with a
+    // warning, not ORPHANED.
+    let f = Fixture::new();
+    let origin = Origin::new(&f, "humanizer", EPOCH);
+    let rev = origin.commit_files(&[("skills/humanizer/SKILL.md", "humanize\n")], EPOCH);
+    declare(&f, "humanizer", &origin);
+    f.module(
+        "agents",
+        "[[directory]]\nsource = \"skills/humanizer\"\nremote = \"humanizer\"\n\
+         target = \"~/.claude/skills/humanizer\"\nmode = \"copy\"\n",
+    );
+    write_lock(&f, "humanizer", &origin, &rev);
+    assert_eq!(code(&f.apply(&["--yes"])), 0, "priming apply");
+
+    // The pulled lockfile pins a rev this machine has not materialized.
+    write_lock(&f, "humanizer", &origin, &"c".repeat(40));
+
+    let out = f.run(&["status"], &[]);
+    assert_eq!(
+        code(&out),
+        0,
+        "status must not fail over an absent checkout"
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("orphaned: 0"),
+        "an unmaterialized checkout must not orphan applied leaves: {stdout}"
+    );
+    assert!(
+        stdout.contains("clean") && stdout.contains("SKILL.md"),
+        "the applied leaf must still be reported: {stdout}"
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("humanizer"),
+        "status must warn which remote it could not assess: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn an_entry_naming_the_remote_in_another_case_still_resolves() {
+    // Names are one identity ignoring case (the registry rejects case-only
+    // duplicates on that basis), so a reference spelled differently must find
+    // the declaration rather than fail as undeclared.
+    let f = Fixture::new();
+    let origin = Origin::new(&f, "humanizer", EPOCH);
+    let rev = origin.commit_files(&[("SKILL.md", "humanize\n")], EPOCH);
+    declare(&f, "humanizer", &origin);
+    f.module(
+        "agents",
+        "[[file]]\nsource = \"SKILL.md\"\nremote = \"Humanizer\"\n\
+         target = \"~/.claude/skills/humanizer/SKILL.md\"\nmode = \"copy\"\n",
+    );
+    write_lock(&f, "humanizer", &origin, &rev);
+
+    let out = f.apply(&["--yes"]);
+    assert_eq!(
+        code(&out),
+        0,
+        "a case-respelled reference must resolve; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        fs_err::read_to_string(
+            f.home
+                .join(".claude/skills/humanizer/SKILL.md")
+                .as_std_path()
+        )
+        .expect("the deployed leaf is readable"),
+        "humanize\n"
+    );
+}
+
+#[test]
+fn one_module_mixes_its_own_files_with_a_remotes() {
+    let f = Fixture::new();
+    let origin = Origin::new(&f, "humanizer", EPOCH);
+    let rev = origin.commit_files(&[("SKILL.md", "humanize\n")], EPOCH);
     declare(&f, "humanizer", &origin);
     let module = f.module(
         "agents",
@@ -232,8 +290,8 @@ fn a_remote_only_a_when_false_entry_names_is_never_fetched() {
     // not read the (absent) pin, must not reach the (deleted) origin, and must
     // leave no cache directory behind.
     let f = Fixture::new();
-    let origin = Origin::new(&f, "unused");
-    origin.commit(&[("a.md", "a\n")]);
+    let origin = Origin::new(&f, "unused", EPOCH);
+    origin.commit_files(&[("a.md", "a\n")], EPOCH);
     declare(&f, "unused", &origin);
     let module = f.module(
         "agents",
@@ -297,8 +355,8 @@ fn apply_update_under_json_does_not_bump_the_lockfile() {
     // A `--json` run is a single-document preview: `--update` must be ignored so
     // it neither rewrites patina.lock nor prints human lines onto stdout.
     let f = Fixture::new();
-    let origin = Origin::new(&f, "humanizer");
-    let rev = origin.commit(&[("skills/x/SKILL.md", "one\n")]);
+    let origin = Origin::new(&f, "humanizer", EPOCH);
+    let rev = origin.commit_files(&[("skills/x/SKILL.md", "one\n")], EPOCH);
     declare(&f, "humanizer", &origin);
     f.module(
         "agents",
@@ -307,7 +365,7 @@ fn apply_update_under_json_does_not_bump_the_lockfile() {
     );
     write_lock(&f, "humanizer", &origin, &rev);
     // A newer upstream tip a producer pass would otherwise bump to.
-    origin.commit(&[("skills/x/SKILL.md", "two\n")]);
+    origin.commit_files(&[("skills/x/SKILL.md", "two\n")], EPOCH);
     let before =
         fs_err::read_to_string(f.root.join("patina.lock").as_std_path()).expect("read lock");
 
@@ -340,8 +398,8 @@ fn a_remote_source_that_escapes_its_checkout_is_refused() {
     // A hostile manifest climbs out of the checkout with `..` to read host
     // files. The resolver must refuse it before anything is deployed.
     let f = Fixture::new();
-    let origin = Origin::new(&f, "evil");
-    let rev = origin.commit(&[("inside.txt", "ok\n")]);
+    let origin = Origin::new(&f, "evil", EPOCH);
+    let rev = origin.commit_files(&[("inside.txt", "ok\n")], EPOCH);
     declare(&f, "evil", &origin);
     f.module(
         "evil",
@@ -369,8 +427,8 @@ fn a_remote_source_that_escapes_its_checkout_is_refused() {
 #[test]
 fn a_remote_symlink_entry_points_into_the_pinned_checkout() {
     let f = Fixture::new();
-    let origin = Origin::new(&f, "prompts");
-    let rev = origin.commit(&[("prompts/agent.md", "be brief\n")]);
+    let origin = Origin::new(&f, "prompts", EPOCH);
+    let rev = origin.commit_files(&[("prompts/agent.md", "be brief\n")], EPOCH);
     declare(&f, "prompts", &origin);
     f.module(
         "prompts",
@@ -412,16 +470,19 @@ fn a_patina_toml_inside_the_checkout_contributes_nothing() {
     // only from manifests in the user's own repository. A hostile manifest in the
     // checkout must be inert bytes.
     let f = Fixture::new();
-    let origin = Origin::new(&f, "hostile");
-    let rev = origin.commit(&[
-        ("payload/note.md", "harmless\n"),
-        (
-            "patina.toml",
-            "[patina]\nroot = true\n\n[[file]]\nsource = \"payload/note.md\"\n\
+    let origin = Origin::new(&f, "hostile", EPOCH);
+    let rev = origin.commit_files(
+        &[
+            ("payload/note.md", "harmless\n"),
+            (
+                "patina.toml",
+                "[patina]\nroot = true\n\n[[file]]\nsource = \"payload/note.md\"\n\
              target = \"~/.ssh/authorized_keys\"\nmode = \"copy\"\n\n\
              [[hook]]\nevent = \"post_apply\"\ncommand = \"touch pwned\"\n",
-        ),
-    ]);
+            ),
+        ],
+        EPOCH,
+    );
     declare(&f, "hostile", &origin);
     f.module(
         "hostile",
@@ -467,8 +528,8 @@ fn a_patina_toml_inside_the_checkout_contributes_nothing() {
 #[test]
 fn an_entry_naming_an_unpinned_remote_fails_planning_and_names_the_command() {
     let f = Fixture::new();
-    let origin = Origin::new(&f, "humanizer");
-    origin.commit(&[("a.md", "a\n")]);
+    let origin = Origin::new(&f, "humanizer", EPOCH);
+    origin.commit_files(&[("a.md", "a\n")], EPOCH);
     declare(&f, "humanizer", &origin);
     f.module(
         "agents",
@@ -494,8 +555,8 @@ fn an_entry_naming_an_unpinned_remote_fails_planning_and_names_the_command() {
 #[test]
 fn a_cold_cache_with_an_unreachable_remote_fails_naming_the_rev() {
     let f = Fixture::new();
-    let origin = Origin::new(&f, "gone");
-    let rev = origin.commit(&[("a.md", "a\n")]);
+    let origin = Origin::new(&f, "gone", EPOCH);
+    let rev = origin.commit_files(&[("a.md", "a\n")], EPOCH);
     declare(&f, "gone", &origin);
     f.module(
         "agents",
@@ -503,7 +564,6 @@ fn a_cold_cache_with_an_unreachable_remote_fails_naming_the_rev() {
          mode = \"copy\"\n",
     );
     write_lock(&f, "gone", &origin, &rev);
-    // Simulating offline: the remote is unreachable and nothing is cached yet.
     fs_err::remove_dir_all(origin.dir.as_std_path()).expect("delete the origin");
 
     let out = f.apply(&["--yes"]);
@@ -524,8 +584,8 @@ fn a_cold_cache_with_an_unreachable_remote_fails_naming_the_rev() {
 #[test]
 fn a_warm_cache_applies_fully_with_the_remote_unreachable() {
     let f = Fixture::new();
-    let origin = Origin::new(&f, "warm");
-    let rev = origin.commit(&[("a.md", "a\n")]);
+    let origin = Origin::new(&f, "warm", EPOCH);
+    let rev = origin.commit_files(&[("a.md", "a\n")], EPOCH);
     declare(&f, "warm", &origin);
     f.module(
         "agents",
@@ -535,8 +595,6 @@ fn a_warm_cache_applies_fully_with_the_remote_unreachable() {
     write_lock(&f, "warm", &origin, &rev);
     assert_eq!(code(&f.apply(&["--yes"])), 0, "priming apply");
 
-    // Now go offline. The checkout is already materialized, so the whole apply
-    // must still work.
     fs_err::remove_dir_all(origin.dir.as_std_path()).expect("delete the origin");
     fs_err::remove_file(f.home.join(".a.md").as_std_path()).expect("delete the deployed file");
 
@@ -560,8 +618,8 @@ fn a_checkout_holds_the_commit_bytes_even_under_autocrlf() {
     // on another and hash differently in the journal, so a checkout must hold
     // the commit's bytes verbatim.
     let f = Fixture::new();
-    let origin = Origin::new(&f, "crlf");
-    let rev = origin.commit(&[("a.md", "one\ntwo\n")]);
+    let origin = Origin::new(&f, "crlf", EPOCH);
+    let rev = origin.commit_files(&[("a.md", "one\ntwo\n")], EPOCH);
     declare(&f, "crlf", &origin);
     f.module(
         "agents",
@@ -598,8 +656,8 @@ fn a_checkout_holds_the_commit_bytes_even_under_autocrlf() {
 #[test]
 fn re_applying_an_unchanged_pin_is_a_byte_identical_no_op() {
     let f = Fixture::new();
-    let origin = Origin::new(&f, "stable");
-    let rev = origin.commit(&[("a.md", "a\n")]);
+    let origin = Origin::new(&f, "stable", EPOCH);
+    let rev = origin.commit_files(&[("a.md", "a\n")], EPOCH);
     declare(&f, "stable", &origin);
     f.module(
         "agents",
@@ -623,8 +681,8 @@ fn re_applying_an_unchanged_pin_is_a_byte_identical_no_op() {
 #[test]
 fn bumping_the_pin_re_points_the_link_and_rollback_restores_the_prior_checkout() {
     let f = Fixture::new();
-    let origin = Origin::new(&f, "moving");
-    let first_rev = origin.commit(&[("a.md", "first\n")]);
+    let origin = Origin::new(&f, "moving", EPOCH);
+    let first_rev = origin.commit_files(&[("a.md", "first\n")], EPOCH);
     declare(&f, "moving", &origin);
     f.module(
         "agents",
@@ -633,14 +691,11 @@ fn bumping_the_pin_re_points_the_link_and_rollback_restores_the_prior_checkout()
     write_lock(&f, "moving", &origin, &first_rev);
     assert_eq!(code(&f.apply(&["--yes"])), 0, "apply the first pin");
 
-    // Journal files are keyed by a one-second-resolution timestamp, so two
-    // applies inside the same second share a `<ts>.COMMIT` and the earlier
-    // record is overwritten, which would leave the prior checkout unreferenced
-    // and swept, and rollback with a dangling link. Cross a second boundary so
-    // the two applies get distinct journal cycles.
+    // Two applies inside one second would share a `<ts>.COMMIT`, leaving the
+    // prior checkout unreferenced and swept, and rollback with a dangling link.
     wait_for_next_second();
 
-    let second_rev = origin.commit(&[("a.md", "second\n")]);
+    let second_rev = origin.commit_files(&[("a.md", "second\n")], EPOCH);
     write_lock(&f, "moving", &origin, &second_rev);
     let bumped = f.apply(&["--yes"]);
     assert_eq!(
@@ -672,8 +727,8 @@ fn bumping_the_pin_re_points_the_link_and_rollback_restores_the_prior_checkout()
 #[test]
 fn apply_prunes_a_checkout_no_journal_record_references() {
     let f = Fixture::new();
-    let origin = Origin::new(&f, "sweep");
-    let rev = origin.commit(&[("a.md", "a\n")]);
+    let origin = Origin::new(&f, "sweep", EPOCH);
+    let rev = origin.commit_files(&[("a.md", "a\n")], EPOCH);
     declare(&f, "sweep", &origin);
     f.module(
         "agents",

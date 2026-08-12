@@ -67,6 +67,17 @@ pub enum RemoteConfigError {
         name: String,
     },
 
+    /// A `name` (written or derived) collides with one of Patina's own files
+    /// in the cache directory.
+    #[error(
+        "the remote name `{name}` is reserved; `notice`, `pending`, and `last_check` name \
+         Patina's own files beside the per-remote cache directories"
+    )]
+    ReservedName {
+        /// The offending name.
+        name: String,
+    },
+
     /// Two `[[remote]]` tables claim one name.
     #[error(
         "two [[remote]] tables declare the name `{name}`; a remote name addresses one pin, \
@@ -78,8 +89,8 @@ pub enum RemoteConfigError {
         name: String,
     },
 
-    /// A module manifest carries a `[remote]` table, which is where remotes
-    /// were declared before the root registry existed.
+    /// A module manifest carries a `[remote]` table; remotes are declared only
+    /// in the root manifest.
     #[error(
         "a module manifest declares a `[remote]` table; declare the remote once in the root \
          patina.toml as a `[[remote]]` table, then point each entry at it with \
@@ -142,6 +153,9 @@ impl RemoteSpec {
             }
             None => derive_name(&url)?,
         };
+        if RESERVED_NAMES.contains(&name_key(&name).as_str()) {
+            return Err(RemoteConfigError::ReservedName { name });
+        }
         Ok(Self {
             name,
             url,
@@ -176,6 +190,29 @@ pub fn derive_name(url: &str) -> Result<String, RemoteConfigError> {
         });
     }
     Ok(name.to_owned())
+}
+
+/// The names of Patina's own files beside the per-remote cache directories
+/// under `<state>/remotes/`, compared folded. A remote so named would fight
+/// its own metadata over one path.
+const RESERVED_NAMES: [&str; 3] = ["notice", "pending", "last_check"];
+
+/// The identity key of a remote name.
+///
+/// A name becomes a cache directory on filesystems that treat two spellings as
+/// one path, so two names are the same remote exactly when their folded forms
+/// agree. Every comparison of remote names — declaration uniqueness, the
+/// reserved set, entry-to-declaration resolution, lockfile keys, and the cache
+/// sweep — routes through this key so the identity rule is decided once.
+#[must_use = "the key is the identity every name comparison uses"]
+pub fn name_key(name: &str) -> String {
+    crate::caseless::fold(name)
+}
+
+/// Whether two remote-name spellings address one remote.
+#[must_use = "the answer is the name-identity comparison"]
+pub fn same_name(a: &str, b: &str) -> bool {
+    name_key(a) == name_key(b)
 }
 
 /// Whether `name` may address a remote.
@@ -309,18 +346,7 @@ mod tests {
 
     #[test]
     fn malformed_durations_are_rejected() {
-        for input in [
-            // no unit
-            "72",    // unknown unit
-            "72w",   // compound
-            "1h30m", // fractional
-            "1.5h",  // signed
-            "-1h",   // unit only
-            "h",     // empty
-            "",      // internal space
-            "72 h",  // uppercase unit is a distinct (unaccepted) spelling
-            "72H",
-        ] {
+        for input in ["72", "72w", "1h30m", "1.5h", "-1h", "h", "", "72 h", "72H"] {
             let err =
                 parse_duration("min_age", input).expect_err(&format!("`{input}` must be rejected"));
             assert!(
@@ -376,6 +402,34 @@ mod tests {
                 .expect_err("a dash-led ref must be rejected"),
             RemoteConfigError::LeadingDash { key: "ref", .. }
         ));
+    }
+
+    #[test]
+    fn a_name_colliding_with_a_cache_metadata_file_is_rejected() {
+        // `<state>/remotes/` holds the `notice`, `pending`, and `last_check`
+        // files beside the per-remote directories, so a remote by any of those
+        // names (in any case) would fight Patina's own metadata over one path.
+        for name in ["notice", "pending", "last_check", "Notice", "PENDING"] {
+            let err = RawRemote {
+                name: Some(name.to_owned()),
+                url: "https://example.invalid/r".to_owned(),
+                git_ref: None,
+                min_age: None,
+            }
+            .validate()
+            .expect_err("a reserved name must be rejected");
+            assert!(
+                matches!(err, RemoteConfigError::ReservedName { .. }),
+                "`{name}` must be reserved, got: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_reserved_name_derived_from_a_url_is_rejected() {
+        raw("https://example.invalid/owner/notice", None)
+            .validate()
+            .expect_err("a derived reserved name must be rejected the same way");
     }
 
     #[test]

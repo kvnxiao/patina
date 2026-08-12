@@ -43,6 +43,8 @@ fn git_in(cwd: &Utf8Path, epoch: i64, args: &[&str]) -> String {
         .env("GIT_COMMITTER_EMAIL", "fixture@example.invalid")
         .env("GIT_AUTHOR_DATE", &date)
         .env("GIT_COMMITTER_DATE", &date)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
         .output()
         .expect("spawn git");
     assert!(
@@ -100,7 +102,6 @@ impl Fixture {
             global_min_age: None,
             lockfile,
             remotes: vec![RemoteView {
-                name: "humanizer".to_owned(),
                 spec: RemoteSpec {
                     name: "humanizer".to_owned(),
                     url: self.origin.as_str().to_owned(),
@@ -188,11 +189,6 @@ fn a_first_pin_of_an_old_commit_is_allowed() {
     assert_eq!(proposal.outcome, GateOutcome::Allowed);
     assert_eq!(proposal.candidate_rev, tip);
     assert_eq!(proposal.current_rev, None);
-    assert_eq!(
-        proposal.candidate_epoch,
-        NOW - WEEK,
-        "the committer time must be read from the fetched commit"
-    );
 }
 
 #[test]
@@ -315,8 +311,14 @@ fn accept_writes_the_pin_and_it_reads_back() {
     let view = only(&inventory);
     let proposal = update::propose(&inventory, &view, NOW, false).expect("propose an update");
 
-    update::accept(&mut inventory, &view, &proposal, "2026-08-11T14:00:00Z")
-        .expect("write the lockfile");
+    update::accept(
+        &mut inventory.lockfile,
+        &inventory.repo_root,
+        &view,
+        &proposal,
+        "2026-08-11T14:00:00Z",
+    )
+    .expect("write the lockfile");
 
     let written = Lockfile::load(&lockfile_path(&f.repo)).expect("read the lockfile back");
     let entry = written.get("humanizer").expect("the pin was recorded");
