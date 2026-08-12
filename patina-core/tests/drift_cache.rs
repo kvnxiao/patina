@@ -97,12 +97,19 @@ fn atomic_write_replaces_via_rename_leaving_no_staging_tempfile() {
     let second = sample();
     write_drift_cache(&path, &second).expect("write second");
 
-    // No leftover staging tempfile beside the destination after a
-    // successful rename, and the destination holds the second cache in full
-    // (the rename never truncated the destination in place).
+    // No leftover staging file beside the destination after a successful
+    // rename, and the destination holds the second cache in full (the rename
+    // never truncated the destination in place). Asserting over the whole
+    // directory rather than one expected name keeps this from passing merely
+    // because the staging name changed.
+    let leftovers: Vec<String> = fs_err::read_dir(dir)
+        .expect("read the cache directory")
+        .filter_map(|entry| Some(entry.ok()?.file_name().to_string_lossy().into_owned()))
+        .filter(|name| name != "drift.cache")
+        .collect();
     assert!(
-        !dir.join("drift.cache.tmp").exists(),
-        "the staging tempfile must be renamed away, not left behind"
+        leftovers.is_empty(),
+        "the staging file must be renamed away, not left behind: {leftovers:?}"
     );
     assert_eq!(load_drift_cache_file(&path).expect("load"), second);
 }

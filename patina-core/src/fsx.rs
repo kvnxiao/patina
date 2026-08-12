@@ -12,8 +12,12 @@
 //! primitive, so backup and restore cannot disagree on what "the same
 //! entry" means.
 //!
-//! These helpers are crate-internal plumbing; their only callers are the
-//! `apply`, `backups`, `journal`, and `rollback` modules.
+//! [`write_atomic`] is here for a related reason: several subsystems keep a
+//! small file whose readers must never see it half-written, and one
+//! implementation of stage-then-rename is what keeps them from drifting apart.
+//!
+//! These helpers are crate-internal plumbing, called from the modules that
+//! materialize, stash, and restore filesystem entries.
 
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
@@ -187,6 +191,48 @@ pub(crate) fn symlink_to(link: &Utf8Path, target: &Utf8Path) -> std::io::Result<
     })
 }
 
+/// Replace the file at `path` with `bytes` through a same-directory temporary
+/// and a rename, creating `path`'s parent chain if it is missing.
+///
+/// The rename is the atomic point: POSIX `rename(2)` and Windows `MoveFileEx`
+/// both swap the destination in one operation, so a concurrent reader, or a
+/// process killed mid-write, observes either the previous file whole or the
+/// new one whole, never a truncated one. Writing to the destination directly
+/// would leave neither on a kill between the truncate and the last byte.
+///
+/// The temporary is a sibling, so it shares a filesystem with the destination
+/// and the rename cannot degrade into a cross-device copy, and it carries the
+/// writer's pid, so two processes writing the same file never collide on one
+/// scratch name.
+///
+/// # Errors
+///
+/// Returns the underlying [`std::io::Error`] when the parent cannot be
+/// created, or the staged write or the rename fails.
+pub(crate) fn write_atomic(path: &Utf8Path, bytes: &[u8]) -> std::io::Result<()> {
+    if let Some(parent) = path.parent()
+        && !parent.as_str().is_empty()
+    {
+        fs_err::create_dir_all(parent)?;
+    }
+    let staging = staging_path(path);
+    fs_err::write(&staging, bytes)?;
+    fs_err::rename(&staging, path)
+}
+
+/// The sibling temporary [`write_atomic`] stages into: the destination
+/// filename, the writer's pid, and a `.tmp` suffix.
+fn staging_path(path: &Utf8Path) -> Utf8PathBuf {
+    let pid = std::process::id();
+    let name = match path.file_name() {
+        Some(name) => format!("{name}.{pid}.tmp"),
+        None => format!("{pid}.tmp"),
+    };
+    let mut staging = path.to_owned();
+    staging.set_file_name(name);
+    staging
+}
+
 /// Read the link target of the symbolic link at `path` as a UTF-8 path.
 fn read_link_utf8(path: &Utf8Path) -> std::io::Result<Utf8PathBuf> {
     let raw = fs_err::read_link(path)?;
@@ -343,6 +389,43 @@ mod tests {
 
         assert!(!link.exists(), "exists() follows the dead link");
         assert!(entry_present(&link), "entry_present sees the link itself");
+    }
+
+    #[test]
+    fn write_atomic_replaces_the_destination_and_leaves_no_staging_file() {
+        let (_td, dir) = utf8_tempdir();
+        let path = dir.join("state");
+        write_atomic(&path, b"first").expect("write first");
+        write_atomic(&path, b"second").expect("write second");
+
+        assert_eq!(fs_err::read(&path).expect("read back"), b"second");
+        let siblings: Vec<Utf8PathBuf> = fs_err::read_dir(&dir)
+            .expect("read the directory")
+            .filter_map(|entry| Utf8PathBuf::from_path_buf(entry.ok()?.path()).ok())
+            .filter(|entry| entry != &path)
+            .collect();
+        assert!(
+            siblings.is_empty(),
+            "the staging file must be renamed away, not left behind: {siblings:?}"
+        );
+    }
+
+    #[test]
+    fn the_staging_file_is_a_sibling_of_its_destination() {
+        // Staging elsewhere would put the rename across filesystems, where it
+        // degrades into a copy and stops being atomic.
+        let path = Utf8Path::new("/var/state/patina/patina.lock");
+        let staging = staging_path(path);
+        assert_eq!(staging.parent(), path.parent());
+        assert_ne!(staging.file_name(), path.file_name());
+    }
+
+    #[test]
+    fn write_atomic_creates_the_parent_chain() {
+        let (_td, dir) = utf8_tempdir();
+        let path = dir.join("nested").join("deeper").join("state");
+        write_atomic(&path, b"payload").expect("write into a missing parent");
+        assert_eq!(fs_err::read(&path).expect("read back"), b"payload");
     }
 
     #[test]

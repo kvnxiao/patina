@@ -120,6 +120,12 @@ pub enum Command {
     /// findings.
     Doctor(DoctorArgs),
 
+    /// Manage remote git sources. `list` reports each remote's pin, `check`
+    /// compares upstream tips against the lock without downloading objects,
+    /// `update` bumps pins through the update gate, and `prune` removes cached
+    /// checkouts no journal record references.
+    Remote(RemoteArgs),
+
     /// Watch the repository and re-apply on source changes. `--foreground`
     /// runs the watcher inline in the current terminal; the
     /// `install` / `uninstall` / `start` / `stop` / `restart` / `status`
@@ -198,6 +204,65 @@ pub enum WatchCommand {
     /// Report the service's installed / running state, last-exit code, and the
     /// watcher's recovered subscription / re-apply counters. Read-only.
     Status,
+}
+
+/// Flags for `patina remote`.
+///
+/// The verbs split along a producer/consumer line: `update` is the producer
+/// (it fetches upstream, runs the update gate, and rewrites `patina.lock` for
+/// review), while `list`, `check`, and `prune` are safe to run anywhere.
+#[derive(Debug, Args)]
+#[command(disable_help_subcommand = true)]
+pub struct RemoteArgs {
+    /// The remote-source subcommand to run.
+    #[command(subcommand)]
+    pub command: RemoteCommand,
+
+    /// Emit a JSON envelope instead of human output. Global, so it is accepted
+    /// both before and after the subcommand (`patina remote list --json`).
+    #[arg(long, global = true)]
+    pub json: bool,
+}
+
+/// Subcommands under `patina remote`.
+#[derive(Debug, Subcommand, Clone)]
+pub enum RemoteCommand {
+    /// Report each remote's URL, ref, pinned rev, and pending-update state.
+    /// Read-only, and offline: the pending state comes from the last
+    /// `patina remote check`.
+    List,
+
+    /// Compare upstream tips against the lock with `git ls-remote` only and
+    /// refresh the pending-update notice. Downloads no objects and changes no
+    /// pin.
+    Check {
+        /// Run as a shell hook: self-throttle to at most one real check per day
+        /// and stay completely silent on success.
+        #[arg(long)]
+        hook: bool,
+    },
+
+    /// Fetch upstream, run the update gate, and bump `rev` / `updated_at` in
+    /// the working-tree lockfile for you to review and commit. Touches no
+    /// targets.
+    Update {
+        /// The remote to update. Every remote when omitted.
+        #[arg(value_name = "name")]
+        name: Option<String>,
+
+        /// Bypass the age gate for this run only, with a visible warning. Every
+        /// other gate check still applies.
+        #[arg(long)]
+        now: bool,
+
+        /// Accept every gate confirmation automatically. Required to bump a pin
+        /// the gate flags in a non-interactive shell.
+        #[arg(long)]
+        yes: bool,
+    },
+
+    /// Remove cached checkouts unreferenced by any journal record.
+    Prune,
 }
 
 /// Subcommands under the `patina debug` namespace.
@@ -381,6 +446,10 @@ pub struct StatusArgs {
 
 /// Flags for `patina apply`.
 #[derive(Debug, Args, Default)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "this is a clap-derived flag struct: each bool is an independent CLI flag (--yes / --force-deploy / --update / --json), not a state machine that would read better as an enum."
+)]
 pub struct ApplyArgs {
     /// Apply unconditionally with no prompt, regardless of TTY state.
     #[arg(long)]
@@ -389,6 +458,12 @@ pub struct ApplyArgs {
     /// Override every hook in this invocation to `must_succeed = false`.
     #[arg(long)]
     pub force_deploy: bool,
+
+    /// Run `patina remote update` for every remote before applying, so a pin
+    /// bump and its consent diff happen in one sitting. Degrades to a plain
+    /// apply with a warning when the remotes are unreachable.
+    #[arg(long)]
+    pub update: bool,
 
     /// Emit a JSON envelope instead of human output. Without `--yes` this
     /// is a preview (no mutation); pair with `--yes` to apply.

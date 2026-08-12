@@ -39,6 +39,8 @@ use crate::config::FileMode;
 use crate::config::HookEntry;
 use crate::config::HookEvent;
 use crate::config::ManagedEntry;
+use crate::config::RemoteName;
+use crate::config::RemoteSpec;
 use crate::config::parse_module_config;
 use crate::config::parse_root_config;
 use crate::discovery::discover_modules;
@@ -66,6 +68,9 @@ use crate::paths::expand_tilde;
 use crate::paths::resolve_location;
 use crate::profile::load_auto_match_rules;
 use crate::profile::resolve as resolve_profile;
+use crate::remote::cache as remote_cache;
+use crate::remote::lockfile::Lockfile;
+use crate::remote::lockfile::lockfile_path;
 use crate::state_dir::HostOs;
 use crate::state_dir::resolve as resolve_state_dir;
 use crate::template::Engine;
@@ -76,6 +81,7 @@ use crate::windows::HostDevModeProbe;
 use crate::windows::decide_symlink_gate;
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
+use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use tracing::warn;
 
@@ -230,6 +236,15 @@ pub struct ResolvedPlan {
     /// the hook `when` evaluator, and the CLI diff renderer so all three
     /// agree on rendered template output.
     pub resolver: Resolver,
+    /// The names of every `[[remote]]` the root manifest declares, in
+    /// declaration order. Carried so the stale-pin and cache sweeps work from
+    /// the same parse this plan was built from.
+    pub remote_names: Vec<RemoteName>,
+    /// The `(name, rev)` of every declared remote's pin, or `None` when
+    /// planning never read the lockfile because no active entry selected a
+    /// remote. The cache sweep retains these checkouts regardless of journal
+    /// reachability, and treats `None` as "leave every declared remote alone".
+    pub remote_pins: Option<Vec<(RemoteName, String)>>,
 }
 
 impl ResolvedPlan {
@@ -280,13 +295,20 @@ pub enum ApplyResult {
 }
 
 /// Resolve the repository, modules, profile, variables, and paths into a
-/// [`ResolvedPlan`] without mutating the filesystem.
+/// [`ResolvedPlan`].
+///
+/// Mutates no user target. An entry naming a remote is the one exception to
+/// touching the filesystem at all: that remote's pinned checkout is fetched and
+/// materialized under the state directory as the entry resolves, so a cold
+/// cache fails planning rather than half-way through a diff. Everything it
+/// writes stays inside `<state>/remotes/`; no managed target is touched.
 ///
 /// # Errors
 ///
 /// Returns an [`EngineError`] when repository discovery, module
 /// enumeration, manifest parsing, state-directory resolution, profile
-/// resolution, variable ingestion, or path canonicalization fails.
+/// resolution, variable ingestion, remote-checkout materialization, or path
+/// canonicalization fails.
 pub fn plan(
     request: &ApplyRequest,
     timestamp: impl Into<String>,
@@ -300,7 +322,9 @@ pub fn plan(
         mut resolver,
         engine,
         modules,
+        remotes,
     } = build_planning_context(&request.cli_overrides)?;
+    let mut registry = RemoteRegistry::new(&remotes, &repo_root, &state_dir, CachePolicy::Fetch);
 
     // Resolve every managed entry into its canonical source/targets, kept
     // in two ordered buckets — `[[file]]` entries and `[[directory]]`
@@ -332,7 +356,8 @@ pub fn plan(
         for entry in &config.files {
             file_entries.push(gate_and_resolve_entry(
                 entry,
-                &module.path,
+                module,
+                &mut registry,
                 &home,
                 &engine,
                 &resolver,
@@ -341,7 +366,8 @@ pub fn plan(
         for entry in &config.directories {
             directory_entries.push(gate_and_resolve_entry(
                 entry,
-                &module.path,
+                module,
+                &mut registry,
                 &home,
                 &engine,
                 &resolver,
@@ -351,7 +377,14 @@ pub fn plan(
         hooks.extend(config.hooks.iter().cloned());
     }
 
+    let expanded = expand_claims(&file_entries, &directory_entries)?;
+    let claims: Vec<crate::apply::TargetClaim<'_>> =
+        expanded.iter().map(ClaimTargets::claim).collect();
+    crate::apply::collisions::validate_targets(&claims)?;
+
     let (operations, resolved_ops) = assemble_plan_operations(file_entries, directory_entries);
+    let remote_names: Vec<RemoteName> = remotes.iter().map(|spec| spec.name.clone()).collect();
+    let remote_pins = registry.pins();
 
     Ok(ResolvedPlan {
         repo_root,
@@ -363,6 +396,8 @@ pub fn plan(
         host_os,
         timestamp: timestamp.into(),
         resolver,
+        remote_names,
+        remote_pins,
     })
 }
 
@@ -386,6 +421,258 @@ struct PlanningContext {
     resolver: Resolver,
     engine: Engine,
     modules: Vec<crate::discovery::ModuleHandle>,
+    remotes: Vec<RemoteSpec>,
+}
+
+/// Whether resolving an entry's source root may fill a cold cache.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CachePolicy {
+    /// Fetch the pinned rev when it is missing. The planning path: `apply` must
+    /// converge this machine to the committed lock.
+    Fetch,
+    /// Never touch the network. The `patina status` path, which is read-only
+    /// and must not stall on an unreachable remote; an unmaterialized
+    /// checkout is reported as no source root at all.
+    ReadOnly,
+}
+
+/// Where one entry's `source` resolves from.
+///
+/// For an entry with no `remote` key this is simply its module's directory.
+/// For an entry naming a remote it is the
+/// immutable checkout of the rev `patina.lock` pins, so the module directory
+/// contributes only the manifest that declared the entry. That is also why a
+/// `patina.toml` inside a checkout is inert: module discovery walks the
+/// repository, never the cache.
+struct EntryOrigin {
+    /// The directory the entry's `source` is joined onto, or `None` for a
+    /// remote whose checkout is not materialized on this machine (only
+    /// reachable under [`CachePolicy::ReadOnly`]).
+    source_root: Option<Utf8PathBuf>,
+    /// The name of the remote the entry selected, or `None` when its source is
+    /// the module's own tree. `Some` drives the containment check that keeps a
+    /// remote entry's source from resolving outside its checkout; a local
+    /// module's own tree is trusted.
+    remote: Option<String>,
+}
+
+/// The root manifest's `[[remote]]` declarations, resolved to checkouts on
+/// demand.
+///
+/// Pins are global and checkouts are local: the lockfile is a
+/// machine-independent statement about what every machine applies, while
+/// materializing one is a per-machine consequence of an entry actually
+/// selecting that remote here. So the lockfile is read on the first selection
+/// of any remote, a checkout is materialized on the first selection of that
+/// remote, and both are memoized. A remote no active entry names on this host
+/// costs no `patina.lock` read and no fetch, which is what keeps a
+/// `when`-false entry from pulling the network into a plan.
+struct RemoteRegistry<'a> {
+    /// Every declaration, in root-manifest order.
+    declared: &'a [RemoteSpec],
+    /// Canonical repository root; `patina.lock` sits directly inside it.
+    repo_root: &'a Utf8Path,
+    /// Per-machine state directory, whose `remotes/` subtree holds checkouts.
+    state_dir: &'a Utf8Path,
+    /// Whether resolving may fill a cold cache.
+    policy: CachePolicy,
+    /// The committed pins, read on first use.
+    lockfile: Option<Lockfile>,
+    /// Resolved checkout per remote identity, so a remote several entries
+    /// select is materialized once however each of them spells its name.
+    checkouts: BTreeMap<String, Option<Utf8PathBuf>>,
+}
+
+impl<'a> RemoteRegistry<'a> {
+    /// A registry over the root manifest's declarations.
+    fn new(
+        declared: &'a [RemoteSpec],
+        repo_root: &'a Utf8Path,
+        state_dir: &'a Utf8Path,
+        policy: CachePolicy,
+    ) -> Self {
+        Self {
+            declared,
+            repo_root,
+            state_dir,
+            policy,
+            lockfile: None,
+            checkouts: BTreeMap::new(),
+        }
+    }
+
+    /// Resolve where `entry`'s source lives, materializing a checkout if this
+    /// is the first entry to select that remote.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`EngineError`] when the entry names a remote the root
+    /// manifest does not declare, or, under [`CachePolicy::Fetch`], when that
+    /// remote has no pin (the message points at `patina remote update <name>`)
+    /// or its pinned rev is neither cached nor fetchable. All three are raised
+    /// at plan time so nothing is partially applied.
+    fn origin(
+        &mut self,
+        entry: &ManagedEntry,
+        module_dir: &Utf8Path,
+    ) -> Result<EntryOrigin, EngineError> {
+        let Some(name) = entry.remote.as_deref() else {
+            return Ok(EntryOrigin {
+                source_root: Some(module_dir.to_path_buf()),
+                remote: None,
+            });
+        };
+        Ok(EntryOrigin {
+            source_root: self.checkout(name)?,
+            remote: Some(name.to_owned()),
+        })
+    }
+
+    /// The checkout directory for the remote called `name`, memoized.
+    ///
+    /// Memoized under the folded identity rather than the spelling this entry
+    /// wrote, so two entries selecting one remote through two spellings
+    /// resolve it once.
+    fn checkout(&mut self, name: &str) -> Result<Option<Utf8PathBuf>, EngineError> {
+        let key = crate::config::remote::name_key(name);
+        if let Some(resolved) = self.checkouts.get(&key) {
+            return Ok(resolved.clone());
+        }
+        let resolved = self.materialize(name)?;
+        self.checkouts.insert(key, resolved.clone());
+        Ok(resolved)
+    }
+
+    /// Fetch and check out `name`'s pinned rev (or, read-only, report whether
+    /// it is already here). The returned directory is canonical, so the
+    /// containment check downstream needs no further filesystem resolution.
+    ///
+    /// Under [`CachePolicy::ReadOnly`] every failure shape degrades to "no
+    /// source root" instead of erroring: status reports on what a prior apply
+    /// left behind, and losing the whole drift report over an undeclared
+    /// remote, a malformed lockfile, or a missing pin would hide the entries
+    /// that are perfectly reportable. The apply plan raises all three.
+    fn materialize(&mut self, name: &str) -> Result<Option<Utf8PathBuf>, EngineError> {
+        // Reborrowed from `self` so the lockfile can be loaded into `self`
+        // below while `spec` stays alive.
+        let declared = self.declared;
+        let Some(spec) = declared.iter().find(|spec| spec.name.matches(name)) else {
+            if self.policy == CachePolicy::ReadOnly {
+                tracing::warn!(
+                    remote = name,
+                    "an entry names a remote no [[remote]] table declares; drift for it is \
+                     unknown"
+                );
+                return Ok(None);
+            }
+            return Err(crate::remote::RemoteError::undeclared_remote(name).into());
+        };
+
+        if self.policy == CachePolicy::ReadOnly {
+            let pin = match self.lockfile() {
+                Ok(lockfile) => lockfile.get(&spec.name).cloned(),
+                Err(error) => {
+                    tracing::warn!(
+                        remote = name,
+                        %error,
+                        "patina.lock could not be read; drift for remote-backed entries is \
+                         unknown"
+                    );
+                    None
+                }
+            };
+            let Some(pin) = pin else {
+                return Ok(None);
+            };
+            let dir = remote_cache::checkout_dir(self.state_dir, &spec.name, &pin.rev);
+            if !dir.is_dir() {
+                return Ok(None);
+            }
+            return Ok(Some(canonicalize(&dir)?));
+        }
+
+        let Some(pin) = self.lockfile()?.get(&spec.name).cloned() else {
+            return Err(crate::remote::RemoteError::missing_lock_entry(spec.name.as_str()).into());
+        };
+
+        let checkout = remote_cache::ensure_checkout(
+            self.state_dir,
+            &spec.name,
+            &spec.url,
+            spec.git_ref.as_deref(),
+            &pin.rev,
+        )
+        .map_err(|err| err.into_cold_cache(spec.name.as_str(), &pin.rev))?;
+        Ok(Some(canonicalize(&checkout)?))
+    }
+
+    /// The `(name, rev)` of every declared remote's pin, or `None` when this
+    /// run never read the lockfile.
+    ///
+    /// The distinction is what keeps the cache sweep honest: "no remote is
+    /// pinned" and "which remotes are pinned was never established" look the
+    /// same as an empty list, and deleting a checkout on the second would take
+    /// out the one the next run materializes.
+    fn pins(&self) -> Option<Vec<(RemoteName, String)>> {
+        Some(declared_pins(
+            self.declared.iter().map(|spec| &spec.name),
+            self.lockfile.as_ref()?,
+        ))
+    }
+
+    /// The committed pins, reading `patina.lock` on first use.
+    ///
+    /// A run where no active entry selects a remote never calls this, so a
+    /// stray or malformed `patina.lock` never fails a plain local apply or
+    /// status.
+    fn lockfile(&mut self) -> Result<&Lockfile, EngineError> {
+        let repo_root = self.repo_root;
+        let slot = &mut self.lockfile;
+        let lockfile = match slot {
+            Some(lockfile) => lockfile,
+            None => slot.insert(Lockfile::load(&lockfile_path(repo_root))?),
+        };
+        Ok(lockfile)
+    }
+}
+
+/// Re-read the pins for a plan that never loaded the lockfile, or `None` when
+/// the file cannot be read.
+///
+/// A remote declared but selected by no active entry still has a pin the next
+/// run will materialize, so the sweep must learn it from somewhere. Failing to
+/// read is not an error here: it only means no declared remote's cache is
+/// swept this time.
+fn reread_pins(resolved: &ResolvedPlan) -> Option<Vec<(RemoteName, String)>> {
+    if resolved.remote_names.is_empty() {
+        return Some(Vec::new());
+    }
+    let lockfile = Lockfile::load(&lockfile_path(&resolved.repo_root))
+        .inspect_err(|error| {
+            tracing::warn!(
+                %error,
+                "leaving the declared remotes' checkouts alone: patina.lock could not be read, \
+                 so which revs are pinned is unknown"
+            );
+        })
+        .ok()?;
+    Some(declared_pins(&resolved.remote_names, &lockfile))
+}
+
+/// The `(name, rev)` each remote in `declared` is pinned to, skipping the ones
+/// with no pin yet.
+fn declared_pins<'a>(
+    declared: impl IntoIterator<Item = &'a RemoteName>,
+    lockfile: &Lockfile,
+) -> Vec<(RemoteName, String)> {
+    declared
+        .into_iter()
+        .filter_map(|name| {
+            lockfile
+                .get(name)
+                .map(|pin| (name.clone(), pin.rev.clone()))
+        })
+        .collect()
 }
 
 /// Build the [`PlanningContext`] both [`plan`] and [`current_managed_targets`]
@@ -458,6 +745,7 @@ fn build_planning_context(
         resolver,
         engine,
         modules,
+        remotes: root_config.remotes,
     })
 }
 
@@ -494,16 +782,22 @@ fn build_planning_context(
 /// Returns an [`EngineError`] when repository discovery, profile resolution,
 /// module enumeration, manifest parsing, a reserved-key violation, or a
 /// `when` predicate evaluation fails.
-pub fn current_managed_targets() -> Result<BTreeSet<Utf8PathBuf>, EngineError> {
+pub fn current_managed_targets() -> Result<crate::status::ManagedTargets, EngineError> {
     let PlanningContext {
+        repo_root,
+        state_dir,
         home,
         mut resolver,
         engine,
         modules,
+        remotes,
         ..
     } = build_planning_context(&[])?;
 
-    let mut targets = BTreeSet::new();
+    // Read-only: status must not fetch. An unpinned or uncached remote yields
+    // no source root, which costs only tree-mode leaf expansion.
+    let mut registry = RemoteRegistry::new(&remotes, &repo_root, &state_dir, CachePolicy::ReadOnly);
+    let mut managed = crate::status::ManagedTargets::default();
     for module in &modules {
         let manifest = module.path.join(MANIFEST_FILENAME);
         let config = parse_module_config(&manifest)?;
@@ -520,24 +814,31 @@ pub fn current_managed_targets() -> Result<BTreeSet<Utf8PathBuf>, EngineError> {
             {
                 continue;
             }
-            insert_managed_targets(entry, &module.path, &home, &mut targets);
+            let origin = registry.origin(entry, &module.path)?;
+            insert_managed_targets(entry, &origin, &home, &mut managed);
         }
     }
-    Ok(targets)
+    Ok(managed)
 }
 
 /// Insert the managed `manage_key`(s) for one surviving (`when`-true) entry.
 ///
 /// A tree-mode entry (`symlink-tree` or `copy-tree`) expands to one key per
 /// live source leaf, mirrored under each declared target the same way the
-/// executor materializes them (`target.join(rel)`); a missing source
+/// executor materializes them (`target.join(rel)`); a missing local source
 /// contributes no leaves. Every other mode contributes its declared targets
 /// directly.
+///
+/// A tree-mode entry whose remote checkout is not on this machine is different
+/// from one whose source is missing: its leaves are unknowable rather than
+/// gone, so its declared targets are recorded as indeterminate roots and its
+/// remote is reported, instead of letting every recorded leaf classify
+/// ORPHANED (and be reaped) over a checkout that merely is not here.
 fn insert_managed_targets(
     entry: &ManagedEntry,
-    module_path: &Utf8Path,
+    origin: &EntryOrigin,
     home: &Utf8Path,
-    targets: &mut BTreeSet<Utf8PathBuf>,
+    managed: &mut crate::status::ManagedTargets,
 ) {
     use crate::status::manage_key;
 
@@ -548,7 +849,18 @@ fn insert_managed_targets(
     // next apply — the reap pass would delete it (and `copy-tree`'s journal
     // hashing would then fail on the just-reaped file).
     if matches!(entry.mode, FileMode::SymlinkTree | FileMode::CopyTree) {
-        let source = module_path.join(&entry.source);
+        let Some(source_root) = origin.source_root.as_deref() else {
+            if let Some(remote) = origin.remote.as_ref() {
+                managed.unmaterialized_remotes.insert(remote.clone());
+                for target in &entry.targets {
+                    managed
+                        .indeterminate_roots
+                        .insert(manage_key(&expand_tilde(target, home)));
+                }
+            }
+            return;
+        };
+        let source = source_root.join(&entry.source);
         // The executor walks the live source for leaves; a source that no
         // longer exists yields none, so every recorded leaf is then orphaned.
         let Ok(leaves) = crate::apply::walk_files(&source) else {
@@ -557,7 +869,7 @@ fn insert_managed_targets(
         for target in &entry.targets {
             let expanded = expand_tilde(target, home);
             for rel in &leaves {
-                targets.insert(manage_key(&expanded.join(rel)));
+                managed.targets.insert(manage_key(&expanded.join(rel)));
             }
         }
         return;
@@ -565,7 +877,7 @@ fn insert_managed_targets(
 
     for target in &entry.targets {
         let expanded = expand_tilde(target, home);
-        targets.insert(manage_key(&expanded));
+        managed.targets.insert(manage_key(&expanded));
     }
 }
 
@@ -600,6 +912,96 @@ struct ResolvedEntry {
     /// resolution while the template engine and resolver are in scope (a
     /// template target is classified against its freshly rendered output).
     dispositions: Vec<TargetDisposition>,
+    /// Name of the module that declared this entry, and the entry's declared
+    /// module-relative source. Neither drives materialization; both exist so a
+    /// target-collision error can point the author at a specific manifest line.
+    module: String,
+    /// The entry's declared source, as written in the manifest.
+    declared_source: Utf8PathBuf,
+}
+
+/// One resolved entry paired with the targets it actually claims on the
+/// filesystem: borrowed straight from the entry when they are its declared
+/// targets, owned only when the planner expanded a tree-mode entry into
+/// leaves.
+struct ClaimTargets<'a> {
+    entry: &'a ResolvedEntry,
+    /// The declared directory target `targets` are the leaves of, for a
+    /// tree-mode entry; `None` when they are the declared targets themselves.
+    tree_target: Option<&'a Utf8Path>,
+    targets: std::borrow::Cow<'a, [Utf8PathBuf]>,
+}
+
+impl ClaimTargets<'_> {
+    /// Project this into the claim the target-collision check consumes.
+    fn claim(&self) -> crate::apply::TargetClaim<'_> {
+        crate::apply::TargetClaim {
+            module: &self.entry.module,
+            source: &self.entry.declared_source,
+            mode: self.entry.mode,
+            tree_target: self.tree_target,
+            targets: &self.targets,
+        }
+    }
+}
+
+/// Project the active entries into what each one actually claims, expanding a
+/// tree-mode entry into the leaves it will materialize.
+///
+/// A `symlink-tree` or `copy` `[[directory]]` does not own its whole target
+/// directory: it materializes one object per source leaf, records each leaf as
+/// its own journal target, and the reap pass removes only the leaves it
+/// recorded. The collision check has to see the same footprint, or it would
+/// refuse manifests the rest of the engine handles cleanly. Deploying one
+/// upstream file into a directory the repository also fills is the ordinary
+/// case once remotes exist.
+///
+/// The consequence is that the verdict depends on what the source tree holds
+/// right now, so a file appearing upstream under a tree source can newly fail a
+/// plan. That failure lands before any write, which is what a tree growing an
+/// unexpected file is supposed to do.
+///
+/// The leaves are walked here rather than taken from the classified
+/// dispositions, because classification deliberately records none for a tree
+/// target that does not exist yet (the whole-op Create shortcut), and a fresh
+/// target is exactly when a collision must still be caught.
+///
+/// Claims come out in declaration order, every `[[file]]` entry and then every
+/// `[[directory]]` entry, so the reported pair is a function of the manifest.
+///
+/// # Errors
+///
+/// Returns an [`EngineError`] when a tree source cannot be walked. Its
+/// existence and kind were validated during resolution, so this is a live IO
+/// failure rather than a manifest error.
+fn expand_claims<'a>(
+    file_entries: &'a [Option<ResolvedEntry>],
+    directory_entries: &'a [Option<ResolvedEntry>],
+) -> Result<Vec<ClaimTargets<'a>>, EngineError> {
+    let mut expanded = Vec::new();
+    // Only surviving (`when`-true) entries claim anything, so `flatten` drops
+    // the gated-off slots.
+    for entry in file_entries.iter().chain(directory_entries).flatten() {
+        if !matches!(entry.mode, FileMode::SymlinkTree | FileMode::CopyTree) {
+            expanded.push(ClaimTargets {
+                entry,
+                tree_target: None,
+                targets: std::borrow::Cow::Borrowed(&entry.targets[..]),
+            });
+            continue;
+        }
+        let leaves = crate::apply::walk_files(&entry.source)?;
+        for target in &entry.targets {
+            expanded.push(ClaimTargets {
+                entry,
+                tree_target: Some(target.as_path()),
+                targets: std::borrow::Cow::Owned(
+                    leaves.iter().map(|leaf| target.join(leaf)).collect(),
+                ),
+            });
+        }
+    }
+    Ok(expanded)
 }
 
 /// Impose the single deterministic order on the resolved entries and
@@ -676,7 +1078,8 @@ fn assemble_plan_operations(
 /// validated.
 fn gate_and_resolve_entry(
     entry: &ManagedEntry,
-    module_path: &Utf8Path,
+    module: &crate::discovery::ModuleHandle,
+    registry: &mut RemoteRegistry<'_>,
     home: &Utf8Path,
     engine: &Engine,
     resolver: &Resolver,
@@ -686,9 +1089,13 @@ fn gate_and_resolve_entry(
     {
         return Ok(None);
     }
+    // The gate is above this, so an entry switched off on this host never
+    // reaches the registry and never triggers a fetch.
+    let origin = registry.origin(entry, &module.path)?;
     Ok(Some(resolve_entry(
         entry,
-        module_path,
+        &origin,
+        &module.name,
         home,
         engine,
         resolver,
@@ -822,13 +1229,55 @@ fn classify_target(
 /// [`EngineError::Template`].
 fn resolve_entry(
     entry: &ManagedEntry,
-    module_path: &Utf8Path,
+    origin: &EntryOrigin,
+    module: &str,
     home: &Utf8Path,
     engine: &Engine,
     resolver: &Resolver,
 ) -> Result<ResolvedEntry, EngineError> {
-    let source = canonicalize(&module_path.join(&entry.source))?;
-    validate_source_kind(&source, entry.kind)?;
+    let root = match (origin.source_root.as_deref(), origin.remote.as_ref()) {
+        (Some(root), _) => root,
+        // A `Fetch`-policy origin always carries a source root for a remote
+        // entry; a slip here must not weaken the containment check below by
+        // anchoring it on the working directory.
+        (None, Some(remote)) => {
+            return Err(
+                crate::remote::RemoteError::checkout_not_materialized(remote.as_str()).into(),
+            );
+        }
+        // A local origin always carries its module directory; the fallback
+        // keeps this total so a logic slip surfaces as `SourceNotFound` rather
+        // than as a panic.
+        (None, None) => Utf8Path::new("."),
+    };
+    let source = canonicalize(&root.join(&entry.source))?;
+    // A remote checkout is third-party: refuse a source that resolves outside
+    // it (a `..` in the declared source, or a symlink the checkout shipped),
+    // which would otherwise let a hostile remote read arbitrary host files. A
+    // local source is the user's own tree and keeps its existing latitude.
+    // `root` came out of the registry canonical, so the prefix test needs no
+    // further resolution.
+    if let Some(remote) = origin.remote.as_ref()
+        && !source.starts_with(root)
+    {
+        return Err(crate::remote::RemoteError::source_escapes_checkout(
+            remote.as_str(),
+            &entry.source,
+        )
+        .into());
+    }
+    let metadata = source_metadata(&source)?;
+    // Canonicalizing the declared source vets that one path, but a directory
+    // source is deployed leaf by leaf and the executors dereference any
+    // symlink they meet, so every leaf must be vetted too. Patina's own
+    // materialization writes with `core.symlinks=false` and never produces
+    // one; finding one means the cache was made or altered by something else.
+    if let Some(remote) = origin.remote.as_ref()
+        && metadata.is_dir()
+    {
+        reject_symlink_leaves(remote.as_str(), &source)?;
+    }
+    validate_source_kind(&source, entry.kind, &metadata)?;
     let mut targets = Vec::with_capacity(entry.targets.len());
     for target in &entry.targets {
         let expanded = expand_tilde(target, home);
@@ -850,44 +1299,75 @@ fn resolve_entry(
         source,
         targets,
         dispositions,
+        module: module.to_owned(),
+        declared_source: entry.source.clone(),
     })
 }
 
-/// Validate a canonical source path against the kind declared by its
-/// table-array.
+/// Refuse a remote directory source holding a symbolic link anywhere beneath
+/// it.
 ///
-/// `paths::canonicalize` falls back to a *lexical* resolution for a
-/// non-existent path, so a missing source does not fail at canonicalization;
-/// the existence check is therefore an explicit `symlink_metadata` probe on
-/// the canonical source rather than a reliance on canonicalization failing.
-/// The kind check (`is_dir` / `is_file`) reads the same already-fetched
-/// metadata, so this adds a single `stat`, not a second IO pass. A symlinked
-/// source resolves through the metadata follow so the *kind it points at* is
-/// what is validated — the same kind the executor will materialize.
+/// The leaves come from the same [`crate::apply::walk_files`] enumeration the
+/// executors deploy, which yields a symlink as a leaf rather than descending
+/// it, whether it points at a file, a directory, or nothing at all. The two
+/// passes can therefore never disagree about what the tree contains. The plan
+/// fails before any mutation.
 ///
 /// # Errors
 ///
-/// Returns [`EngineError::SourceNotFound`] when the source does not exist,
-/// and [`EngineError::SourceKindMismatch`] when a `[[file]]` source is a
-/// directory or a `[[directory]]` source is a file.
-fn validate_source_kind(source: &Utf8Path, kind: EntryKind) -> Result<(), EngineError> {
-    // `metadata` follows symlinks, so the kind validated is the kind the
-    // source ultimately resolves to — matching what the executor materializes.
-    let metadata = match fs_err::metadata(source) {
-        Ok(metadata) => metadata,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            return Err(EngineError::SourceNotFound {
-                path: source.to_path_buf(),
-            });
+/// Returns the [`RemoteError`](crate::remote::RemoteError) naming the first
+/// link found, or the walk's own error when the tree cannot be read.
+fn reject_symlink_leaves(remote: &str, source: &Utf8Path) -> Result<(), EngineError> {
+    for leaf in crate::apply::walk_files(source)? {
+        let path = source.join(&leaf);
+        let metadata = fs_err::symlink_metadata(path.as_std_path()).map_err(|io_source| {
+            EngineError::Path(crate::paths::PathError::Filesystem {
+                path: path.clone(),
+                source: io_source,
+            })
+        })?;
+        if metadata.file_type().is_symlink() {
+            return Err(crate::remote::RemoteError::symlink_in_checkout(remote, &path).into());
         }
-        Err(err) => {
-            return Err(EngineError::Path(crate::paths::PathError::Filesystem {
-                path: source.to_path_buf(),
-                source: err,
-            }));
-        }
-    };
+    }
+    Ok(())
+}
 
+/// The metadata of a canonical source path, with a missing source reported as
+/// [`EngineError::SourceNotFound`].
+///
+/// `paths::canonicalize` falls back to a *lexical* resolution for a
+/// non-existent path, so a missing source does not fail at canonicalization;
+/// the existence check is therefore this explicit probe. `metadata` follows
+/// symlinks, so the kind carried is the kind the source ultimately resolves
+/// to: the same kind the executor will materialize.
+fn source_metadata(source: &Utf8Path) -> Result<std::fs::Metadata, EngineError> {
+    match fs_err::metadata(source) {
+        Ok(metadata) => Ok(metadata),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            Err(EngineError::SourceNotFound {
+                path: source.to_path_buf(),
+            })
+        }
+        Err(err) => Err(EngineError::Path(crate::paths::PathError::Filesystem {
+            path: source.to_path_buf(),
+            source: err,
+        })),
+    }
+}
+
+/// Validate a canonical source's already-fetched metadata against the kind
+/// declared by its table-array, so the check adds no IO of its own.
+///
+/// # Errors
+///
+/// Returns [`EngineError::SourceKindMismatch`] when a `[[file]]` source is a
+/// directory or a `[[directory]]` source is a file.
+fn validate_source_kind(
+    source: &Utf8Path,
+    kind: EntryKind,
+    metadata: &std::fs::Metadata,
+) -> Result<(), EngineError> {
     match kind {
         EntryKind::File if metadata.is_dir() => Err(EngineError::SourceKindMismatch {
             path: source.to_path_buf(),
@@ -1247,6 +1727,40 @@ pub async fn execute(
         // rolling back to it correctly deletes its fresh targets.
         let pruned = gc_retain(&backups_dir, crate::backups::RETENTION_COUNT)?;
         prune_cycles(&journal_dir, &pruned)?;
+        // Remote checkouts follow the same retain-what-recovery-needs rule as
+        // backups, and for the same reason: a checkout an on-disk journal record
+        // still names is what `patina rollback` re-points links back to. Runs
+        // after the commit and after the journal prune, so the reachability set
+        // it reads is this run's, and disk settles at roughly the current and
+        // previous rev per remote. Currently pinned checkouts survive even
+        // unreferenced: another process's not-yet-committed plan points at a
+        // pinned rev by construction.
+        //
+        // Planning reads `patina.lock` only when an active entry selects a
+        // remote, so a run without one arrives here not knowing what is pinned.
+        // It is re-read here rather than assumed empty; a lockfile that cannot
+        // be read leaves every declared remote's cache untouched.
+        //
+        // Pruning is best-effort cleanup after a durable commit, so a failure
+        // anywhere here is logged, not propagated: the apply already succeeded
+        // and rolling it back over a stale checkout would be worse than leaving
+        // the checkout on disk.
+        let declared: BTreeSet<&RemoteName> = resolved.remote_names.iter().collect();
+        let pins = resolved
+            .remote_pins
+            .clone()
+            .or_else(|| reread_pins(resolved));
+        match remote_cache::prune(&resolved.state_dir, &declared, pins.as_deref()) {
+            Ok(removed) => {
+                for checkout in removed {
+                    tracing::debug!(checkout = %checkout, "pruned an unreferenced remote checkout");
+                }
+            }
+            Err(error) => tracing::warn!(
+                %error,
+                "failed to prune unreferenced remote checkouts; the committed apply is unaffected"
+            ),
+        }
         // A committed apply that actually flushed a plan and wrote a COMMIT is
         // not a no-op, even when some targets were `Unchanged`: the full-no-op
         // short-circuit above is the only path that sets `up_to_date`.
@@ -1413,6 +1927,10 @@ fn expected_target(
 /// entry's kind, so an intermediate `symlink-tree` directory survives while
 /// its orphaned leaf links are removed.
 ///
+/// Nor is a recorded target that now lies inside a live entry's target: the
+/// live entry owns those bytes, and where it materializes a whole-directory
+/// symlink the recorded path resolves through the link into its source.
+///
 /// # Errors
 ///
 /// Returns an [`EngineError`] when the commit read, the managed-set
@@ -1528,13 +2046,13 @@ pub fn plan_orphans(resolved: &ResolvedPlan) -> Result<Vec<Utf8PathBuf>, EngineE
 /// Reads the last committed [`ApplyRecord`] and the current managed-target
 /// set ([`current_managed_targets`]), returning each recorded target whose
 /// [`manage_key`](crate::status::manage_key) is absent from the current set,
-/// is still on disk, and is not a directory. Shared by
-/// [`reap_orphans`] — which backs up and removes each returned target — and
-/// by the full-no-op short-circuit in [`execute`], which only needs
-/// to know whether this set is empty (a non-empty reap set means there is
-/// work to do, so the run is not a no-op). Splitting the detection out keeps
-/// the "what counts as an orphan" rule in one place rather than copying the
-/// walk into the short-circuit.
+/// is still on disk, is not a directory, and lies under no currently-managed
+/// target. Shared by [`reap_orphans`], which backs up and removes each
+/// returned target, and by the full-no-op short-circuit in [`execute`], which
+/// only needs to know whether this set is empty (a non-empty reap set means
+/// there is work to do, so the run is not a no-op). Splitting the detection out
+/// keeps the "what counts as an orphan" rule in one place rather than copying
+/// the walk into the short-circuit.
 ///
 /// # Errors
 ///
@@ -1554,7 +2072,7 @@ fn detect_orphans(resolved: &ResolvedPlan) -> Result<Vec<Utf8PathBuf>, EngineErr
     let mut orphans = Vec::new();
     for expected in &record.targets {
         let target = Utf8PathBuf::from(expected.target());
-        if managed.contains(&manage_key(&target)) {
+        if managed.governs(&manage_key(&target)) {
             // Still managed by the current plan: leave it for materialize /
             // status to handle. Never reaped.
             continue;
@@ -1569,6 +2087,26 @@ fn detect_orphans(resolved: &ResolvedPlan) -> Result<Vec<Utf8PathBuf>, EngineErr
         // is the guard that keeps a `symlink-tree` intermediate directory in
         // place while its orphaned leaf links are reaped.
         if meta.is_dir() {
+            continue;
+        }
+        // A recorded target that now lies *under* a target the current plan
+        // manages belongs to that entry, not to the record: a whole-directory
+        // `symlink` entry can claim the directory a prior apply's leaf lived
+        // in, and the recorded leaf path then resolves through the new link
+        // into that entry's source, a remote checkout or the repository itself.
+        // Removing it would delete source bytes, and back them up as if they
+        // were the target's.
+        //
+        // Containment is tested one ancestor at a time rather than as a prefix
+        // relation between keys: `manage_key` canonicalizes a path's parent, so
+        // the leaf's key already resolves through the link while each
+        // ancestor's own key does not. Tested last, so only a path that passed
+        // every cheaper test pays for the canonicalizations.
+        if target
+            .ancestors()
+            .skip(1)
+            .any(|ancestor| managed.governs(&manage_key(ancestor)))
+        {
             continue;
         }
         orphans.push(target);
@@ -1737,6 +2275,8 @@ mod tests {
             source: Utf8PathBuf::from(format!("/repo/{source_tag}")),
             targets,
             dispositions,
+            module: "m".to_owned(),
+            declared_source: Utf8PathBuf::from(source_tag),
         }
     }
 
@@ -1868,6 +2408,12 @@ mod tests {
         );
     }
 
+    /// The production sequence for a source check: probe the metadata, then
+    /// validate the declared kind against it.
+    fn check_source(source: &Utf8Path, kind: EntryKind) -> Result<(), EngineError> {
+        validate_source_kind(source, kind, &source_metadata(source)?)
+    }
+
     /// A `[[file]]` entry whose canonical source is a directory is
     /// a plan-time kind mismatch directing the author to `[[directory]]`. The
     /// error names the source path and both tables so the message is
@@ -1879,7 +2425,7 @@ mod tests {
         let dir_source = root.join("confdir");
         fs_err::create_dir(&dir_source).expect("mkdir source");
 
-        let err = validate_source_kind(&dir_source, EntryKind::File)
+        let err = check_source(&dir_source, EntryKind::File)
             .expect_err("a directory source under `[[file]]` must be rejected");
 
         assert!(
@@ -1906,7 +2452,7 @@ mod tests {
         let file_source = root.join("gitconfig");
         fs_err::write(&file_source, "[user]\n").expect("write source");
 
-        let err = validate_source_kind(&file_source, EntryKind::Directory)
+        let err = check_source(&file_source, EntryKind::Directory)
             .expect_err("a file source under `[[directory]]` must be rejected");
 
         assert!(
@@ -1933,8 +2479,8 @@ mod tests {
         let root = Utf8Path::from_path(temp.path()).expect("utf8 temp path");
         let ghost = root.join("ghost");
 
-        let err = validate_source_kind(&ghost, EntryKind::File)
-            .expect_err("an absent source must be rejected");
+        let err =
+            check_source(&ghost, EntryKind::File).expect_err("an absent source must be rejected");
 
         assert!(
             matches!(&err, EngineError::SourceNotFound { path } if *path == ghost),
@@ -1954,9 +2500,9 @@ mod tests {
         let dir_source = root.join("mpv");
         fs_err::create_dir(&dir_source).expect("mkdir dir source");
 
-        validate_source_kind(&file_source, EntryKind::File)
+        check_source(&file_source, EntryKind::File)
             .expect("a file source under `[[file]]` validates");
-        validate_source_kind(&dir_source, EntryKind::Directory)
+        check_source(&dir_source, EntryKind::Directory)
             .expect("a directory source under `[[directory]]` validates");
     }
 
@@ -1987,6 +2533,8 @@ mod tests {
                 host_os: HostOs::current(),
                 timestamp: TS.to_owned(),
                 resolver: Resolver::new(Builtins::current()),
+                remote_names: Vec::new(),
+                remote_pins: Some(Vec::new()),
             };
             Self {
                 _temp: temp,
@@ -2190,10 +2738,15 @@ mod tests {
             source: Utf8PathBuf::from("d"),
             targets: vec![target.clone()],
             when: None,
+            remote: None,
         };
 
-        let mut got = BTreeSet::new();
-        insert_managed_targets(&entry, &module, &root, &mut got);
+        let origin = EntryOrigin {
+            source_root: Some(module.clone()),
+            remote: None,
+        };
+        let mut got = crate::status::ManagedTargets::default();
+        insert_managed_targets(&entry, &origin, &root, &mut got);
 
         let expected: BTreeSet<Utf8PathBuf> = [
             manage_key(&target.join("a.conf")),
@@ -2202,19 +2755,64 @@ mod tests {
         .into_iter()
         .collect();
         assert_eq!(
-            got, expected,
+            got.targets, expected,
             "a symlink-tree entry must contribute exactly one key per live leaf"
         );
 
         // Delete a source leaf: it drops out of the managed set, so its
         // recorded target leaf would now classify ORPHANED.
         fs_err::remove_file(source.join("sub").join("b.conf")).expect("delete leaf");
-        let mut after = BTreeSet::new();
-        insert_managed_targets(&entry, &module, &root, &mut after);
+        let mut after = crate::status::ManagedTargets::default();
+        insert_managed_targets(&entry, &origin, &root, &mut after);
         assert_eq!(
-            after,
+            after.targets,
             [manage_key(&target.join("a.conf"))].into_iter().collect(),
             "a deleted source leaf must no longer be a managed target"
+        );
+    }
+
+    /// A tree-mode entry whose remote checkout is not on this machine must not
+    /// let its recorded leaves classify ORPHANED (and be reaped): its leaves
+    /// are unknowable, so its declared target becomes an indeterminate root
+    /// that still governs everything beneath it.
+    #[test]
+    fn insert_managed_targets_marks_an_unmaterialized_remote_tree_indeterminate() {
+        use crate::status::manage_key;
+
+        let td = TempDir::new().expect("tempdir");
+        let root = Utf8PathBuf::from_path_buf(td.path().to_path_buf()).expect("utf8 temp path");
+        let target = root.join("dest");
+        fs_err::create_dir_all(&target).expect("mkdir target");
+
+        let entry = ManagedEntry {
+            kind: EntryKind::Directory,
+            mode: FileMode::CopyTree,
+            source: Utf8PathBuf::from("skills"),
+            targets: vec![target.clone()],
+            when: None,
+            remote: Some("humanizer".to_owned()),
+        };
+        let origin = EntryOrigin {
+            source_root: None,
+            remote: Some("humanizer".to_owned()),
+        };
+
+        let mut got = crate::status::ManagedTargets::default();
+        insert_managed_targets(&entry, &origin, &root, &mut got);
+
+        assert!(got.targets.is_empty(), "no leaf is enumerable");
+        assert!(
+            got.governs(&manage_key(&target.join("SKILL.md"))),
+            "a recorded leaf under the declared target must still count as managed"
+        );
+        assert!(
+            !got.governs(&manage_key(&root.join("elsewhere"))),
+            "a path outside the declared target is not governed"
+        );
+        assert_eq!(
+            got.unmaterialized_remotes.iter().collect::<Vec<_>>(),
+            ["humanizer"],
+            "the remote must be reported so status can warn"
         );
     }
 
@@ -2238,14 +2836,49 @@ mod tests {
             source: Utf8PathBuf::from("zshrc"),
             targets: vec![t1.clone(), t2.clone()],
             when: None,
+            remote: None,
         };
 
-        let mut got = BTreeSet::new();
-        insert_managed_targets(&entry, &module, &root, &mut got);
+        let origin = EntryOrigin {
+            source_root: Some(module.clone()),
+            remote: None,
+        };
+        let mut got = crate::status::ManagedTargets::default();
+        insert_managed_targets(&entry, &origin, &root, &mut got);
 
         let expected: BTreeSet<Utf8PathBuf> =
             [manage_key(&t1), manage_key(&t2)].into_iter().collect();
-        assert_eq!(got, expected);
+        assert_eq!(got.targets, expected);
+    }
+
+    /// The guard behind the remote trust boundary: a checkout Patina wrote
+    /// never contains a symbolic link (`core.symlinks=false`), so one found
+    /// under a remote tree source means the cache was made or altered by
+    /// something else, and deploying through it could read or plant paths
+    /// outside the checkout.
+    #[test]
+    fn a_symlink_anywhere_under_a_remote_tree_source_fails_the_plan() {
+        use crate::test_util::symlink_file;
+
+        let td = TempDir::new().expect("tempdir");
+        let root = Utf8PathBuf::from_path_buf(td.path().to_path_buf()).expect("utf8 temp path");
+        let tree = root.join("checkout").join("skills");
+        fs_err::create_dir_all(tree.join("sub")).expect("mkdir tree");
+        fs_err::write(tree.join("ok.md"), b"fine").expect("write plain leaf");
+
+        reject_symlink_leaves("humanizer", &tree).expect("a link-free tree passes");
+
+        let outside = root.join("secret");
+        fs_err::write(&outside, b"key material").expect("write outside file");
+        symlink_file(&outside, &tree.join("sub").join("creds"));
+
+        let err = reject_symlink_leaves("humanizer", &tree)
+            .expect_err("a nested symlink must fail the plan");
+        let message = err.to_string();
+        assert!(
+            message.contains("creds") && message.contains("humanizer"),
+            "the error must name the link and the remote: {message}"
+        );
     }
 
     // --- plan-time disposition classification ------------
@@ -2509,6 +3142,8 @@ mod tests {
                 aggregate: Disposition::Unchanged,
                 leaves: Vec::new(),
             }],
+            module: "m".to_owned(),
+            declared_source: Utf8PathBuf::from("config"),
         };
 
         let (operations, resolved_ops) = assemble_plan_operations(vec![Some(resolved)], vec![]);

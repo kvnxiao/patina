@@ -54,6 +54,39 @@ pub struct StatusEntry {
     pub state: TargetState,
 }
 
+/// The current plan's managed-target set, plus the regions it cannot see.
+///
+/// A tree-mode entry backed by a remote expands into one managed key per
+/// checkout leaf, but read-only passes (status, the orphan reap) must not
+/// fetch, so when the pinned checkout is not materialized the entry's leaves
+/// are unknowable rather than absent. Treating them as absent would report
+/// every previously-applied leaf ORPHANED, and let the reap delete it, so
+/// those entries' declared target roots are carried separately and a recorded
+/// target under one still counts as managed.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ManagedTargets {
+    /// The managed keys ([`manage_key`] form) of every enumerable target.
+    pub targets: BTreeSet<Utf8PathBuf>,
+    /// Declared target roots ([`manage_key`] form) of tree-mode entries whose
+    /// remote checkout is not materialized on this machine.
+    pub indeterminate_roots: BTreeSet<Utf8PathBuf>,
+    /// The remotes whose checkouts those roots are waiting on, for reporting.
+    pub unmaterialized_remotes: BTreeSet<String>,
+}
+
+impl ManagedTargets {
+    /// Whether the current plan manages `key`, either enumerably or as part of
+    /// a tree whose remote checkout is not on this machine.
+    #[must_use = "the answer decides ORPHANED classification and the reap"]
+    pub fn governs(&self, key: &camino::Utf8Path) -> bool {
+        self.targets.contains(key)
+            || self
+                .indeterminate_roots
+                .iter()
+                .any(|root| key.starts_with(root))
+    }
+}
+
 /// The full result of a `patina status` run.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct StatusReport {
@@ -73,6 +106,10 @@ pub struct StatusReport {
     /// Human-readable warnings (e.g. the lock-timeout escape hatch). The
     /// CLI routes these to stderr.
     pub warnings: Vec<String>,
+    /// The remotes the last `patina remote check` found behind their upstream,
+    /// in module-name order. Read from the per-machine notice state, so this is
+    /// as fresh as the last check and never triggers network work of its own.
+    pub remotes_pending: Vec<String>,
 }
 
 impl StatusReport {
@@ -101,7 +138,7 @@ impl StatusReport {
 /// the current-plan computation, or the journal read fails. A shared-lock
 /// *timeout* is not an error: it is downgraded to a warning and the read
 /// proceeds.
-pub fn report(current_plan_targets: &BTreeSet<Utf8PathBuf>) -> Result<StatusReport, EngineError> {
+pub fn report(managed: &ManagedTargets) -> Result<StatusReport, EngineError> {
     let state_dir = resolve_state_dir()?;
     let journal_dir = state_dir.join("journal");
     let lock_path = state_dir.join("lock");
@@ -121,10 +158,25 @@ pub fn report(current_plan_targets: &BTreeSet<Utf8PathBuf>) -> Result<StatusRepo
         }
         Err(other) => return Err(EngineError::Lock(other)),
     };
+    if !managed.unmaterialized_remotes.is_empty() {
+        let names: Vec<&str> = managed
+            .unmaterialized_remotes
+            .iter()
+            .map(String::as_str)
+            .collect();
+        warnings.push(format!(
+            "the pinned checkout for remote(s) {} is not materialized on this machine; drift \
+             for their directory entries cannot be assessed until `patina apply` runs",
+            names.join(", ")
+        ));
+    }
 
     let record = read_latest_commit(&journal_dir)?;
     let mut report = StatusReport {
         warnings,
+        remotes_pending: crate::remote::notice::read_pending(&state_dir)
+            .into_iter()
+            .collect(),
         ..StatusReport::default()
     };
     let Some(record) = record else {
@@ -136,7 +188,7 @@ pub fn report(current_plan_targets: &BTreeSet<Utf8PathBuf>) -> Result<StatusRepo
     report.last_apply = Some(record.last_apply);
     for expected in &record.targets {
         let path = Utf8PathBuf::from(expected.target());
-        let still_managed = current_plan_targets.contains(&manage_key(&path));
+        let still_managed = managed.governs(&manage_key(&path));
         let state = classify(expected, still_managed);
         // A target the current plan dropped *and* that is already gone from
         // disk is fully done — nothing to surface (it would classify
@@ -172,7 +224,7 @@ pub fn report(current_plan_targets: &BTreeSet<Utf8PathBuf>) -> Result<StatusRepo
 /// Returns an [`EngineError`] when repository discovery, profile resolution,
 /// module enumeration, manifest parsing, or a `when` predicate evaluation
 /// fails.
-pub fn current_plan_targets() -> Result<BTreeSet<Utf8PathBuf>, EngineError> {
+pub fn current_plan_targets() -> Result<ManagedTargets, EngineError> {
     crate::apply::engine::current_managed_targets()
 }
 
@@ -195,6 +247,15 @@ pub fn current_plan_targets() -> Result<BTreeSet<Utf8PathBuf>, EngineError> {
 /// same declared target yields the same key regardless of when it was
 /// computed.
 ///
+/// The result is then folded through [`crate::caseless::fold`], the same
+/// identity the target-collision check uses, so that a target respelled only in
+/// case or Unicode normal form stays the same key. Without the fold, renaming
+/// `~/.Config` to `~/.config` would leave the recorded key unmatched, and on a
+/// case-insensitive filesystem the reap would then delete the very object the
+/// respelled entry had just materialized. Folding on a case-sensitive
+/// filesystem is the safe direction of the same trade: a genuinely distinct
+/// old path is left behind rather than deleted.
+///
 /// Public so the `remove` / `promote` commands can match a
 /// user-supplied target path against a journaled
 /// [`ExpectedTarget::target`](crate::ExpectedTarget::target) under the same
@@ -206,12 +267,18 @@ pub fn manage_key(path: &camino::Utf8Path) -> Utf8PathBuf {
         Some(parent) if !parent.as_str().is_empty() => parent
             .canonicalize_utf8()
             .map_or_else(|_| parent.to_owned(), |p| crate::paths::simplified(&p)),
-        _ => return crate::paths::simplified(path),
+        _ => return folded(&crate::paths::simplified(path)),
     };
-    match path.file_name() {
+    let key = match path.file_name() {
         Some(name) => parent_key.join(name),
         None => parent_key,
-    }
+    };
+    folded(&key)
+}
+
+/// `path` under the shared caseless identity.
+fn folded(path: &camino::Utf8Path) -> Utf8PathBuf {
+    Utf8PathBuf::from(crate::caseless::fold(path.as_str()))
 }
 
 #[cfg(test)]
@@ -246,5 +313,27 @@ mod tests {
         fs_err::write(&child, b"x").expect("create child");
         let present_key = manage_key(&child);
         assert_eq!(absent_key, present_key);
+    }
+
+    #[test]
+    fn a_leaf_respelled_in_case_or_normal_form_keys_the_same_target() {
+        // The reap deletes a recorded target whose key is absent from the
+        // current plan. A respelling that a case-insensitive or normalizing
+        // filesystem resolves to one object must therefore key the same, or the
+        // reap deletes what the respelled entry just materialized.
+        let dir = Utf8PathBuf::from("/home/u");
+        assert_eq!(
+            manage_key(&dir.join(".Config")),
+            manage_key(&dir.join(".config"))
+        );
+        assert_eq!(
+            manage_key(&dir.join(".caf\u{e9}")),
+            manage_key(&dir.join(".cafe\u{301}"))
+        );
+        assert_ne!(
+            manage_key(&dir.join(".config")),
+            manage_key(&dir.join(".configs")),
+            "the fold must not merge two genuinely different targets"
+        );
     }
 }

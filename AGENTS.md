@@ -10,30 +10,33 @@ Its source of truth is a user's centralized git repository. A user runs `patina 
 
 ### Users
 
-- **Fresh-laptop developer** — clones the dotfiles repo, runs one command, expects shell/editor/git config to land everywhere.
-- **Existing-machine maintainer** — adds, edits, removes config; re-runs `patina apply` expecting the diff-and-prompt loop to never surprise them.
-- **Multi-machine syncer** — runs Patina across macOS / Linux / Windows; same source must produce same result everywhere.
-- **Cautious user** — wants a diff and prompt before any mutation; never accidentally overwrites a file edited outside Patina.
-- **CI script author** — runs `patina apply` in a non-interactive shell to preview a deployment; expects plan output and zero writes.
+- **Fresh-laptop developer.** Clones the dotfiles repo, runs one command, expects shell/editor/git config to land everywhere.
+- **Existing-machine maintainer.** Adds, edits, removes config; re-runs `patina apply` expecting the diff-and-prompt loop to never surprise them.
+- **Multi-machine syncer.** Runs Patina across macOS / Linux / Windows; same source must produce same result everywhere.
+- **Cautious user.** Wants a diff and prompt before any mutation; never accidentally overwrites a file edited outside Patina.
+- **CI script author.** Runs `patina apply` in a non-interactive shell to preview a deployment; expects plan output and no writes to the repository or to any target. Planning a remote-backed entry against a cold cache still fills the per-machine remote cache, which is what the plan is computed from.
 
 ### V1.0 outcome
 
 V1.0 is considered complete when a user can:
 
-- **Declare and apply** — `patina apply` materializes `patina.toml` as symlinks / rendered templates / byte copies at the right targets.
-- **Preview safely** — diff-and-prompt by default; non-interactive shells fall through to plan-only.
-- **Recover** — `patina status` reports drift; `patina rollback` restores pre-apply state; `patina debug journal` decodes the binary journal post-mortem.
-- **Bootstrap** — `init`, `add`, `remove`, `promote`, `doctor` cover repo setup and migration; Windows symlink elevation via Developer Mode or UAC.
-- **Watch** — background service reapplies on source changes; surfaces files modified outside Patina.
+- **Declare and apply.** `patina apply` materializes `patina.toml` as symlinks / rendered templates / byte copies at the right targets.
+- **Preview safely.** Diff-and-prompt by default; non-interactive shells fall through to plan-only.
+- **Recover.** `patina status` reports drift; `patina rollback` restores pre-apply state; `patina debug journal` decodes the binary journal post-mortem.
+- **Bootstrap.** `init`, `add`, `remove`, `promote`, `doctor` cover repo setup and migration; Windows symlink elevation via Developer Mode or UAC.
+- **Watch.** A background service reapplies on source changes and surfaces files modified outside Patina.
+- **Consume remote sources.** The root manifest declares each third-party git repository as a `[[remote]]`, and any entry deploys from a pinned checkout of one with `remote = "<name>"`; `patina.lock` is the committed statement every machine converges to, and `patina remote list` / `check` / `update` / `prune` manage it. Normative spec: `docs/REMOTE_SOURCES.md`.
 
 ### Quality bar
 
 - **Crash safety.** Single-fsync postcard journal + per-operation progress cursor; `kill -9` mid-apply converges deterministically on the next run. Scope: process termination, where the page cache survives; power-loss / kernel-panic durability is out of scope for v1.0 (see Known unknowns).
-- **Idempotency.** Re-applying against unchanged source is a no-op — same plan, no writes, byte-identical stdout.
+- **Idempotency.** Re-applying against unchanged source is a no-op: same plan, no writes, byte-identical stdout.
 - **Never overwrite without consent.** Files Patina doesn't own are never clobbered without consent; every overwrite is first backed up so `patina rollback` restores it.
 - **Rollback fidelity.** After `patina rollback`, the filesystem matches pre-apply state in content and entry kind (file / symlink / directory), modulo mode/timestamp bits and files the user touched outside Patina.
 - **Deterministic stdout.** Two consecutive `apply`s against unchanged source produce byte-identical output. No timestamps, PIDs, or random IDs (`--json` included).
 - **Cross-platform parity.** macOS, Linux, Windows are first-class. Two-of-three is not done.
+- **Third-party content is never trusted.** A remote checkout supplies bytes only: its `patina.toml` is never read, its `.tmpl` files are never rendered, and every byte still passes the consent diff. Pin bumps are gated (`docs/REMOTE_SOURCES.md` "The update gate"), with an honest statement of what the gate cannot stop.
+- **No two entries fight over a target.** Plan-time validation rejects duplicate canonical targets and a whole-directory `symlink` target that contains another entry's target, before any diff is shown. A tree-mode entry claims the leaves it materializes, not the whole directory.
 - **No panics; tests gate truth.**
 
 ### Non-goals
@@ -56,12 +59,15 @@ If the user asks for one of these, the answer is "not in v1.0" — surface as a 
 
 ### Known unknowns
 
-- **`postcard` wire-format stability** — mitigated by the journal version envelope.
-- **`fs2` advisory lock semantics** — paper over POSIX `flock(2)` vs Windows `LockFileEx` for single-CLI and watcher↔CLI coordination.
+- **`postcard` wire-format stability.** Mitigated by the journal version envelope.
+- **`fs2` advisory lock semantics.** Patina papers over POSIX `flock(2)` against Windows `LockFileEx` for single-CLI and watcher↔CLI coordination.
 - **`tokio` file I/O remains `spawn_blocking`-backed** in v1.0; we accept the cost.
 - **MiniJinja strict-undefined** (including the Jinja2 `{% else %}` empty-string rule) is acceptable.
-- **Power-loss / kernel-panic durability** — backups are not fsync'd before an overwrite, so crash safety holds under process termination (`kill -9`, page cache intact) but not a power cut. Full never-intermediate durability under power loss (atomic temp+rename target writes plus fsync of backups and parent dirs) is a post-1.0 hardening item.
+- **Power-loss / kernel-panic durability.** Backups are not fsync'd before an overwrite, so crash safety holds under process termination (`kill -9`, page cache intact) but not a power cut. Full never-intermediate durability under power loss (atomic temp+rename target writes plus fsync of backups and parent dirs) is a post-1.0 hardening item.
 - **Per-machine state directory must not live on cloud-sync paths** (iCloud / OneDrive / Dropbox / Box / Google Drive / Syncthing). Patina does not detect cloud-sync paths in v1.0; the constraint is documented only.
+- **Committer timestamps are self-reported.** The update gate's future / backdating / age checks stop untargeted, fast-moving compromises but not an attacker who backdates deliberately. Plain git offers no unforgeable time source; the diff-and-prompt loop is the hard boundary.
+- **Fetching a bare SHA needs server cooperation.** A server with `uploadpack.allowReachableSHA1InWant` off refuses the specced shallow fetch by exact SHA, so `remote::git::fetch_commit` falls back to a shallow fetch of the tracked ref and re-checks that the pin arrived.
+- **Journal timestamps have one-second resolution.** Two applies inside one second share a `<ts>.COMMIT`, collapsing the older record. Pre-existing, and now load-bearing for the remote cache's reachability sweep.
 
 ---
 

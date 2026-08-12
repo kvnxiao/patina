@@ -93,6 +93,10 @@ pub struct ManagedEntry {
     /// only parses and carries it, and does not evaluate it through
     /// `MiniJinja` (mirrors [`HookEntry.when`](super::HookEntry::when)).
     pub when: Option<String>,
+    /// The root-declared remote this entry's `source` is relative to, or
+    /// `None` for a source relative to the module's own directory. The name is
+    /// resolved against the registry at plan time; this module only carries it.
+    pub remote: Option<String>,
 }
 
 /// Backwards-compatible alias retained while downstream consumers still
@@ -162,6 +166,50 @@ pub enum FileEntryError {
         /// The offending `.tmpl` directory source path.
         source_path: String,
     },
+
+    /// An entry declared `remote = ""`. Omitting the key is how an entry
+    /// stays local; a blank one is a typo whose silent fallback would resolve
+    /// the source against the wrong tree.
+    #[error(
+        "entry source `{source_path}` declares an empty `remote`; name a `[[remote]]` from the \
+         root patina.toml, or drop the key to resolve the source inside this module"
+    )]
+    EmptyRemote {
+        /// The source path of the entry that declared it.
+        source_path: String,
+    },
+}
+
+/// Whether a `.tmpl` suffix on an entry's source triggers the implicit
+/// template render.
+///
+/// A local source takes the render. A source inside a remote
+/// checkout never does: third-party bytes full of `{{ }}` would either explode
+/// under strict-undefined rendering or, worse, render. Under
+/// [`TemplatePolicy::Never`] a `.tmpl` suffix is just part of a filename: the
+/// entry materializes as plain bytes under its declared mode, and a `.tmpl`
+/// directory source is an ordinary directory name rather than an error. The
+/// policy is per entry, so a module's own `.tmpl` still renders beside a
+/// remote-sourced one that does not. See `docs/REMOTE_SOURCES.md`
+/// "Trust boundaries".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TemplatePolicy {
+    /// A `.tmpl` source renders, and declaring an explicit `mode` beside it is
+    /// an error.
+    Implicit,
+    /// A `.tmpl` suffix carries no meaning.
+    Never,
+}
+
+impl TemplatePolicy {
+    /// The policy for an entry that does (or does not) select a remote.
+    fn for_source(remote: Option<&str>) -> Self {
+        if remote.is_some() {
+            Self::Never
+        } else {
+            Self::Implicit
+        }
+    }
 }
 
 impl ManagedEntry {
@@ -174,15 +222,18 @@ impl ManagedEntry {
             targets,
             mode,
             when,
+            remote,
         } = raw;
 
+        let remote = resolve_remote(remote, &source)?;
+        let policy = TemplatePolicy::for_source(remote.as_deref());
         let resolved_targets = resolve_targets(target, targets)?;
 
         // The implicit-template rule is checked before the mode allowlist
         // so a `.tmpl` source plus `mode = "..."` surfaces
         // ImplicitTemplateModeDeclared rather than an UnsupportedFileMode
         // false-positive.
-        let is_tmpl = has_tmpl_suffix(&source);
+        let is_tmpl = policy == TemplatePolicy::Implicit && has_tmpl_suffix(&source);
         if is_tmpl && let Some(declared) = mode.as_deref() {
             return Err(FileEntryError::ImplicitTemplateModeDeclared {
                 source_path: source.to_string(),
@@ -210,6 +261,7 @@ impl ManagedEntry {
             source,
             targets: resolved_targets,
             when,
+            remote,
         })
     }
 
@@ -223,13 +275,17 @@ impl ManagedEntry {
             targets,
             mode,
             when,
+            remote,
         } = raw;
 
+        let remote = resolve_remote(remote, &source)?;
+        let policy = TemplatePolicy::for_source(remote.as_deref());
         let resolved_targets = resolve_targets(target, targets)?;
 
         // Template render is file-only: a `.tmpl` directory source is
-        // rejected outright.
-        if has_tmpl_suffix(&source) {
+        // rejected outright. Under `Never` the suffix means nothing at all, so
+        // a remote directory that happens to be named `*.tmpl` is fine.
+        if policy == TemplatePolicy::Implicit && has_tmpl_suffix(&source) {
             return Err(FileEntryError::DirectoryTemplateSource {
                 source_path: source.to_string(),
             });
@@ -252,8 +308,26 @@ impl ManagedEntry {
             source,
             targets: resolved_targets,
             when,
+            remote,
         })
     }
+}
+
+/// Normalize a declared `remote`, refusing a blank one.
+fn resolve_remote(
+    remote: Option<String>,
+    source: &Utf8Path,
+) -> Result<Option<String>, FileEntryError> {
+    let Some(name) = remote else {
+        return Ok(None);
+    };
+    let name = name.trim();
+    if name.is_empty() {
+        return Err(FileEntryError::EmptyRemote {
+            source_path: source.to_string(),
+        });
+    }
+    Ok(Some(name.to_owned()))
 }
 
 /// Apply the exactly-one-of `target` / `targets` rule and the
@@ -298,4 +372,6 @@ pub(super) struct RawEntry {
     pub(super) mode: Option<String>,
     #[serde(default)]
     pub(super) when: Option<String>,
+    #[serde(default)]
+    pub(super) remote: Option<String>,
 }

@@ -45,9 +45,33 @@ pub struct Styles {
     pub prompt_affirm: Style,
     /// The default key in a `[y/N]` confirmation (the capitalized `N`).
     pub prompt_default: Style,
+    /// The roles the `patina remote list` table paints with.
+    pub remote: RemoteStyles,
     /// The roles the Defender exclusion listing paints with.
     #[cfg(windows)]
     pub exclusion: ExclusionStyles,
+}
+
+/// The roles the `patina remote list` table paints with.
+///
+/// Every cell these color also carries its meaning in text, so an ANSI-stripped
+/// listing loses the color and nothing else.
+#[derive(Debug, Clone, Copy)]
+pub struct RemoteStyles {
+    /// The remote's name.
+    pub name: Style,
+    /// The `ref` a `[[remote]]` declares.
+    pub declared_ref: Style,
+    /// A recorded pin's rev.
+    pub rev: Style,
+    /// The remote's URL.
+    pub url: Style,
+    /// The cells asking for action: `(unpinned)` and the `(update pending)`
+    /// tag. One role because one command answers both.
+    pub attention: Style,
+    /// The `(default branch)` stand-in for a `[[remote]]` that declares no
+    /// `ref`.
+    pub implicit_ref: Style,
 }
 
 /// The styles the Defender exclusion listing paints with.
@@ -104,6 +128,14 @@ impl Styles {
             prompt: none,
             prompt_affirm: none,
             prompt_default: none,
+            remote: RemoteStyles {
+                name: none,
+                declared_ref: none,
+                rev: none,
+                url: none,
+                attention: none,
+                implicit_ref: none,
+            },
             #[cfg(windows)]
             exclusion: ExclusionStyles {
                 file: none,
@@ -142,6 +174,14 @@ impl Styles {
             prompt_default: Style::new()
                 .fg_color(Some(Color::Ansi(AnsiColor::Red)))
                 .bold(),
+            remote: RemoteStyles {
+                name: Style::new().fg_color(Some(Color::Ansi(AnsiColor::Cyan))),
+                declared_ref: Style::new().fg_color(Some(Color::Ansi(AnsiColor::BrightYellow))),
+                rev: Style::new().fg_color(Some(Color::Ansi(AnsiColor::Green))),
+                url: Style::new().fg_color(Some(Color::Ansi(AnsiColor::BrightBlue))),
+                attention: Style::new().fg_color(Some(Color::Ansi(AnsiColor::Yellow))),
+                implicit_ref: Style::new().dimmed(),
+            },
             #[cfg(windows)]
             exclusion: ExclusionStyles {
                 file: Style::new().fg_color(Some(Color::Ansi(AnsiColor::Blue))),
@@ -185,6 +225,12 @@ mod tests {
             p.prompt,
             p.prompt_affirm,
             p.prompt_default,
+            p.remote.name,
+            p.remote.declared_ref,
+            p.remote.rev,
+            p.remote.url,
+            p.remote.attention,
+            p.remote.implicit_ref,
         ] {
             assert_eq!(
                 style.render().to_string(),
@@ -260,8 +306,35 @@ mod tests {
         assert_ne!(affirm, default, "affirm and default must differ");
     }
 
-    /// The five Defender-exclusion roles must each emit an escape and be
-    /// mutually distinct. Kind and state appear on the same line, so a hue
+    #[test]
+    fn colored_remote_roles_are_distinct_and_escaped() {
+        let r = Styles::colored().remote;
+        let roles = [
+            ("name", r.name),
+            ("declared_ref", r.declared_ref),
+            ("rev", r.rev),
+            ("url", r.url),
+            ("attention", r.attention),
+            ("implicit_ref", r.implicit_ref),
+        ];
+        for (name, style) in roles {
+            assert!(
+                style.render().to_string().contains('\u{1b}'),
+                "the {name} role must carry a color escape"
+            );
+        }
+        for (index, (left_name, left)) in roles.iter().enumerate() {
+            for (right_name, right) in roles.iter().skip(index + 1) {
+                assert_ne!(
+                    left.render().to_string(),
+                    right.render().to_string(),
+                    "{left_name} and {right_name} must render differently"
+                );
+            }
+        }
+    }
+
+    /// Kind and state appear on the same line, so a hue
     /// shared between the two groups would make one read as the other, and the
     /// three state colors are the only thing separating the three states.
     #[cfg(windows)]

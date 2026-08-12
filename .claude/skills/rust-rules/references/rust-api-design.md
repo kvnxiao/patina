@@ -195,6 +195,16 @@ rc = []
 
 Forbid `unsafe` by default. If a crate must relax that baseline, keep the discipline; `unsafe_code = "warn"` is a middle ground.
 
+Before writing `unsafe`, search for a safe wrapper crate:
+
+| Domain | Unsafe Bindings | Safe Wrapper |
+|--------|-----------------|--------------|
+| Windows API | `windows-sys` | `winsafe` |
+| POSIX/Unix | `libc` | `nix`, `rustix` |
+| SQLite | `libsqlite3-sys` | `rusqlite` |
+| OpenSSL | `openssl-sys` | `openssl` |
+| Memory | raw pointers | `bytemuck`, `zerocopy` |
+
 ```rust
 #![deny(unsafe_op_in_unsafe_fn)]
 
@@ -202,6 +212,8 @@ Forbid `unsafe` by default. If a crate must relax that baseline, keep the discip
 // Safety: `ptr` is non-null and points to an initialized `T` (checked above).
 let value = unsafe { &*ptr };
 ```
+
+Keep unsafe blocks minimal, never expose them in a public API (wrap in a safe abstraction), and document caller obligations in a `/// # Safety` section. Run `cargo +nightly miri test` over crates containing `unsafe`.
 
 Lock the public auto-trait surface with `assert_send::<T>()`-style tests, and add drop-count tests for by-value ownership tricks.
 

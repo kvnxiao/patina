@@ -8,21 +8,17 @@
 //! The `output::Reporter` abstraction is the only sanctioned site
 //! for user-facing prints: `println!`, `eprintln!`, `print!`, and `eprint!`
 //! are denied everywhere else via the workspace `clippy.toml`'s
-//! `disallowed-macros` list. This suite proves two halves of that contract:
-//!
-//! 1. The contract is *declared* — the real workspace `clippy.toml` lists all
-//!    four macros under `disallowed-macros`.
-//! 2. The contract *bites* — a fresh `println!("hi")` in a non-`output` file
-//!    makes clippy fail with a `clippy::disallowed_macros` diagnostic that
-//!    names the offending file, while the `tracing`-style macros and a
-//!    module-scoped `#[expect(clippy::disallowed_macros, ...)]` carve-out stay
-//!    clean.
+//! `disallowed-macros` list. This suite proves the contract *bites*: a fresh
+//! `println!("hi")` in a non-`output` file makes clippy fail with a
+//! `clippy::disallowed_macros` diagnostic that names the offending file, while
+//! the `tracing`-style macros and a module-scoped
+//! `#[expect(clippy::disallowed_macros, ...)]` carve-out stay clean.
 //!
 //! Rather than mutate the checked-in source tree (which would race with other
-//! parallel tests and risk leaving the tree dirty on failure), the "bites"
-//! half compiles a throwaway crate in a tempdir that reuses the *real*
-//! workspace `clippy.toml` — the artifact under test — so the assertion
-//! exercises the same config CI enforces.
+//! parallel tests and risk leaving the tree dirty on failure), each scenario
+//! compiles a throwaway crate in a tempdir that reuses the *real* workspace
+//! `clippy.toml`, the artifact under test, so the assertion exercises the
+//! same config CI enforces.
 
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
@@ -30,7 +26,7 @@ use serde_json::Value;
 use std::process::Command;
 use tempfile::TempDir;
 
-/// Absolute path to the workspace `clippy.toml` — the artifact under test.
+/// Absolute path to the workspace `clippy.toml`, the artifact under test.
 /// `CARGO_MANIFEST_DIR` is the `patina-cli` crate dir; the workspace root is
 /// its parent.
 fn workspace_clippy_toml() -> Utf8PathBuf {
@@ -39,32 +35,6 @@ fn workspace_clippy_toml() -> Utf8PathBuf {
         .parent()
         .expect("patina-cli has a workspace-root parent");
     root.join("clippy.toml")
-}
-
-#[test]
-fn clippy_toml_lists_all_four_print_macros() {
-    // The workspace clippy.toml must declare every raw
-    // print macro under `disallowed-macros`. Parse the real file as TOML and
-    // assert each entry is present as a literal string. Missing any one would
-    // leave a hole an `eprint!` (etc.) could slip through.
-    let path = workspace_clippy_toml();
-    let body = fs_err::read_to_string(&path).expect("read workspace clippy.toml");
-    let parsed: toml::Value = toml::from_str(&body).expect("clippy.toml parses as TOML");
-
-    let entries: Vec<&str> = parsed
-        .get("disallowed-macros")
-        .and_then(toml::Value::as_array)
-        .expect("clippy.toml has a disallowed-macros array")
-        .iter()
-        .filter_map(toml::Value::as_str)
-        .collect();
-
-    for expected in ["std::println", "std::eprintln", "std::print", "std::eprint"] {
-        assert!(
-            entries.contains(&expected),
-            "disallowed-macros is missing {expected}; found {entries:?}"
-        );
-    }
 }
 
 /// A throwaway single-file crate that reuses the workspace `clippy.toml`, with
@@ -89,8 +59,8 @@ fn scratch_crate(temp: &TempDir, body: &str) -> Utf8PathBuf {
     // `mod` would make them dead code and `-D warnings` would fail for that
     // reason instead of the one under test.
     fs_err::write(root.join("src/lib.rs"), "pub mod plan;\n").expect("write lib.rs");
-    // Reuse the real workspace clippy.toml verbatim — this is the artifact
-    // whose behaviour we are asserting.
+    // Reuse the real workspace clippy.toml verbatim: it is the artifact whose
+    // behaviour we are asserting.
     let clippy_toml = fs_err::read_to_string(workspace_clippy_toml()).expect("read clippy.toml");
     fs_err::write(root.join("clippy.toml"), clippy_toml).expect("write scratch clippy.toml");
     root
@@ -141,24 +111,32 @@ fn run_clippy(crate_root: &Utf8Path) -> (bool, Vec<String>) {
 }
 
 #[test]
-fn raw_println_outside_output_module_fails_clippy_naming_the_file() {
-    // A fresh `println!("hi")` in a non-`output` file (here `plan.rs`,
-    // mirroring `patina-core/src/plan.rs`) makes clippy
-    // exit non-zero with a `disallowed_macros` diagnostic that names the file.
+fn each_raw_print_macro_outside_output_module_fails_clippy_naming_the_file() {
+    // One use of each denied macro in a non-`output` file (here `plan.rs`,
+    // mirroring `patina-core/src/plan.rs`) makes clippy exit non-zero with one
+    // `disallowed_macros` diagnostic per use, so a macro missing from the
+    // workspace list shows up as the count dropping.
     let temp = TempDir::new().expect("tempdir");
-    let crate_root = scratch_crate(&temp, "pub fn shout() {\n    println!(\"hi\");\n}\n");
+    let crate_root = scratch_crate(
+        &temp,
+        "pub fn shout() {\n    println!(\"a\");\n    eprintln!(\"b\");\n    print!(\"c\");\n    \
+         eprint!(\"d\");\n}\n",
+    );
 
     let (success, files) = run_clippy(&crate_root);
 
     assert!(
         !success,
-        "clippy must reject a raw println! outside the output module"
+        "clippy must reject the raw print macros outside the output module"
     );
-    assert!(
-        files
-            .iter()
-            .any(|f| f.replace('\\', "/").ends_with("src/plan.rs")),
-        "the disallowed_macros diagnostic must name plan.rs; named {files:?}"
+    let in_plan = files
+        .iter()
+        .filter(|f| f.replace('\\', "/").ends_with("src/plan.rs"))
+        .count();
+    assert_eq!(
+        in_plan, 4,
+        "each of println!, eprintln!, print!, and eprint! must raise its own \
+         disallowed_macros diagnostic naming plan.rs; named {files:?}"
     );
 }
 
@@ -167,8 +145,8 @@ fn tracing_macro_and_scoped_expect_stay_clean() {
     // Sibling scenarios: replacing the offending line with a non-listed macro
     // (a `tracing`-style `info!`, stubbed locally so the scratch crate needs no
     // dependency) does not fire the lint, and a module-scoped
-    // `#[expect(clippy::disallowed_macros, ...)]` carve-out — the same shape
-    // the `output` module / lock_helper example use — suppresses it cleanly
+    // `#[expect(clippy::disallowed_macros, ...)]` carve-out (the same shape the
+    // `output` module and the lock_helper example use) suppresses it cleanly
     // without leaving an unfulfilled-expectation warning.
     let temp = TempDir::new().expect("tempdir");
     let crate_root = scratch_crate(

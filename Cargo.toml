@@ -51,17 +51,22 @@ notify-debouncer-full = "0.7"
 # stack clears `cargo deny check` at this dep-add gate.
 notify-rust = "4.17"
 postcard = { version = "1.1", default-features = false, features = ["use-std"] }
-pulldown-cmark = { version = "0.13", default-features = false }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 similar = "3.1"
+tabwriter = "1.4"
 tempfile = "3.10"
 thiserror = "2.0"
 tokio = { version = "1.52", default-features = false }
 toml = "1.1"
-toml_edit = "0.23"
+toml_edit = "0.25"
 tracing = "0.1"
 tracing-appender = "0.2"
+# NFC folding for the target-collision comparison key: APFS is
+# normalization-insensitive, so two targets differing only in NFC/NFD spelling
+# are one file on macOS. One transitive dep (`tinyvec`), against ~14 and
+# embedded data for `icu_normalizer`.
+unicode-normalization = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Host identity (hostname / username) via OS syscalls, not the unreliable
 # `$HOSTNAME` / `$USER` env vars — those are unset under non-login shells and

@@ -36,8 +36,8 @@ fn env_map(pairs: Vec<(&'static str, String)>) -> impl Fn(&str) -> Option<String
 
 #[test]
 fn linux_xdg_state_home_creates_tree_and_is_idempotent() {
-    // Scenario 1: Linux + XDG_STATE_HOME=T → T/patina/ with journal/
-    // and backups/ subdirs; a second call is a no-op.
+    // Scenario 1: Linux + XDG_STATE_HOME=T → T/patina/ with journal/,
+    // backups/, and remotes/ subdirs; a second call is a no-op.
     let (_keep, t) = utf8_tempdir();
     let env = env_map(vec![("XDG_STATE_HOME", t.to_string())]);
 
@@ -46,6 +46,7 @@ fn linux_xdg_state_home_creates_tree_and_is_idempotent() {
     assert!(first.is_dir(), "patina root must exist");
     assert!(first.join("journal").is_dir(), "journal/ must exist");
     assert!(first.join("backups").is_dir(), "backups/ must exist");
+    assert!(first.join("remotes").is_dir(), "remotes/ must exist");
 
     // Idempotency: second call returns same path and does not error
     // even though the directories already exist.

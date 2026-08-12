@@ -1,0 +1,5 @@
+---
+source: patina-core/src/apply/collisions.rs
+expression: err.to_string()
+---
+two entries resolve to the same target /home/u/.gitconfig: `gitconfig` in module `git` and `config/gitconfig` in module `work`. Give them distinct targets, or guard them with mutually exclusive `when` predicates
