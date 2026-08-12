@@ -306,6 +306,46 @@ fn a_branch_tracking_a_differently_named_upstream_is_still_compared() {
 }
 
 #[test]
+fn a_branch_tracking_nothing_falls_back_to_its_own_name_on_origin() {
+    // Without tracking configuration there is no upstream to read, and a
+    // clone's branches live on `origin` under their own names. The fallback
+    // has to keep comparing, or such a branch would silently never report.
+    let f = Fixture::new();
+    f.commit("a.txt", "one\n", BASE_EPOCH);
+    git_in(&f.origin, BASE_EPOCH, &["branch", "solo"]);
+
+    let clone = f.state.join("clone");
+    git_in(
+        &f.state,
+        BASE_EPOCH,
+        &["clone", "--quiet", f.origin.as_str(), clone.as_str()],
+    );
+    git_in(
+        &clone,
+        BASE_EPOCH,
+        &[
+            "checkout",
+            "--quiet",
+            "--no-track",
+            "-b",
+            "solo",
+            "origin/solo",
+        ],
+    );
+    assert!(
+        !git::repo_differs_from_origin(&clone),
+        "the untracked branch is level with the origin branch of its own name"
+    );
+
+    git_in(&f.origin, BASE_EPOCH + 60, &["checkout", "--quiet", "solo"]);
+    f.commit("a.txt", "two\n", BASE_EPOCH + 60);
+    assert!(
+        git::repo_differs_from_origin(&clone),
+        "the fallback must still see the origin branch move"
+    );
+}
+
+#[test]
 fn a_directory_that_is_not_a_git_repository_reports_no_difference() {
     // The check is notify-only, so an unanswerable question must read as "not
     // behind" rather than failing a command or spamming a shell prompt.

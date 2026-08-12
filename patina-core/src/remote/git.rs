@@ -546,24 +546,29 @@ fn try_repo_differs_from_origin(repo_root: &Utf8Path) -> Option<bool> {
     if branch == "HEAD" {
         return Some(false);
     }
-    let remote = in_repo(&["config", &format!("branch.{branch}.remote")])
-        .filter(|name| !name.is_empty())
-        .unwrap_or_else(|| "origin".to_owned());
     // The local branch name is not the upstream one: a branch may track any
-    // ref, and `work` tracking `origin/main` would otherwise be compared
-    // against a nonexistent `origin/work` and read as never behind. The
-    // configured merge ref is the branch this one actually tracks.
-    let upstream = in_repo(&["config", &format!("branch.{branch}.merge")])
-        .filter(|merge| !merge.is_empty())
-        .map_or(branch, |merge| {
-            merge
-                .trim()
-                .strip_prefix("refs/heads/")
-                .unwrap_or(merge.trim())
-                .to_owned()
-        });
-    let listing = in_repo(&["ls-remote", &remote, &upstream])?;
-    Some(select_ls_remote_sha(&listing, &upstream)? != head)
+    // ref, and `work` tracking `origin/main` compared against a nonexistent
+    // `origin/work` would read as never behind. One spawn answers both halves
+    // of the tracking configuration, with `lstrip` reducing the upstream to
+    // the branch name `ls-remote` takes. A branch tracking nothing falls back
+    // to its own name on `origin`, which is where a clone's branches live.
+    let tracking = in_repo(&[
+        "for-each-ref",
+        "--format=%(upstream:remotename)%09%(upstream:lstrip=3)",
+        &format!("refs/heads/{branch}"),
+    ])?;
+    // Trailing whitespace is trimmed off the captured output, so a branch that
+    // tracks nothing answers with an empty string rather than a lone
+    // separator, and one that names only a remote loses its trailing field.
+    let (remote, upstream) = tracking.split_once('\t').unwrap_or((tracking.as_str(), ""));
+    let remote = if remote.is_empty() { "origin" } else { remote };
+    let upstream = if upstream.is_empty() {
+        &branch
+    } else {
+        upstream
+    };
+    let listing = in_repo(&["ls-remote", remote, upstream])?;
+    Some(select_ls_remote_sha(&listing, upstream)? != head)
 }
 
 #[cfg(test)]
