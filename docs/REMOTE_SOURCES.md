@@ -263,6 +263,22 @@ The verbs split along a producer/consumer line:
 | `patina remote check`        | either   | `git ls-remote` only: compare upstream tips against the lock, refresh the notice file. No object download. Exits non-zero if any remote could not be reached. |
 | `patina remote prune`        | either   | Remove cached checkouts unreferenced by any journal record (currently pinned revs always stay), plus the cache tree of any undeclared remote. |
 
+`patina remote list` prints a header and one row per declaration, each
+column sized to its widest cell:
+
+```text
+NAME       REF               REV                                       URL
+humanizer  main              1f0c6c9b9f2e8a1d4b7c0e3a5d8f2b6c9e1a4d70  https://github.com/example/humanizer
+starship   (default branch)  (unpinned)                                https://github.com/starship/starship  (update pending)
+```
+
+A terminal additionally gets color: the name cyan, a recorded rev green,
+`(unpinned)` and `(update pending)` yellow, and a ref the manifest left
+to the remote's own default dim. Every one of those facts is in the text
+as well, so a piped run, `--color never`, and `NO_COLOR` lose the color
+and nothing else. `--json` carries the same rows plus each pin's
+`updated_at`.
+
 Failure shapes worth knowing:
 
 - Plain `apply`, offline, warm cache: works fully.

@@ -45,9 +45,29 @@ pub struct Styles {
     pub prompt_affirm: Style,
     /// The default key in a `[y/N]` confirmation (the capitalized `N`).
     pub prompt_default: Style,
+    /// The roles the `patina remote list` table paints with.
+    pub remote: RemoteStyles,
     /// The roles the Defender exclusion listing paints with.
     #[cfg(windows)]
     pub exclusion: ExclusionStyles,
+}
+
+/// The roles the `patina remote list` table paints with.
+///
+/// Every cell these color also carries its meaning in text, so an ANSI-stripped
+/// listing loses the color and nothing else.
+#[derive(Debug, Clone, Copy)]
+pub struct RemoteStyles {
+    /// The remote's name.
+    pub name: Style,
+    /// A recorded pin's rev.
+    pub rev: Style,
+    /// The cells asking for action: `(unpinned)` and the `(update pending)`
+    /// tag. One role because one command answers both.
+    pub attention: Style,
+    /// The `(default branch)` stand-in for a `[[remote]]` that declares no
+    /// `ref`.
+    pub implicit_ref: Style,
 }
 
 /// The styles the Defender exclusion listing paints with.
@@ -104,6 +124,12 @@ impl Styles {
             prompt: none,
             prompt_affirm: none,
             prompt_default: none,
+            remote: RemoteStyles {
+                name: none,
+                rev: none,
+                attention: none,
+                implicit_ref: none,
+            },
             #[cfg(windows)]
             exclusion: ExclusionStyles {
                 file: none,
@@ -119,6 +145,9 @@ impl Styles {
     /// warnings, bold headers, and cyan interactive prompts whose `[y/N]`
     /// keys read green (affirm) / red (default) so the two answers stand
     /// apart from the prose and each other.
+    ///
+    /// The remote-listing roles paint the name cyan, a recorded rev green, the
+    /// cells wanting action yellow, and an undeclared ref dim.
     ///
     /// The Defender-exclusion roles paint the path blue (file) or magenta
     /// (folder), leaving green, yellow, and red for the state tag: green in
@@ -142,6 +171,12 @@ impl Styles {
             prompt_default: Style::new()
                 .fg_color(Some(Color::Ansi(AnsiColor::Red)))
                 .bold(),
+            remote: RemoteStyles {
+                name: Style::new().fg_color(Some(Color::Ansi(AnsiColor::Cyan))),
+                rev: Style::new().fg_color(Some(Color::Ansi(AnsiColor::Green))),
+                attention: Style::new().fg_color(Some(Color::Ansi(AnsiColor::Yellow))),
+                implicit_ref: Style::new().dimmed(),
+            },
             #[cfg(windows)]
             exclusion: ExclusionStyles {
                 file: Style::new().fg_color(Some(Color::Ansi(AnsiColor::Blue))),
@@ -185,6 +220,10 @@ mod tests {
             p.prompt,
             p.prompt_affirm,
             p.prompt_default,
+            p.remote.name,
+            p.remote.rev,
+            p.remote.attention,
+            p.remote.implicit_ref,
         ] {
             assert_eq!(
                 style.render().to_string(),
@@ -258,6 +297,36 @@ mod tests {
         assert_ne!(prose, affirm, "prose and affirm must differ");
         assert_ne!(prose, default, "prose and default must differ");
         assert_ne!(affirm, default, "affirm and default must differ");
+    }
+
+    /// The four remote-listing roles must each emit an escape and be mutually
+    /// distinct. A pinned rev, an unpinned one, and an undeclared ref differ in
+    /// nothing but their text and their color, so a shared hue would make two
+    /// of the three read as one down a list of remotes.
+    #[test]
+    fn colored_remote_roles_are_distinct_and_escaped() {
+        let r = Styles::colored().remote;
+        let roles = [
+            ("name", r.name),
+            ("rev", r.rev),
+            ("attention", r.attention),
+            ("implicit_ref", r.implicit_ref),
+        ];
+        for (name, style) in roles {
+            assert!(
+                style.render().to_string().contains('\u{1b}'),
+                "the {name} role must carry a color escape"
+            );
+        }
+        for (index, (left_name, left)) in roles.iter().enumerate() {
+            for (right_name, right) in roles.iter().skip(index + 1) {
+                assert_ne!(
+                    left.render().to_string(),
+                    right.render().to_string(),
+                    "{left_name} and {right_name} must render differently"
+                );
+            }
+        }
     }
 
     /// The five Defender-exclusion roles must each emit an escape and be

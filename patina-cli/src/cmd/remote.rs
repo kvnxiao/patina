@@ -30,6 +30,8 @@ use crate::cmd::apply::Tty;
 use crate::cmd::shared_lock;
 use crate::exit_code::ExitCode;
 use crate::output::reporter::Reporter;
+use crate::output::style::Styles;
+use crate::output::style::paint;
 use anyhow::Context;
 use anyhow::Result;
 use patina_core::LockKind;
@@ -43,6 +45,8 @@ use patina_core::remote::update;
 use patina_core::remote::update::Proposal;
 use patina_core::remote::update::RemoteInventory;
 use patina_core::remote::update::RemoteView;
+use std::io::Write;
+use tabwriter::TabWriter;
 
 /// Run `patina remote`. Returns the process exit code.
 ///
@@ -66,7 +70,12 @@ pub fn run(
     match &args.command {
         RemoteCommand::List => {
             let inventory = read_inventory(&lock_path, false, reporter)?;
-            Ok(run_list(&inventory, args.json, reporter))
+            Ok(run_list(
+                &inventory,
+                args.json,
+                &Styles::colored(),
+                reporter,
+            ))
         }
         RemoteCommand::Check { hook } => {
             let inventory = read_inventory(&lock_path, *hook, reporter)?;
@@ -165,7 +174,12 @@ fn read_inventory(
 
 /// Report the pins as recorded, with the pending state the last
 /// `check` observed.
-fn run_list(inventory: &RemoteInventory, json: bool, reporter: &mut impl Reporter) -> i32 {
+fn run_list(
+    inventory: &RemoteInventory,
+    json: bool,
+    styles: &Styles,
+    reporter: &mut impl Reporter,
+) -> i32 {
     let pending = notice::read_pending(&inventory.state_dir);
     if json {
         let rows: Vec<serde_json::Value> = inventory
@@ -190,27 +204,69 @@ fn run_list(inventory: &RemoteInventory, json: bool, reporter: &mut impl Reporte
         reporter.line("No remotes are declared.");
         return ExitCode::Success.code();
     }
+
+    let mut table = format!(
+        "{}\t{}\t{}\t{}\n",
+        paint(styles.header, "NAME"),
+        paint(styles.header, "REF"),
+        paint(styles.header, "REV"),
+        paint(styles.header, "URL"),
+    );
     for view in &inventory.remotes {
-        let git_ref = view.spec.git_ref.as_deref().unwrap_or("(default branch)");
-        let rev = view
-            .pin
-            .as_ref()
-            .map_or("(unpinned)", |pin| pin.rev.as_str());
-        let state = if notice::is_pending(&pending, view.name()) {
-            "  update pending"
-        } else {
-            ""
-        };
-        reporter.line(&format!(
-            "{}  {}  {}  {}{}",
-            view.name(),
-            view.spec.url,
-            git_ref,
-            rev,
-            state
+        table.push_str(&list_row(
+            view,
+            notice::is_pending(&pending, view.name()),
+            styles,
         ));
     }
+    for line in align(&table).lines() {
+        reporter.line(line);
+    }
     ExitCode::Success.code()
+}
+
+/// One tab-separated listing row. The URL is the trailing cell, which elastic
+/// tabstops leave unpadded, so a pending tag can follow it without widening a
+/// column for every other remote.
+fn list_row(view: &RemoteView, pending: bool, styles: &Styles) -> String {
+    let git_ref = match &view.spec.git_ref {
+        Some(declared) => declared.clone(),
+        None => paint(styles.remote.implicit_ref, "(default branch)"),
+    };
+    let rev = match &view.pin {
+        Some(pin) => paint(styles.remote.rev, &pin.rev),
+        None => paint(styles.remote.attention, "(unpinned)"),
+    };
+    let tag = if pending {
+        format!("  {}", paint(styles.remote.attention, "(update pending)"))
+    } else {
+        String::new()
+    };
+    format!(
+        "{}\t{git_ref}\t{rev}\t{}{tag}\n",
+        paint(styles.remote.name, view.name().as_str()),
+        view.spec.url,
+    )
+}
+
+/// Align tab-separated cells into columns.
+///
+/// ANSI mode measures a cell by printable width, so a painted cell pads exactly
+/// as its stripped form does; that is what keeps piped, `--color never`, and
+/// `NO_COLOR` output aligned identically to a terminal's. Writing to a `Vec`
+/// cannot fail, so the unaligned fallback is unreachable and exists only
+/// because a print path must not carry a panic.
+fn align(table: &str) -> String {
+    let mut aligned: Vec<u8> = Vec::new();
+    let mut writer = TabWriter::new(&mut aligned)
+        .minwidth(0)
+        .padding(2)
+        .ansi(true);
+    if writer.write_all(table.as_bytes()).is_err() || writer.flush().is_err() {
+        return table.to_owned();
+    }
+    drop(writer);
+    String::from_utf8(aligned).unwrap_or_else(|_| table.to_owned())
 }
 
 /// Run `ls-remote` against every remote and refresh the notice.
@@ -766,7 +822,15 @@ mod tests {
     fn list_json_reports_the_declared_remote_and_its_pin() {
         let mut reporter = BufferReporter::new();
         let rev = "a".repeat(40);
-        assert_eq!(run_list(&inventory(Some(&rev)), true, &mut reporter), 0);
+        assert_eq!(
+            run_list(
+                &inventory(Some(&rev)),
+                true,
+                &Styles::plain(),
+                &mut reporter
+            ),
+            0
+        );
         let doc: serde_json::Value =
             serde_json::from_str(reporter.out.trim()).expect("one JSON document");
         assert_eq!(
@@ -790,7 +854,10 @@ mod tests {
     #[test]
     fn list_human_marks_an_unpinned_remote() {
         let mut reporter = BufferReporter::new();
-        assert_eq!(run_list(&inventory(None), false, &mut reporter), 0);
+        assert_eq!(
+            run_list(&inventory(None), false, &Styles::plain(), &mut reporter),
+            0
+        );
         assert!(
             reporter.out.contains("humanizer") && reporter.out.contains("(unpinned)"),
             "an unpinned remote must be shown as such: {}",
@@ -803,8 +870,105 @@ mod tests {
         let mut empty = inventory(None);
         empty.remotes.clear();
         let mut reporter = BufferReporter::new();
-        assert_eq!(run_list(&empty, false, &mut reporter), 0);
+        assert_eq!(run_list(&empty, false, &Styles::plain(), &mut reporter), 0);
         assert!(reporter.out.contains("No remotes are declared"));
+        assert!(
+            !reporter.out.contains("NAME"),
+            "an empty listing must print no table header: {}",
+            reporter.out
+        );
+    }
+
+    /// The second remote is wider in the name column and narrower in the rev
+    /// column, so no single row drives every width.
+    #[test]
+    fn list_human_starts_each_column_where_its_header_starts() {
+        let rev = "a".repeat(40);
+        let mut inv = inventory(Some(&rev));
+        inv.remotes.push(RemoteView {
+            spec: patina_core::RemoteSpec {
+                name: remote_name("a-much-longer-remote-name"),
+                url: "https://example.invalid/other".to_owned(),
+                git_ref: None,
+                min_age: None,
+            },
+            pin: None,
+        });
+
+        let mut reporter = BufferReporter::new();
+        assert_eq!(run_list(&inv, false, &Styles::plain(), &mut reporter), 0);
+        let mut lines = reporter.out.lines();
+        let header = lines.next().expect("a header row");
+        let pinned = lines.next().expect("the pinned remote's row");
+        let unpinned = lines.next().expect("the unpinned remote's row");
+        assert_eq!(lines.next(), None, "one row per remote and nothing more");
+
+        for (label, pinned_cell, unpinned_cell) in [
+            ("REF", "main", "(default branch)"),
+            ("REV", rev.as_str(), "(unpinned)"),
+            (
+                "URL",
+                "https://example.invalid/r",
+                "https://example.invalid/other",
+            ),
+        ] {
+            let column = header.find(label).expect("every header label is printed");
+            let starts_at = |line: &str, expected: &str| {
+                line.get(column..)
+                    .is_some_and(|rest| rest.starts_with(expected))
+            };
+            assert!(
+                starts_at(pinned, pinned_cell),
+                "{label} must start at column {column} in {pinned:?}"
+            );
+            assert!(
+                starts_at(unpinned, unpinned_cell),
+                "{label} must start at column {column} in {unpinned:?}"
+            );
+        }
+    }
+
+    /// Color must be purely additive over the plain table: the colored render
+    /// has to carry escapes, and stripping them has to give back the plain
+    /// render byte for byte. Padding painted along with its cell would break
+    /// this, and with it the alignment of piped and `--color never` output.
+    #[test]
+    fn list_human_color_strips_back_to_the_plain_table() {
+        let inv = inventory(Some(&"a".repeat(40)));
+
+        let mut plain = BufferReporter::new();
+        assert_eq!(run_list(&inv, false, &Styles::plain(), &mut plain), 0);
+        let mut colored = BufferReporter::new();
+        assert_eq!(run_list(&inv, false, &Styles::colored(), &mut colored), 0);
+
+        assert!(
+            colored.out.contains('\u{1b}'),
+            "the colored render must carry escapes: {:?}",
+            colored.out
+        );
+        assert_eq!(
+            anstream::adapter::strip_str(&colored.out).to_string(),
+            plain.out,
+            "stripping color must leave the plain table untouched"
+        );
+    }
+
+    /// A remote the last `check` found behind its upstream must say so on its
+    /// own row, in text and not by color alone.
+    #[test]
+    fn list_row_tags_a_pending_update_after_the_url() {
+        let view = only_view(&inventory(Some(&"a".repeat(40))));
+        let plain = Styles::plain();
+        assert!(
+            list_row(&view, true, &plain)
+                .ends_with("\thttps://example.invalid/r  (update pending)\n"),
+            "the tag must follow the URL in the trailing cell: {:?}",
+            list_row(&view, true, &plain)
+        );
+        assert!(
+            list_row(&view, false, &plain).ends_with("\thttps://example.invalid/r\n"),
+            "a remote at its pin must carry no tag"
+        );
     }
 
     #[test]
