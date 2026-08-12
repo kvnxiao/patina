@@ -69,19 +69,22 @@ fn state_for(doc: &serde_json::Value, suffix: &str) -> String {
     panic!("no files entry ending in `{suffix}` in {doc}");
 }
 
-/// Apply `manifest` for module `cfg` over a `conf` source, then re-apply after
-/// respelling the target, and return the second run's output.
+/// Apply a `copy` entry at `first`, respell its target to `second`, and apply
+/// again. Returns the fixture and the `patina status --json` taken between the
+/// two applies.
 ///
 /// The two spellings differ only in case or Unicode normal form, which a
-/// case-insensitive filesystem resolves to one object. Recording the first
-/// spelling and re-deriving the second must therefore yield one managed key, or
-/// the reap deletes what the second apply just wrote.
-fn respell_target(first: &str, second: &str) -> (common::Fixture, std::process::Output) {
+/// case-insensitive (or normalizing) filesystem resolves to one object.
+/// Recording the first spelling and re-deriving the second must therefore yield
+/// one managed key, or the reap deletes what the second apply just wrote.
+///
+/// The status document is the host-independent half of the proof: classifying
+/// the recorded target is a comparison of managed keys, so it answers ORPHANED
+/// under an unfolded key on every filesystem. The surviving bytes only prove
+/// anything where the two spellings name one object.
+fn respell_target(first: &str, second: &str) -> (common::Fixture, serde_json::Value) {
     let f = Fixture::new();
-    let module = f.module(
-        "cfg",
-        &format!("[[file]]\nsource = \"conf\"\ntarget = \"{first}\"\nmode = \"copy\"\n"),
-    );
+    let module = f.module("cfg", &copy_entry(first));
     fs_err::write(module.join("conf"), b"body").expect("write source");
 
     let applied = f.apply(&["--yes"]);
@@ -92,10 +95,9 @@ fn respell_target(first: &str, second: &str) -> (common::Fixture, std::process::
         String::from_utf8_lossy(&applied.stderr)
     );
 
-    f.module(
-        "cfg",
-        &format!("[[file]]\nsource = \"conf\"\ntarget = \"{second}\"\nmode = \"copy\"\n"),
-    );
+    f.module("cfg", &copy_entry(second));
+    let doc = status_json(&f.run(&["status", "--json"], &[]));
+
     let reapplied = f.apply(&["--yes"]);
     assert_eq!(
         code(&reapplied),
@@ -103,12 +105,22 @@ fn respell_target(first: &str, second: &str) -> (common::Fixture, std::process::
         "the respelled apply must succeed; stderr: {}",
         String::from_utf8_lossy(&reapplied.stderr)
     );
-    (f, reapplied)
+    (f, doc)
+}
+
+/// A one-entry module manifest copying `conf` to `target`.
+fn copy_entry(target: &str) -> String {
+    format!("[[file]]\nsource = \"conf\"\ntarget = \"{target}\"\nmode = \"copy\"\n")
 }
 
 #[test]
 fn a_case_only_target_respelling_does_not_reap_the_live_target() {
-    let (f, _out) = respell_target("~/.Config", "~/.config");
+    let (f, doc) = respell_target("~/.Config", "~/.config");
+    assert_eq!(
+        state_for(&doc, "/.Config"),
+        "clean",
+        "the recorded target must still read as managed after a case-only respelling: {doc}"
+    );
     assert_eq!(
         fs_err::read(f.home.join(".config").as_std_path()).expect("the respelled target exists"),
         b"body",
@@ -119,9 +131,15 @@ fn a_case_only_target_respelling_does_not_reap_the_live_target() {
 #[test]
 fn a_normalization_only_target_respelling_does_not_reap_the_live_target() {
     // `é` precomposed against `e` plus a combining acute. APFS resolves the two
-    // to one file, so this is where the reap could delete a live target; on a
-    // normalization-sensitive filesystem they are simply two files.
-    let (f, _out) = respell_target("~/.caf\u{e9}", "~/.cafe\u{301}");
+    // to one file; elsewhere they are two files and only the classification
+    // above can fail.
+    let (f, doc) = respell_target("~/.caf\u{e9}", "~/.cafe\u{301}");
+    assert_eq!(
+        state_for(&doc, "/.caf\u{e9}"),
+        "clean",
+        "the recorded target must still read as managed after a normalization-only \
+         respelling: {doc}"
+    );
     assert_eq!(
         fs_err::read(f.home.join(".cafe\u{301}").as_std_path())
             .expect("the respelled target exists"),
