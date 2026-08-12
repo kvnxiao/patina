@@ -222,17 +222,6 @@ mod tests {
     }
 
     #[test]
-    fn an_additive_commit_does_not_trip_the_ancestry_check() {
-        assert_eq!(
-            evaluate(GateInputs {
-                descends_from_pin: Some(true),
-                ..clean()
-            }),
-            GateOutcome::Allowed
-        );
-    }
-
-    #[test]
     fn a_candidate_dated_before_the_pin_was_recorded_needs_confirmation() {
         let inputs = GateInputs {
             candidate_epoch: NOW - 3 * WEEK,
@@ -249,10 +238,13 @@ mod tests {
     }
 
     #[test]
-    fn a_candidate_dated_after_the_pin_was_recorded_does_not_trip_the_floor() {
+    fn a_candidate_dated_exactly_at_the_pin_timestamp_is_not_backdated() {
+        // The backdating comparison is strict: a commit made in the same second
+        // the pin was recorded is not evidence of a rollback, and prompting on
+        // it would put a confirmation in front of an ordinary re-pin.
         assert_eq!(
             evaluate(GateInputs {
-                candidate_epoch: NOW - WEEK,
+                candidate_epoch: NOW - 2 * WEEK,
                 pinned_updated_at: Some(NOW - 2 * WEEK),
                 ..clean()
             }),

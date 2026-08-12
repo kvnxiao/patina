@@ -381,8 +381,8 @@ mod tests {
         )
         .expect_err("case-only-differing names must collide");
         assert!(
-            err.to_string().contains("Humanizer") || err.to_string().contains("humanizer"),
-            "the message must name the collision, got: {err}"
+            err.to_string().contains("humanizer"),
+            "the message must name the second declaration, the one that collided, got: {err}"
         );
     }
 

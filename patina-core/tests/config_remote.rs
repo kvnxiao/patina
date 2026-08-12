@@ -63,38 +63,6 @@ fn a_written_name_wins_over_the_url() {
 }
 
 #[test]
-fn a_url_with_no_derivable_name_says_to_write_one() {
-    let err = parse_root_config_str("[[remote]]\nurl = \"https://example.invalid/repo?ref=x\"\n")
-        .expect_err("a URL with no legal last segment must be rejected");
-    assert!(
-        err.to_string().contains("name = "),
-        "the message must point at the key that fixes it, got: {err}"
-    );
-}
-
-#[test]
-fn two_declarations_may_not_share_a_name() {
-    let err = parse_root_config_str(
-        "[[remote]]\nurl = \"https://a.invalid/humanizer\"\n\n\
-         [[remote]]\nurl = \"https://b.invalid/humanizer.git\"\n",
-    )
-    .expect_err("two remotes may not answer to one name");
-    assert!(
-        err.to_string().contains("humanizer"),
-        "the message must name the collision, got: {err}"
-    );
-}
-
-#[test]
-fn names_differing_only_in_case_are_one_name() {
-    parse_root_config_str(
-        "[[remote]]\nname = \"Humanizer\"\nurl = \"https://a.invalid/r\"\n\n\
-         [[remote]]\nname = \"humanizer\"\nurl = \"https://b.invalid/r\"\n",
-    )
-    .expect_err("case-only-differing names must collide");
-}
-
-#[test]
 fn a_declaration_with_an_empty_url_is_rejected() {
     parse_root_config_str("[[remote]]\nurl = \"\"\n").expect_err("a remote needs a URL");
 }

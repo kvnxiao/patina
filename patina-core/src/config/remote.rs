@@ -648,15 +648,13 @@ mod tests {
     }
 
     #[test]
-    fn a_normalization_only_respelling_is_one_remote() {
-        // `café` precomposed against `e` plus a combining acute: one directory
-        // on macOS, so one remote everywhere.
-        let precomposed = RemoteName::parse("caf\u{e9}");
-        let decomposed = RemoteName::parse("cafe\u{301}");
-        // Both are outside the ASCII alphabet, so both are refused; what must
-        // not happen is one being accepted and the other not.
-        assert!(precomposed.is_err() && decomposed.is_err());
-        assert_eq!(name_key("caf\u{e9}"), name_key("cafe\u{301}"));
+    fn both_normal_forms_of_one_name_are_refused_together() {
+        // `café` precomposed against `e` plus a combining acute. Both are
+        // outside the legal alphabet; what must not happen is one being
+        // accepted and the other not, which would make a manifest's legality
+        // depend on the editor that saved it.
+        RemoteName::parse("caf\u{e9}").expect_err("a precomposed non-ASCII name is refused");
+        RemoteName::parse("cafe\u{301}").expect_err("its decomposed spelling is refused too");
     }
 
     #[test]

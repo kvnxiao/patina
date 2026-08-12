@@ -29,12 +29,12 @@ use std::process::Command;
 use std::time::Duration;
 use tempfile::TempDir;
 
-/// "Now" for every gate evaluation here, so no assertion depends on the clock.
 /// The one remote every fixture declares.
 fn humanizer() -> RemoteName {
     RemoteName::parse("humanizer").expect("a legal remote name")
 }
 
+/// "Now" for every gate evaluation here, so no assertion depends on the clock.
 const NOW: i64 = 1_800_000_000;
 const WEEK: i64 = 7 * 24 * 60 * 60;
 
