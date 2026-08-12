@@ -185,10 +185,10 @@ clean: 1  drifted: 1  missing: 1  orphaned: 1
 
 On a terminal the state word is green (clean), yellow (drifted), red
 (missing), or magenta (orphaned); an orphan gets its own hue because it
-is a leftover awaiting a reap, not a degree of failure. In the summary
-only a non-zero counter is painted, so a clean repository reads at a
-glance. Every state is in the text as well, so a stripped run loses the
-color and nothing else.
+is a leftover awaiting a reap rather than a degree of failure. In the
+summary only a non-zero counter is painted, so a clean repository reads
+at a glance. Every state is in the text as well, so a stripped run loses
+the color and nothing else.
 
 ## Commands
 

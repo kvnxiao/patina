@@ -39,6 +39,7 @@ use crate::output::reporter::Reporter;
 use crate::output::style::Styles;
 use crate::output::style::paint;
 use crate::output::table::align;
+use crate::output::table::row;
 use anyhow::Context;
 use anyhow::Result;
 use camino::Utf8Path;
@@ -640,24 +641,20 @@ fn render_human(findings: &[Finding], styles: &Styles, reporter: &mut impl Repor
         reporter.line("doctor: no findings; the environment looks healthy.");
         return;
     }
-    let mut table = String::new();
-    for finding in findings {
-        table.push_str(&finding_row(finding, styles));
-    }
+    // Level and code share the level's color, so severity reads off the whole
+    // left edge rather than one bracketed word.
+    let table: String = findings
+        .iter()
+        .map(|finding| {
+            let style = level_style(finding.level, styles);
+            row(&[
+                paint(style, &format!("[{}]", finding.level.label())).as_str(),
+                paint(style, finding.code.label()).as_str(),
+                finding.message.as_str(),
+            ])
+        })
+        .collect();
     reporter.err_block(&align(&table));
-}
-
-/// One tab-separated finding row: the bracketed level, the stable code, and the
-/// message. Level and code share the level's color, so severity reads off the
-/// whole left edge rather than one bracketed word.
-fn finding_row(finding: &Finding, styles: &Styles) -> String {
-    let style = level_style(finding.level, styles);
-    format!(
-        "{}\t{}\t{}\n",
-        paint(style, &format!("[{}]", finding.level.label())),
-        paint(style, finding.code.label()),
-        finding.message
-    )
 }
 
 /// The palette role for a finding's level.
@@ -673,6 +670,7 @@ fn level_style(level: Level, styles: &Styles) -> anstyle::Style {
 mod tests {
     use super::*;
     use crate::output::reporter::BufferReporter;
+    use crate::output::reporter::assert_color_is_additive;
 
     /// A scripted prompt reader yielding a fixed sequence of lines.
     struct ScriptedReader {
@@ -1111,9 +1109,9 @@ mod tests {
         );
     }
 
-    /// The level is what the old single-warn render lost: every finding painted
-    /// the same yellow whatever it said. Color alone cannot carry it, so the
-    /// bracketed word must survive a strip, and the three codes must line up.
+    /// A reader has to tell an advisory note from an error at a glance, and
+    /// color alone cannot carry that: the bracketed word must survive a strip.
+    /// The codes must also share one column, or the messages read ragged.
     #[test]
     fn each_level_keeps_its_bracketed_word_and_paints_apart() {
         let findings = [Level::Info, Level::Warning, Level::Error].map(|level| Finding {
@@ -1122,6 +1120,8 @@ mod tests {
             message: "a message".to_owned(),
             path: None,
         });
+
+        assert_color_is_additive(|styles, reporter| render_human(&findings, styles, reporter));
 
         let mut plain = BufferReporter::new();
         render_human(&findings, &Styles::plain(), &mut plain);
@@ -1147,11 +1147,6 @@ mod tests {
                 colored.err.escape_debug()
             );
         }
-        assert_eq!(
-            anstream::adapter::strip_str(&colored.err).to_string(),
-            plain.err,
-            "stripping color must leave the plain report untouched"
-        );
 
         let column = plain
             .err

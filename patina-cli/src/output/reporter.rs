@@ -18,8 +18,11 @@
 //!   paths. The color decision is carried by the [`anstream::ColorChoice`]
 //!   passed at construction.
 //! - `BufferReporter` captures both streams into in-memory buffers so a test
-//!   can assert on exactly what would have been printed. It never styles, so
-//!   its buffers are always plain text.
+//!   can assert on exactly what would have been printed. It adds no styling of
+//!   its own, so its buffers hold whatever palette the renderer under test was
+//!   handed: plain under `Styles::plain`, escapes and all under
+//!   `Styles::colored`. `assert_color_is_additive` drives a renderer with both
+//!   and compares the two.
 
 use crate::output::style::Styles;
 use crate::output::style::paint;
@@ -191,6 +194,39 @@ impl BufferReporter {
     #[must_use = "construct the reporter to capture user-facing output"]
     pub fn new() -> Self {
         Self::default()
+    }
+}
+
+/// Assert that color is purely additive over whatever `render` prints.
+///
+/// This is the output layer's own contract, so it lives here rather than being
+/// restated by each surface that paints. Two failures are in scope. Painting a
+/// cell's padding along with the cell would misalign piped and `--color never`
+/// output, and making color the sole carrier of a fact would lose that fact
+/// wherever ANSI is stripped. Both streams are checked, so a renderer cannot
+/// pass by writing its painted bytes to the one nobody looked at.
+#[cfg(test)]
+pub fn assert_color_is_additive(render: impl Fn(&Styles, &mut BufferReporter)) {
+    let mut plain = BufferReporter::new();
+    render(&Styles::plain(), &mut plain);
+    let mut colored = BufferReporter::new();
+    render(&Styles::colored(), &mut colored);
+
+    assert!(
+        colored.out.contains('\u{1b}') || colored.err.contains('\u{1b}'),
+        "the colored render must carry escapes, or it is painting nothing:\nout: {:?}\nerr: {:?}",
+        colored.out,
+        colored.err
+    );
+    for (stream, painted, bare) in [
+        ("stdout", &colored.out, &plain.out),
+        ("stderr", &colored.err, &plain.err),
+    ] {
+        assert_eq!(
+            &anstream::adapter::strip_str(painted).to_string(),
+            bare,
+            "stripping color from {stream} must leave the plain render untouched"
+        );
     }
 }
 

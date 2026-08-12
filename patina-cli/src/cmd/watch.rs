@@ -23,7 +23,8 @@ use crate::exit_code::ExitCode;
 use crate::output::reporter::Reporter;
 use crate::output::style::Styles;
 use crate::output::style::paint;
-use crate::output::table::align;
+use crate::output::table::emit_aligned;
+use crate::output::table::row;
 use anyhow::Context;
 use anyhow::Result;
 use patina_core::LifecycleResult;
@@ -218,14 +219,20 @@ fn status_envelope(status: &ServiceStatus) -> String {
 /// Render the human-readable `status` summary: one aligned row per field, with
 /// `unknown` standing in for an absent recovered value.
 ///
-/// The key keeps its trailing colon inside its own cell, so a piped run reads
-/// `installed:` exactly as it always has.
+/// The key keeps its trailing colon inside its own cell, so `installed:` and
+/// `running:` stay single literal tokens for a script that greps them.
 fn render_status_human(status: &ServiceStatus, styles: &Styles, reporter: &mut impl Reporter) {
+    // Only `true` is painted. A machine that never installed the service reads
+    // `false` on both fields, and the warn color would call that intended state
+    // a fault.
     let liveness = |state: bool| {
-        let style = if state { styles.success } else { styles.warn };
-        paint(style, if state { "true" } else { "false" })
+        if state {
+            paint(styles.success, "true")
+        } else {
+            "false".to_owned()
+        }
     };
-    let rows = [
+    let table: String = [
         ("installed:", liveness(status.installed)),
         ("running:", liveness(status.running)),
         (
@@ -241,19 +248,11 @@ fn render_status_human(status: &ServiceStatus, styles: &Styles, reporter: &mut i
             "re-applies since start:",
             recovered(status.re_applies_since_start, styles),
         ),
-    ];
-    let mut table = String::new();
-    for (key, value) in rows {
-        table.push_str(&field_row(key, &value));
-    }
-    for line in align(&table).lines() {
-        reporter.line(line);
-    }
-}
-
-/// One tab-separated summary row: the key with its colon, then the value.
-fn field_row(key: &str, value: &str) -> String {
-    format!("{key}\t{value}\n")
+    ]
+    .iter()
+    .map(|(key, value)| row(&[key, value.as_str()]))
+    .collect();
+    emit_aligned(&table, reporter);
 }
 
 /// A recovered field's value, or the literal `unknown` when it could not be
@@ -315,6 +314,7 @@ async fn shutdown_signal() {
 mod tests {
     use super::*;
     use crate::output::reporter::BufferReporter;
+    use crate::output::reporter::assert_color_is_additive;
     use std::cell::RefCell;
 
     /// An in-memory [`ServiceBackend`] fake that records which method the
@@ -460,40 +460,34 @@ mod tests {
         assert_eq!(doc.get("subscriptions_count"), Some(&serde_json::json!(3)));
     }
 
-    /// Color must be purely additive over the aligned summary: the colored
-    /// render has to carry escapes, and stripping them has to give back the
-    /// plain render byte for byte. Padding painted along with its cell would
-    /// misalign every piped run.
-    #[test]
-    fn human_status_color_strips_back_to_the_plain_summary() {
-        // A mix of read and unread fields, so both the liveness colors and the
-        // `unknown` stand-in are exercised.
-        let status = ServiceStatus {
+    /// A mix of read and unread fields, so both the liveness color and the
+    /// `unknown` stand-in are exercised.
+    fn mixed_status() -> ServiceStatus {
+        ServiceStatus {
             installed: true,
             running: false,
             last_fired_at: None,
             last_exit_code: Some(0),
             subscriptions_count: Some(3),
             re_applies_since_start: None,
-        };
+        }
+    }
 
+    #[test]
+    fn human_status_color_strips_back_to_the_plain_summary() {
+        let status = mixed_status();
+        assert_color_is_additive(|styles, reporter| {
+            render_status_human(&status, styles, reporter);
+        });
+    }
+
+    /// Every value starts where the widest key's column ends, so a reader scans
+    /// the values down one edge.
+    #[test]
+    fn every_value_starts_at_one_column() {
         let mut plain = BufferReporter::new();
-        render_status_human(&status, &Styles::plain(), &mut plain);
-        let mut colored = BufferReporter::new();
-        render_status_human(&status, &Styles::colored(), &mut colored);
+        render_status_human(&mixed_status(), &Styles::plain(), &mut plain);
 
-        assert!(
-            colored.out.contains('\u{1b}'),
-            "the colored render must carry escapes: {:?}",
-            colored.out
-        );
-        assert_eq!(
-            anstream::adapter::strip_str(&colored.out).to_string(),
-            plain.out,
-            "stripping color must leave the plain summary untouched"
-        );
-        // Every value starts where the widest key's column ends, which is what
-        // the literal space runs used to approximate by hand.
         let column = plain
             .out
             .lines()

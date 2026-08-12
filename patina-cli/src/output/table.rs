@@ -1,9 +1,14 @@
 //! Column alignment for the CLI's multi-row human surfaces.
 //!
-//! Every table-shaped listing buffers `\t`-separated cells into one block and
-//! runs it through [`align`], so a single setting decides the padding for all
-//! of them and no surface hand-counts spaces.
+//! Every table-shaped listing buffers `\t`-separated cells into one block, runs
+//! it through [`align`], and prints it with [`emit_aligned`]. One setting
+//! decides the padding for all of them, and no command module counts spaces.
+//!
+//! The `patina debug` dumps in `patina_core` are not clients. They render a
+//! developer post-mortem, not a table, and `patina_core` cannot reach the CLI's
+//! palette.
 
+use crate::output::reporter::Reporter;
 use std::io::Write;
 use tabwriter::TabWriter;
 
@@ -28,13 +33,35 @@ pub fn align(table: &str) -> String {
     String::from_utf8(aligned).unwrap_or_else(|_| table.to_owned())
 }
 
+/// Join `cells` into one tab-separated, newline-terminated row.
+///
+/// [`align`] pads a cell only when a tab follows it, so a row ends after its
+/// last cell rather than trailing the padding of an empty one.
+#[must_use = "the row is what gets buffered into the table"]
+pub fn row(cells: &[&str]) -> String {
+    let mut row = cells.join("\t");
+    row.push('\n');
+    row
+}
+
+/// Align a buffered block and print it to the out stream, one row at a time.
+///
+/// Every row a caller buffers ends in `\n`, and `lines` drops that terminator
+/// before [`Reporter::line`] puts it back. An empty block yields no lines, so a
+/// listing with no rows prints nothing.
+pub fn emit_aligned(table: &str, reporter: &mut impl Reporter) {
+    for line in align(table).lines() {
+        reporter.line(line);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     /// The widest cell in a column sets that column's width, so every row's
-    /// next cell begins at the same offset. Hand-padding is what this replaces,
-    /// and a row that drove its own width would defeat the point.
+    /// next cell begins at the same offset. A row that padded to its own width
+    /// would leave the block ragged, which is the whole failure this prevents.
     #[test]
     fn every_row_starts_its_second_column_at_one_offset() {
         let aligned = align("a\tone\nlonger\ttwo\n");

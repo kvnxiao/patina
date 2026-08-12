@@ -30,7 +30,8 @@ use crate::exit_code::ExitCode;
 use crate::output::reporter::Reporter;
 use crate::output::style::Styles;
 use crate::output::style::paint;
-use crate::output::table::align;
+use crate::output::table::emit_aligned;
+use crate::output::table::row;
 use anyhow::Context;
 use anyhow::Result;
 use anyhow::anyhow;
@@ -479,12 +480,8 @@ fn render_preview(reconcile: &Reconcile<'_>, styles: &Styles, reporter: &mut imp
     for exclusion in desired {
         let state = classifier.classify(exclusion);
         if !state.needs_add() {
-            table.push_str(&listing_row(
-                "    ",
-                exclusion,
-                Some(state_tag(state, styles)),
-                styles,
-            ));
+            let tag = state_tag(state, styles);
+            table.push_str(&listing_row("    ", exclusion, Some(&tag), styles));
         }
     }
     emit_aligned(&table, reporter);
@@ -493,32 +490,15 @@ fn render_preview(reconcile: &Reconcile<'_>, styles: &Styles, reporter: &mut imp
     }
 }
 
-/// One tab-separated listing row: the add / remove / unchanged marker and the
-/// path in one cell, then the state tag in the next.
+/// One listing row: the add / remove / unchanged marker and the path in one
+/// cell, then the state tag in the next.
 ///
-/// The marker shares the path's cell so it cannot widen the column, and a row
-/// with no tag ends after the path rather than trailing an empty cell.
-fn listing_row(
-    marker: &str,
-    exclusion: &Exclusion,
-    tag: Option<String>,
-    styles: &Styles,
-) -> String {
-    let path = path_by_kind(exclusion, styles);
+/// The marker shares the path's cell so it cannot widen the column.
+fn listing_row(marker: &str, exclusion: &Exclusion, tag: Option<&str>, styles: &Styles) -> String {
+    let path = format!("{marker}{}", path_by_kind(exclusion, styles));
     match tag {
-        Some(tag) => format!("{marker}{path}\t{tag}\n"),
-        None => format!("{marker}{path}\n"),
-    }
-}
-
-/// Align a buffered listing and emit it a line at a time, or emit nothing when
-/// there are no rows. Aligning an empty block would still print a blank line.
-fn emit_aligned(table: &str, reporter: &mut impl Reporter) {
-    if table.is_empty() {
-        return;
-    }
-    for line in align(table).lines() {
-        reporter.line(line);
+        Some(tag) => row(&[path.as_str(), tag]),
+        None => row(&[path.as_str()]),
     }
 }
 
@@ -539,15 +519,11 @@ fn render_status(
     let mut table = String::new();
     for exclusion in desired {
         let tag = state_tag(classifier.classify(exclusion), styles);
-        table.push_str(&listing_row("  ", exclusion, Some(tag), styles));
+        table.push_str(&listing_row("  ", exclusion, Some(&tag), styles));
     }
+    let stale = stale_tag(styles);
     for exclusion in &diff.to_remove {
-        table.push_str(&listing_row(
-            "  ",
-            exclusion,
-            Some(stale_tag(styles)),
-            styles,
-        ));
+        table.push_str(&listing_row("  ", exclusion, Some(&stale), styles));
     }
     emit_aligned(&table, reporter);
 }
@@ -724,6 +700,7 @@ fn save_ledger(path: &Utf8Path, ledger: &DefenderLedger) -> Result<()> {
 mod tests {
     use super::*;
     use crate::output::reporter::BufferReporter;
+    use crate::output::reporter::assert_color_is_additive;
     use patina_core::CurrentExclusions;
     use patina_core::ExclusionKind;
 
@@ -1056,22 +1033,14 @@ mod tests {
 
         assert!(reporter.out.contains(REPO));
         assert!(reporter.out.contains("[recorded]"));
-        assert!(
-            reporter.out.contains('\u{1b}'),
-            "the colored palette must actually emit escapes: {}",
-            reporter.out.escape_debug()
-        );
-        assert_eq!(
-            anstream::adapter::strip_str(&reporter.out).to_string(),
-            fixture.preview(),
-            "stripping color must leave the plain listing untouched: padding painted \
-             along with its cell would misalign every piped run"
-        );
+        assert_color_is_additive(|styles, reporter| {
+            render_preview(&fixture.reconcile(), styles, reporter);
+        });
     }
 
     /// Two desired exclusions of different path lengths must put their tags in
-    /// one column. Hand-padding is what this replaced, and a listing that runs
-    /// to dozens of paths is the whole reason the column has to hold.
+    /// one column. The listing runs to dozens of paths, so a reader scans the
+    /// state down that column rather than reading each line to its end.
     #[test]
     fn a_listing_starts_every_state_tag_at_one_column() {
         let short = r"C:\a";

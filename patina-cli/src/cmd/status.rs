@@ -17,7 +17,8 @@ use crate::exit_code::ExitCode;
 use crate::output::reporter::Reporter;
 use crate::output::style::Styles;
 use crate::output::style::paint;
-use crate::output::table::align;
+use crate::output::table::emit_aligned;
+use crate::output::table::row;
 use anyhow::Context;
 use anyhow::Result;
 use patina_core::StatusOptions;
@@ -95,24 +96,19 @@ fn render_human(report: &StatusReport, styles: &Styles, reporter: &mut impl Repo
         render_remotes_pending(report, reporter);
         return;
     }
-    let mut table = String::new();
-    for entry in &report.files {
-        table.push_str(&entry_row(entry, styles));
-    }
-    for line in align(&table).lines() {
-        reporter.line(line);
-    }
+    let table: String = report
+        .files
+        .iter()
+        .map(|entry| {
+            row(&[
+                paint(state_style(entry.state, styles), state_label(entry.state)).as_str(),
+                entry.path.as_str(),
+            ])
+        })
+        .collect();
+    emit_aligned(&table, reporter);
     reporter.line(&render_summary(report, styles));
     render_remotes_pending(report, reporter);
-}
-
-/// One tab-separated status row: the state word, painted, then the target path.
-fn entry_row(entry: &patina_core::StatusEntry, styles: &Styles) -> String {
-    format!(
-        "{}\t{}\n",
-        paint(state_style(entry.state, styles), state_label(entry.state)),
-        entry.path
-    )
 }
 
 /// The four aggregate counters on one line, each non-zero counter painted in
@@ -169,6 +165,7 @@ fn state_label(state: TargetState) -> &'static str {
 mod tests {
     use super::*;
     use crate::output::reporter::BufferReporter;
+    use crate::output::reporter::assert_color_is_additive;
     use camino::Utf8PathBuf;
     use patina_core::LastApply;
     use patina_core::StatusEntry;
@@ -316,27 +313,10 @@ mod tests {
         );
     }
 
-    /// Color must be purely additive over the aligned table: padding painted
-    /// along with its cell would misalign every piped run.
     #[test]
     fn human_render_color_strips_back_to_the_plain_table() {
         let report = report_of_every_state();
-
-        let mut plain = BufferReporter::new();
-        render_human(&report, &Styles::plain(), &mut plain);
-        let mut colored = BufferReporter::new();
-        render_human(&report, &Styles::colored(), &mut colored);
-
-        assert!(
-            colored.out.contains('\u{1b}'),
-            "the colored render must carry escapes: {:?}",
-            colored.out
-        );
-        assert_eq!(
-            anstream::adapter::strip_str(&colored.out).to_string(),
-            plain.out,
-            "stripping color must leave the plain table untouched"
-        );
+        assert_color_is_additive(|styles, reporter| render_human(&report, styles, reporter));
     }
 
     #[test]

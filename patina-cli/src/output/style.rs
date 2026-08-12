@@ -445,8 +445,8 @@ mod tests {
         ]);
     }
 
-    /// Routing every finding through one warn style is what made the level
-    /// invisible, so the three levels must not converge again.
+    /// Three levels sharing one hue would leave the severity of a report
+    /// readable only by reading every bracketed word.
     #[test]
     fn colored_finding_roles_are_distinct_and_escaped() {
         let f = Styles::colored().finding;

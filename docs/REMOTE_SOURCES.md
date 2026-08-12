@@ -298,10 +298,10 @@ run considered, and `STATUS` what became of the pin. The two blanks are
 worded apart on purpose: `(unpinned)` means no pin was recorded, while
 `(unknown)` means the run never learned a candidate. A remote that
 failed or was refused still gets a row, so the table accounts for the
-whole run; the reason stays on stderr with the warning. The rows are
-emitted after the run rather than during it, because the run
-interleaves warnings and confirmation prompts. Color follows `remote
-list`: cyan names, green revs, yellow for either blank.
+whole run; the reason stays on stderr with the warning. `remote update`
+emits the rows once the run is over rather than during it, because it
+interleaves warnings and confirmation prompts as it goes. Color follows
+`remote list`: cyan names, green revs, yellow for either blank.
 
 Failure shapes worth knowing:
 
