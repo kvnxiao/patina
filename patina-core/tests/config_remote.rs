@@ -5,9 +5,9 @@
 //! wants its bytes. The parse-level consequences are that each declaration is
 //! validated and named, that a module manifest may not declare a remote
 //! of its own, and that an entry naming one gets no implicit `.tmpl` template
-//! render — third-party bytes are never handed to `MiniJinja` — while its local
-//! neighbours in the same manifest keep it. See `docs/REMOTE_SOURCES.md` "The
-//! remote registry" and "Trust boundaries".
+//! render, because third-party bytes are never handed to `MiniJinja`, while its
+//! local neighbours in the same manifest keep it. See `docs/REMOTE_SOURCES.md`
+//! "The remote registry" and "Trust boundaries".
 
 use patina_core::FileMode;
 use patina_core::parse_module_config_str;

@@ -44,8 +44,8 @@ min_age = "0s"           # optional; overrides remote_min_age for this remote
 A remote's **name** is what entries refer to it by, and what keys its
 pin in the lockfile, its directory in the cache, and every
 `patina remote` verb. Write `name` outright, or let Patina take it from
-the last path segment of the URL with any trailing `.git` removed —
-which gives `humanizer` for all of
+the last path segment of the URL with any trailing `.git` removed.
+That gives `humanizer` for all of
 `https://github.com/blader/humanizer.git`,
 `git@github.com:blader/humanizer`, and `/srv/mirrors/humanizer.git`. A
 name may contain letters, digits, `.`, `_`, and `-`, because it becomes
@@ -58,7 +58,7 @@ for, and `notice.` would land on Patina's own notice file. Those are
 refused on every platform, so manifest validity never depends on which
 machine reads it. Two remotes may not answer to one
 name, compared ignoring case and Unicode normalization so a manifest
-cannot mean two things on Linux and one thing on macOS — and every
+cannot mean two things on Linux and one thing on macOS. Every
 reference is matched the same way: an entry's `remote` key, a
 `patina remote update <name>` argument, and a `patina.lock` key all
 find a declaration whose spelling differs only in case. The names
@@ -122,9 +122,10 @@ Remote content is third-party input, and Patina holds these lines:
   is refused at plan time. Symlinks in a checkout are materialized as
   inert files holding their target text, so the resolver cannot follow
   one out of the checkout. Should a cached checkout hold a real
-  symbolic link anyway — Patina never writes one, so it means the
-  cache was made or altered by something else — a directory source
-  containing one fails the plan rather than deploying through it.
+  symbolic link anyway, a directory source containing one fails the
+  plan rather than deploying through it. Patina never writes such a
+  link, so its presence means the cache was made or altered by
+  something else.
 - A remote's `url` and `ref` are passed to `git` as positional
   arguments and may not begin with `-`, so a manifest cannot smuggle a
   git option (for example `--upload-pack`) into a fetch.
@@ -176,8 +177,8 @@ about what this machine happens to use. Two consequences follow.
 including one no entry currently names, so the committed lock stays
 complete for machines whose active entries differ from yours. And a pin
 whose `[[remote]]` you deleted is stale by definition: a `patina apply`
-that may write drops it and says so. A preview — a non-interactive
-apply without `--yes`, or any `--json` run — reports the stale pin and
+that may write drops it and says so. A preview (a non-interactive
+apply without `--yes`, or any `--json` run) reports the stale pin and
 leaves the file alone, because a preview never writes your repository.
 
 Reading `patina.lock` is itself lazy: it happens on the first entry
@@ -209,7 +210,7 @@ from the checkout's bytes. A preview is therefore not offline and not
 write-free in the strictest sense: a non-interactive apply without
 `--yes`, and any `--json` run, will fetch and write a checkout the
 cache lacks. What a preview never writes is your repository or any
-target — the lockfile rewrites are held back for exactly that reason.
+target: the lockfile rewrites are held back for exactly that reason.
 
 The directory under `<state>/remotes/` is named by the remote's
 folded name (one case, one Unicode normal form), not by the spelling
@@ -236,7 +237,7 @@ is a post-1.0 item.
 After each successful apply, the cache is swept automatically:
 checkouts that no journal record on disk references are removed, and a
 remote the root manifest no longer declares loses its whole cache
-directory — bare repository included — once no journal record points
+directory, bare repository included, once no journal record points
 into it. Rollback always has what it needs, and disk stays bounded at
 roughly the current and previous rev per remote. The checkout of each
 declared remote's currently pinned rev always survives, referenced or
@@ -301,9 +302,9 @@ must clear four checks, evaluated after fetching it:
 
 Declining a confirmation prompt leaves the pin where it is and exits
 `5`, the code every Patina command uses for a declined prompt. A pin
-the gate held back on its own — a cooldown, a verdict this binary does
-not recognize — exits `0` instead: nobody was asked, so nothing was
-refused.
+the gate held back on its own, through a cooldown or a verdict this
+binary does not recognize, exits `0` instead: nobody was asked, so
+nothing was refused.
 
 The first pin of a newly declared remote is exempt from the age gate:
 adopting a remote is a deliberate act whose content you are about to
@@ -311,14 +312,13 @@ review in the consent diff. The gate exists to slow down *unattended*
 pin bumps. `--now` bypasses the age gate for one run, with a visible
 warning.
 
-One limit must be stated plainly: committer timestamps are authored
-by whoever makes the commit. The checks stop untargeted, fast-moving
-compromises, the common case where attackers race detection windows
-and publish with honest timestamps. An attacker who backdates a
-commit specifically to defeat this gate will pass it. Plain git
-offers no unforgeable, machine-independent time source. The
-diff-and-prompt loop remains the hard boundary in front of every
-byte.
+The gate has one limit worth stating plainly: committer timestamps are
+authored by whoever makes the commit. The checks stop untargeted,
+fast-moving compromises, the common case where attackers race detection
+windows and publish with honest timestamps. An attacker who backdates a
+commit specifically to defeat this gate will pass it. Plain git offers
+no unforgeable, machine-independent time source. The diff-and-prompt
+loop remains the hard boundary in front of every byte.
 
 ## Multi-machine flow
 
@@ -445,10 +445,9 @@ object. A `symlink-tree` or `copy` `[[directory]]` materializes one
 object per source leaf and journals each leaf as its own target, so it
 claims those leaves and nothing between them. Another entry may
 therefore deploy into a part of the same directory the tree does not
-fill — which is what makes "add one upstream file to a directory my
-repository also populates" expressible — while two entries writing one
-leaf is still refused, naming the leaf and the directory target it came
-from.
+fill, which is what makes "add one upstream file to a directory my
+repository also populates" expressible. Two entries writing one leaf is
+still refused, naming the leaf and the directory target it came from.
 
 The leaves are read from the source tree as it stands, so the verdict
 depends on what the source currently holds: a file appearing upstream

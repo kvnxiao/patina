@@ -60,7 +60,7 @@ pub struct StatusEntry {
 /// checkout leaf, but read-only passes (status, the orphan reap) must not
 /// fetch, so when the pinned checkout is not materialized the entry's leaves
 /// are unknowable rather than absent. Treating them as absent would report
-/// every previously-applied leaf ORPHANED — and let the reap delete it — so
+/// every previously-applied leaf ORPHANED, and let the reap delete it, so
 /// those entries' declared target roots are carried separately and a recorded
 /// target under one still counts as managed.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -75,8 +75,8 @@ pub struct ManagedTargets {
 }
 
 impl ManagedTargets {
-    /// Whether the current plan manages `key` — either enumerably, or as part
-    /// of a tree whose remote checkout is not on this machine.
+    /// Whether the current plan manages `key`, either enumerably or as part of
+    /// a tree whose remote checkout is not on this machine.
     #[must_use = "the answer decides ORPHANED classification and the reap"]
     pub fn governs(&self, key: &camino::Utf8Path) -> bool {
         self.targets.contains(key)

@@ -10,7 +10,7 @@
 //! mode that plants a single object over the entire target path. A
 //! `symlink-tree` or `copy` `[[directory]]` materializes one object per source
 //! leaf and the journal records each leaf as its own target, so its footprint
-//! is those leaves — which is what the planner hands this module, already
+//! is those leaves, which is what the planner hands this module, already
 //! expanded. Two entries filling different parts of one directory are therefore
 //! legal, and two entries writing one leaf of it are not.
 //!
@@ -111,7 +111,7 @@ enum CollisionRepr {
         "the directory entry `{outer_source}` in module `{outer_module}` links its whole \
          target {outer_target}, which contains the target {inner_target} of \
          `{inner_source}` in module `{inner_module}`{}. A `[[directory]]` `mode = \"symlink\"` \
-         replaces its target path outright, so move one of the two — or switch it to \
+         replaces its target path outright, so move one of the two, or switch it to \
          `symlink-tree`, which owns only the leaves it materializes",
         leaf_of(.inner_tree_target.as_deref())
     )]
@@ -207,7 +207,7 @@ fn comparison_key(
     };
     // The leaf rides along as a to-be-appended component from the start, so only
     // the parent chain (real directories) is ever resolved through the
-    // filesystem — and each distinct parent only once per validation pass.
+    // filesystem, and each distinct parent only once per validation pass.
     let parent = match target.parent() {
         Some(parent) if !parent.as_str().is_empty() => parent,
         _ => return case_fold(target),

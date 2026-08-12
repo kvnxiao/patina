@@ -148,8 +148,8 @@ fn declared_remotes() -> Result<RemoteInventory> {
 
 /// Read the inventory under the shared lock, releasing it before returning.
 ///
-/// The lock covers the read of the manifest and the lockfile — the files a
-/// concurrent `apply` or `remote update` rewrites — and nothing after it. The
+/// The lock covers the read of the manifest and the lockfile, the files a
+/// concurrent `apply` or `remote update` rewrites, and nothing after it. The
 /// caller may then spend as long as it likes on the network without an apply
 /// waiting behind it.
 fn read_inventory(
@@ -441,7 +441,7 @@ fn reconcile_notice(
 ///
 /// A failure outranks a decline: a run that both failed to reach one remote and
 /// was told no about another reports the failure, the more actionable of the
-/// two. A pin the gate held on its own is a success — the run did what the gate
+/// two. A pin the gate held on its own is a success: the run did what the gate
 /// said, and a script that treated a cooldown as an error would fail daily.
 fn exit_for(outcomes: &[Outcome]) -> ExitCode {
     if outcomes

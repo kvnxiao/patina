@@ -13,7 +13,7 @@
 //! host, reads the process environment, materializes the directory
 //! tree (`<state>/patina/`, `<state>/patina/journal/`,
 //! `<state>/patina/backups/`, `<state>/patina/remotes/`) on first call, and
-//! returns the canonical absolute path. It is idempotent — a second call on the
+//! returns the canonical absolute path. It is idempotent: a second call on the
 //! same host returns the same path and is a filesystem no-op.
 //!
 //! The lazily-created files `profile`, `default_repo`, and `lock`
@@ -183,7 +183,7 @@ where
 }
 
 /// Create the patina state root and its three required subdirectories
-/// (`journal/`, `backups/`, and `remotes/`). Idempotent — pre-existing
+/// (`journal/`, `backups/`, and `remotes/`). Idempotent: pre-existing
 /// directories are not an error.
 fn create_tree(root: &Utf8Path) -> Result<(), StateDirError> {
     create_dir_idempotent(root)?;

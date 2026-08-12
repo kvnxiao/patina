@@ -195,8 +195,8 @@ pub(crate) fn symlink_to(link: &Utf8Path, target: &Utf8Path) -> std::io::Result<
 /// and a rename, creating `path`'s parent chain if it is missing.
 ///
 /// The rename is the atomic point: POSIX `rename(2)` and Windows `MoveFileEx`
-/// both swap the destination in one operation, so a concurrent reader — and a
-/// process killed mid-write — observes either the previous file whole or the
+/// both swap the destination in one operation, so a concurrent reader, or a
+/// process killed mid-write, observes either the previous file whole or the
 /// new one whole, never a truncated one. Writing to the destination directly
 /// would leave neither on a kill between the truncate and the last byte.
 ///

@@ -150,8 +150,8 @@ fn a_checkout_holding_a_real_symlink_fails_the_apply_plan() {
 #[test]
 fn status_reports_applied_leaves_clean_when_the_pin_moved_but_its_checkout_is_absent() {
     // The multi-machine flow: a `git pull` bumps the pin before the next
-    // apply. Status must not fetch, so the new rev's leaves are unknowable —
-    // and the previously applied, still-correct leaves must read CLEAN with a
+    // apply. Status must not fetch, so the new rev's leaves are unknowable, and
+    // the previously applied, still-correct leaves must read CLEAN with a
     // warning, not ORPHANED.
     let f = Fixture::new();
     let origin = Origin::new(&f, "humanizer", EPOCH);

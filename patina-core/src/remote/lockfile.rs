@@ -230,7 +230,7 @@ impl Lockfile {
     /// The lockfile is a statement about the root manifest's declarations, so a
     /// pin whose declaration was deleted is stale by definition: it would keep
     /// its checkout alive in the cache and reappear in `patina remote` output
-    /// forever. Nothing else depends on it — an entry naming a remote that is
+    /// forever. Nothing else depends on it: an entry naming a remote that is
     /// not declared fails at plan time, before this runs.
     pub fn retain_declared<'a>(
         &mut self,
@@ -368,7 +368,7 @@ mod tests {
     fn a_pin_answers_to_a_name_respelled_in_case() {
         // The registry compares declarations ignoring case, so a pin written
         // under one spelling must keep answering after a case-only respell of
-        // its declaration — for reads, replacement, and the stale sweep alike.
+        // its declaration, for reads, replacement, and the stale sweep alike.
         let mut lock = Lockfile::default();
         lock.insert(name("Humanizer"), entry(REV));
 

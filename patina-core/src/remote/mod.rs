@@ -256,7 +256,7 @@ pub(crate) enum RemoteRepr {
     /// else.
     #[error(
         "the checkout for remote `{name}` contains a symbolic link ({path}); refusing to deploy \
-         from it — remove the cache directory and re-run `patina apply` to re-materialize"
+         from it. Remove the cache directory and re-run `patina apply` to re-materialize"
     )]
     SymlinkInCheckout {
         /// The remote whose checkout holds the link.

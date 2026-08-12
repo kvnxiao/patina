@@ -169,7 +169,7 @@ fn rewrites_the_lockfile(args: &ApplyArgs, tty: Tty) -> bool {
 /// pruned either way. A preview writes nothing and names the stale pins
 /// instead.
 ///
-/// The common case — nothing stale — is decided from an unlocked read and
+/// The common case, nothing stale, is decided from an unlocked read and
 /// costs no lock. A mutating pass then redoes the read-modify-write under the
 /// exclusive lock: `Lockfile::save` rewrites the whole file, so a snapshot
 /// taken outside the lock would silently revert whatever a concurrent

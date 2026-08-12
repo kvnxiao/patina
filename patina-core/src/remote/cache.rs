@@ -101,7 +101,7 @@ pub fn checkout_present(state_dir: &Utf8Path, module: &RemoteName, rev: &str) ->
 /// writer's pid because materialization runs without the process lock (plan
 /// time precedes the consent prompt), so two processes may stage the same rev
 /// concurrently; each writes its own directory, and whichever renames second
-/// finds the destination already present and discards its copy — both staged
+/// finds the destination already present and discards its copy: both staged
 /// the same immutable commit.
 ///
 /// Returns the checkout directory.
@@ -171,7 +171,7 @@ fn staging_dir(final_dir: &Utf8Path) -> Utf8PathBuf {
 /// the warm cache an offline apply depends on, and a plan another process has
 /// materialized but not yet confirmed points at a pinned rev by construction.
 /// `None` means the current pins could not be read at all, and no declared
-/// remote's checkouts are touched — an undeclared remote has no pin to protect
+/// remote's checkouts are touched. An undeclared remote has no pin to protect
 /// by definition, so its tree still goes.
 ///
 /// A directory name read off disk is compared folded, because a cache written

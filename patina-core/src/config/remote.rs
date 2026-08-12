@@ -93,7 +93,7 @@ impl RemoteName {
 
     /// Whether `spelling` addresses this remote.
     ///
-    /// For the raw strings that arrive from outside a validated manifest — an
+    /// For the raw strings that arrive from outside a validated manifest: an
     /// entry's `remote = "..."`, a `patina remote update <name>` argument.
     #[must_use = "the answer decides which declaration a raw spelling selects"]
     pub fn matches(&self, spelling: &str) -> bool {
@@ -293,9 +293,9 @@ impl RemoteSpec {
 /// the segment a user would name the remote after:
 /// `https://github.com/blader/humanizer.git`, the scp-like
 /// `git@github.com:blader/humanizer`, a trailing slash on either, and a local
-/// path. A URL whose last segment is not a legal name — a bare host, a query
-/// string — has nothing obvious to take, so it is refused and the author writes
-/// `name` instead of getting a surprising one.
+/// path. A URL whose last segment is not a legal name, such as a bare host or
+/// a query string, has nothing obvious to take, so it is refused and the author
+/// writes `name` instead of getting a surprising one.
 ///
 /// # Errors
 ///
@@ -324,7 +324,7 @@ const RESERVED_NAMES: [&str; 3] = ["notice", "pending", "last_check"];
 /// The identity key of a remote-name spelling.
 ///
 /// [`RemoteName`] carries this for every validated name; the bare function is
-/// for the spellings that never went through validation — a directory name the
+/// for the spellings that never went through validation: a directory name the
 /// cache sweep read off disk, a raw selector from a manifest or a command line.
 #[must_use = "the key is the identity every name comparison uses"]
 pub fn name_key(name: &str) -> String {
@@ -570,7 +570,7 @@ mod tests {
     #[test]
     fn a_ref_is_stored_trimmed() {
         // The stored value reaches git as a bare argv element and is committed
-        // to patina.lock, so padding is not merely cosmetic.
+        // to patina.lock, so padding changes what git receives.
         let spec = raw("https://example.invalid/r", Some("  main\n"))
             .validate()
             .expect("valid remote");

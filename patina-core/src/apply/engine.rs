@@ -465,7 +465,7 @@ struct EntryOrigin {
 /// selecting that remote here. So the lockfile is read on the first selection
 /// of any remote, a checkout is materialized on the first selection of that
 /// remote, and both are memoized. A remote no active entry names on this host
-/// costs no `patina.lock` read and no fetch — which is what keeps a
+/// costs no `patina.lock` read and no fetch, which is what keeps a
 /// `when`-false entry from pulling the network into a plan.
 struct RemoteRegistry<'a> {
     /// Every declaration, in root-manifest order.
@@ -507,7 +507,7 @@ impl<'a> RemoteRegistry<'a> {
     /// # Errors
     ///
     /// Returns an [`EngineError`] when the entry names a remote the root
-    /// manifest does not declare, or — under [`CachePolicy::Fetch`] — when that
+    /// manifest does not declare, or, under [`CachePolicy::Fetch`], when that
     /// remote has no pin (the message points at `patina remote update <name>`)
     /// or its pinned rev is neither cached nor fetchable. All three are raised
     /// at plan time so nothing is partially applied.
@@ -952,7 +952,7 @@ impl ClaimTargets<'_> {
 /// directory: it materializes one object per source leaf, records each leaf as
 /// its own journal target, and the reap pass removes only the leaves it
 /// recorded. The collision check has to see the same footprint, or it would
-/// refuse manifests the rest of the engine handles cleanly — deploying one
+/// refuse manifests the rest of the engine handles cleanly. Deploying one
 /// upstream file into a directory the repository also fills is the ordinary
 /// case once remotes exist.
 ///
@@ -963,11 +963,11 @@ impl ClaimTargets<'_> {
 ///
 /// The leaves are walked here rather than taken from the classified
 /// dispositions, because classification deliberately records none for a tree
-/// target that does not exist yet (the whole-op Create shortcut) — and a fresh
+/// target that does not exist yet (the whole-op Create shortcut), and a fresh
 /// target is exactly when a collision must still be caught.
 ///
-/// Claims come out in declaration order — every `[[file]]` entry, then every
-/// `[[directory]]` entry — so the reported pair is a function of the manifest.
+/// Claims come out in declaration order, every `[[file]]` entry and then every
+/// `[[directory]]` entry, so the reported pair is a function of the manifest.
 ///
 /// # Errors
 ///
@@ -1308,10 +1308,10 @@ fn resolve_entry(
 /// it.
 ///
 /// The leaves come from the same [`crate::apply::walk_files`] enumeration the
-/// executors deploy, which yields a symlink — to a file, a directory, or
-/// nothing at all — as a leaf rather than descending it, so the two passes can
-/// never disagree about what the tree contains. The plan fails before any
-/// mutation.
+/// executors deploy, which yields a symlink as a leaf rather than descending
+/// it, whether it points at a file, a directory, or nothing at all. The two
+/// passes can therefore never disagree about what the tree contains. The plan
+/// fails before any mutation.
 ///
 /// # Errors
 ///
@@ -1340,7 +1340,7 @@ fn reject_symlink_leaves(remote: &str, source: &Utf8Path) -> Result<(), EngineEr
 /// non-existent path, so a missing source does not fail at canonicalization;
 /// the existence check is therefore this explicit probe. `metadata` follows
 /// symlinks, so the kind carried is the kind the source ultimately resolves
-/// to — the same kind the executor will materialize.
+/// to: the same kind the executor will materialize.
 fn source_metadata(source: &Utf8Path) -> Result<std::fs::Metadata, EngineError> {
     match fs_err::metadata(source) {
         Ok(metadata) => Ok(metadata),
