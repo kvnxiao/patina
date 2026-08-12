@@ -230,7 +230,7 @@ fn run_list(
 /// column for every other remote.
 fn list_row(view: &RemoteView, pending: bool, styles: &Styles) -> String {
     let git_ref = match &view.spec.git_ref {
-        Some(declared) => declared.clone(),
+        Some(declared) => paint(styles.remote.declared_ref, declared),
         None => paint(styles.remote.implicit_ref, "(default branch)"),
     };
     let rev = match &view.pin {
@@ -245,7 +245,7 @@ fn list_row(view: &RemoteView, pending: bool, styles: &Styles) -> String {
     format!(
         "{}\t{git_ref}\t{rev}\t{}{tag}\n",
         paint(styles.remote.name, view.name().as_str()),
-        view.spec.url,
+        paint(styles.remote.url, &view.spec.url),
     )
 }
 

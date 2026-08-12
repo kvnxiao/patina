@@ -272,9 +272,10 @@ humanizer  main              1f0c6c9b9f2e8a1d4b7c0e3a5d8f2b6c9e1a4d70  https://g
 starship   (default branch)  (unpinned)                                https://github.com/starship/starship  (update pending)
 ```
 
-A terminal additionally gets color: the name cyan, a recorded rev green,
-`(unpinned)` and `(update pending)` yellow, and a ref the manifest left
-to the remote's own default dim. Every one of those facts is in the text
+A terminal additionally gets color: the name cyan, a declared ref bright
+yellow, a recorded rev green, the URL bright blue, `(unpinned)` and
+`(update pending)` yellow, and a ref the manifest left to the remote's
+own default dim. Every one of those facts is in the text
 as well, so a piped run, `--color never`, and `NO_COLOR` lose the color
 and nothing else. `--json` carries the same rows plus each pin's
 `updated_at`.

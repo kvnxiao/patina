@@ -60,8 +60,12 @@ pub struct Styles {
 pub struct RemoteStyles {
     /// The remote's name.
     pub name: Style,
+    /// The `ref` a `[[remote]]` declares.
+    pub declared_ref: Style,
     /// A recorded pin's rev.
     pub rev: Style,
+    /// The remote's URL.
+    pub url: Style,
     /// The cells asking for action: `(unpinned)` and the `(update pending)`
     /// tag. One role because one command answers both.
     pub attention: Style,
@@ -126,7 +130,9 @@ impl Styles {
             prompt_default: none,
             remote: RemoteStyles {
                 name: none,
+                declared_ref: none,
                 rev: none,
+                url: none,
                 attention: none,
                 implicit_ref: none,
             },
@@ -145,9 +151,6 @@ impl Styles {
     /// warnings, bold headers, and cyan interactive prompts whose `[y/N]`
     /// keys read green (affirm) / red (default) so the two answers stand
     /// apart from the prose and each other.
-    ///
-    /// The remote-listing roles paint the name cyan, a recorded rev green, the
-    /// cells wanting action yellow, and an undeclared ref dim.
     ///
     /// The Defender-exclusion roles paint the path blue (file) or magenta
     /// (folder), leaving green, yellow, and red for the state tag: green in
@@ -173,7 +176,9 @@ impl Styles {
                 .bold(),
             remote: RemoteStyles {
                 name: Style::new().fg_color(Some(Color::Ansi(AnsiColor::Cyan))),
+                declared_ref: Style::new().fg_color(Some(Color::Ansi(AnsiColor::BrightYellow))),
                 rev: Style::new().fg_color(Some(Color::Ansi(AnsiColor::Green))),
+                url: Style::new().fg_color(Some(Color::Ansi(AnsiColor::BrightBlue))),
                 attention: Style::new().fg_color(Some(Color::Ansi(AnsiColor::Yellow))),
                 implicit_ref: Style::new().dimmed(),
             },
@@ -221,7 +226,9 @@ mod tests {
             p.prompt_affirm,
             p.prompt_default,
             p.remote.name,
+            p.remote.declared_ref,
             p.remote.rev,
+            p.remote.url,
             p.remote.attention,
             p.remote.implicit_ref,
         ] {
@@ -299,16 +306,14 @@ mod tests {
         assert_ne!(affirm, default, "affirm and default must differ");
     }
 
-    /// The four remote-listing roles must each emit an escape and be mutually
-    /// distinct. A pinned rev, an unpinned one, and an undeclared ref differ in
-    /// nothing but their text and their color, so a shared hue would make two
-    /// of the three read as one down a list of remotes.
     #[test]
     fn colored_remote_roles_are_distinct_and_escaped() {
         let r = Styles::colored().remote;
         let roles = [
             ("name", r.name),
+            ("declared_ref", r.declared_ref),
             ("rev", r.rev),
+            ("url", r.url),
             ("attention", r.attention),
             ("implicit_ref", r.implicit_ref),
         ];
@@ -329,8 +334,7 @@ mod tests {
         }
     }
 
-    /// The five Defender-exclusion roles must each emit an escape and be
-    /// mutually distinct. Kind and state appear on the same line, so a hue
+    /// Kind and state appear on the same line, so a hue
     /// shared between the two groups would make one read as the other, and the
     /// three state colors are the only thing separating the three states.
     #[cfg(windows)]
