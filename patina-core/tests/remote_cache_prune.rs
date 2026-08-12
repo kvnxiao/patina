@@ -18,6 +18,7 @@ use patina_core::ApplyRecord;
 use patina_core::Disposition;
 use patina_core::ExpectedTarget;
 use patina_core::LastApply;
+use patina_core::config::RemoteName;
 use patina_core::remote::cache;
 use std::collections::BTreeSet;
 use tempfile::TempDir;
@@ -26,10 +27,9 @@ use tempfile::TempDir;
 const REV_A: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const REV_B: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 
-/// The declared set naming the fixture's one remote, so the sweep exercises
-/// per-checkout reachability rather than the whole-tree undeclared removal.
-fn declared() -> BTreeSet<&'static str> {
-    ["humanizer"].into_iter().collect()
+/// The fixture's one declared remote.
+fn humanizer() -> RemoteName {
+    RemoteName::parse("humanizer").expect("a legal remote name")
 }
 
 struct Fixture {
@@ -50,12 +50,21 @@ impl Fixture {
 
     /// Create a checkout directory holding one leaf, and return the leaf's
     /// path.
-    fn checkout(&self, module: &str, rev: &str) -> Utf8PathBuf {
+    fn checkout(&self, module: &RemoteName, rev: &str) -> Utf8PathBuf {
         let dir = cache::checkout_dir(&self.state, module, rev);
         fs_err::create_dir_all(dir.as_std_path()).expect("mkdir checkout");
         let leaf = dir.join("SKILL.md");
         fs_err::write(leaf.as_std_path(), b"body").expect("write checkout leaf");
         leaf
+    }
+
+    /// Sweep the cache with `humanizer` as the only declared remote, so the
+    /// tests exercise per-checkout reachability rather than the whole-tree
+    /// undeclared removal. `keep` is `None` when the current pins are unknown.
+    fn prune(&self, keep: Option<&[(RemoteName, String)]>) -> Vec<Utf8PathBuf> {
+        let declared = [humanizer()];
+        let declared: BTreeSet<&RemoteName> = declared.iter().collect();
+        cache::prune(&self.state, &declared, keep).expect("prune the cache")
     }
 
     /// Write a `<ts>.COMMIT` sentinel whose single recorded target was
@@ -88,22 +97,22 @@ impl Fixture {
 #[test]
 fn an_unreferenced_checkout_is_pruned_and_a_referenced_one_survives() {
     let f = Fixture::new();
-    let kept_leaf = f.checkout("humanizer", REV_A);
-    f.checkout("humanizer", REV_B);
+    let kept_leaf = f.checkout(&humanizer(), REV_A);
+    f.checkout(&humanizer(), REV_B);
     f.commit("20260811T140000Z", &kept_leaf);
 
-    let removed = cache::prune(&f.state, &declared(), &[]).expect("prune the cache");
+    let removed = f.prune(Some(&[]));
 
     assert_eq!(
         removed,
-        vec![cache::checkout_dir(&f.state, "humanizer", REV_B)],
+        vec![cache::checkout_dir(&f.state, &humanizer(), REV_B)],
         "only the unreferenced checkout may be removed"
     );
     assert!(
-        cache::checkout_present(&f.state, "humanizer", REV_A),
+        cache::checkout_present(&f.state, &humanizer(), REV_A),
         "the checkout a journal record names must survive"
     );
-    assert!(!cache::checkout_present(&f.state, "humanizer", REV_B));
+    assert!(!cache::checkout_present(&f.state, &humanizer(), REV_B));
 }
 
 #[test]
@@ -111,12 +120,12 @@ fn a_checkout_referenced_only_by_an_older_commit_survives() {
     // Rollback walks back through older commits, so "referenced by the latest
     // apply" is the wrong retention rule; reachability is per-record.
     let f = Fixture::new();
-    let previous_leaf = f.checkout("humanizer", REV_A);
-    let current_leaf = f.checkout("humanizer", REV_B);
+    let previous_leaf = f.checkout(&humanizer(), REV_A);
+    let current_leaf = f.checkout(&humanizer(), REV_B);
     f.commit("20260810T140000Z", &previous_leaf);
     f.commit("20260811T140000Z", &current_leaf);
 
-    let removed = cache::prune(&f.state, &declared(), &[]).expect("prune the cache");
+    let removed = f.prune(Some(&[]));
 
     assert!(
         removed.is_empty(),
@@ -127,15 +136,15 @@ fn a_checkout_referenced_only_by_an_older_commit_survives() {
 #[test]
 fn the_bare_repository_is_never_pruned() {
     let f = Fixture::new();
-    let bare = cache::bare_repo(&f.state, "humanizer");
+    let bare = cache::bare_repo(&f.state, &humanizer());
     fs_err::create_dir_all(bare.join("objects").as_std_path()).expect("mkdir bare repo");
-    f.checkout("humanizer", REV_A);
+    f.checkout(&humanizer(), REV_A);
 
-    let removed = cache::prune(&f.state, &declared(), &[]).expect("prune the cache");
+    let removed = f.prune(Some(&[]));
 
     assert_eq!(
         removed,
-        vec![cache::checkout_dir(&f.state, "humanizer", REV_A)],
+        vec![cache::checkout_dir(&f.state, &humanizer(), REV_A)],
         "the unreferenced checkout goes but the fetch repository stays"
     );
     assert!(
@@ -147,7 +156,7 @@ fn the_bare_repository_is_never_pruned() {
 #[test]
 fn scratch_artifacts_are_always_removed() {
     let f = Fixture::new();
-    let module = cache::module_dir(&f.state, "humanizer");
+    let module = cache::module_dir(&f.state, &humanizer());
     let partial = module.join(format!("{REV_A}.partial"));
     let pid_partial = module.join(format!("{REV_A}.partial.4242"));
     let index = module.join(format!("{REV_A}.index"));
@@ -157,7 +166,7 @@ fn scratch_artifacts_are_always_removed() {
     fs_err::write(index.as_std_path(), b"junk").expect("write scratch index");
     fs_err::write(pid_index.as_std_path(), b"junk").expect("write pid scratch index");
 
-    let removed = cache::prune(&f.state, &declared(), &[]).expect("prune the cache");
+    let removed = f.prune(Some(&[]));
 
     for artifact in [&partial, &pid_partial, &index, &pid_index] {
         assert!(!artifact.exists(), "{artifact} must be swept");
@@ -175,42 +184,77 @@ fn a_pinned_checkout_survives_without_a_journal_reference() {
     // warm cache an offline apply depends on and the checkout a concurrent
     // plan may already point into.
     let f = Fixture::new();
-    f.checkout("humanizer", REV_A);
-    let keep = vec![("humanizer".to_owned(), REV_A.to_owned())];
+    f.checkout(&humanizer(), REV_A);
+    let keep = vec![(humanizer(), REV_A.to_owned())];
 
-    let removed = cache::prune(&f.state, &declared(), &keep).expect("prune the cache");
+    let removed = f.prune(Some(&keep));
 
     assert!(
         removed.is_empty(),
         "a currently pinned checkout must survive, got {removed:?}"
     );
-    assert!(cache::checkout_present(&f.state, "humanizer", REV_A));
+    assert!(cache::checkout_present(&f.state, &humanizer(), REV_A));
 }
 
 #[test]
-fn an_undeclared_remotes_tree_goes_and_a_case_respelled_one_survives() {
-    // On a case-insensitive filesystem the cache directory keeps the spelling
-    // the remote was first declared under, so a declaration respelled from
-    // `Humanizer` to `humanizer` keeps addressing the same on-disk tree; the
-    // undeclared sweep must not read it as a deleted remote.
+fn an_undeclared_remotes_tree_goes_whole() {
     let f = Fixture::new();
-    f.checkout("Humanizer", REV_A);
-    f.checkout("gone", REV_B);
-    let removed = cache::prune(&f.state, &declared(), &[]).expect("prune the cache");
+    let gone = RemoteName::parse("gone").expect("a legal remote name");
+    f.checkout(&humanizer(), REV_A);
+    f.checkout(&gone, REV_B);
+
+    let removed = f.prune(Some(&[]));
 
     assert!(
-        !cache::module_dir(&f.state, "gone").exists(),
+        !cache::module_dir(&f.state, &gone).exists(),
         "an undeclared remote's whole tree must be removed"
-    );
-    assert!(
-        cache::module_dir(&f.state, "Humanizer").exists(),
-        "a declaration differing only in case must keep its tree"
     );
     assert!(
         removed
             .iter()
-            .any(|path| path == &cache::module_dir(&f.state, "gone")),
+            .any(|path| path == &cache::module_dir(&f.state, &gone)),
         "the removed tree must be reported: {removed:?}"
+    );
+}
+
+#[test]
+fn a_cache_directory_spelled_in_another_case_is_still_the_declared_remote() {
+    // Checkouts are keyed by the folded name, but a directory written before
+    // that (or created on a case-insensitive filesystem under the spelling its
+    // author first used) carries the display spelling. The undeclared sweep
+    // must not read it as a deleted remote and delete the tree whole.
+    let f = Fixture::new();
+    let legacy = cache::remotes_root(&f.state).join("Humanizer");
+    fs_err::create_dir_all(legacy.join(REV_A).as_std_path()).expect("mkdir the legacy tree");
+
+    let removed = f.prune(Some(&[(humanizer(), REV_A.to_owned())]));
+
+    assert!(
+        legacy.is_dir(),
+        "a declared remote's tree must survive whatever case it is spelled in: {removed:?}"
+    );
+}
+
+#[test]
+fn unknown_pins_leave_a_declared_remotes_checkouts_alone() {
+    // A run where no active entry selected a remote never read the lockfile, so
+    // every checkout here may be the one that remote is pinned to. An
+    // undeclared remote has no pin to protect, so its tree still goes.
+    let f = Fixture::new();
+    f.checkout(&humanizer(), REV_A);
+    let gone = RemoteName::parse("gone").expect("a legal remote name");
+    f.checkout(&gone, REV_B);
+
+    let removed = f.prune(None);
+
+    assert!(
+        cache::checkout_present(&f.state, &humanizer(), REV_A),
+        "an unreferenced checkout must survive while the pins are unknown"
+    );
+    assert_eq!(
+        removed,
+        vec![cache::module_dir(&f.state, &gone)],
+        "only the undeclared tree may go"
     );
 }
 
@@ -220,13 +264,13 @@ fn a_partial_or_index_with_a_non_sha_stem_is_left_alone() {
     // `manifest.index` a user or a future version left here is not patina's
     // staging artifact, so the pruner must not delete it.
     let f = Fixture::new();
-    let module = cache::module_dir(&f.state, "humanizer");
+    let module = cache::module_dir(&f.state, &humanizer());
     let stray_partial = module.join("notes.partial");
     let stray_index = module.join("manifest.index");
     fs_err::create_dir_all(stray_partial.as_std_path()).expect("mkdir stray partial");
     fs_err::write(stray_index.as_std_path(), b"keep").expect("write stray index");
 
-    let removed = cache::prune(&f.state, &declared(), &[]).expect("prune the cache");
+    let removed = f.prune(Some(&[]));
 
     assert!(
         removed.is_empty(),
@@ -244,10 +288,10 @@ fn an_unrecognized_directory_name_is_left_alone() {
     // The pruner must not become a general-purpose deleter: anything that is
     // not a checkout, a staging dir, or a scratch index stays put.
     let f = Fixture::new();
-    let stray = cache::module_dir(&f.state, "humanizer").join("notes");
+    let stray = cache::module_dir(&f.state, &humanizer()).join("notes");
     fs_err::create_dir_all(stray.as_std_path()).expect("mkdir stray dir");
 
-    let removed = cache::prune(&f.state, &declared(), &[]).expect("prune the cache");
+    let removed = f.prune(Some(&[]));
 
     assert!(
         removed.is_empty(),
@@ -261,7 +305,7 @@ fn an_undecodable_commit_sentinel_suspends_pruning() {
     // Reachability is unknown, so deleting could strand a rollback. A stale
     // checkout costs only disk.
     let f = Fixture::new();
-    f.checkout("humanizer", REV_A);
+    f.checkout(&humanizer(), REV_A);
     fs_err::write(
         f.state
             .join("journal")
@@ -271,14 +315,13 @@ fn an_undecodable_commit_sentinel_suspends_pruning() {
     )
     .expect("write a torn sentinel");
 
-    let removed =
-        cache::prune(&f.state, &declared(), &[]).expect("prune must not fail on a torn sentinel");
+    let removed = f.prune(Some(&[]));
 
     assert!(
         removed.is_empty(),
         "nothing may be pruned while reachability is unknown, got {removed:?}"
     );
-    assert!(cache::checkout_present(&f.state, "humanizer", REV_A));
+    assert!(cache::checkout_present(&f.state, &humanizer(), REV_A));
 }
 
 #[test]
@@ -288,7 +331,7 @@ fn pruning_an_absent_cache_is_a_clean_no_op() {
         .expect("utf8 temp path")
         .join("state");
     assert!(
-        cache::prune(&state, &BTreeSet::new(), &[])
+        cache::prune(&state, &BTreeSet::new(), Some(&[]))
             .expect("a state dir with no remotes cache prunes cleanly")
             .is_empty()
     );

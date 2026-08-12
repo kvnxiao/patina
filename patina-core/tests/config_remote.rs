@@ -26,7 +26,7 @@ fn a_remote_declaration_is_parsed_with_its_derived_name_ref_and_min_age() {
     .expect("a root registry parses");
 
     let remote = config.remotes.first().expect("one declared remote");
-    assert_eq!(remote.name, "humanizer");
+    assert_eq!(remote.name.as_str(), "humanizer");
     assert_eq!(remote.url, "https://github.com/blader/humanizer.git");
     assert_eq!(remote.git_ref.as_deref(), Some("main"));
     assert_eq!(remote.min_age, Some(Duration::ZERO));
@@ -37,7 +37,11 @@ fn a_declaration_without_ref_or_min_age_defers_both() {
     let config = parse_root_config_str("[[remote]]\nurl = \"git@example.invalid:r.git\"\n")
         .expect("a minimal declaration parses");
     let remote = config.remotes.first().expect("one declared remote");
-    assert_eq!(remote.name, "r", "the scp-like form names the last segment");
+    assert_eq!(
+        remote.name.as_str(),
+        "r",
+        "the scp-like form names the last segment"
+    );
     assert_eq!(remote.git_ref, None, "no `ref` means the default branch");
     assert_eq!(
         remote.min_age, None,
@@ -52,7 +56,7 @@ fn a_written_name_wins_over_the_url() {
     )
     .expect("an explicitly named declaration parses");
     assert_eq!(
-        config.remotes.first().expect("one remote").name,
+        config.remotes.first().expect("one remote").name.as_str(),
         "agents",
         "a written name must not be overridden by the derived one"
     );

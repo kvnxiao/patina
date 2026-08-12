@@ -17,6 +17,7 @@ use super::git;
 use super::lockfile::LockEntry;
 use super::lockfile::Lockfile;
 use super::lockfile::lockfile_path;
+use crate::config::RemoteName;
 use crate::config::RemoteSpec;
 use crate::error::EngineError;
 use camino::Utf8PathBuf;
@@ -35,7 +36,7 @@ impl RemoteView {
     /// The remote's name, which entries select it by and which keys its pin,
     /// its cache directory, and every `patina remote` verb.
     #[must_use = "the name keys the pin, the cache directory, and every verb"]
-    pub fn name(&self) -> &str {
+    pub fn name(&self) -> &RemoteName {
         &self.spec.name
     }
 }
@@ -91,13 +92,11 @@ pub fn inventory() -> Result<RemoteInventory, EngineError> {
 }
 
 impl RemoteInventory {
-    /// The view for the remote called `name` (compared under
-    /// [`crate::config::remote::name_key`]), if the root manifest declares it.
+    /// The view for the remote `name` addresses, if the root manifest declares
+    /// it.
     #[must_use = "the view carries the spec and pin a command operates on"]
     pub fn find(&self, name: &str) -> Option<&RemoteView> {
-        self.remotes
-            .iter()
-            .find(|view| crate::config::remote::same_name(view.name(), name))
+        self.remotes.iter().find(|view| view.name().matches(name))
     }
 }
 
@@ -130,7 +129,7 @@ impl CheckResult {
 pub fn check_upstream(view: &RemoteView) -> Result<CheckResult, RemoteError> {
     let upstream_rev = git::ls_remote(&view.spec.url, view.spec.git_ref.as_deref())?;
     Ok(CheckResult {
-        name: view.name().to_owned(),
+        name: view.name().to_string(),
         pinned_rev: view.pin.as_ref().map(|pin| pin.rev.clone()),
         upstream_rev,
     })
@@ -170,7 +169,7 @@ pub fn propose(
 
     if current_rev.as_deref() == Some(candidate_rev.as_str()) {
         return Ok(Proposal {
-            name: view.name().to_owned(),
+            name: view.name().to_string(),
             candidate_rev,
             current_rev,
             outcome: GateOutcome::AlreadyPinned,
@@ -203,7 +202,7 @@ pub fn propose(
     });
 
     Ok(Proposal {
-        name: view.name().to_owned(),
+        name: view.name().to_string(),
         candidate_rev,
         current_rev,
         outcome,
@@ -226,7 +225,7 @@ pub fn accept(
     now_rfc3339: &str,
 ) -> Result<(), RemoteError> {
     lockfile.insert(
-        view.name().to_owned(),
+        view.name().clone(),
         LockEntry {
             url: view.spec.url.clone(),
             git_ref: view.spec.git_ref.clone(),

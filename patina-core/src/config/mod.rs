@@ -33,6 +33,7 @@ pub use hook_entry::HookEntryError;
 pub use hook_entry::HookEvent;
 pub use remote::DEFAULT_MIN_AGE;
 pub use remote::RemoteConfigError;
+pub use remote::RemoteName;
 pub use remote::RemoteSpec;
 pub use remote::parse_duration;
 pub use root::RootConfig;

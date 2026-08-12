@@ -18,8 +18,9 @@
 use super::RemoteError;
 use super::RemoteRepr;
 use super::cache;
+use crate::config::remote::RemoteName;
 use camino::Utf8Path;
-use camino::Utf8PathBuf;
+use std::collections::BTreeSet;
 use std::time::Duration;
 
 /// How long `patina remote check --hook` waits between real checks.
@@ -129,6 +130,16 @@ pub fn write_pending(state_dir: &Utf8Path, modules: &[String]) -> Result<(), Rem
     atomic_write(&path, body.as_bytes())
 }
 
+/// Whether `pending` names `remote`.
+///
+/// The file was written by an earlier process from the declaration as it was
+/// spelled then, so membership folds rather than matching bytes: a declaration
+/// respelled between the check and the report is still the same remote.
+#[must_use = "the answer is the per-remote pending state `remote list` reports"]
+pub fn is_pending(pending: &BTreeSet<String>, remote: &RemoteName) -> bool {
+    pending.iter().any(|name| remote.matches(name))
+}
+
 /// Drop `names` from the pending-update state, rewriting the machine-readable
 /// `pending` file and the prose `notice` to match, and clearing both when
 /// nothing remains.
@@ -145,13 +156,11 @@ pub fn write_pending(state_dir: &Utf8Path, modules: &[String]) -> Result<(), Rem
 /// # Errors
 ///
 /// Returns a [`RemoteError`] when a write or removal fails.
-pub fn settle(state_dir: &Utf8Path, names: &[&str]) -> Result<(), RemoteError> {
+pub fn settle(state_dir: &Utf8Path, names: &[&RemoteName]) -> Result<(), RemoteError> {
     let mut pending = read_pending(state_dir);
-    let mut changed = false;
-    for name in names {
-        changed |= pending.remove(*name);
-    }
-    if !changed {
+    let before = pending.len();
+    pending.retain(|entry| !names.iter().any(|name| name.matches(entry)));
+    if pending.len() == before {
         return Ok(());
     }
     let remaining: Vec<String> = pending.into_iter().collect();
@@ -166,7 +175,7 @@ pub fn settle(state_dir: &Utf8Path, names: &[&str]) -> Result<(), RemoteError> {
 /// An absent or unreadable file reads as "none pending": this is notification
 /// state, and a stale read is better than a failed command.
 #[must_use = "the set is the per-remote pending state `remote list` reports"]
-pub fn read_pending(state_dir: &Utf8Path) -> std::collections::BTreeSet<String> {
+pub fn read_pending(state_dir: &Utf8Path) -> BTreeSet<String> {
     fs_err::read_to_string(cache::pending_path(state_dir).as_std_path())
         .map(|text| {
             text.lines()
@@ -200,37 +209,16 @@ pub fn record_check(state_dir: &Utf8Path, epoch: i64) -> Result<(), RemoteError>
     )
 }
 
-/// Create `path`'s parent directory when it is missing.
-fn ensure_parent(path: &Utf8Path) -> Result<(), RemoteError> {
-    if let Some(parent) = path.parent() {
-        fs_err::create_dir_all(parent.as_std_path()).map_err(|source| RemoteRepr::Cache {
-            action: "creating",
-            path: parent.to_path_buf(),
-            source,
-        })?;
-    }
-    Ok(())
-}
-
-/// Write `bytes` to `path` through a per-process temporary and an atomic
-/// rename.
+/// Write `bytes` to `path` atomically.
 ///
 /// The shell integration can spawn a `patina remote check` in every session,
-/// so several may write these files concurrently. A rename swaps the file in
-/// whole, so a concurrent reader (the shell's `test -s`, `patina status`) sees
-/// either the old file or the new one, never a half-written line. The temporary
-/// carries the writer's pid, so two writers never collide on one scratch name.
+/// so several processes may write these files at once while a shell's
+/// `test -s` reads one. Staging into a same-directory temporary and renaming is
+/// what makes every such reader see one whole version.
 fn atomic_write(path: &Utf8Path, bytes: &[u8]) -> Result<(), RemoteError> {
-    ensure_parent(path)?;
-    let tmp = Utf8PathBuf::from(format!("{path}.{}.tmp", std::process::id()));
-    fs_err::write(tmp.as_std_path(), bytes).map_err(|source| RemoteRepr::Cache {
-        action: "writing",
-        path: tmp.clone(),
-        source,
-    })?;
-    fs_err::rename(tmp.as_std_path(), path.as_std_path()).map_err(|source| {
+    crate::fsx::write_atomic(path, bytes).map_err(|source| {
         RemoteRepr::Cache {
-            action: "renaming into",
+            action: "writing",
             path: path.to_path_buf(),
             source,
         }
@@ -258,6 +246,11 @@ mod tests {
     use super::*;
     use camino::Utf8PathBuf;
     use tempfile::TempDir;
+
+    /// A validated name, for the settle fixtures.
+    fn name(spelling: &str) -> RemoteName {
+        RemoteName::parse(spelling).expect("a legal remote name")
+    }
 
     fn state() -> (TempDir, Utf8PathBuf) {
         let temp = TempDir::new().expect("tempdir");
@@ -350,7 +343,7 @@ mod tests {
         )
         .expect("write the notice");
 
-        settle(&dir, &["humanizer"]).expect("settle one remote");
+        settle(&dir, &[&name("humanizer")]).expect("settle one remote");
         assert!(!read_pending(&dir).contains("humanizer"));
         let body = read_notice(&dir).expect("a notice remains for the other remote");
         assert!(
@@ -358,7 +351,7 @@ mod tests {
             "the notice must be rewritten to the remaining set: {body}"
         );
 
-        settle(&dir, &["prompts"]).expect("settle the last remote");
+        settle(&dir, &[&name("prompts")]).expect("settle the last remote");
         assert!(read_pending(&dir).is_empty());
         assert_eq!(
             read_notice(&dir),
@@ -368,10 +361,30 @@ mod tests {
     }
 
     #[test]
+    fn the_pending_state_answers_to_a_name_respelled_in_case() {
+        // The file was written by an earlier `remote check` from whatever
+        // spelling the declaration carried then. A respelling must not strand
+        // an announcement that outlives the update it asked for.
+        let (_keep, dir) = state();
+        write_pending(&dir, &["Humanizer".to_owned()]).expect("record the pending set");
+        let respelled = name("humanizer");
+
+        assert!(
+            is_pending(&read_pending(&dir), &respelled),
+            "a folded membership test must hit"
+        );
+        settle(&dir, &[&respelled]).expect("settle the respelled remote");
+        assert!(
+            read_pending(&dir).is_empty(),
+            "settling under a respelling must clear the entry, not leave it behind"
+        );
+    }
+
+    #[test]
     fn settling_a_remote_that_was_never_pending_touches_nothing() {
         let (_keep, dir) = state();
         write_pending(&dir, &["humanizer".to_owned()]).expect("record the pending set");
-        settle(&dir, &["prompts"]).expect("a no-op settle succeeds");
+        settle(&dir, &[&name("prompts")]).expect("a no-op settle succeeds");
         assert!(
             read_pending(&dir).contains("humanizer"),
             "an unrelated settle must leave the pending set alone"

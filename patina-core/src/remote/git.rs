@@ -549,8 +549,21 @@ fn try_repo_differs_from_origin(repo_root: &Utf8Path) -> Option<bool> {
     let remote = in_repo(&["config", &format!("branch.{branch}.remote")])
         .filter(|name| !name.is_empty())
         .unwrap_or_else(|| "origin".to_owned());
-    let listing = in_repo(&["ls-remote", &remote, &branch])?;
-    Some(select_ls_remote_sha(&listing, &branch)? != head)
+    // The local branch name is not the upstream one: a branch may track any
+    // ref, and `work` tracking `origin/main` would otherwise be compared
+    // against a nonexistent `origin/work` and read as never behind. The
+    // configured merge ref is the branch this one actually tracks.
+    let upstream = in_repo(&["config", &format!("branch.{branch}.merge")])
+        .filter(|merge| !merge.is_empty())
+        .map_or(branch, |merge| {
+            merge
+                .trim()
+                .strip_prefix("refs/heads/")
+                .unwrap_or(merge.trim())
+                .to_owned()
+        });
+    let listing = in_repo(&["ls-remote", &remote, &upstream])?;
+    Some(select_ls_remote_sha(&listing, &upstream)? != head)
 }
 
 #[cfg(test)]

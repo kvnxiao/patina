@@ -22,6 +22,7 @@
 use super::RemoteError;
 use super::RemoteRepr;
 use super::git;
+use crate::config::remote::RemoteName;
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
 use std::collections::BTreeSet;
@@ -41,21 +42,25 @@ pub fn remotes_root(state_dir: &Utf8Path) -> Utf8PathBuf {
 }
 
 /// `<state>/remotes/<module>/`, one directory per remote-backed module.
+///
+/// Named by the remote's folded key rather than the spelling its author wrote,
+/// so a case-only respelling of a declaration keeps addressing the checkouts
+/// already on disk instead of cold-starting a second tree beside them.
 #[must_use = "the module cache directory holds the bare repo and its checkouts"]
-pub fn module_dir(state_dir: &Utf8Path, module: &str) -> Utf8PathBuf {
-    remotes_root(state_dir).join(module)
+pub fn module_dir(state_dir: &Utf8Path, module: &RemoteName) -> Utf8PathBuf {
+    remotes_root(state_dir).join(module.key())
 }
 
 /// `<state>/remotes/<module>/repo.git`, the bare repository fetches land in.
 #[must_use = "the bare repository is the git-dir every remote git call uses"]
-pub fn bare_repo(state_dir: &Utf8Path, module: &str) -> Utf8PathBuf {
+pub fn bare_repo(state_dir: &Utf8Path, module: &RemoteName) -> Utf8PathBuf {
     module_dir(state_dir, module).join(BARE_REPO_DIR)
 }
 
 /// `<state>/remotes/<module>/<rev>/`, the immutable checkout of one pinned
 /// rev.
 #[must_use = "the checkout directory is what entry sources resolve against"]
-pub fn checkout_dir(state_dir: &Utf8Path, module: &str, rev: &str) -> Utf8PathBuf {
+pub fn checkout_dir(state_dir: &Utf8Path, module: &RemoteName, rev: &str) -> Utf8PathBuf {
     module_dir(state_dir, module).join(rev)
 }
 
@@ -81,7 +86,7 @@ pub fn last_check_path(state_dir: &Utf8Path) -> Utf8PathBuf {
 
 /// Whether the checkout of `rev` for `module` is already materialized.
 #[must_use = "a warm checkout is what lets a plain apply run offline"]
-pub fn checkout_present(state_dir: &Utf8Path, module: &str, rev: &str) -> bool {
+pub fn checkout_present(state_dir: &Utf8Path, module: &RemoteName, rev: &str) -> bool {
     checkout_dir(state_dir, module, rev).is_dir()
 }
 
@@ -106,7 +111,7 @@ pub fn checkout_present(state_dir: &Utf8Path, module: &str, rev: &str) -> bool {
 /// Returns a [`RemoteError`] when the fetch, the checkout, or the rename fails.
 pub fn ensure_checkout(
     state_dir: &Utf8Path,
-    module: &str,
+    module: &RemoteName,
     url: &str,
     git_ref: Option<&str>,
     rev: &str,
@@ -165,9 +170,12 @@ fn staging_dir(final_dir: &Utf8Path) -> Utf8PathBuf {
 /// even when no journal record names it: a pin bumped but not yet applied is
 /// the warm cache an offline apply depends on, and a plan another process has
 /// materialized but not yet confirmed points at a pinned rev by construction.
+/// `None` means the current pins could not be read at all, and no declared
+/// remote's checkouts are touched — an undeclared remote has no pin to protect
+/// by definition, so its tree still goes.
 ///
-/// Names are compared under [`crate::config::remote::name_key`], because on a
-/// case-insensitive filesystem the on-disk directory keeps the spelling the
+/// A directory name read off disk is compared folded, because a cache written
+/// before checkouts were keyed by the folded name carries the spelling the
 /// remote was first declared under.
 ///
 /// When any sentinel fails to decode, nothing is pruned. Deleting on partial
@@ -182,11 +190,10 @@ fn staging_dir(final_dir: &Utf8Path) -> Utf8PathBuf {
 /// removal fails.
 pub fn prune(
     state_dir: &Utf8Path,
-    declared: &BTreeSet<&str>,
-    keep: &[(String, String)],
+    declared: &BTreeSet<&RemoteName>,
+    keep: Option<&[(RemoteName, String)]>,
 ) -> Result<Vec<Utf8PathBuf>, RemoteError> {
     use crate::config::remote::name_key;
-    use crate::config::remote::same_name;
 
     let root = remotes_root(state_dir);
     if !root.is_dir() {
@@ -195,23 +202,30 @@ pub fn prune(
     let Some(referenced) = referenced_paths(&state_dir.join("journal"))? else {
         return Ok(Vec::new());
     };
-    let declared: BTreeSet<String> = declared.iter().map(|name| name_key(name)).collect();
+    let declared: BTreeSet<&str> = declared.iter().map(|name| name.key()).collect();
 
     let mut removed = Vec::new();
     for module in read_subdirectories(&root)? {
         let Some(module_name) = module.file_name() else {
             continue;
         };
-        if !declared.contains(&name_key(module_name)) {
-            // An undeclared tree goes whole once nothing points into it; while
-            // a journal record still does, it degrades to the per-checkout
-            // sweep below so rollback keeps what it needs and nothing more.
-            if !is_referenced(&module, &referenced) {
-                remove_any(&module)?;
-                removed.push(module);
-                continue;
-            }
+        let module_key = name_key(module_name);
+        let is_declared = declared.contains(module_key.as_str());
+        // An undeclared tree goes whole once nothing points into it; while a
+        // journal record still does, it degrades to the per-checkout sweep
+        // below so rollback keeps what it needs and nothing more.
+        if !is_declared && !is_referenced(&module, &referenced) {
+            remove_any(&module)?;
+            removed.push(module);
+            continue;
         }
+        let keep = match keep {
+            Some(pins) => pins,
+            // The current pins are unknown, so any checkout here may be the one
+            // this remote is pinned to. Leave the whole directory alone.
+            None if is_declared => continue,
+            None => &[],
+        };
         for candidate in read_dir_entries(&module)? {
             let Some(name) = candidate.file_name() else {
                 continue;
@@ -227,7 +241,7 @@ pub fn prune(
             if !is_checkout_name(name)
                 || keep
                     .iter()
-                    .any(|(kept, rev)| rev == name && same_name(kept, module_name))
+                    .any(|(kept, rev)| rev == name && kept.key() == module_key)
                 || is_referenced(&candidate, &referenced)
             {
                 continue;
@@ -377,9 +391,10 @@ mod tests {
         // this from being a second copy of the same path constants.
         let state = Utf8Path::new("/state/patina");
         let root = remotes_root(state);
-        let module = module_dir(state, "humanizer");
-        let bare = bare_repo(state, "humanizer");
-        let checkout = checkout_dir(state, "humanizer", "abc123");
+        let humanizer = RemoteName::parse("humanizer").expect("a legal remote name");
+        let module = module_dir(state, &humanizer);
+        let bare = bare_repo(state, &humanizer);
+        let checkout = checkout_dir(state, &humanizer, "abc123");
 
         assert!(root.starts_with(state) && root != state);
         assert!(module.starts_with(&root) && module != root);
@@ -399,6 +414,21 @@ mod tests {
                 "{path} must sit directly in the cache root, beside the module dirs"
             );
         }
+    }
+
+    #[test]
+    fn a_respelled_declaration_addresses_the_same_cache_directory() {
+        // The directory is named by the folded key, so respelling a
+        // declaration keeps the warm cache instead of cold-starting a second
+        // tree beside it (and leaving the first one to linger forever).
+        let state = Utf8Path::new("/state/patina");
+        let written = RemoteName::parse("Humanizer").expect("a legal remote name");
+        let respelled = RemoteName::parse("humanizer").expect("a legal remote name");
+        assert_eq!(module_dir(state, &written), module_dir(state, &respelled));
+        assert_eq!(
+            checkout_dir(state, &written, "abc123"),
+            checkout_dir(state, &respelled, "abc123")
+        );
     }
 
     #[test]

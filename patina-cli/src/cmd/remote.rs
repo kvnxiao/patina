@@ -14,7 +14,11 @@
 //! `prune` mutate (the working-tree lockfile, the cache) and take the exclusive
 //! lock; `list` and `check` take the shared lock with the read-only escape
 //! hatch, since `check` writes only the per-machine notice files it alone owns.
-//! A shell hook must never contend with a running apply.
+//!
+//! A shell hook must never contend with a running apply, and the shared lock is
+//! therefore held across the inventory read alone, never across the network. A
+//! `git` call has no timeout of its own, so holding the lock over one would let
+//! an unreachable server keep an apply waiting until its own lock wait expires.
 //!
 //! See `docs/REMOTE_SOURCES.md` "Commands", "The update gate", and
 //! "Shell integration".
@@ -61,13 +65,11 @@ pub fn run(
 
     match &args.command {
         RemoteCommand::List => {
-            let _guard = shared_lock(&lock_path, false, reporter);
-            let inventory = declared_remotes()?;
+            let inventory = read_inventory(&lock_path, false, reporter)?;
             Ok(run_list(&inventory, args.json, reporter))
         }
         RemoteCommand::Check { hook } => {
-            let _guard = shared_lock(&lock_path, *hook, reporter);
-            let inventory = declared_remotes()?;
+            let inventory = read_inventory(&lock_path, *hook, reporter)?;
             Ok(run_check(&inventory, *hook, args.json, reporter))
         }
         RemoteCommand::Update { name, now, yes } => run_update_locked(
@@ -144,6 +146,23 @@ fn declared_remotes() -> Result<RemoteInventory> {
     update::inventory().context("failed to enumerate the declared remotes")
 }
 
+/// Read the inventory under the shared lock, releasing it before returning.
+///
+/// The lock covers the read of the manifest and the lockfile — the files a
+/// concurrent `apply` or `remote update` rewrites — and nothing after it. The
+/// caller may then spend as long as it likes on the network without an apply
+/// waiting behind it.
+fn read_inventory(
+    lock_path: &camino::Utf8Path,
+    quiet: bool,
+    reporter: &mut impl Reporter,
+) -> Result<RemoteInventory> {
+    let guard = shared_lock(lock_path, quiet, reporter);
+    let inventory = declared_remotes();
+    drop(guard);
+    inventory
+}
+
 /// Report the pins as recorded, with the pending state the last
 /// `check` observed.
 fn run_list(inventory: &RemoteInventory, json: bool, reporter: &mut impl Reporter) -> i32 {
@@ -154,12 +173,12 @@ fn run_list(inventory: &RemoteInventory, json: bool, reporter: &mut impl Reporte
             .iter()
             .map(|view| {
                 serde_json::json!({
-                    "name": view.name(),
+                    "name": view.name().as_str(),
                     "url": view.spec.url,
                     "ref": view.spec.git_ref,
                     "rev": view.pin.as_ref().map(|pin| pin.rev.clone()),
                     "updated_at": view.pin.as_ref().map(|pin| pin.updated_at.clone()),
-                    "pending": pending.contains(view.name()),
+                    "pending": notice::is_pending(&pending, view.name()),
                 })
             })
             .collect();
@@ -177,7 +196,7 @@ fn run_list(inventory: &RemoteInventory, json: bool, reporter: &mut impl Reporte
             .pin
             .as_ref()
             .map_or("(unpinned)", |pin| pin.rev.as_str());
-        let state = if pending.contains(view.name()) {
+        let state = if notice::is_pending(&pending, view.name()) {
             "  update pending"
         } else {
             ""
@@ -308,7 +327,7 @@ fn run_update(
         let Some(index) = inventory
             .remotes
             .iter()
-            .position(|view| patina_core::config::remote::same_name(view.name(), name))
+            .position(|view| view.name().matches(name))
         else {
             reporter.warn(&format!(
                 "no remote named `{name}` is declared in this repository's root patina.toml"
@@ -339,7 +358,7 @@ fn run_update(
                 // One unreachable remote must not stop the others.
                 reporter.warn(&format!("could not update remote {}: {error}", view.name()));
                 outcomes.push(Outcome {
-                    name: view.name().to_owned(),
+                    name: view.name().clone(),
                     action: Action::Failed,
                     rev: None,
                 });
@@ -358,7 +377,7 @@ fn run_update(
             reporter,
         )?;
         outcomes.push(Outcome {
-            name: view.name().to_owned(),
+            name: view.name().clone(),
             action,
             rev: Some(proposal.candidate_rev),
         });
@@ -370,20 +389,13 @@ fn run_update(
         let rows: Vec<serde_json::Value> = outcomes.iter().map(Outcome::row).collect();
         reporter.json(&document(&serde_json::json!({ "remotes": rows })));
     }
-    let failed = outcomes
-        .iter()
-        .any(|outcome| matches!(outcome.action, Action::Failed | Action::Rejected));
-    Ok(if failed {
-        ExitCode::Generic.code()
-    } else {
-        ExitCode::Success.code()
-    })
+    Ok(exit_for(&outcomes).code())
 }
 
 /// What one remote's update pass amounted to, for the JSON envelope, the exit
 /// code, and the notice reconciliation.
 struct Outcome {
-    name: String,
+    name: patina_core::RemoteName,
     action: Action,
     rev: Option<String>,
 }
@@ -392,7 +404,7 @@ impl Outcome {
     /// One `remotes` row of the `remote update` JSON envelope.
     fn row(&self) -> serde_json::Value {
         serde_json::json!({
-            "name": self.name,
+            "name": self.name.as_str(),
             "action": self.action.label(),
             "rev": self.rev,
         })
@@ -410,10 +422,10 @@ fn reconcile_notice(
     outcomes: &[Outcome],
     reporter: &mut impl Reporter,
 ) {
-    let names: Vec<&str> = outcomes
+    let names: Vec<&patina_core::RemoteName> = outcomes
         .iter()
         .filter(|outcome| matches!(outcome.action, Action::Updated | Action::UpToDate))
-        .map(|outcome| outcome.name.as_str())
+        .map(|outcome| &outcome.name)
         .collect();
     if names.is_empty() {
         return;
@@ -425,6 +437,28 @@ fn reconcile_notice(
     }
 }
 
+/// The exit code for a whole `remote update` run.
+///
+/// A failure outranks a decline: a run that both failed to reach one remote and
+/// was told no about another reports the failure, the more actionable of the
+/// two. A pin the gate held on its own is a success — the run did what the gate
+/// said, and a script that treated a cooldown as an error would fail daily.
+fn exit_for(outcomes: &[Outcome]) -> ExitCode {
+    if outcomes
+        .iter()
+        .any(|outcome| matches!(outcome.action, Action::Failed | Action::Rejected))
+    {
+        ExitCode::Generic
+    } else if outcomes
+        .iter()
+        .any(|outcome| outcome.action == Action::Declined)
+    {
+        ExitCode::UserDeclined
+    } else {
+        ExitCode::Success
+    }
+}
+
 /// What happened to one remote's proposal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Action {
@@ -432,8 +466,12 @@ enum Action {
     UpToDate,
     /// The pin moved.
     Updated,
-    /// The gate held it back, or the user declined.
+    /// The gate held it back on its own: a cooldown, or a verdict this binary
+    /// does not recognize. Nobody was asked, so nothing was refused.
     Held,
+    /// The user was asked and said no. Distinct from [`Action::Held`] because
+    /// a declined prompt is what exit code 5 means across every command.
+    Declined,
     /// A hard reject.
     Rejected,
     /// The remote could not even be proposed (unreachable, missing ref).
@@ -446,6 +484,7 @@ impl Action {
             Self::UpToDate => "up_to_date",
             Self::Updated => "updated",
             Self::Held => "held",
+            Self::Declined => "declined",
             Self::Rejected => "rejected",
             Self::Failed => "failed",
         }
@@ -513,7 +552,8 @@ fn settle(
             Ok(Action::Held)
         }
         GateOutcome::NeedsConfirmation(concerns) => {
-            if confirm(&proposal.name, concerns, flags.yes, tty, reader, reporter) {
+            let answer = confirm(&proposal.name, concerns, flags.yes, tty, reader, reporter);
+            if answer == Confirmed::Yes {
                 bump(
                     lockfile,
                     repo_root,
@@ -523,17 +563,20 @@ fn settle(
                     flags.json,
                     reporter,
                 )?;
-                Ok(Action::Updated)
-            } else {
-                if !flags.json {
-                    reporter.line(&format!(
-                        "{}: pin unchanged at {}",
-                        proposal.name,
-                        proposal.current_rev.as_deref().unwrap_or("(unpinned)")
-                    ));
-                }
-                Ok(Action::Held)
+                return Ok(Action::Updated);
             }
+            if !flags.json {
+                reporter.line(&format!(
+                    "{}: pin unchanged at {}",
+                    proposal.name,
+                    proposal.current_rev.as_deref().unwrap_or("(unpinned)")
+                ));
+            }
+            Ok(if answer == Confirmed::No {
+                Action::Declined
+            } else {
+                Action::Held
+            })
         }
         // `GateOutcome` is `#[non_exhaustive]`. A verdict this binary does not
         // recognize must not be treated as permission to move a pin.
@@ -584,21 +627,38 @@ fn confirm(
     tty: Tty,
     reader: &mut impl PromptReader,
     reporter: &mut impl Reporter,
-) -> bool {
+) -> Confirmed {
     for concern in concerns {
         reporter.warn(&format!("{name}: {}", concern.describe()));
     }
     if yes {
-        return true;
+        return Confirmed::Yes;
     }
     if tty == Tty::NonInteractive {
         reporter.warn(&format!(
             "{name}: cannot confirm in a non-interactive shell; re-run with --yes to accept"
         ));
-        return false;
+        return Confirmed::Unasked;
     }
     reporter.confirm(&format!("Bump the pin for {name} anyway?"));
-    matches!(reader.read_line().unwrap_or_default().trim(), "y" | "Y")
+    if matches!(reader.read_line().unwrap_or_default().trim(), "y" | "Y") {
+        Confirmed::Yes
+    } else {
+        Confirmed::No
+    }
+}
+
+/// What the confirmation step concluded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Confirmed {
+    /// Accepted, by `--yes` or at the prompt.
+    Yes,
+    /// The user was asked and said no.
+    No,
+    /// There was no way to ask. Distinct from [`Confirmed::No`] because a
+    /// non-interactive run that could not raise the prompt refused nothing, and
+    /// exit code 5 means a prompt was declined.
+    Unasked,
 }
 
 /// Run the cache sweep by hand: whole trees for remotes the root manifest no
@@ -612,16 +672,16 @@ fn run_prune(inventory: &RemoteInventory, json: bool, reporter: &mut impl Report
         .iter()
         .map(patina_core::remote::update::RemoteView::name)
         .collect();
-    let keep: Vec<(String, String)> = inventory
+    let keep: Vec<(patina_core::RemoteName, String)> = inventory
         .remotes
         .iter()
         .filter_map(|view| {
             view.pin
                 .as_ref()
-                .map(|pin| (view.name().to_owned(), pin.rev.clone()))
+                .map(|pin| (view.name().clone(), pin.rev.clone()))
         })
         .collect();
-    let removed = cache::prune(&inventory.state_dir, &declared, &keep)
+    let removed = cache::prune(&inventory.state_dir, &declared, Some(&keep))
         .map_err(patina_core::EngineError::from)
         .context("failed to prune the remote checkout cache")?;
     if json {
@@ -647,6 +707,11 @@ fn document(value: &serde_json::Value) -> String {
 mod tests {
     use super::*;
     use crate::output::reporter::BufferReporter;
+
+    /// A validated remote name for the in-process fixtures.
+    fn remote_name(spelling: &str) -> patina_core::RemoteName {
+        patina_core::RemoteName::parse(spelling).expect("a legal remote name")
+    }
 
     /// A reader that answers with a scripted line, then EOF.
     struct ScriptedReader(Option<String>);
@@ -678,7 +743,7 @@ mod tests {
             lockfile: patina_core::remote::lockfile::Lockfile::default(),
             remotes: vec![RemoteView {
                 spec: patina_core::RemoteSpec {
-                    name: "humanizer".to_owned(),
+                    name: remote_name("humanizer"),
                     url: "https://example.invalid/r".to_owned(),
                     git_ref: Some("main".to_owned()),
                     min_age: None,
@@ -857,7 +922,11 @@ mod tests {
             &mut reporter,
         )
         .expect("settling a declined remote cannot fail");
-        assert_eq!(action, Action::Held);
+        assert_eq!(
+            action,
+            Action::Held,
+            "a shell that could not raise the prompt refused nothing"
+        );
         assert!(reporter.out.contains("pin unchanged at"));
         assert!(inv.lockfile.is_empty());
     }
@@ -879,17 +948,47 @@ mod tests {
     }
 
     #[test]
+    fn a_declined_prompt_exits_five_and_a_gate_hold_exits_zero() {
+        // Exit 5 is the repository-wide code for a declined prompt, so a
+        // decline must not be folded into the gate's own holds, which are the
+        // ordinary daily outcome of a cooldown.
+        let outcome = |action| {
+            vec![Outcome {
+                name: remote_name("humanizer"),
+                action,
+                rev: None,
+            }]
+        };
+        assert_eq!(exit_for(&outcome(Action::Declined)), ExitCode::UserDeclined);
+        assert_eq!(exit_for(&outcome(Action::Held)), ExitCode::Success);
+        assert_eq!(exit_for(&outcome(Action::UpToDate)), ExitCode::Success);
+        assert_eq!(exit_for(&outcome(Action::Failed)), ExitCode::Generic);
+        assert_eq!(exit_for(&outcome(Action::Rejected)), ExitCode::Generic);
+
+        let mut mixed = outcome(Action::Declined);
+        mixed.extend(outcome(Action::Failed));
+        assert_eq!(
+            exit_for(&mixed),
+            ExitCode::Generic,
+            "an unreachable remote is the more actionable of the two"
+        );
+    }
+
+    #[test]
     fn yes_accepts_without_reading_stdin() {
         let mut reader = ScriptedReader(None);
         let mut reporter = BufferReporter::new();
-        assert!(confirm(
-            "humanizer",
-            &concerns(),
-            true,
-            Tty::Interactive,
-            &mut reader,
-            &mut reporter
-        ));
+        assert_eq!(
+            confirm(
+                "humanizer",
+                &concerns(),
+                true,
+                Tty::Interactive,
+                &mut reader,
+                &mut reporter
+            ),
+            Confirmed::Yes
+        );
         assert!(
             reporter.err.contains("history was rewritten"),
             "the concern must still be reported under --yes: {}",
@@ -898,11 +997,11 @@ mod tests {
     }
 
     #[test]
-    fn a_non_interactive_shell_declines_and_says_how_to_proceed() {
+    fn a_non_interactive_shell_holds_and_says_how_to_proceed() {
         let mut reader = ScriptedReader(Some("y\n".to_owned()));
         let mut reporter = BufferReporter::new();
-        assert!(
-            !confirm(
+        assert_eq!(
+            confirm(
                 "humanizer",
                 &concerns(),
                 false,
@@ -910,7 +1009,9 @@ mod tests {
                 &mut reader,
                 &mut reporter
             ),
-            "a flagged bump must not be accepted without a confirmation"
+            Confirmed::Unasked,
+            "a flagged bump must not be accepted without a confirmation, and a shell that \
+             could not be asked has refused nothing"
         );
         assert!(
             reporter.err.contains("--yes"),
@@ -921,7 +1022,12 @@ mod tests {
 
     #[test]
     fn an_interactive_y_accepts_and_anything_else_declines() {
-        for (answer, expected) in [("y\n", true), ("Y\n", true), ("n\n", false), ("", false)] {
+        for (answer, expected) in [
+            ("y\n", Confirmed::Yes),
+            ("Y\n", Confirmed::Yes),
+            ("n\n", Confirmed::No),
+            ("", Confirmed::No),
+        ] {
             let mut reader = ScriptedReader(Some(answer.to_owned()));
             let mut reporter = BufferReporter::new();
             assert_eq!(
@@ -934,7 +1040,7 @@ mod tests {
                     &mut reporter
                 ),
                 expected,
-                "answer {answer:?} must map to {expected}"
+                "answer {answer:?} must map to {expected:?}"
             );
             assert!(
                 reporter.err.contains("Bump the pin for humanizer anyway?"),

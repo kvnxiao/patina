@@ -50,7 +50,13 @@ which gives `humanizer` for all of
 `git@github.com:blader/humanizer`, and `/srv/mirrors/humanizer.git`. A
 name may contain letters, digits, `.`, `_`, and `-`, because it becomes
 a directory name; a URL with no legal last segment is refused with a
-message telling you to write `name`. Two remotes may not answer to one
+message telling you to write `name`. For the same reason a name may not
+end in a dot, and may not be a DOS device name (`CON`, `PRN`, `AUX`,
+`NUL`, `COM0`-`COM9`, `LPT0`-`LPT9`, with or without an extension):
+Windows resolves both to something other than the directory you asked
+for, and `notice.` would land on Patina's own notice file. Those are
+refused on every platform, so manifest validity never depends on which
+machine reads it. Two remotes may not answer to one
 name, compared ignoring case and Unicode normalization so a manifest
 cannot mean two things on Linux and one thing on macOS — and every
 reference is matched the same way: an entry's `remote` key, a
@@ -154,6 +160,15 @@ updated_at = "2026-08-11T14:00:00Z"
 - An entry naming a remote with no lock entry is an error at plan time;
   the message points at `patina remote update <name>` to create the
   first pin.
+- Two `[remotes.<name>]` tables that address one remote are refused
+  rather than resolved. Patina's own writer replaces a pin instead of
+  joining a second one, so a folded-equivalent pair means a hand-edit or
+  an unfinished merge, and guessing which one wins would apply a
+  different commit than the machine that wrote the file.
+
+The file is written through a same-directory temporary and a rename, so
+a process killed mid-write leaves either the old pins or the new ones,
+never a truncated file with no pins at all.
 
 The lockfile is a statement about the root manifest's declarations, not
 about what this machine happens to use. Two consequences follow.
@@ -163,7 +178,7 @@ complete for machines whose active entries differ from yours. And a pin
 whose `[[remote]]` you deleted is stale by definition: a `patina apply`
 that may write drops it and says so. A preview — a non-interactive
 apply without `--yes`, or any `--json` run — reports the stale pin and
-leaves the file alone, keeping its zero-writes contract.
+leaves the file alone, because a preview never writes your repository.
 
 Reading `patina.lock` is itself lazy: it happens on the first entry
 that selects a remote, so a repository that uses none never reads (or
@@ -188,6 +203,18 @@ A checkout is materialized on demand: the first entry that actually
 selects a remote on this machine fetches it, and a remote only a
 `when`-false entry names is never fetched at all. Pins are global,
 checkouts are local.
+
+Materialization happens at plan time, because the plan is computed
+from the checkout's bytes. A preview is therefore not offline and not
+write-free in the strictest sense: a non-interactive apply without
+`--yes`, and any `--json` run, will fetch and write a checkout the
+cache lacks. What a preview never writes is your repository or any
+target — the lockfile rewrites are held back for exactly that reason.
+
+The directory under `<state>/remotes/` is named by the remote's
+folded name (one case, one Unicode normal form), not by the spelling
+in the manifest, so respelling a declaration keeps addressing the
+checkouts already on disk instead of cold-starting a second tree.
 
 Git runs as a subprocess (`git` on `PATH`, verified by
 `patina doctor`), so your existing authentication (SSH agent,
@@ -215,6 +242,12 @@ roughly the current and previous rev per remote. The checkout of each
 declared remote's currently pinned rev always survives, referenced or
 not: a pin bumped but not yet applied is the warm cache an offline
 apply depends on. `patina remote prune` runs the same sweep by hand.
+
+An apply where no active entry selects a remote never reads
+`patina.lock` while planning, so the sweep re-reads it before deciding
+anything. If that read fails, no declared remote's cache is touched at
+all: a checkout that might be the current pin is worth more than the
+disk it occupies.
 
 ## Commands
 
@@ -266,6 +299,12 @@ must clear four checks, evaluated after fetching it:
    old (the remote's own override, else `[patina] remote_min_age`, else
    72 hours).
 
+Declining a confirmation prompt leaves the pin where it is and exits
+`5`, the code every Patina command uses for a declined prompt. A pin
+the gate held back on its own — a cooldown, a verdict this binary does
+not recognize — exits `0` instead: nobody was asked, so nothing was
+refused.
+
 The first pin of a newly declared remote is exempt from the age gate:
 adopting a remote is a deliberate act whose content you are about to
 review in the consent diff. The gate exists to slow down *unattended*
@@ -315,6 +354,12 @@ stamp (default: at most one real check per 24 hours) and maintains the
 `notice` file; the shell side needs no logic beyond printing a file
 and spawning one detached process per session, after the first
 command rather than at startup.
+
+A hook holds the shared lock only while it reads the manifest and the
+lockfile, never across `ls-remote`. `git` has no timeout of its own, so
+a hook that kept the lock over the network could make a concurrent
+`apply` wait out its own lock timeout and fail because a server went
+quiet.
 
 fish (`conf.d/patina-remotes.fish`):
 

@@ -206,6 +206,27 @@ pub(crate) enum RemoteRepr {
         value: String,
     },
 
+    /// A `[remotes.<name>]` key is not a usable remote name.
+    #[error("the lock entry key `{name}` is not a usable remote name: {source}")]
+    LockfileName {
+        /// The offending key.
+        name: String,
+        /// Why the name is not usable.
+        #[source]
+        source: crate::config::remote::RemoteConfigError,
+    },
+
+    /// Two `[remotes.<name>]` tables address one remote.
+    #[error(
+        "the lockfile carries two entries for the remote `{name}`; a remote has one pin, and \
+         names are compared ignoring case and Unicode normalization, so the two cannot both be \
+         honoured. Delete the stale entry, or re-pin with `patina remote update {name}`"
+    )]
+    LockfileDuplicate {
+        /// The name claimed twice.
+        name: String,
+    },
+
     /// An entry named a remote no `[[remote]]` table declares.
     #[error(
         "an entry names the remote `{name}`, which no [[remote]] table in the root patina.toml \

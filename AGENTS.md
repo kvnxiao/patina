@@ -14,7 +14,7 @@ Its source of truth is a user's centralized git repository. A user runs `patina 
 - **Existing-machine maintainer** — adds, edits, removes config; re-runs `patina apply` expecting the diff-and-prompt loop to never surprise them.
 - **Multi-machine syncer** — runs Patina across macOS / Linux / Windows; same source must produce same result everywhere.
 - **Cautious user** — wants a diff and prompt before any mutation; never accidentally overwrites a file edited outside Patina.
-- **CI script author** — runs `patina apply` in a non-interactive shell to preview a deployment; expects plan output and zero writes.
+- **CI script author** — runs `patina apply` in a non-interactive shell to preview a deployment; expects plan output and no writes to the repository or to any target. Planning a remote-backed entry against a cold cache still fills the per-machine remote cache, which is what the plan is computed from.
 
 ### V1.0 outcome
 

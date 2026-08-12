@@ -15,6 +15,7 @@
 
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
+use patina_core::RemoteName;
 use patina_core::RemoteSpec;
 use patina_core::remote::gate::GateConcern;
 use patina_core::remote::gate::GateOutcome;
@@ -29,6 +30,11 @@ use std::time::Duration;
 use tempfile::TempDir;
 
 /// "Now" for every gate evaluation here, so no assertion depends on the clock.
+/// The one remote every fixture declares.
+fn humanizer() -> RemoteName {
+    RemoteName::parse("humanizer").expect("a legal remote name")
+}
+
 const NOW: i64 = 1_800_000_000;
 const WEEK: i64 = 7 * 24 * 60 * 60;
 
@@ -94,7 +100,7 @@ impl Fixture {
     fn inventory(&self, min_age: Option<Duration>, pin: Option<LockEntry>) -> RemoteInventory {
         let mut lockfile = Lockfile::default();
         if let Some(pin) = pin.clone() {
-            lockfile.insert("humanizer", pin);
+            lockfile.insert(humanizer(), pin);
         }
         RemoteInventory {
             repo_root: self.repo.clone(),
@@ -103,7 +109,7 @@ impl Fixture {
             lockfile,
             remotes: vec![RemoteView {
                 spec: RemoteSpec {
-                    name: "humanizer".to_owned(),
+                    name: humanizer(),
                     url: self.origin.as_str().to_owned(),
                     git_ref: Some("main".to_owned()),
                     min_age,
@@ -321,7 +327,7 @@ fn accept_writes_the_pin_and_it_reads_back() {
     .expect("write the lockfile");
 
     let written = Lockfile::load(&lockfile_path(&f.repo)).expect("read the lockfile back");
-    let entry = written.get("humanizer").expect("the pin was recorded");
+    let entry = written.get(&humanizer()).expect("the pin was recorded");
     assert_eq!(entry.rev, tip);
     assert_eq!(entry.updated_at, "2026-08-11T14:00:00Z");
     assert_eq!(entry.url, f.origin.as_str());

@@ -1122,7 +1122,7 @@ mod tests {
             timestamp: "fixed".to_owned(),
             resolver: Resolver::new(Builtins::current()),
             remote_names: Vec::new(),
-            remote_pins: Vec::new(),
+            remote_pins: Some(Vec::new()),
         }
     }
 

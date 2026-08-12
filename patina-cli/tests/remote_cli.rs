@@ -51,6 +51,11 @@ fn declare_only(f: &Fixture, name: &str, origin: &Origin, min_age: Option<&str>)
     .expect("write root manifest");
 }
 
+/// A validated remote name, for the cache paths the assertions read.
+fn remote_name(spelling: &str) -> patina_core::RemoteName {
+    patina_core::RemoteName::parse(spelling).expect("a legal remote name")
+}
+
 fn lockfile(f: &Fixture) -> String {
     fs_err::read_to_string(f.root.join("patina.lock").as_std_path()).unwrap_or_default()
 }
@@ -402,7 +407,7 @@ fn prune_removes_an_unreferenced_checkout() {
 
     let orphan = patina_core::remote::cache::checkout_dir(
         &f.state_root(),
-        "humanizer",
+        &remote_name("humanizer"),
         "cccccccccccccccccccccccccccccccccccccccc",
     );
     fs_err::create_dir_all(orphan.as_std_path()).expect("mkdir orphan checkout");
@@ -433,7 +438,7 @@ fn prune_removes_the_whole_cache_tree_of_an_undeclared_remote() {
     origin.commit_files(&[("a.md", "first\n")], OLD_EPOCH);
     declare(&f, "humanizer", &origin, Some("0s"));
     assert_eq!(code(&f.run(&["remote", "update"], &[])), 0, "first pin");
-    let cached = patina_core::remote::cache::module_dir(&f.state_root(), "humanizer");
+    let cached = patina_core::remote::cache::module_dir(&f.state_root(), &remote_name("humanizer"));
     assert!(
         cached.join("repo.git").is_dir(),
         "the update must have filled the fetch repository at {cached}"

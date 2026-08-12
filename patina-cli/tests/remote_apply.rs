@@ -58,7 +58,12 @@ fn wait_for_next_second() {
 
 /// The checkout directory the engine resolves a remote-sourced entry against.
 fn checkout(f: &Fixture, name: &str, rev: &str) -> Utf8PathBuf {
-    patina_core::remote::cache::checkout_dir(&f.state_root(), name, rev)
+    patina_core::remote::cache::checkout_dir(&f.state_root(), &remote_name(name), rev)
+}
+
+/// A validated remote name, for the cache paths the assertions read.
+fn remote_name(spelling: &str) -> patina_core::RemoteName {
+    patina_core::RemoteName::parse(spelling).expect("a legal remote name")
 }
 
 #[test]
@@ -315,7 +320,7 @@ fn a_remote_only_a_when_false_entry_names_is_never_fetched() {
         "local\n"
     );
     assert!(
-        !patina_core::remote::cache::module_dir(&f.state_root(), "unused").exists(),
+        !patina_core::remote::cache::module_dir(&f.state_root(), &remote_name("unused")).exists(),
         "no cache directory may be created for a remote nothing active names"
     );
 }

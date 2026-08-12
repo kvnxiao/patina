@@ -39,6 +39,7 @@ use crate::config::FileMode;
 use crate::config::HookEntry;
 use crate::config::HookEvent;
 use crate::config::ManagedEntry;
+use crate::config::RemoteName;
 use crate::config::RemoteSpec;
 use crate::config::parse_module_config;
 use crate::config::parse_root_config;
@@ -238,11 +239,12 @@ pub struct ResolvedPlan {
     /// The names of every `[[remote]]` the root manifest declares, in
     /// declaration order. Carried so the stale-pin and cache sweeps work from
     /// the same parse this plan was built from.
-    pub remote_names: Vec<String>,
-    /// The `(name, rev)` of every declared remote's pin, when planning read
-    /// the lockfile; empty when no active entry selected a remote. The cache
-    /// sweep retains these checkouts regardless of journal reachability.
-    pub remote_pins: Vec<(String, String)>,
+    pub remote_names: Vec<RemoteName>,
+    /// The `(name, rev)` of every declared remote's pin, or `None` when
+    /// planning never read the lockfile because no active entry selected a
+    /// remote. The cache sweep retains these checkouts regardless of journal
+    /// reachability, and treats `None` as "leave every declared remote alone".
+    pub remote_pins: Option<Vec<(RemoteName, String)>>,
 }
 
 impl ResolvedPlan {
@@ -381,7 +383,7 @@ pub fn plan(
     crate::apply::collisions::validate_targets(&claims)?;
 
     let (operations, resolved_ops) = assemble_plan_operations(file_entries, directory_entries);
-    let remote_names: Vec<String> = remotes.iter().map(|spec| spec.name.clone()).collect();
+    let remote_names: Vec<RemoteName> = remotes.iter().map(|spec| spec.name.clone()).collect();
     let remote_pins = registry.pins();
 
     Ok(ResolvedPlan {
@@ -476,8 +478,8 @@ struct RemoteRegistry<'a> {
     policy: CachePolicy,
     /// The committed pins, read on first use.
     lockfile: Option<Lockfile>,
-    /// Resolved checkout per remote name, so a remote several entries select
-    /// is materialized once.
+    /// Resolved checkout per remote identity, so a remote several entries
+    /// select is materialized once however each of them spells its name.
     checkouts: BTreeMap<String, Option<Utf8PathBuf>>,
 }
 
@@ -527,12 +529,17 @@ impl<'a> RemoteRegistry<'a> {
     }
 
     /// The checkout directory for the remote called `name`, memoized.
+    ///
+    /// Memoized under the folded identity rather than the spelling this entry
+    /// wrote, so two entries selecting one remote through two spellings
+    /// resolve it once.
     fn checkout(&mut self, name: &str) -> Result<Option<Utf8PathBuf>, EngineError> {
-        if let Some(resolved) = self.checkouts.get(name) {
+        let key = crate::config::remote::name_key(name);
+        if let Some(resolved) = self.checkouts.get(&key) {
             return Ok(resolved.clone());
         }
         let resolved = self.materialize(name)?;
-        self.checkouts.insert(name.to_owned(), resolved.clone());
+        self.checkouts.insert(key, resolved.clone());
         Ok(resolved)
     }
 
@@ -549,10 +556,7 @@ impl<'a> RemoteRegistry<'a> {
         // Reborrowed from `self` so the lockfile can be loaded into `self`
         // below while `spec` stays alive.
         let declared = self.declared;
-        let Some(spec) = declared
-            .iter()
-            .find(|spec| crate::config::remote::same_name(&spec.name, name))
-        else {
+        let Some(spec) = declared.iter().find(|spec| spec.name.matches(name)) else {
             if self.policy == CachePolicy::ReadOnly {
                 tracing::warn!(
                     remote = name,
@@ -588,7 +592,7 @@ impl<'a> RemoteRegistry<'a> {
         }
 
         let Some(pin) = self.lockfile()?.get(&spec.name).cloned() else {
-            return Err(crate::remote::RemoteError::missing_lock_entry(&spec.name).into());
+            return Err(crate::remote::RemoteError::missing_lock_entry(spec.name.as_str()).into());
         };
 
         let checkout = remote_cache::ensure_checkout(
@@ -598,25 +602,22 @@ impl<'a> RemoteRegistry<'a> {
             spec.git_ref.as_deref(),
             &pin.rev,
         )
-        .map_err(|err| err.into_cold_cache(&spec.name, &pin.rev))?;
+        .map_err(|err| err.into_cold_cache(spec.name.as_str(), &pin.rev))?;
         Ok(Some(canonicalize(&checkout)?))
     }
 
-    /// The `(name, rev)` of every declared remote's pin, when this run read
-    /// the lockfile; empty otherwise. A run that read no lockfile materialized
-    /// nothing, so the cache sweep has nothing beyond the journal to retain.
-    fn pins(&self) -> Vec<(String, String)> {
-        let Some(lockfile) = &self.lockfile else {
-            return Vec::new();
-        };
-        self.declared
-            .iter()
-            .filter_map(|spec| {
-                lockfile
-                    .get(&spec.name)
-                    .map(|pin| (spec.name.clone(), pin.rev.clone()))
-            })
-            .collect()
+    /// The `(name, rev)` of every declared remote's pin, or `None` when this
+    /// run never read the lockfile.
+    ///
+    /// The distinction is what keeps the cache sweep honest: "no remote is
+    /// pinned" and "which remotes are pinned was never established" look the
+    /// same as an empty list, and deleting a checkout on the second would take
+    /// out the one the next run materializes.
+    fn pins(&self) -> Option<Vec<(RemoteName, String)>> {
+        Some(declared_pins(
+            self.declared.iter().map(|spec| &spec.name),
+            self.lockfile.as_ref()?,
+        ))
     }
 
     /// The committed pins, reading `patina.lock` on first use.
@@ -633,6 +634,45 @@ impl<'a> RemoteRegistry<'a> {
         };
         Ok(lockfile)
     }
+}
+
+/// Re-read the pins for a plan that never loaded the lockfile, or `None` when
+/// the file cannot be read.
+///
+/// A remote declared but selected by no active entry still has a pin the next
+/// run will materialize, so the sweep must learn it from somewhere. Failing to
+/// read is not an error here: it only means no declared remote's cache is
+/// swept this time.
+fn reread_pins(resolved: &ResolvedPlan) -> Option<Vec<(RemoteName, String)>> {
+    if resolved.remote_names.is_empty() {
+        return Some(Vec::new());
+    }
+    let lockfile = Lockfile::load(&lockfile_path(&resolved.repo_root))
+        .inspect_err(|error| {
+            tracing::warn!(
+                %error,
+                "leaving the declared remotes' checkouts alone: patina.lock could not be read, \
+                 so which revs are pinned is unknown"
+            );
+        })
+        .ok()?;
+    Some(declared_pins(&resolved.remote_names, &lockfile))
+}
+
+/// The `(name, rev)` each remote in `declared` is pinned to, skipping the ones
+/// with no pin yet.
+fn declared_pins<'a>(
+    declared: impl IntoIterator<Item = &'a RemoteName>,
+    lockfile: &Lockfile,
+) -> Vec<(RemoteName, String)> {
+    declared
+        .into_iter()
+        .filter_map(|name| {
+            lockfile
+                .get(name)
+                .map(|pin| (name.clone(), pin.rev.clone()))
+        })
+        .collect()
 }
 
 /// Build the [`PlanningContext`] both [`plan`] and [`current_managed_targets`]
@@ -810,8 +850,8 @@ fn insert_managed_targets(
     // hashing would then fail on the just-reaped file).
     if matches!(entry.mode, FileMode::SymlinkTree | FileMode::CopyTree) {
         let Some(source_root) = origin.source_root.as_deref() else {
-            if let Some(remote) = origin.remote.as_deref() {
-                managed.unmaterialized_remotes.insert(remote.to_owned());
+            if let Some(remote) = origin.remote.as_ref() {
+                managed.unmaterialized_remotes.insert(remote.clone());
                 for target in &entry.targets {
                     managed
                         .indeterminate_roots
@@ -1195,13 +1235,15 @@ fn resolve_entry(
     engine: &Engine,
     resolver: &Resolver,
 ) -> Result<ResolvedEntry, EngineError> {
-    let root = match (origin.source_root.as_deref(), origin.remote.as_deref()) {
+    let root = match (origin.source_root.as_deref(), origin.remote.as_ref()) {
         (Some(root), _) => root,
         // A `Fetch`-policy origin always carries a source root for a remote
         // entry; a slip here must not weaken the containment check below by
         // anchoring it on the working directory.
         (None, Some(remote)) => {
-            return Err(crate::remote::RemoteError::checkout_not_materialized(remote).into());
+            return Err(
+                crate::remote::RemoteError::checkout_not_materialized(remote.as_str()).into(),
+            );
         }
         // A local origin always carries its module directory; the fallback
         // keeps this total so a logic slip surfaces as `SourceNotFound` rather
@@ -1215,12 +1257,14 @@ fn resolve_entry(
     // local source is the user's own tree and keeps its existing latitude.
     // `root` came out of the registry canonical, so the prefix test needs no
     // further resolution.
-    if let Some(remote) = origin.remote.as_deref()
+    if let Some(remote) = origin.remote.as_ref()
         && !source.starts_with(root)
     {
-        return Err(
-            crate::remote::RemoteError::source_escapes_checkout(remote, &entry.source).into(),
-        );
+        return Err(crate::remote::RemoteError::source_escapes_checkout(
+            remote.as_str(),
+            &entry.source,
+        )
+        .into());
     }
     let metadata = source_metadata(&source)?;
     // Canonicalizing the declared source vets that one path, but a directory
@@ -1228,10 +1272,10 @@ fn resolve_entry(
     // symlink they meet, so every leaf must be vetted too. Patina's own
     // materialization writes with `core.symlinks=false` and never produces
     // one; finding one means the cache was made or altered by something else.
-    if let Some(remote) = origin.remote.as_deref()
+    if let Some(remote) = origin.remote.as_ref()
         && metadata.is_dir()
     {
-        reject_symlink_leaves(remote, &source)?;
+        reject_symlink_leaves(remote.as_str(), &source)?;
     }
     validate_source_kind(&source, entry.kind, &metadata)?;
     let mut targets = Vec::with_capacity(entry.targets.len());
@@ -1692,12 +1736,21 @@ pub async fn execute(
         // unreferenced: another process's not-yet-committed plan points at a
         // pinned rev by construction.
         //
+        // Planning reads `patina.lock` only when an active entry selects a
+        // remote, so a run without one arrives here not knowing what is pinned.
+        // It is re-read here rather than assumed empty; a lockfile that cannot
+        // be read leaves every declared remote's cache untouched.
+        //
         // Pruning is best-effort cleanup after a durable commit, so a failure
         // anywhere here is logged, not propagated: the apply already succeeded
         // and rolling it back over a stale checkout would be worse than leaving
         // the checkout on disk.
-        let declared: BTreeSet<&str> = resolved.remote_names.iter().map(String::as_str).collect();
-        match remote_cache::prune(&resolved.state_dir, &declared, &resolved.remote_pins) {
+        let declared: BTreeSet<&RemoteName> = resolved.remote_names.iter().collect();
+        let pins = resolved
+            .remote_pins
+            .clone()
+            .or_else(|| reread_pins(resolved));
+        match remote_cache::prune(&resolved.state_dir, &declared, pins.as_deref()) {
             Ok(removed) => {
                 for checkout in removed {
                     tracing::debug!(checkout = %checkout, "pruned an unreferenced remote checkout");
@@ -2457,7 +2510,7 @@ mod tests {
                 timestamp: TS.to_owned(),
                 resolver: Resolver::new(Builtins::current()),
                 remote_names: Vec::new(),
-                remote_pins: Vec::new(),
+                remote_pins: Some(Vec::new()),
             };
             Self {
                 _temp: temp,

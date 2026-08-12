@@ -73,6 +73,7 @@ pub use config::HookEntry;
 pub use config::HookEvent;
 pub use config::ModuleConfig;
 pub use config::RemoteConfigError;
+pub use config::RemoteName;
 pub use config::RemoteSpec;
 pub use config::RootConfig;
 pub use config::RootConfigError;

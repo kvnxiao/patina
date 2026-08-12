@@ -18,13 +18,128 @@ use std::time::Duration;
 /// the root `[patina] remote_min_age` names one.
 pub const DEFAULT_MIN_AGE: Duration = Duration::from_hours(72);
 
+/// A remote's name: the spelling its author wrote, and the folded key that
+/// decides identity.
+///
+/// The name is not a label. It becomes a directory under the per-machine
+/// cache, a table key in the committed lockfile, the `remote = "..."` an entry
+/// selects it by, and the argument every `patina remote` verb takes. Two
+/// spellings a case-insensitive filesystem cannot keep apart are therefore one
+/// remote, and this type is where that rule lives: equality, ordering, and
+/// hashing all run over [`RemoteName::key`], so a map keyed by this type
+/// cannot hold one remote twice. [`Display`](std::fmt::Display) renders the
+/// authored spelling, which is what messages and the lockfile keep.
+#[derive(Debug, Clone)]
+pub struct RemoteName {
+    /// As authored, for messages and the lockfile table key.
+    display: String,
+    /// The folded identity, for comparison and for on-disk paths.
+    key: String,
+}
+
+impl RemoteName {
+    /// Validate `name` as a remote name.
+    ///
+    /// Surrounding whitespace is trimmed first, so an author's stray padding
+    /// never reaches a path or a lockfile key.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RemoteConfigError::IllegalName`] when the name is empty, is
+    /// `.` or `..`, or carries a character outside the portable filename
+    /// alphabet; [`RemoteConfigError::NonPortableName`] when it is a legal
+    /// filename on Unix but not on Windows; and
+    /// [`RemoteConfigError::ReservedName`] when it collides with one of
+    /// Patina's own files in the cache directory.
+    pub fn parse(name: &str) -> Result<Self, RemoteConfigError> {
+        let display = name.trim().to_owned();
+        let illegal = || RemoteConfigError::IllegalName {
+            name: display.clone(),
+        };
+        if display.is_empty() || display == "." || display == ".." {
+            return Err(illegal());
+        }
+        if !display
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+        {
+            return Err(illegal());
+        }
+        if let Some(reason) = non_portable_reason(&display) {
+            return Err(RemoteConfigError::NonPortableName {
+                name: display,
+                reason,
+            });
+        }
+        let key = name_key(&display);
+        if RESERVED_NAMES.contains(&key.as_str()) {
+            return Err(RemoteConfigError::ReservedName { name: display });
+        }
+        Ok(Self { display, key })
+    }
+
+    /// The authored spelling.
+    #[must_use = "the display spelling is what messages and the lockfile key carry"]
+    pub fn as_str(&self) -> &str {
+        &self.display
+    }
+
+    /// The folded identity key: what names a cache directory and what two
+    /// spellings are compared under.
+    #[must_use = "the key is the identity, not the display spelling"]
+    pub fn key(&self) -> &str {
+        &self.key
+    }
+
+    /// Whether `spelling` addresses this remote.
+    ///
+    /// For the raw strings that arrive from outside a validated manifest — an
+    /// entry's `remote = "..."`, a `patina remote update <name>` argument.
+    #[must_use = "the answer decides which declaration a raw spelling selects"]
+    pub fn matches(&self, spelling: &str) -> bool {
+        self.key == name_key(spelling)
+    }
+}
+
+impl std::fmt::Display for RemoteName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.display)
+    }
+}
+
+impl PartialEq for RemoteName {
+    fn eq(&self, other: &Self) -> bool {
+        self.key == other.key
+    }
+}
+
+impl Eq for RemoteName {}
+
+impl PartialOrd for RemoteName {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for RemoteName {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.key.cmp(&other.key)
+    }
+}
+
+impl std::hash::Hash for RemoteName {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.key.hash(state);
+    }
+}
+
 /// One validated `[[remote]]` declaration from the root manifest.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RemoteSpec {
     /// What entries select this remote by, and the key its pin, its cache
     /// directory, and every `patina remote` verb are addressed under. Written
     /// explicitly or derived from the URL by [`derive_name`].
-    pub name: String,
+    pub name: RemoteName,
     /// The git URL to fetch from, passed to `git` verbatim so existing SSH
     /// agents and credential helpers apply untouched.
     pub url: String,
@@ -65,6 +180,20 @@ pub enum RemoteConfigError {
     IllegalName {
         /// The offending name.
         name: String,
+    },
+
+    /// A `name` (written or derived) is a legal filename on Unix but not on
+    /// Windows.
+    #[error(
+        "the remote name `{name}` is not a portable directory name: {reason}. A manifest must \
+         mean the same thing on macOS, Linux, and Windows, so such a name is refused on every \
+         platform rather than only where it breaks"
+    )]
+    NonPortableName {
+        /// The offending name.
+        name: String,
+        /// What Windows does with it.
+        reason: &'static str,
     },
 
     /// A `name` (written or derived) collides with one of Patina's own files
@@ -144,18 +273,10 @@ impl RemoteSpec {
             .as_deref()
             .map(|value| parse_duration("min_age", value))
             .transpose()?;
-        let name = match raw.name.map(|name| name.trim().to_owned()) {
-            Some(written) => {
-                if !is_legal_name(&written) {
-                    return Err(RemoteConfigError::IllegalName { name: written });
-                }
-                written
-            }
+        let name = match raw.name {
+            Some(written) => RemoteName::parse(&written)?,
             None => derive_name(&url)?,
         };
-        if RESERVED_NAMES.contains(&name_key(&name).as_str()) {
-            return Err(RemoteConfigError::ReservedName { name });
-        }
         Ok(Self {
             name,
             url,
@@ -179,55 +300,58 @@ impl RemoteSpec {
 /// # Errors
 ///
 /// Returns [`RemoteConfigError::UnderivableName`] when no legal name remains.
-pub fn derive_name(url: &str) -> Result<String, RemoteConfigError> {
+/// A segment that is shaped like a name but is refused for what it would
+/// collide with keeps its own error, so the author is told the real reason
+/// rather than being sent to write an explicit `name` that would fail too.
+pub fn derive_name(url: &str) -> Result<RemoteName, RemoteConfigError> {
     let trimmed = url.trim().trim_end_matches(['/', '\\']);
     // `:` separates host from path in the scp-like form, which has no `//`.
     let segment = trimmed.rsplit(['/', '\\', ':']).next().unwrap_or(trimmed);
     let name = segment.strip_suffix(".git").unwrap_or(segment);
-    if !is_legal_name(name) {
-        return Err(RemoteConfigError::UnderivableName {
+    RemoteName::parse(name).map_err(|err| match err {
+        RemoteConfigError::IllegalName { .. } => RemoteConfigError::UnderivableName {
             url: url.trim().to_owned(),
-        });
-    }
-    Ok(name.to_owned())
+        },
+        other => other,
+    })
 }
 
 /// The names of Patina's own files beside the per-remote cache directories
-/// under `<state>/remotes/`, compared folded. A remote so named would fight
-/// its own metadata over one path.
+/// under `<state>/remotes/`, in folded form. A remote so named would fight its
+/// own metadata over one path.
 const RESERVED_NAMES: [&str; 3] = ["notice", "pending", "last_check"];
 
-/// The identity key of a remote name.
+/// The identity key of a remote-name spelling.
 ///
-/// A name becomes a cache directory on filesystems that treat two spellings as
-/// one path, so two names are the same remote exactly when their folded forms
-/// agree. Every comparison of remote names — declaration uniqueness, the
-/// reserved set, entry-to-declaration resolution, lockfile keys, and the cache
-/// sweep — routes through this key so the identity rule is decided once.
+/// [`RemoteName`] carries this for every validated name; the bare function is
+/// for the spellings that never went through validation — a directory name the
+/// cache sweep read off disk, a raw selector from a manifest or a command line.
 #[must_use = "the key is the identity every name comparison uses"]
 pub fn name_key(name: &str) -> String {
     crate::caseless::fold(name)
 }
 
-/// Whether two remote-name spellings address one remote.
-#[must_use = "the answer is the name-identity comparison"]
-pub fn same_name(a: &str, b: &str) -> bool {
-    name_key(a) == name_key(b)
-}
-
-/// Whether `name` may address a remote.
+/// Why Windows would not treat `name` as an ordinary directory name, or `None`
+/// when it would.
 ///
-/// The name is not merely a label: it becomes a directory name under the
-/// per-machine cache and a table key in the committed lockfile. Restricting it
-/// to a portable filename alphabet — and refusing the two directory names that
-/// traverse — keeps a manifest from steering a checkout outside the cache.
-fn is_legal_name(name: &str) -> bool {
-    !name.is_empty()
-        && name != "."
-        && name != ".."
-        && name
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+/// The name becomes a directory under the per-machine cache, so a name Windows
+/// resolves elsewhere is not a naming-style preference: `notice.` would land on
+/// Patina's own notice file, and `CON` is a device rather than a path at all.
+fn non_portable_reason(name: &str) -> Option<&'static str> {
+    if name.ends_with('.') {
+        return Some("Windows strips a trailing dot, so this would name a different directory");
+    }
+    let stem = name.split_once('.').map_or(name, |(stem, _)| stem);
+    let folded = stem.to_ascii_lowercase();
+    let device = matches!(folded.as_str(), "con" | "prn" | "aux" | "nul")
+        || matches!(
+            folded.strip_suffix(|c: char| c.is_ascii_digit()),
+            Some("com" | "lpt")
+        );
+    device.then_some(
+        "Windows reserves CON, PRN, AUX, NUL, COM0-9, and LPT0-9 as device names, with or \
+         without an extension",
+    )
 }
 
 /// Reject a `url` or `ref` that begins with `-`.
@@ -467,7 +591,7 @@ mod tests {
             "C:\\mirrors\\humanizer",
         ] {
             assert_eq!(
-                derive_name(url).expect("a name is derivable"),
+                derive_name(url).expect("a name is derivable").as_str(),
                 "humanizer",
                 "`{url}` must name the remote `humanizer`"
             );
@@ -502,7 +626,80 @@ mod tests {
         }
         .validate()
         .expect("valid remote");
-        assert_eq!(spec.name, "agents");
+        assert_eq!(spec.name.as_str(), "agents");
+    }
+
+    #[test]
+    fn identity_is_the_folded_key_while_display_keeps_the_authored_spelling() {
+        // The whole point of the type: a map keyed by it cannot hold one remote
+        // twice, yet a message still shows the name as its author wrote it.
+        let written = RemoteName::parse("Humanizer").expect("a legal name");
+        let respelled = RemoteName::parse("humanizer").expect("a legal name");
+
+        assert_eq!(written, respelled, "a case-only respelling is one remote");
+        assert_eq!(written.key(), respelled.key());
+        assert_eq!(written.as_str(), "Humanizer", "the spelling is preserved");
+        assert_eq!(written.to_string(), "Humanizer");
+        assert!(written.matches("HUMANIZER"), "a raw selector folds too");
+
+        let set: std::collections::BTreeSet<RemoteName> =
+            [written, respelled].into_iter().collect();
+        assert_eq!(set.len(), 1, "two spellings must occupy one slot");
+    }
+
+    #[test]
+    fn a_normalization_only_respelling_is_one_remote() {
+        // `café` precomposed against `e` plus a combining acute: one directory
+        // on macOS, so one remote everywhere.
+        let precomposed = RemoteName::parse("caf\u{e9}");
+        let decomposed = RemoteName::parse("cafe\u{301}");
+        // Both are outside the ASCII alphabet, so both are refused; what must
+        // not happen is one being accepted and the other not.
+        assert!(precomposed.is_err() && decomposed.is_err());
+        assert_eq!(name_key("caf\u{e9}"), name_key("cafe\u{301}"));
+    }
+
+    #[test]
+    fn a_dos_device_name_is_refused_on_every_platform() {
+        // These are devices rather than paths on Windows, with or without an
+        // extension, so a manifest carrying one would apply on Linux and fail
+        // on Windows.
+        for name in [
+            "con", "CON", "PRN", "aux", "NUL", "com1", "LPT9", "con.git", "nul.d",
+        ] {
+            let err = RemoteName::parse(name).expect_err("a device name must be refused");
+            assert!(
+                matches!(err, RemoteConfigError::NonPortableName { .. }),
+                "`{name}` must be refused as non-portable, got {err:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_name_windows_would_resolve_elsewhere_is_refused() {
+        // Windows strips a trailing dot, so `notice.` would land on Patina's
+        // own notice file and `humanizer.` on a directory of another name.
+        for name in ["notice.", "humanizer.", "a.."] {
+            let err = RemoteName::parse(name).expect_err("a trailing dot must be refused");
+            assert!(
+                matches!(err, RemoteConfigError::NonPortableName { .. }),
+                "`{name}` must be refused as non-portable, got {err:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn names_that_merely_contain_a_device_word_stay_legal() {
+        // The rule is about the stem Windows resolves, not about the substring:
+        // refusing these would reject ordinary repository names.
+        for name in ["console", "com", "lpt", "my-con", "conf.d", "aux-tools"] {
+            let parsed = RemoteName::parse(name);
+            assert!(
+                parsed.is_ok(),
+                "`{name}` must stay legal, got: {:?}",
+                parsed.err()
+            );
+        }
     }
 
     #[test]

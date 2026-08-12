@@ -350,7 +350,7 @@ mod tests {
     #[test]
     fn a_per_remote_floor_overrides_the_global_one() {
         let spec = RemoteSpec {
-            name: "r".to_owned(),
+            name: crate::config::RemoteName::parse("r").expect("a legal remote name"),
             url: "u".to_owned(),
             git_ref: None,
             min_age: Some(Duration::from_secs(0)),
@@ -364,7 +364,7 @@ mod tests {
     #[test]
     fn the_global_floor_applies_when_the_remote_declares_none() {
         let spec = RemoteSpec {
-            name: "r".to_owned(),
+            name: crate::config::RemoteName::parse("r").expect("a legal remote name"),
             url: "u".to_owned(),
             git_ref: None,
             min_age: None,

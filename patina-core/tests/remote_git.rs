@@ -13,6 +13,7 @@
 
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
+use patina_core::config::RemoteName;
 use patina_core::remote::cache;
 use patina_core::remote::git;
 use std::process::Command;
@@ -20,6 +21,11 @@ use tempfile::TempDir;
 
 /// A fixed committer epoch the ancestry / age assertions are written against.
 const BASE_EPOCH: i64 = 1_700_000_000;
+
+/// The remote every fixture caches under.
+fn module() -> RemoteName {
+    RemoteName::parse("m").expect("a legal remote name")
+}
 
 /// Run `git` in `cwd` with a pinned identity and committer/author date, so the
 /// commits the fixtures produce have stable, clock-independent SHAs and do not
@@ -90,7 +96,7 @@ impl Fixture {
     }
 
     fn bare(&self) -> Utf8PathBuf {
-        cache::bare_repo(&self.state, "m")
+        cache::bare_repo(&self.state, &module())
     }
 }
 
@@ -99,10 +105,11 @@ fn fetch_by_exact_sha_then_checkout_materializes_the_tree() {
     let f = Fixture::new();
     let sha = f.commit("skills/humanizer/SKILL.md", "hello\n", BASE_EPOCH);
 
-    let checkout = cache::ensure_checkout(&f.state, "m", f.origin.as_str(), Some("main"), &sha)
-        .expect("fetch and check out the pinned rev");
+    let checkout =
+        cache::ensure_checkout(&f.state, &module(), f.origin.as_str(), Some("main"), &sha)
+            .expect("fetch and check out the pinned rev");
 
-    assert_eq!(checkout, cache::checkout_dir(&f.state, "m", &sha));
+    assert_eq!(checkout, cache::checkout_dir(&f.state, &module(), &sha));
     assert_eq!(
         fs_err::read_to_string(checkout.join("skills/humanizer/SKILL.md").as_std_path())
             .expect("the checked-out leaf is readable"),
@@ -121,11 +128,11 @@ fn a_second_ensure_checkout_is_a_no_op_and_needs_no_remote() {
     // warm cache: the origin is deleted, so any fetch attempt would fail.
     let f = Fixture::new();
     let sha = f.commit("a.txt", "one\n", BASE_EPOCH);
-    cache::ensure_checkout(&f.state, "m", f.origin.as_str(), Some("main"), &sha)
+    cache::ensure_checkout(&f.state, &module(), f.origin.as_str(), Some("main"), &sha)
         .expect("first checkout");
     fs_err::remove_dir_all(f.origin.as_std_path()).expect("delete the origin");
 
-    let again = cache::ensure_checkout(&f.state, "m", f.origin.as_str(), Some("main"), &sha)
+    let again = cache::ensure_checkout(&f.state, &module(), f.origin.as_str(), Some("main"), &sha)
         .expect("a warm checkout must not touch the remote");
     assert_eq!(
         fs_err::read_to_string(again.join("a.txt").as_std_path()).expect("leaf readable"),
@@ -139,7 +146,7 @@ fn a_cold_cache_with_an_unreachable_remote_is_a_typed_error_naming_the_url() {
     let missing = f.state.join("no-such-origin");
     let err = cache::ensure_checkout(
         &f.state,
-        "m",
+        &module(),
         missing.as_str(),
         Some("main"),
         "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0",
@@ -263,6 +270,38 @@ fn a_repository_reports_whether_it_matches_its_origin() {
     assert!(
         git::repo_differs_from_origin(&clone),
         "a clone whose origin has moved on must report as differing"
+    );
+}
+
+#[test]
+fn a_branch_tracking_a_differently_named_upstream_is_still_compared() {
+    // A work branch tracking `origin/main` must be checked against `main`, not
+    // against a nonexistent `origin/<work branch>`, which `ls-remote` answers
+    // with nothing and which would read as "never behind".
+    let f = Fixture::new();
+    f.commit("a.txt", "one\n", BASE_EPOCH);
+
+    let clone = f.state.join("clone");
+    git_in(
+        &f.state,
+        BASE_EPOCH,
+        &["clone", "--quiet", f.origin.as_str(), clone.as_str()],
+    );
+    git_in(&clone, BASE_EPOCH, &["checkout", "--quiet", "-b", "work"]);
+    git_in(
+        &clone,
+        BASE_EPOCH,
+        &["branch", "--set-upstream-to", "origin/main", "work"],
+    );
+    assert!(
+        !git::repo_differs_from_origin(&clone),
+        "the work branch is level with the upstream it tracks"
+    );
+
+    f.commit("a.txt", "two\n", BASE_EPOCH + 60);
+    assert!(
+        git::repo_differs_from_origin(&clone),
+        "a moved upstream must be seen through the tracked ref, not the local branch name"
     );
 }
 

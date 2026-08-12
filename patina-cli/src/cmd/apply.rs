@@ -207,7 +207,7 @@ fn prune_stale_pins(
     let Ok(mut lockfile) = Lockfile::load(&path) else {
         return Ok(());
     };
-    let stale = lockfile.retain_declared(resolved.remote_names.iter().map(String::as_str));
+    let stale = names_of(&lockfile.retain_declared(&resolved.remote_names));
     if stale.is_empty() {
         return Ok(());
     }
@@ -235,14 +235,17 @@ fn stale_pins(
     reporter: &mut impl Reporter,
 ) -> Option<Vec<String>> {
     match Lockfile::load(path) {
-        Ok(mut lockfile) => {
-            Some(lockfile.retain_declared(resolved.remote_names.iter().map(String::as_str)))
-        }
+        Ok(mut lockfile) => Some(names_of(&lockfile.retain_declared(&resolved.remote_names))),
         Err(error) => {
             reporter.warn(&format!("leaving patina.lock alone: {error}"));
             None
         }
     }
+}
+
+/// Remote names as written, for a message that lists them.
+fn names_of(remotes: &[patina_core::RemoteName]) -> Vec<String> {
+    remotes.iter().map(ToString::to_string).collect()
 }
 
 /// Run `patina remote update` over every remote before the apply proper.

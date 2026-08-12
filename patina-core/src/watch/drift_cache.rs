@@ -212,51 +212,19 @@ impl From<crate::version_envelope::EnvelopeError> for DriftCacheError {
     }
 }
 
-/// Filename suffix for the sibling tempfile the atomic write stages bytes
-/// in before the rename.
-const TEMP_SUFFIX: &str = ".tmp";
-
-/// Write `cache` to `path` atomically: encode to bytes, write them to a
-/// sibling `<path>.tmp`, then rename it over `path`. A concurrent reader
-/// (e.g. `patina debug drift-cache`) therefore observes either the previous
-/// complete cache or the new complete cache, never a half-written file.
-///
-/// The rename is the atomic point: POSIX `rename(2)` and Windows
-/// `MoveFileEx` both replace the destination as a single operation, so the
-/// destination is never observed truncated mid-write.
+/// Write `cache` to `path` through a same-directory temporary and a rename, so
+/// a concurrent reader (`patina debug drift-cache`, the watcher's own next
+/// start) sees either the previous complete cache or the new one.
 ///
 /// # Errors
 ///
 /// Returns [`DriftCacheError::Encode`] if the cache cannot be serialized, or
-/// [`DriftCacheError::Filesystem`] if the tempfile write or the rename
-/// fails.
+/// [`DriftCacheError::Filesystem`] if the staged write or the rename fails.
 pub fn write_drift_cache(
     path: impl AsRef<Utf8Path>,
     cache: &DriftCache,
 ) -> Result<(), DriftCacheError> {
-    let path = path.as_ref();
-    let bytes = cache.encode()?;
-    let temp_path = sibling_temp_path(path);
-    fs_err::write(&temp_path, &bytes)?;
-    fs_err::rename(&temp_path, path)?;
-    Ok(())
-}
-
-/// The sibling tempfile path the atomic write stages into: the destination
-/// filename with [`TEMP_SUFFIX`] appended, so it lands in the same directory
-/// (and thus the same filesystem) and the rename is atomic rather than a
-/// cross-device copy.
-fn sibling_temp_path(path: &Utf8Path) -> Utf8PathBuf {
-    let mut temp = path.to_owned();
-    let name = match path.file_name() {
-        Some(name) => format!("{name}{TEMP_SUFFIX}"),
-        // A path with no filename component cannot be a real cache path;
-        // fall back to a fixed tempfile name so the write still has a
-        // sibling to stage into rather than panicking.
-        None => TEMP_SUFFIX.trim_start_matches('.').to_owned(),
-    };
-    temp.set_file_name(name);
-    temp
+    Ok(crate::fsx::write_atomic(path.as_ref(), &cache.encode()?)?)
 }
 
 /// Read and decode the drift cache at `path`, parallel to the journal's
@@ -437,37 +405,6 @@ mod tests {
             DriftCache::decode(&[]),
             Err(DriftCacheError::Truncated { got: 0, need: 2 })
         ));
-    }
-
-    #[test]
-    fn write_lands_via_rename_leaving_no_tempfile_and_no_inplace_truncation() {
-        let (_temp, dir) = temp_dir();
-        let path = dir.join("drift.cache");
-
-        // Seed a prior complete cache, then overwrite it. If the write
-        // truncated the destination in place, an interrupted reader could
-        // see a short file; the rename guarantees the destination is only
-        // ever the old or the new complete bytes.
-        let first = DriftCache::new("20260101T000000Z", Vec::new());
-        write_drift_cache(&path, &first).expect("write first");
-        let second = sample();
-        write_drift_cache(&path, &second).expect("write second");
-
-        // The sibling tempfile must not linger after a successful rename.
-        let temp_path = sibling_temp_path(&path);
-        assert!(
-            !temp_path.exists(),
-            "the staging tempfile {temp_path} must be renamed away, not left behind"
-        );
-        // The final bytes at the destination are the second cache in full.
-        assert_eq!(load_drift_cache_file(&path).expect("load"), second);
-    }
-
-    #[test]
-    fn sibling_temp_path_stays_in_the_same_directory() {
-        let temp = sibling_temp_path(Utf8Path::new("/var/state/patina/drift.cache"));
-        assert_eq!(temp.parent(), Some(Utf8Path::new("/var/state/patina")));
-        assert_eq!(temp.file_name(), Some("drift.cache.tmp"));
     }
 
     #[test]

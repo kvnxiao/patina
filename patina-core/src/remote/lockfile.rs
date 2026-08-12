@@ -25,6 +25,7 @@
 
 use super::RemoteError;
 use super::RemoteRepr;
+use crate::config::remote::RemoteName;
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
 use serde::Deserialize;
@@ -69,9 +70,12 @@ impl LockEntry {
 }
 
 /// The parsed lockfile: one pin per declared remote, keyed by remote name.
+///
+/// [`RemoteName`] compares folded, so the map cannot hold one remote under two
+/// spellings and every lookup answers to any spelling of the same name.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Lockfile {
-    remotes: BTreeMap<String, LockEntry>,
+    remotes: BTreeMap<RemoteName, LockEntry>,
 }
 
 /// `<repo_root>/patina.lock`.
@@ -143,8 +147,12 @@ impl Lockfile {
                 }
                 .into());
             }
-            remotes.insert(
-                name,
+            let key = RemoteName::parse(&name).map_err(|source| RemoteRepr::LockfileName {
+                name: name.clone(),
+                source,
+            })?;
+            let replaced = remotes.insert(
+                key,
                 LockEntry {
                     url: entry.url,
                     git_ref: entry.git_ref,
@@ -152,17 +160,29 @@ impl Lockfile {
                     updated_at: entry.updated_at,
                 },
             );
+            // Patina's own writer replaces rather than joins, so two keys that
+            // fold together mean a hand-edited file or a merge nobody finished
+            // resolving. Guessing which pin wins would apply a different commit
+            // than the machine that wrote the file.
+            if replaced.is_some() {
+                return Err(RemoteRepr::LockfileDuplicate { name }.into());
+            }
         }
         Ok(Self { remotes })
     }
 
     /// Write the lockfile to `path`.
     ///
+    /// Atomic, because this file is the only record of which commit each
+    /// remote is pinned to: a direct write killed between the truncate and the
+    /// last byte would leave neither the old pins nor the new ones, and every
+    /// remote-backed entry would then fail to plan.
+    ///
     /// # Errors
     ///
     /// Returns a [`RemoteError`] when the write fails.
     pub fn save(&self, path: &Utf8Path) -> Result<(), RemoteError> {
-        fs_err::write(path.as_std_path(), self.render()).map_err(|source| {
+        crate::fsx::write_atomic(path, self.render().as_bytes()).map_err(|source| {
             RemoteRepr::LockfileIo {
                 path: path.to_path_buf(),
                 source,
@@ -173,15 +193,15 @@ impl Lockfile {
 
     /// Render the lockfile as TOML.
     ///
-    /// Entries come out in remote-name order with a fixed field order, so two
+    /// Entries come out in folded-name order with a fixed field order, so two
     /// renders of the same pins are byte-identical and a pin bump shows up as a
-    /// one-entry diff.
+    /// one-entry diff. Each key keeps the spelling its author declared.
     #[must_use = "the rendered document is what gets committed"]
     pub fn render(&self) -> String {
         let mut out = format!("version = {LOCKFILE_VERSION}\n");
         for (name, entry) in &self.remotes {
             out.push_str("\n[remotes.");
-            out.push_str(&toml_key(name));
+            out.push_str(&toml_key(name.as_str()));
             out.push_str("]\n");
             push_field(&mut out, "url", &entry.url);
             if let Some(git_ref) = &entry.git_ref {
@@ -193,41 +213,19 @@ impl Lockfile {
         out
     }
 
-    /// The pin for the remote called `name`, if any.
-    ///
-    /// Names are compared under [`crate::config::remote::name_key`], so a pin
-    /// written under one spelling still answers to a declaration respelled
-    /// only in case.
+    /// The pin for `name`, if any.
     #[must_use = "the pin is the rev apply materializes"]
-    pub fn get(&self, name: &str) -> Option<&LockEntry> {
-        if let Some(entry) = self.remotes.get(name) {
-            return Some(entry);
-        }
-        self.remotes
-            .iter()
-            .find(|(key, _)| crate::config::remote::same_name(key, name))
-            .map(|(_, entry)| entry)
+    pub fn get(&self, name: &RemoteName) -> Option<&LockEntry> {
+        self.remotes.get(name)
     }
 
-    /// Record (or replace) the pin for the remote called `name`.
-    ///
-    /// A pin recorded under a spelling that differs only in case is replaced
-    /// rather than joined, so the file never carries two keys for one remote.
-    pub fn insert(&mut self, name: impl Into<String>, entry: LockEntry) {
-        let name = name.into();
-        self.remotes
-            .retain(|key, _| !crate::config::remote::same_name(key, &name));
+    /// Record (or replace) the pin for `name`.
+    pub fn insert(&mut self, name: RemoteName, entry: LockEntry) {
         self.remotes.insert(name, entry);
     }
 
-    /// Drop the pin for the remote called `name`, returning it when one was
-    /// present.
-    pub fn remove(&mut self, name: &str) -> Option<LockEntry> {
-        self.remotes.remove(name)
-    }
-
     /// Drop every pin `declared` does not name, returning the dropped names in
-    /// order. Names are compared under [`crate::config::remote::name_key`].
+    /// order.
     ///
     /// The lockfile is a statement about the root manifest's declarations, so a
     /// pin whose declaration was deleted is stale by definition: it would keep
@@ -236,16 +234,13 @@ impl Lockfile {
     /// not declared fails at plan time, before this runs.
     pub fn retain_declared<'a>(
         &mut self,
-        declared: impl IntoIterator<Item = &'a str>,
-    ) -> Vec<String> {
-        let declared: BTreeSet<String> = declared
-            .into_iter()
-            .map(crate::config::remote::name_key)
-            .collect();
-        let stale: Vec<String> = self
+        declared: impl IntoIterator<Item = &'a RemoteName>,
+    ) -> Vec<RemoteName> {
+        let declared: BTreeSet<&RemoteName> = declared.into_iter().collect();
+        let stale: Vec<RemoteName> = self
             .remotes
             .keys()
-            .filter(|name| !declared.contains(&crate::config::remote::name_key(name)))
+            .filter(|name| !declared.contains(name))
             .cloned()
             .collect();
         for name in &stale {
@@ -254,11 +249,9 @@ impl Lockfile {
         stale
     }
 
-    /// Every pin, in remote-name order.
-    pub fn iter(&self) -> impl Iterator<Item = (&str, &LockEntry)> {
-        self.remotes
-            .iter()
-            .map(|(name, entry)| (name.as_str(), entry))
+    /// Every pin, in folded-name order.
+    pub fn iter(&self) -> impl Iterator<Item = (&RemoteName, &LockEntry)> {
+        self.remotes.iter()
     }
 
     /// Whether any pin is recorded.
@@ -358,10 +351,15 @@ mod tests {
 
     const REV: &str = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0";
 
+    /// A validated name, for the fixtures that key pins by one.
+    fn name(spelling: &str) -> RemoteName {
+        RemoteName::parse(spelling).expect("a legal remote name")
+    }
+
     #[test]
     fn a_rendered_lockfile_round_trips_through_parse() {
         let mut lock = Lockfile::default();
-        lock.insert("humanizer", entry(REV));
+        lock.insert(name("humanizer"), entry(REV));
         let parsed = Lockfile::parse(&lock.render()).expect("the rendered document parses");
         assert_eq!(parsed, lock);
     }
@@ -372,22 +370,25 @@ mod tests {
         // under one spelling must keep answering after a case-only respell of
         // its declaration — for reads, replacement, and the stale sweep alike.
         let mut lock = Lockfile::default();
-        lock.insert("Humanizer", entry(REV));
+        lock.insert(name("Humanizer"), entry(REV));
 
-        assert!(lock.get("humanizer").is_some(), "a folded get must hit");
         assert!(
-            lock.retain_declared(["humanizer"]).is_empty(),
+            lock.get(&name("humanizer")).is_some(),
+            "a folded get must hit"
+        );
+        assert!(
+            lock.retain_declared([&name("humanizer")]).is_empty(),
             "a case-respelled declaration must not read its own pin as stale"
         );
 
-        lock.insert("humanizer", entry(&"b".repeat(40)));
+        lock.insert(name("humanizer"), entry(&"b".repeat(40)));
         assert_eq!(
             lock.iter().count(),
             1,
             "an insert under a respelling must replace, not join"
         );
         assert_eq!(
-            lock.get("Humanizer").expect("still answers").rev,
+            lock.get(&name("Humanizer")).expect("still answers").rev,
             "b".repeat(40)
         );
     }
@@ -397,11 +398,11 @@ mod tests {
         // The determinism contract: the committed bytes must be a function of
         // the pins, not of the order they happened to be inserted in.
         let mut first = Lockfile::default();
-        first.insert("zsh", entry(REV));
-        first.insert("humanizer", entry(REV));
+        first.insert(name("zsh"), entry(REV));
+        first.insert(name("humanizer"), entry(REV));
         let mut second = Lockfile::default();
-        second.insert("humanizer", entry(REV));
-        second.insert("zsh", entry(REV));
+        second.insert(name("humanizer"), entry(REV));
+        second.insert(name("zsh"), entry(REV));
 
         assert_eq!(first.render(), first.render(), "two renders must agree");
         assert_eq!(
@@ -419,12 +420,15 @@ mod tests {
     #[test]
     fn retaining_the_declared_set_drops_the_rest_and_names_them() {
         let mut lock = Lockfile::default();
-        lock.insert("humanizer", entry(REV));
-        lock.insert("zsh", entry(REV));
-        assert_eq!(lock.retain_declared(["zsh"]), vec!["humanizer".to_owned()]);
-        assert!(lock.get("humanizer").is_none());
+        lock.insert(name("humanizer"), entry(REV));
+        lock.insert(name("zsh"), entry(REV));
+        assert_eq!(
+            lock.retain_declared([&name("zsh")]),
+            vec![name("humanizer")]
+        );
+        assert!(lock.get(&name("humanizer")).is_none());
         assert!(
-            lock.get("zsh").is_some(),
+            lock.get(&name("zsh")).is_some(),
             "a declared remote's pin must survive"
         );
     }
@@ -434,9 +438,12 @@ mod tests {
         // A declaration with no pin yet is the ordinary state before the first
         // `patina remote update`; it must not make the sweep report anything.
         let mut lock = Lockfile::default();
-        lock.insert("zsh", entry(REV));
-        assert!(lock.retain_declared(["zsh", "humanizer"]).is_empty());
-        assert!(lock.get("zsh").is_some());
+        lock.insert(name("zsh"), entry(REV));
+        assert!(
+            lock.retain_declared([&name("zsh"), &name("humanizer")])
+                .is_empty()
+        );
+        assert!(lock.get(&name("zsh")).is_some());
     }
 
     #[test]
@@ -453,7 +460,7 @@ mod tests {
     fn a_remote_without_a_ref_omits_the_field_and_round_trips() {
         let mut lock = Lockfile::default();
         lock.insert(
-            "humanizer",
+            name("humanizer"),
             LockEntry {
                 git_ref: None,
                 ..entry(REV)
@@ -499,6 +506,38 @@ mod tests {
     }
 
     #[test]
+    fn two_keys_that_fold_together_are_refused() {
+        // Patina's own writer replaces a pin rather than joining a second one,
+        // so this is a hand-edit or an unfinished merge. Picking one would
+        // apply a different commit than the machine that wrote the file.
+        let err = Lockfile::parse(&format!(
+            "version = 1\n\n[remotes.humanizer]\nurl = \"u\"\nrev = \"{REV}\"\n\
+             updated_at = \"2026-08-11T14:00:00Z\"\n\n\
+             [remotes.Humanizer]\nurl = \"u\"\nrev = \"{}\"\n\
+             updated_at = \"2026-08-11T14:00:00Z\"\n",
+            "b".repeat(40)
+        ))
+        .expect_err("two entries for one remote must be refused");
+        assert!(
+            err.to_string().to_lowercase().contains("humanizer"),
+            "the message must name the remote claimed twice, got: {err}"
+        );
+    }
+
+    #[test]
+    fn a_key_that_is_not_a_usable_remote_name_is_refused() {
+        let err = Lockfile::parse(&format!(
+            "version = 1\n\n[remotes.\"../escape\"]\nurl = \"u\"\nrev = \"{REV}\"\n\
+             updated_at = \"2026-08-11T14:00:00Z\"\n"
+        ))
+        .expect_err("a key that could never match a declaration must be refused");
+        assert!(
+            err.to_string().contains("../escape"),
+            "the message must name the offending key, got: {err}"
+        );
+    }
+
+    #[test]
     fn a_malformed_updated_at_is_refused() {
         let err = Lockfile::parse(&format!(
             "version = 1\n\n[remotes.humanizer]\nurl = \"u\"\nrev = \"{REV}\"\n\
@@ -531,7 +570,7 @@ mod tests {
         let root = Utf8Path::from_path(temp.path()).expect("utf8 temp path");
         let path = lockfile_path(root);
         let mut lock = Lockfile::default();
-        lock.insert("humanizer", entry(REV));
+        lock.insert(name("humanizer"), entry(REV));
         lock.save(&path).expect("write the lockfile");
         assert_eq!(Lockfile::load(&path).expect("read it back"), lock);
     }
@@ -540,7 +579,7 @@ mod tests {
     fn a_url_needing_escapes_survives_the_round_trip() {
         let mut lock = Lockfile::default();
         lock.insert(
-            "odd",
+            name("odd"),
             LockEntry {
                 url: "ssh://host/a\\b\"c".to_owned(),
                 ..entry(REV)
@@ -553,7 +592,7 @@ mod tests {
     #[test]
     fn a_remote_name_that_is_not_a_bare_key_is_quoted() {
         let mut lock = Lockfile::default();
-        lock.insert("my.remote", entry(REV));
+        lock.insert(name("my.remote"), entry(REV));
         let rendered = lock.render();
         assert!(
             rendered.contains("[remotes.\"my.remote\"]"),

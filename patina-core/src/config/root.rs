@@ -168,11 +168,14 @@ pub fn parse_root_config_str(text: &str) -> Result<RootConfig, RootConfigError> 
         .transpose()?;
 
     let mut remotes = Vec::with_capacity(raw.remote.len());
-    let mut claimed: BTreeSet<String> = BTreeSet::new();
+    let mut claimed: BTreeSet<super::remote::RemoteName> = BTreeSet::new();
     for table in raw.remote {
         let spec = table.validate()?;
-        if !claimed.insert(super::remote::name_key(&spec.name)) {
-            return Err(super::remote::RemoteConfigError::DuplicateName { name: spec.name }.into());
+        if !claimed.insert(spec.name.clone()) {
+            return Err(super::remote::RemoteConfigError::DuplicateName {
+                name: spec.name.to_string(),
+            }
+            .into());
         }
         remotes.push(spec);
     }
