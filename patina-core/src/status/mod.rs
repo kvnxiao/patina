@@ -247,6 +247,15 @@ pub fn current_plan_targets() -> Result<ManagedTargets, EngineError> {
 /// same declared target yields the same key regardless of when it was
 /// computed.
 ///
+/// The result is then folded through [`crate::caseless::fold`], the same
+/// identity the target-collision check uses, so that a target respelled only in
+/// case or Unicode normal form stays the same key. Without the fold, renaming
+/// `~/.Config` to `~/.config` would leave the recorded key unmatched, and on a
+/// case-insensitive filesystem the reap would then delete the very object the
+/// respelled entry had just materialized. Folding on a case-sensitive
+/// filesystem is the safe direction of the same trade: a genuinely distinct
+/// old path is left behind rather than deleted.
+///
 /// Public so the `remove` / `promote` commands can match a
 /// user-supplied target path against a journaled
 /// [`ExpectedTarget::target`](crate::ExpectedTarget::target) under the same
@@ -258,12 +267,18 @@ pub fn manage_key(path: &camino::Utf8Path) -> Utf8PathBuf {
         Some(parent) if !parent.as_str().is_empty() => parent
             .canonicalize_utf8()
             .map_or_else(|_| parent.to_owned(), |p| crate::paths::simplified(&p)),
-        _ => return crate::paths::simplified(path),
+        _ => return folded(&crate::paths::simplified(path)),
     };
-    match path.file_name() {
+    let key = match path.file_name() {
         Some(name) => parent_key.join(name),
         None => parent_key,
-    }
+    };
+    folded(&key)
+}
+
+/// `path` under the shared caseless identity.
+fn folded(path: &camino::Utf8Path) -> Utf8PathBuf {
+    Utf8PathBuf::from(crate::caseless::fold(path.as_str()))
 }
 
 #[cfg(test)]
@@ -298,5 +313,27 @@ mod tests {
         fs_err::write(&child, b"x").expect("create child");
         let present_key = manage_key(&child);
         assert_eq!(absent_key, present_key);
+    }
+
+    #[test]
+    fn a_leaf_respelled_in_case_or_normal_form_keys_the_same_target() {
+        // The reap deletes a recorded target whose key is absent from the
+        // current plan. A respelling that a case-insensitive or normalizing
+        // filesystem resolves to one object must therefore key the same, or the
+        // reap deletes what the respelled entry just materialized.
+        let dir = Utf8PathBuf::from("/home/u");
+        assert_eq!(
+            manage_key(&dir.join(".Config")),
+            manage_key(&dir.join(".config"))
+        );
+        assert_eq!(
+            manage_key(&dir.join(".caf\u{e9}")),
+            manage_key(&dir.join(".cafe\u{301}"))
+        );
+        assert_ne!(
+            manage_key(&dir.join(".config")),
+            manage_key(&dir.join(".configs")),
+            "the fold must not merge two genuinely different targets"
+        );
     }
 }

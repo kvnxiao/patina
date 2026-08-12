@@ -16,7 +16,10 @@
 //! - the next `patina apply --yes` removes the orphan leaf link while its
 //!   surviving sibling leaf and the intermediate directory stay in place;
 //! - a reaped `[[file]]` target's prior bytes were backed up — provable by
-//!   finding the original bytes in the reaping run's backup tree.
+//!   finding the original bytes in the reaping run's backup tree;
+//! - a target respelled only in case or Unicode normal form is the same target,
+//!   so the reap leaves it alone rather than deleting what the respelled entry
+//!   just materialized.
 
 mod common;
 
@@ -64,6 +67,67 @@ fn state_for(doc: &serde_json::Value, suffix: &str) -> String {
         }
     }
     panic!("no files entry ending in `{suffix}` in {doc}");
+}
+
+/// Apply `manifest` for module `cfg` over a `conf` source, then re-apply after
+/// respelling the target, and return the second run's output.
+///
+/// The two spellings differ only in case or Unicode normal form, which a
+/// case-insensitive filesystem resolves to one object. Recording the first
+/// spelling and re-deriving the second must therefore yield one managed key, or
+/// the reap deletes what the second apply just wrote.
+fn respell_target(first: &str, second: &str) -> (common::Fixture, std::process::Output) {
+    let f = Fixture::new();
+    let module = f.module(
+        "cfg",
+        &format!("[[file]]\nsource = \"conf\"\ntarget = \"{first}\"\nmode = \"copy\"\n"),
+    );
+    fs_err::write(module.join("conf"), b"body").expect("write source");
+
+    let applied = f.apply(&["--yes"]);
+    assert_eq!(
+        code(&applied),
+        0,
+        "the initial apply must succeed; stderr: {}",
+        String::from_utf8_lossy(&applied.stderr)
+    );
+
+    f.module(
+        "cfg",
+        &format!("[[file]]\nsource = \"conf\"\ntarget = \"{second}\"\nmode = \"copy\"\n"),
+    );
+    let reapplied = f.apply(&["--yes"]);
+    assert_eq!(
+        code(&reapplied),
+        0,
+        "the respelled apply must succeed; stderr: {}",
+        String::from_utf8_lossy(&reapplied.stderr)
+    );
+    (f, reapplied)
+}
+
+#[test]
+fn a_case_only_target_respelling_does_not_reap_the_live_target() {
+    let (f, _out) = respell_target("~/.Config", "~/.config");
+    assert_eq!(
+        fs_err::read(f.home.join(".config").as_std_path()).expect("the respelled target exists"),
+        b"body",
+        "the reap must not delete the object the respelled entry manages"
+    );
+}
+
+#[test]
+fn a_normalization_only_target_respelling_does_not_reap_the_live_target() {
+    // `é` precomposed against `e` plus a combining acute. APFS resolves the two
+    // to one file, so this is where the reap could delete a live target; on a
+    // normalization-sensitive filesystem they are simply two files.
+    let (f, _out) = respell_target("~/.caf\u{e9}", "~/.cafe\u{301}");
+    assert_eq!(
+        fs_err::read(f.home.join(".cafe\u{301}").as_std_path())
+            .expect("the respelled target exists"),
+        b"body",
+        "the reap must not delete the object the respelled entry manages"
+    );
 }
 
 #[test]
