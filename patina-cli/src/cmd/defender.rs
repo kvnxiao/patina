@@ -30,6 +30,7 @@ use crate::exit_code::ExitCode;
 use crate::output::reporter::Reporter;
 use crate::output::style::Styles;
 use crate::output::style::paint;
+use crate::output::table::align;
 use anyhow::Context;
 use anyhow::Result;
 use anyhow::anyhow;
@@ -465,11 +466,12 @@ fn render_preview(reconcile: &Reconcile<'_>, styles: &Styles, reporter: &mut imp
     if !classifier.live_list_was_read() {
         reporter.line(LEDGER_SOURCE_NOTE);
     }
+    let mut table = String::new();
     for exclusion in &diff.to_add {
-        reporter.line(&format!("  + {}", path_by_kind(exclusion, styles)));
+        table.push_str(&listing_row("  + ", exclusion, None, styles));
     }
     for exclusion in &diff.to_remove {
-        reporter.line(&format!("  - {}", path_by_kind(exclusion, styles)));
+        table.push_str(&listing_row("  - ", exclusion, None, styles));
     }
     // Everything the reconcile will not add, tagged with why it need not be.
     // This is where an exclusion Defender already has but Patina does not own
@@ -477,15 +479,46 @@ fn render_preview(reconcile: &Reconcile<'_>, styles: &Styles, reporter: &mut imp
     for exclusion in desired {
         let state = classifier.classify(exclusion);
         if !state.needs_add() {
-            reporter.line(&format!(
-                "    {} {}",
-                path_by_kind(exclusion, styles),
-                state_tag(state, styles)
+            table.push_str(&listing_row(
+                "    ",
+                exclusion,
+                Some(state_tag(state, styles)),
+                styles,
             ));
         }
     }
+    emit_aligned(&table, reporter);
     if diff.is_empty() && desired.is_empty() {
         reporter.line("  (no patina-owned exclusions)");
+    }
+}
+
+/// One tab-separated listing row: the add / remove / unchanged marker and the
+/// path in one cell, then the state tag in the next.
+///
+/// The marker shares the path's cell so it cannot widen the column, and a row
+/// with no tag ends after the path rather than trailing an empty cell.
+fn listing_row(
+    marker: &str,
+    exclusion: &Exclusion,
+    tag: Option<String>,
+    styles: &Styles,
+) -> String {
+    let path = path_by_kind(exclusion, styles);
+    match tag {
+        Some(tag) => format!("{marker}{path}\t{tag}\n"),
+        None => format!("{marker}{path}\n"),
+    }
+}
+
+/// Align a buffered listing and emit it a line at a time, or emit nothing when
+/// there are no rows. Aligning an empty block would still print a blank line.
+fn emit_aligned(table: &str, reporter: &mut impl Reporter) {
+    if table.is_empty() {
+        return;
+    }
+    for line in align(table).lines() {
+        reporter.line(line);
     }
 }
 
@@ -503,17 +536,20 @@ fn render_status(
     if !classifier.live_list_was_read() {
         reporter.line(LEDGER_SOURCE_NOTE);
     }
+    let mut table = String::new();
     for exclusion in desired {
-        reporter.line(&format!(
-            "  {} {}",
-            path_by_kind(exclusion, styles),
-            state_tag(classifier.classify(exclusion), styles)
+        let tag = state_tag(classifier.classify(exclusion), styles);
+        table.push_str(&listing_row("  ", exclusion, Some(tag), styles));
+    }
+    for exclusion in &diff.to_remove {
+        table.push_str(&listing_row(
+            "  ",
+            exclusion,
+            Some(stale_tag(styles)),
+            styles,
         ));
     }
-    let stale = stale_tag(styles);
-    for exclusion in &diff.to_remove {
-        reporter.line(&format!("  {} {stale}", path_by_kind(exclusion, styles)));
-    }
+    emit_aligned(&table, reporter);
 }
 
 /// Render the status view when the live read failed: the desired set only.
@@ -527,9 +563,11 @@ fn render_status_desired_only(
         "Desired Defender exclusions for {} (current state unavailable):",
         resolved.repo_root
     ));
+    let mut table = String::new();
     for exclusion in desired {
-        reporter.line(&format!("  {}", path_by_kind(exclusion, styles)));
+        table.push_str(&listing_row("  ", exclusion, None, styles));
     }
+    emit_aligned(&table, reporter);
 }
 
 /// The reconcile JSON envelope: `repo_root`, `current_readable`, `to_add`,
@@ -1022,6 +1060,44 @@ mod tests {
             reporter.out.contains('\u{1b}'),
             "the colored palette must actually emit escapes: {}",
             reporter.out.escape_debug()
+        );
+        assert_eq!(
+            anstream::adapter::strip_str(&reporter.out).to_string(),
+            fixture.preview(),
+            "stripping color must leave the plain listing untouched: padding painted \
+             along with its cell would misalign every piped run"
+        );
+    }
+
+    /// Two desired exclusions of different path lengths must put their tags in
+    /// one column. Hand-padding is what this replaced, and a listing that runs
+    /// to dozens of paths is the whole reason the column has to hold.
+    #[test]
+    fn a_listing_starts_every_state_tag_at_one_column() {
+        let short = r"C:\a";
+        let fixture = Fixture::new(
+            &[
+                (short, ExclusionKind::File),
+                (GITCONFIG, ExclusionKind::File),
+            ],
+            &known(&[short, GITCONFIG]),
+            &[
+                (short, ExclusionKind::File),
+                (GITCONFIG, ExclusionKind::File),
+            ],
+        );
+        let out = fixture.preview();
+        let columns: Vec<Option<usize>> = out
+            .lines()
+            .filter(|line| line.contains("[present]"))
+            .map(|line| line.find("[present]"))
+            .collect();
+
+        assert_eq!(columns.len(), 2, "both exclusions must be listed: {out}");
+        assert_eq!(
+            columns.first(),
+            columns.last(),
+            "both tags must start at the same column: {out}"
         );
     }
 }

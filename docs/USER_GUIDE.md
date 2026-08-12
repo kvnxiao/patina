@@ -166,6 +166,30 @@ subcommand) forces the choice: `auto` (the default) colors a terminal
 and strips otherwise, `always` colors even when piped, `never` disables
 color. `NO_COLOR` in the environment is honoured under `auto`.
 
+Every multi-row listing lines its columns up the same way, sized to the
+widest cell: `patina status`, `patina remote list`, `patina remote
+update`, `patina watch status`, `patina doctor`, and the Defender
+listing. Painted cells pad by printable width, so a piped run and a
+terminal run stay aligned identically.
+
+`patina status` prints one row per managed target and a summary of the
+four counters:
+
+```text
+clean     /home/u/.zshrc
+drifted   /home/u/.gitconfig
+missing   /home/u/.config/nvim/init.lua
+orphaned  /home/u/.oldrc
+clean: 1  drifted: 1  missing: 1  orphaned: 1
+```
+
+On a terminal the state word is green (clean), yellow (drifted), red
+(missing), or magenta (orphaned); an orphan gets its own hue because it
+is a leftover awaiting a reap, not a degree of failure. In the summary
+only a non-zero counter is painted, so a clean repository reads at a
+glance. Every state is in the text as well, so a stripped run loses the
+color and nothing else.
+
 ## Commands
 
 Beyond `apply`, `status`, `rollback`, and `debug journal`, Patina ships
@@ -276,7 +300,15 @@ system directory (`%SystemRoot%`, `%ProgramFiles%`, and friends).
 ### Reading the listing
 
 The listing carries the exclusion kind as **color on the path**, and the
-state as a colored tag after it:
+state as a colored tag after it. The tags share one column, sized to the
+widest path, so a long list stays scannable down the state rather than
+ragged:
+
+```text
+  C:\Users\kevin\dotfiles      [present]
+  C:\Users\kevin\.gitconfig    [missing]
+  C:\Users\kevin\.config\nvim  [present, not recorded by patina]
+```
 
 | Element      | Meaning            |
 | ------------ | ------------------ |

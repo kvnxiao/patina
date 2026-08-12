@@ -42,6 +42,8 @@ use crate::cmd::managed::acquire_state_and_lock;
 use crate::cmd::managed::rejournal;
 use crate::exit_code::ExitCode;
 use crate::output::reporter::Reporter;
+use crate::output::style::Styles;
+use crate::output::style::paint;
 use anyhow::Context;
 use anyhow::Result;
 use anyhow::anyhow;
@@ -274,12 +276,14 @@ fn report_unmanaged(args: &RemoveArgs, reporter: &mut impl Reporter) -> i32 {
 fn report_success(args: &RemoveArgs, target: &Utf8Path, reporter: &mut impl Reporter) {
     if args.json {
         reporter.json(&success_envelope(&args.path, target, args.purge));
-    } else if args.purge {
-        reporter.line(&format!("Removed {} and deleted it from disk.", args.path));
+        return;
+    }
+    let path = paint(Styles::colored().path, args.path.as_str());
+    if args.purge {
+        reporter.line(&format!("Removed {path} and deleted it from disk."));
     } else {
         reporter.line(&format!(
-            "Removed {}; replaced it with a regular file holding the last-applied content.",
-            args.path
+            "Removed {path}; replaced it with a regular file holding the last-applied content."
         ));
     }
 }

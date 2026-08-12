@@ -36,6 +36,9 @@ use crate::cmd::apply::PromptReader;
 use crate::cmd::apply::Tty;
 use crate::exit_code::ExitCode;
 use crate::output::reporter::Reporter;
+use crate::output::style::Styles;
+use crate::output::style::paint;
+use crate::output::table::align;
 use anyhow::Context;
 use anyhow::Result;
 use camino::Utf8Path;
@@ -235,7 +238,7 @@ fn run_report(args: &DoctorArgs, state: &Utf8Path, reporter: &mut impl Reporter)
     if args.json {
         reporter.json(&json_envelope(&findings));
     } else {
-        render_human(&findings, reporter);
+        render_human(&findings, &Styles::colored(), reporter);
     }
     Ok(exit_code(&findings).code())
 }
@@ -623,21 +626,46 @@ fn json_envelope(findings: &[Finding]) -> String {
     serde_json::to_string_pretty(&envelope).unwrap_or_else(|_| "{}".to_owned())
 }
 
-/// Render the findings to stderr as one warning line each (all
-/// findings go to stderr regardless of format). A clean environment prints a
-/// single "no findings" line so the user gets explicit confirmation.
-fn render_human(findings: &[Finding], reporter: &mut impl Reporter) {
+/// Render the findings to stderr as one aligned row each (all findings go to
+/// stderr regardless of format). A clean environment prints a single "no
+/// findings" line so the user gets explicit confirmation.
+///
+/// The block goes out through [`Reporter::err_block`] rather than one
+/// [`Reporter::warn`] per line, because `warn` forces a single style over a
+/// whole line and would paint every level the same yellow. The bracketed level
+/// stays in the first cell, so a stripped report still tells an advisory note
+/// from an error.
+fn render_human(findings: &[Finding], styles: &Styles, reporter: &mut impl Reporter) {
     if findings.is_empty() {
         reporter.line("doctor: no findings; the environment looks healthy.");
         return;
     }
+    let mut table = String::new();
     for finding in findings {
-        reporter.warn(&format!(
-            "[{}] {}: {}",
-            finding.level.label(),
-            finding.code.label(),
-            finding.message
-        ));
+        table.push_str(&finding_row(finding, styles));
+    }
+    reporter.err_block(&align(&table));
+}
+
+/// One tab-separated finding row: the bracketed level, the stable code, and the
+/// message. Level and code share the level's color, so severity reads off the
+/// whole left edge rather than one bracketed word.
+fn finding_row(finding: &Finding, styles: &Styles) -> String {
+    let style = level_style(finding.level, styles);
+    format!(
+        "{}\t{}\t{}\n",
+        paint(style, &format!("[{}]", finding.level.label())),
+        paint(style, finding.code.label()),
+        finding.message
+    )
+}
+
+/// The palette role for a finding's level.
+fn level_style(level: Level, styles: &Styles) -> anstyle::Style {
+    match level {
+        Level::Info => styles.finding.info,
+        Level::Warning => styles.finding.warning,
+        Level::Error => styles.finding.error,
     }
 }
 
@@ -1070,7 +1098,7 @@ mod tests {
         };
         let findings = compute_findings(&inputs);
         let mut reporter = BufferReporter::new();
-        render_human(&findings, &mut reporter);
+        render_human(&findings, &Styles::plain(), &mut reporter);
         assert!(
             reporter.err.contains("DOC-NO-DEFAULT-REPO"),
             "findings must render to stderr, got err: {}",
@@ -1083,10 +1111,67 @@ mod tests {
         );
     }
 
+    /// The level is what the old single-warn render lost: every finding painted
+    /// the same yellow whatever it said. Color alone cannot carry it, so the
+    /// bracketed word must survive a strip, and the three codes must line up.
+    #[test]
+    fn each_level_keeps_its_bracketed_word_and_paints_apart() {
+        let findings = [Level::Info, Level::Warning, Level::Error].map(|level| Finding {
+            code: FindingCode::NoGit,
+            level,
+            message: "a message".to_owned(),
+            path: None,
+        });
+
+        let mut plain = BufferReporter::new();
+        render_human(&findings, &Styles::plain(), &mut plain);
+        let mut colored = BufferReporter::new();
+        render_human(&findings, &Styles::colored(), &mut colored);
+
+        for level in ["[info]", "[warning]", "[error]"] {
+            assert!(
+                plain.err.contains(level),
+                "the level must stay in the text: {}",
+                plain.err
+            );
+        }
+        for level in [Level::Info, Level::Warning, Level::Error] {
+            let painted = paint(
+                level_style(level, &Styles::colored()),
+                &format!("[{}]", level.label()),
+            );
+            assert!(
+                colored.err.contains(&painted),
+                "the {} level must wear its own role: {}",
+                level.label(),
+                colored.err.escape_debug()
+            );
+        }
+        assert_eq!(
+            anstream::adapter::strip_str(&colored.err).to_string(),
+            plain.err,
+            "stripping color must leave the plain report untouched"
+        );
+
+        let column = plain
+            .err
+            .lines()
+            .next()
+            .and_then(|line| line.find("DOC-NO-GIT"))
+            .expect("the first row carries its code");
+        for line in plain.err.lines() {
+            assert_eq!(
+                line.find("DOC-NO-GIT"),
+                Some(column),
+                "every code must start at column {column}: {line:?}"
+            );
+        }
+    }
+
     #[test]
     fn human_render_reports_clean_env() {
         let mut reporter = BufferReporter::new();
-        render_human(&[], &mut reporter);
+        render_human(&[], &Styles::plain(), &mut reporter);
         assert!(
             reporter.out.contains("no findings"),
             "a clean env must confirm no findings, got: {}",

@@ -21,6 +21,9 @@ use crate::cli::WatchArgs;
 use crate::cli::WatchCommand;
 use crate::exit_code::ExitCode;
 use crate::output::reporter::Reporter;
+use crate::output::style::Styles;
+use crate::output::style::paint;
+use crate::output::table::align;
 use anyhow::Context;
 use anyhow::Result;
 use patina_core::LifecycleResult;
@@ -187,7 +190,7 @@ fn render_status(
             if json {
                 reporter.json(&status_envelope(&status));
             } else {
-                render_status_human(&status, reporter);
+                render_status_human(&status, &Styles::colored(), reporter);
             }
             ExitCode::Success.code()
         }
@@ -212,32 +215,52 @@ fn status_envelope(status: &ServiceStatus) -> String {
     serde_json::to_string_pretty(&envelope).unwrap_or_else(|_| "{}".to_owned())
 }
 
-/// Render the human-readable `status` summary: one line per field, with
+/// Render the human-readable `status` summary: one aligned row per field, with
 /// `unknown` standing in for an absent recovered value.
-fn render_status_human(status: &ServiceStatus, reporter: &mut impl Reporter) {
-    reporter.line(&format!("installed:              {}", status.installed));
-    reporter.line(&format!("running:                {}", status.running));
-    reporter.line(&format!(
-        "last fired at:          {}",
-        status.last_fired_at.as_deref().unwrap_or("unknown")
-    ));
-    reporter.line(&format!(
-        "last exit code:         {}",
-        opt_to_string(status.last_exit_code)
-    ));
-    reporter.line(&format!(
-        "subscriptions:          {}",
-        opt_to_string(status.subscriptions_count)
-    ));
-    reporter.line(&format!(
-        "re-applies since start: {}",
-        opt_to_string(status.re_applies_since_start)
-    ));
+///
+/// The key keeps its trailing colon inside its own cell, so a piped run reads
+/// `installed:` exactly as it always has.
+fn render_status_human(status: &ServiceStatus, styles: &Styles, reporter: &mut impl Reporter) {
+    let liveness = |state: bool| {
+        let style = if state { styles.success } else { styles.warn };
+        paint(style, if state { "true" } else { "false" })
+    };
+    let rows = [
+        ("installed:", liveness(status.installed)),
+        ("running:", liveness(status.running)),
+        (
+            "last fired at:",
+            recovered(status.last_fired_at.as_deref(), styles),
+        ),
+        ("last exit code:", recovered(status.last_exit_code, styles)),
+        (
+            "subscriptions:",
+            recovered(status.subscriptions_count, styles),
+        ),
+        (
+            "re-applies since start:",
+            recovered(status.re_applies_since_start, styles),
+        ),
+    ];
+    let mut table = String::new();
+    for (key, value) in rows {
+        table.push_str(&field_row(key, &value));
+    }
+    for line in align(&table).lines() {
+        reporter.line(line);
+    }
 }
 
-/// Render an optional numeric field as its value or the literal `unknown`.
-fn opt_to_string<T: std::fmt::Display>(value: Option<T>) -> String {
-    value.map_or_else(|| "unknown".to_owned(), |v| format!("{v}"))
+/// One tab-separated summary row: the key with its colon, then the value.
+fn field_row(key: &str, value: &str) -> String {
+    format!("{key}\t{value}\n")
+}
+
+/// A recovered field's value, or the literal `unknown` when it could not be
+/// read. `unknown` takes the hint color: it is the absence of a reading, not a
+/// reading of zero, and must not compete with the values around it.
+fn recovered<T: std::fmt::Display>(value: Option<T>, styles: &Styles) -> String {
+    value.map_or_else(|| paint(styles.hint, "unknown"), |value| value.to_string())
 }
 
 /// Read the root manifest and, if it declares the ignored `[watcher]
@@ -435,6 +458,55 @@ mod tests {
             serde_json::from_str(json.out.trim()).expect("status --json is one JSON doc");
         assert_eq!(doc.get("installed"), Some(&serde_json::Value::Bool(true)));
         assert_eq!(doc.get("subscriptions_count"), Some(&serde_json::json!(3)));
+    }
+
+    /// Color must be purely additive over the aligned summary: the colored
+    /// render has to carry escapes, and stripping them has to give back the
+    /// plain render byte for byte. Padding painted along with its cell would
+    /// misalign every piped run.
+    #[test]
+    fn human_status_color_strips_back_to_the_plain_summary() {
+        // A mix of read and unread fields, so both the liveness colors and the
+        // `unknown` stand-in are exercised.
+        let status = ServiceStatus {
+            installed: true,
+            running: false,
+            last_fired_at: None,
+            last_exit_code: Some(0),
+            subscriptions_count: Some(3),
+            re_applies_since_start: None,
+        };
+
+        let mut plain = BufferReporter::new();
+        render_status_human(&status, &Styles::plain(), &mut plain);
+        let mut colored = BufferReporter::new();
+        render_status_human(&status, &Styles::colored(), &mut colored);
+
+        assert!(
+            colored.out.contains('\u{1b}'),
+            "the colored render must carry escapes: {:?}",
+            colored.out
+        );
+        assert_eq!(
+            anstream::adapter::strip_str(&colored.out).to_string(),
+            plain.out,
+            "stripping color must leave the plain summary untouched"
+        );
+        // Every value starts where the widest key's column ends, which is what
+        // the literal space runs used to approximate by hand.
+        let column = plain
+            .out
+            .lines()
+            .next()
+            .and_then(|line| line.find("true"))
+            .expect("the installed row carries its value");
+        for line in plain.out.lines() {
+            assert!(
+                line.get(column..)
+                    .is_some_and(|rest| !rest.starts_with(' ')),
+                "every value must start at column {column}: {line:?}"
+            );
+        }
     }
 
     #[test]

@@ -32,6 +32,7 @@ use crate::exit_code::ExitCode;
 use crate::output::reporter::Reporter;
 use crate::output::style::Styles;
 use crate::output::style::paint;
+use crate::output::table::align;
 use anyhow::Context;
 use anyhow::Result;
 use patina_core::LockKind;
@@ -45,8 +46,6 @@ use patina_core::remote::update;
 use patina_core::remote::update::Proposal;
 use patina_core::remote::update::RemoteInventory;
 use patina_core::remote::update::RemoteView;
-use std::io::Write;
-use tabwriter::TabWriter;
 
 /// Run `patina remote`. Returns the process exit code.
 ///
@@ -249,26 +248,6 @@ fn list_row(view: &RemoteView, pending: bool, styles: &Styles) -> String {
     )
 }
 
-/// Align tab-separated cells into columns.
-///
-/// ANSI mode measures a cell by printable width, so a painted cell pads exactly
-/// as its stripped form does; that is what keeps piped, `--color never`, and
-/// `NO_COLOR` output aligned identically to a terminal's. Writing to a `Vec`
-/// cannot fail, so the unaligned fallback is unreachable and exists only
-/// because a print path must not carry a panic.
-fn align(table: &str) -> String {
-    let mut aligned: Vec<u8> = Vec::new();
-    let mut writer = TabWriter::new(&mut aligned)
-        .minwidth(0)
-        .padding(2)
-        .ansi(true);
-    if writer.write_all(table.as_bytes()).is_err() || writer.flush().is_err() {
-        return table.to_owned();
-    }
-    drop(writer);
-    String::from_utf8(aligned).unwrap_or_else(|_| table.to_owned())
-}
-
 /// Run `ls-remote` against every remote and refresh the notice.
 fn run_check(
     inventory: &RemoteInventory,
@@ -416,7 +395,10 @@ fn run_update(
                 outcomes.push(Outcome {
                     name: view.name().clone(),
                     action: Action::Failed,
+                    // No proposal, so the recorded pin is the only rev known.
+                    from: view.pin.as_ref().map(|pin| pin.rev.clone()),
                     rev: None,
+                    status: status_for(Action::Failed, None),
                 });
                 continue;
             }
@@ -435,10 +417,18 @@ fn run_update(
         outcomes.push(Outcome {
             name: view.name().clone(),
             action,
+            status: status_for(action, Some(&proposal.outcome)),
+            from: proposal.current_rev,
             rev: Some(proposal.candidate_rev),
         });
     }
 
+    // Every per-remote line waits until the loop is done: the loop interleaves
+    // warnings and confirmation prompts, so nothing emitted inside it could be
+    // aligned against the rows that follow.
+    if !flags.json {
+        render_outcomes(&outcomes, &Styles::colored(), reporter);
+    }
     reconcile_notice(&inventory.state_dir, &outcomes, reporter);
 
     if flags.json {
@@ -448,12 +438,88 @@ fn run_update(
     Ok(exit_for(&outcomes).code())
 }
 
-/// What one remote's update pass amounted to, for the JSON envelope, the exit
-/// code, and the notice reconciliation.
+/// Render one aligned row per remote the run touched: where its pin was, the
+/// candidate considered, and what became of it.
+///
+/// Every remote gets a row, including one that could not be reached, so the
+/// table accounts for the whole run rather than only its successes. The reason
+/// a remote failed or was refused stays on stderr, where the warning already
+/// is.
+fn render_outcomes(outcomes: &[Outcome], styles: &Styles, reporter: &mut impl Reporter) {
+    if outcomes.is_empty() {
+        return;
+    }
+    let mut table = format!(
+        "{}\t{}\t{}\t{}\n",
+        paint(styles.header, "NAME"),
+        paint(styles.header, "FROM"),
+        paint(styles.header, "TO"),
+        paint(styles.header, "STATUS"),
+    );
+    for outcome in outcomes {
+        table.push_str(&update_row(outcome, styles));
+    }
+    for line in align(&table).lines() {
+        reporter.line(line);
+    }
+}
+
+/// One tab-separated row of the `remote update` table.
+fn update_row(outcome: &Outcome, styles: &Styles) -> String {
+    format!(
+        "{}\t{}\t{}\t{}\n",
+        paint(styles.remote.name, outcome.name.as_str()),
+        rev_cell(outcome.from.as_deref(), "(unpinned)", styles),
+        rev_cell(outcome.rev.as_deref(), "(unknown)", styles),
+        outcome.status,
+    )
+}
+
+/// A rev cell: the rev itself, or `absent` in the attention color when there is
+/// none. The two absences differ and must not be worded alike: no pin was
+/// recorded (`(unpinned)`), against no candidate having been learned at all
+/// (`(unknown)`).
+fn rev_cell(rev: Option<&str>, absent: &str, styles: &Styles) -> String {
+    match rev {
+        Some(rev) => paint(styles.remote.rev, rev),
+        None => paint(styles.remote.attention, absent),
+    }
+}
+
+/// The `STATUS` cell: what became of one remote's pin.
+///
+/// `verdict` is `None` for a remote that could not be proposed at all, the one
+/// case with no gate verdict to report. Only a cooldown needs anything from the
+/// verdict, so every other arm reads off the action alone.
+fn status_for(action: Action, verdict: Option<&GateOutcome>) -> String {
+    match action {
+        Action::Updated => "updated".to_owned(),
+        Action::UpToDate => "already at the upstream tip".to_owned(),
+        Action::Held => match verdict {
+            Some(GateOutcome::Cooldown { eligible_at }) => format!(
+                "holding until {} (min_age not yet met)",
+                patina_core::clock::epoch_to_rfc3339(*eligible_at)
+            ),
+            _ => "the pin is unchanged".to_owned(),
+        },
+        Action::Declined => "declined; the pin is unchanged".to_owned(),
+        Action::Rejected => "refused; the pin is unchanged".to_owned(),
+        Action::Failed => "could not be updated".to_owned(),
+    }
+}
+
+/// What one remote's update pass amounted to, for the human table, the JSON
+/// envelope, the exit code, and the notice reconciliation.
 struct Outcome {
     name: patina_core::RemoteName,
     action: Action,
+    /// The pin as recorded before the run; `None` when the remote was unpinned.
+    from: Option<String>,
+    /// The candidate rev the run considered; `None` when the remote could not
+    /// be proposed, so no candidate was ever learned.
     rev: Option<String>,
+    /// The human `STATUS` cell, built where the gate verdict is still in hand.
+    status: String,
 }
 
 impl Outcome {
@@ -567,25 +633,9 @@ fn settle(
     reporter: &mut impl Reporter,
 ) -> Result<Action> {
     match &proposal.outcome {
-        GateOutcome::AlreadyPinned => {
-            if !flags.json {
-                reporter.line(&format!(
-                    "{}: already at {}",
-                    proposal.name, proposal.candidate_rev
-                ));
-            }
-            Ok(Action::UpToDate)
-        }
+        GateOutcome::AlreadyPinned => Ok(Action::UpToDate),
         GateOutcome::Allowed => {
-            bump(
-                lockfile,
-                repo_root,
-                view,
-                proposal,
-                now_rfc3339,
-                flags.json,
-                reporter,
-            )?;
+            bump(lockfile, repo_root, view, proposal, now_rfc3339)?;
             Ok(Action::Updated)
         }
         GateOutcome::RejectedFuture { .. } => {
@@ -596,37 +646,12 @@ fn settle(
             ));
             Ok(Action::Rejected)
         }
-        GateOutcome::Cooldown { eligible_at } => {
-            if !flags.json {
-                reporter.line(&format!(
-                    "{}: holding {} until {} (min_age not yet met); the pin is unchanged",
-                    proposal.name,
-                    proposal.candidate_rev,
-                    patina_core::clock::epoch_to_rfc3339(*eligible_at)
-                ));
-            }
-            Ok(Action::Held)
-        }
+        GateOutcome::Cooldown { .. } => Ok(Action::Held),
         GateOutcome::NeedsConfirmation(concerns) => {
             let answer = confirm(&proposal.name, concerns, flags.yes, tty, reader, reporter);
             if answer == Confirmed::Yes {
-                bump(
-                    lockfile,
-                    repo_root,
-                    view,
-                    proposal,
-                    now_rfc3339,
-                    flags.json,
-                    reporter,
-                )?;
+                bump(lockfile, repo_root, view, proposal, now_rfc3339)?;
                 return Ok(Action::Updated);
-            }
-            if !flags.json {
-                reporter.line(&format!(
-                    "{}: pin unchanged at {}",
-                    proposal.name,
-                    proposal.current_rev.as_deref().unwrap_or("(unpinned)")
-                ));
             }
             Ok(if answer == Confirmed::No {
                 Action::Declined
@@ -647,28 +672,17 @@ fn settle(
     }
 }
 
-/// Write one accepted proposal into the lockfile and report it.
+/// Write one accepted proposal into the lockfile.
 fn bump(
     lockfile: &mut patina_core::remote::lockfile::Lockfile,
     repo_root: &camino::Utf8Path,
     view: &RemoteView,
     proposal: &Proposal,
     now_rfc3339: &str,
-    json: bool,
-    reporter: &mut impl Reporter,
 ) -> Result<()> {
     update::accept(lockfile, repo_root, view, proposal, now_rfc3339)
         .map_err(patina_core::EngineError::from)
-        .context("failed to write patina.lock")?;
-    if !json {
-        reporter.line(&format!(
-            "{}: {} -> {}",
-            proposal.name,
-            proposal.current_rev.as_deref().unwrap_or("(unpinned)"),
-            proposal.candidate_rev
-        ));
-    }
-    Ok(())
+        .context("failed to write patina.lock")
 }
 
 /// Ask whether to accept a flagged pin bump.
@@ -746,8 +760,9 @@ fn run_prune(inventory: &RemoteInventory, json: bool, reporter: &mut impl Report
     } else if removed.is_empty() {
         reporter.line("No unreferenced remote checkouts to remove.");
     } else {
+        let styles = Styles::colored();
         for path in &removed {
-            reporter.line(&format!("removed {path}"));
+            reporter.line(&format!("removed {}", paint(styles.delete, path.as_str())));
         }
     }
     Ok(ExitCode::Success.code())
@@ -972,7 +987,7 @@ mod tests {
     }
 
     #[test]
-    fn an_already_pinned_proposal_reports_up_to_date_and_writes_nothing() {
+    fn an_already_pinned_proposal_is_up_to_date_and_writes_nothing() {
         let mut inv = inventory(None);
         let view = only_view(&inv);
         let mut reader = ScriptedReader(None);
@@ -990,7 +1005,6 @@ mod tests {
         )
         .expect("settling an up-to-date remote cannot fail");
         assert_eq!(action, Action::UpToDate);
-        assert!(reporter.out.contains("already at"));
         assert!(
             inv.lockfile.is_empty(),
             "an up-to-date remote must not write a pin"
@@ -998,7 +1012,7 @@ mod tests {
     }
 
     #[test]
-    fn a_cooldown_proposal_reports_when_it_becomes_eligible() {
+    fn a_cooldown_proposal_holds_and_writes_nothing() {
         let mut inv = inventory(None);
         let view = only_view(&inv);
         let mut reader = ScriptedReader(None);
@@ -1022,13 +1036,137 @@ mod tests {
         .expect("settling a held remote cannot fail");
         assert_eq!(action, Action::Held);
         assert!(
-            reporter.out.contains("2026-08-11T14:00:00Z") && reporter.out.contains("min_age"),
-            "the cooldown must name the eligibility instant: {}",
-            reporter.out
-        );
-        assert!(
             inv.lockfile.is_empty(),
             "a held remote must not write a pin"
+        );
+    }
+
+    /// The status cell is the only place a human learns why a pin did not move,
+    /// so each action has to produce its own wording. Three of these are pinned
+    /// by the integration suite (`already at`, `holding`, `min_age`), and a
+    /// cooldown must name the instant it becomes eligible rather than only that
+    /// it is waiting.
+    #[test]
+    fn each_action_reports_its_own_status() {
+        let cooldown = GateOutcome::Cooldown {
+            eligible_at: 1_786_456_800,
+        };
+        assert_eq!(
+            status_for(Action::Held, Some(&cooldown)),
+            "holding until 2026-08-11T14:00:00Z (min_age not yet met)"
+        );
+        assert_eq!(
+            status_for(Action::UpToDate, Some(&GateOutcome::AlreadyPinned)),
+            "already at the upstream tip"
+        );
+        assert_eq!(
+            status_for(Action::Updated, Some(&GateOutcome::Allowed)),
+            "updated"
+        );
+        assert_eq!(status_for(Action::Failed, None), "could not be updated");
+
+        for (action, expected) in [
+            (Action::Declined, "declined; the pin is unchanged"),
+            (Action::Rejected, "refused; the pin is unchanged"),
+        ] {
+            assert_eq!(
+                status_for(action, Some(&GateOutcome::NeedsConfirmation(concerns()))),
+                expected
+            );
+        }
+        assert_eq!(
+            status_for(Action::Held, None),
+            "the pin is unchanged",
+            "a hold with no cooldown to name still has to say the pin stayed put"
+        );
+    }
+
+    /// A remote whose proposal never happened has no candidate rev, and an
+    /// unpinned one has no prior rev. The two absences must read differently: a
+    /// row reporting `(unpinned)` where nothing was learned would claim the
+    /// upstream is at no commit.
+    #[test]
+    fn the_two_absent_revs_are_worded_apart() {
+        let styles = Styles::plain();
+        let unreachable = Outcome {
+            name: remote_name("humanizer"),
+            action: Action::Failed,
+            from: None,
+            rev: None,
+            status: status_for(Action::Failed, None),
+        };
+        let row = update_row(&unreachable, &styles);
+        assert_eq!(
+            row, "humanizer\t(unpinned)\t(unknown)\tcould not be updated\n",
+            "an unreachable, unpinned remote must distinguish its two blanks"
+        );
+    }
+
+    /// Every remote the run touched must get a row, including one that failed,
+    /// so the table accounts for the whole run and not only its successes.
+    #[test]
+    fn the_table_carries_one_row_per_remote_under_a_header() {
+        let outcomes = vec![
+            Outcome {
+                name: remote_name("humanizer"),
+                action: Action::Updated,
+                from: Some("a".repeat(40)),
+                rev: Some("b".repeat(40)),
+                status: status_for(Action::Updated, Some(&GateOutcome::Allowed)),
+            },
+            Outcome {
+                name: remote_name("prompts"),
+                action: Action::Failed,
+                from: None,
+                rev: None,
+                status: status_for(Action::Failed, None),
+            },
+        ];
+        let mut reporter = BufferReporter::new();
+        render_outcomes(&outcomes, &Styles::plain(), &mut reporter);
+
+        let lines: Vec<&str> = reporter.out.lines().collect();
+        assert_eq!(lines.len(), 3, "a header and two rows: {:?}", reporter.out);
+        let header = lines.first().expect("the header row");
+        for label in ["NAME", "FROM", "TO", "STATUS"] {
+            assert!(header.contains(label), "the header must name {label}");
+        }
+        let column = header.find("STATUS").expect("the STATUS header");
+        for row in lines.iter().skip(1) {
+            assert!(
+                row.get(column..).is_some_and(|rest| !rest.starts_with(' ')),
+                "every status must start at column {column}: {row:?}"
+            );
+        }
+    }
+
+    /// Color must be purely additive over the plain table, exactly as it is for
+    /// `remote list`: padding painted along with its cell would misalign piped
+    /// and `--color never` output.
+    #[test]
+    fn update_table_color_strips_back_to_the_plain_table() {
+        let outcomes = vec![Outcome {
+            name: remote_name("humanizer"),
+            action: Action::Updated,
+            from: Some("a".repeat(40)),
+            rev: Some("b".repeat(40)),
+            status: status_for(Action::Updated, Some(&GateOutcome::Allowed)),
+        }];
+
+        let mut plain = BufferReporter::new();
+        render_outcomes(&outcomes, &Styles::plain(), &mut plain);
+        let mut colored = BufferReporter::new();
+        render_outcomes(&outcomes, &Styles::colored(), &mut colored);
+
+        assert!(
+            colored.out.contains('\u{1b}'),
+            "the colored render must carry escapes: {:?}",
+            colored.out
+        );
+        assert_eq!(
+            anstream::adapter::strip_str(&colored.out).to_string(),
+            plain.out,
+            "stripping color must leave the plain table untouched"
         );
     }
 
@@ -1091,7 +1229,6 @@ mod tests {
             Action::Held,
             "a shell that could not raise the prompt refused nothing"
         );
-        assert!(reporter.out.contains("pin unchanged at"));
         assert!(inv.lockfile.is_empty());
     }
 
@@ -1120,7 +1257,9 @@ mod tests {
             vec![Outcome {
                 name: remote_name("humanizer"),
                 action,
+                from: None,
                 rev: None,
+                status: String::new(),
             }]
         };
         assert_eq!(exit_for(&outcome(Action::Declined)), ExitCode::UserDeclined);

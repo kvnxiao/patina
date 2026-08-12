@@ -21,6 +21,8 @@ use crate::cli::Pager;
 use crate::exit_code::ExitCode;
 use crate::output::diff;
 use crate::output::reporter::Reporter;
+use crate::output::style::Styles;
+use crate::output::style::paint;
 use anyhow::Context;
 use anyhow::Result;
 use anyhow::anyhow;
@@ -559,11 +561,12 @@ fn report_result(result: &ApplyResult, reporter: &mut impl Reporter) {
             }
             // A full no-op prints a deterministic up-to-date line
             // (no timestamp, PID, or state path) instead of "Applied.".
-            if *up_to_date {
-                reporter.line("Already up to date. No changes to apply.");
+            let outcome = if *up_to_date {
+                "Already up to date. No changes to apply."
             } else {
-                reporter.line("Applied.");
-            }
+                "Applied."
+            };
+            reporter.line(&paint(Styles::colored().success, outcome));
         }
         ApplyResult::RolledBack { failed_hook } => {
             reporter.warn(&format!(

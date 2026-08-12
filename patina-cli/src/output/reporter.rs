@@ -55,6 +55,12 @@ pub trait Reporter {
     /// [`Reporter::warn`] so the production reporter can style genuine
     /// failures differently from advisory warnings.
     fn error(&mut self, message: &str);
+    /// Emit an already-painted block to the err stream verbatim, newlines and
+    /// all. The caller owns every style inside it, which is what lets an
+    /// aligned table carry one color per cell instead of the single style
+    /// [`Reporter::warn`] forces on a whole line. Add the trailing newline
+    /// yourself; nothing is appended here.
+    fn err_block(&mut self, painted: &str);
 }
 
 /// Production reporter writing to the process stdout / stderr through an
@@ -161,6 +167,12 @@ impl Reporter for StreamReporter {
     fn error(&mut self, message: &str) {
         self.styled_err(self.styles.error, message, true);
     }
+
+    fn err_block(&mut self, painted: &str) {
+        // Pre-painted per cell; write it with an empty outer style, as
+        // `confirm` does, so the auto-stream still strips color when not wanted.
+        self.styled_err(Style::new(), painted, false);
+    }
 }
 
 /// Test reporter capturing both streams into in-memory strings.
@@ -218,6 +230,10 @@ impl Reporter for BufferReporter {
         self.err.push_str(message);
         self.err.push('\n');
     }
+
+    fn err_block(&mut self, painted: &str) {
+        self.err.push_str(painted);
+    }
 }
 
 #[cfg(test)]
@@ -233,11 +249,12 @@ mod tests {
         r.prompt("P");
         r.warn("W");
         r.error("E");
+        r.err_block("B1\nB2\n");
         // The out stream carries diff, line, and json (json + trailing
         // newline); the err stream carries prompt (no newline), warn, and
-        // error (each newline-terminated).
+        // error (each newline-terminated), then the block verbatim.
         assert_eq!(r.out, "DL\n{\"k\":1}\n");
-        assert_eq!(r.err, "PW\nE\n");
+        assert_eq!(r.err, "PW\nE\nB1\nB2\n");
     }
 
     #[test]

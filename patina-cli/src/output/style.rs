@@ -45,11 +45,58 @@ pub struct Styles {
     pub prompt_affirm: Style,
     /// The default key in a `[y/N]` confirmation (the capitalized `N`).
     pub prompt_default: Style,
+    /// A completed action that changed nothing for the worse: an apply that
+    /// landed, a watch service that is installed and running.
+    pub success: Style,
+    /// A path embedded in a one-line result sentence, so the path the command
+    /// acted on stands out from the prose around it.
+    pub path: Style,
+    /// A follow-up suggestion, and any stand-in for a value that could not be
+    /// read. Subordinate to the line it sits beside, never the fact itself.
+    pub hint: Style,
+    /// The roles the `patina status` table paints with.
+    pub status: StatusStyles,
+    /// The roles the `patina doctor` findings paint with.
+    pub finding: FindingStyles,
     /// The roles the `patina remote list` table paints with.
     pub remote: RemoteStyles,
     /// The roles the Defender exclusion listing paints with.
     #[cfg(windows)]
     pub exclusion: ExclusionStyles,
+}
+
+/// The roles the `patina status` table paints with, one per
+/// [`TargetState`](patina_core::TargetState).
+///
+/// Each row keeps its state word in text, so the color only makes a clean
+/// repository scannable without reading four counters.
+#[derive(Debug, Clone, Copy)]
+pub struct StatusStyles {
+    /// A target matching the last apply.
+    pub clean: Style,
+    /// A target whose content or link destination has moved.
+    pub drifted: Style,
+    /// A target the last apply wrote that is no longer on disk.
+    pub missing: Style,
+    /// A target the current plan no longer manages. Its own hue rather than a
+    /// failure color: an orphan is a leftover awaiting a reap, and the next
+    /// apply offers to remove it.
+    pub orphaned: Style,
+}
+
+/// The roles the `patina doctor` findings paint with, one per
+/// [`Level`](crate::cmd::doctor::Level).
+///
+/// The level also stays bracketed in the row's first cell, so an ANSI-stripped
+/// report still tells an advisory note from an error.
+#[derive(Debug, Clone, Copy)]
+pub struct FindingStyles {
+    /// An advisory note that never affects the exit code.
+    pub info: Style,
+    /// A warning the user should act on; the command still exits 0.
+    pub warning: Style,
+    /// A finding that exits 1.
+    pub error: Style,
 }
 
 /// The roles the `patina remote list` table paints with.
@@ -128,6 +175,20 @@ impl Styles {
             prompt: none,
             prompt_affirm: none,
             prompt_default: none,
+            success: none,
+            path: none,
+            hint: none,
+            status: StatusStyles {
+                clean: none,
+                drifted: none,
+                missing: none,
+                orphaned: none,
+            },
+            finding: FindingStyles {
+                info: none,
+                warning: none,
+                error: none,
+            },
             remote: RemoteStyles {
                 name: none,
                 declared_ref: none,
@@ -152,6 +213,11 @@ impl Styles {
     /// `[y/N]` keys read green (affirm) and red (default), so the two answers
     /// stand apart from the prose and from each other.
     ///
+    /// Severity runs green → yellow → red wherever it appears, so the status
+    /// states and the doctor levels read the same way as a diff does. An
+    /// orphaned target breaks out of that run into magenta, because it is a
+    /// leftover rather than a degree of failure.
+    ///
     /// The Defender-exclusion roles paint the path blue (file) or magenta
     /// (folder), leaving green, yellow, and red for the state tag: green in
     /// place and Patina's, yellow in place but not Patina's, red not in place.
@@ -174,6 +240,20 @@ impl Styles {
             prompt_default: Style::new()
                 .fg_color(Some(Color::Ansi(AnsiColor::Red)))
                 .bold(),
+            success: Style::new().fg_color(Some(Color::Ansi(AnsiColor::Green))),
+            path: Style::new().bold(),
+            hint: Style::new().dimmed(),
+            status: StatusStyles {
+                clean: Style::new().fg_color(Some(Color::Ansi(AnsiColor::Green))),
+                drifted: Style::new().fg_color(Some(Color::Ansi(AnsiColor::Yellow))),
+                missing: Style::new().fg_color(Some(Color::Ansi(AnsiColor::Red))),
+                orphaned: Style::new().fg_color(Some(Color::Ansi(AnsiColor::Magenta))),
+            },
+            finding: FindingStyles {
+                info: Style::new().dimmed(),
+                warning: Style::new().fg_color(Some(Color::Ansi(AnsiColor::Yellow))),
+                error: Style::new().fg_color(Some(Color::Ansi(AnsiColor::Red))),
+            },
             remote: RemoteStyles {
                 name: Style::new().fg_color(Some(Color::Ansi(AnsiColor::Cyan))),
                 declared_ref: Style::new().fg_color(Some(Color::Ansi(AnsiColor::BrightYellow))),
@@ -225,6 +305,16 @@ mod tests {
             p.prompt,
             p.prompt_affirm,
             p.prompt_default,
+            p.success,
+            p.path,
+            p.hint,
+            p.status.clean,
+            p.status.drifted,
+            p.status.missing,
+            p.status.orphaned,
+            p.finding.info,
+            p.finding.warning,
+            p.finding.error,
             p.remote.name,
             p.remote.declared_ref,
             p.remote.rev,
@@ -306,17 +396,11 @@ mod tests {
         assert_ne!(affirm, default, "affirm and default must differ");
     }
 
-    #[test]
-    fn colored_remote_roles_are_distinct_and_escaped() {
-        let r = Styles::colored().remote;
-        let roles = [
-            ("name", r.name),
-            ("declared_ref", r.declared_ref),
-            ("rev", r.rev),
-            ("url", r.url),
-            ("attention", r.attention),
-            ("implicit_ref", r.implicit_ref),
-        ];
+    /// Every role in a group must emit an escape and render unlike every other
+    /// role in the same group. A silent `Style::new()` would make one role's
+    /// color a no-op, and two roles sharing a hue would make one read as the
+    /// other wherever they appear on the same row.
+    fn assert_distinct_and_escaped(roles: &[(&str, Style)]) {
         for (name, style) in roles {
             assert!(
                 style.render().to_string().contains('\u{1b}'),
@@ -334,6 +418,53 @@ mod tests {
         }
     }
 
+    #[test]
+    fn colored_remote_roles_are_distinct_and_escaped() {
+        let r = Styles::colored().remote;
+        assert_distinct_and_escaped(&[
+            ("name", r.name),
+            ("declared_ref", r.declared_ref),
+            ("rev", r.rev),
+            ("url", r.url),
+            ("attention", r.attention),
+            ("implicit_ref", r.implicit_ref),
+        ]);
+    }
+
+    /// The four state colors are what let a reader scan a long listing without
+    /// reading every state word, so two states rendering alike would defeat the
+    /// whole reason `status` is painted.
+    #[test]
+    fn colored_status_roles_are_distinct_and_escaped() {
+        let s = Styles::colored().status;
+        assert_distinct_and_escaped(&[
+            ("clean", s.clean),
+            ("drifted", s.drifted),
+            ("missing", s.missing),
+            ("orphaned", s.orphaned),
+        ]);
+    }
+
+    /// Routing every finding through one warn style is what made the level
+    /// invisible, so the three levels must not converge again.
+    #[test]
+    fn colored_finding_roles_are_distinct_and_escaped() {
+        let f = Styles::colored().finding;
+        assert_distinct_and_escaped(&[
+            ("info", f.info),
+            ("warning", f.warning),
+            ("error", f.error),
+        ]);
+    }
+
+    /// `init` prints a painted path and a hint on consecutive lines, so the two
+    /// have to read apart even though neither is a table cell.
+    #[test]
+    fn colored_flat_roles_are_distinct_and_escaped() {
+        let c = Styles::colored();
+        assert_distinct_and_escaped(&[("success", c.success), ("path", c.path), ("hint", c.hint)]);
+    }
+
     /// Kind and state appear on the same line, so a hue shared between the two
     /// groups would make one read as the other. The three state colors are
     /// also the only thing separating the three states.
@@ -341,28 +472,13 @@ mod tests {
     #[test]
     fn colored_exclusion_roles_are_distinct_and_escaped() {
         let c = Styles::colored();
-        let roles = [
+        assert_distinct_and_escaped(&[
             ("file", c.exclusion.file),
             ("folder", c.exclusion.folder),
             ("present", c.exclusion.state_present),
             ("unmanaged", c.exclusion.state_unmanaged),
             ("absent", c.exclusion.state_absent),
-        ];
-        for (name, style) in roles {
-            assert!(
-                style.render().to_string().contains('\u{1b}'),
-                "the {name} role must carry a color escape"
-            );
-        }
-        for (i, (left_name, left)) in roles.iter().enumerate() {
-            for (right_name, right) in roles.iter().skip(i + 1) {
-                assert_ne!(
-                    left.render().to_string(),
-                    right.render().to_string(),
-                    "{left_name} and {right_name} must use different colors"
-                );
-            }
-        }
+        ]);
     }
 
     /// `paint` must be a no-op under the plain palette, which the diff and
