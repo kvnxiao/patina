@@ -6,7 +6,7 @@
 //!
 //! - **Whether styled bytes are generated** is [`Styles`]. `Styles::plain`
 //!   (test-only) holds empty styles that render to zero bytes, so a plain
-//!   render is byte-for-byte identical to unstyled output — the form the diff
+//!   render is byte-for-byte identical to unstyled output, the form the diff
 //!   unit tests assert against. [`Styles::colored`] carries the production
 //!   palette.
 //! - **Whether those bytes reach the user** is decided at the write boundary in
@@ -38,7 +38,7 @@ pub struct Styles {
     pub warn: Style,
     /// Error-chain causes.
     pub error: Style,
-    /// Interactive prompt prose — the question and its surrounding brackets,
+    /// Interactive prompt prose: the question and its surrounding brackets,
     /// and free-form input prompts. Signals that input is awaited.
     pub prompt: Style,
     /// The affirmative key in a `[y/N]` confirmation (the `y`).
@@ -110,7 +110,7 @@ pub struct ExclusionStyles {
 
 impl Styles {
     /// All-empty styles. Every field renders to zero bytes, so styled output
-    /// is byte-identical to unstyled — the invariant the diff unit tests and
+    /// is byte-identical to unstyled, the invariant the diff unit tests and
     /// the deterministic-stdout contract depend on. Test-only: production
     /// always renders with [`Styles::colored`] and lets the reporter's
     /// auto-stream strip when color is not wanted.
@@ -209,7 +209,7 @@ mod tests {
     use super::*;
 
     /// The plain palette must render to zero bytes on both the opening code
-    /// and the reset — this is what keeps plain output byte-identical to
+    /// and the reset. That is what keeps plain output byte-identical to
     /// unstyled and underpins the deterministic-stdout contract. A regression
     /// giving `plain()` a real color would make this fail.
     #[test]

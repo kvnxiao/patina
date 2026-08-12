@@ -3,14 +3,14 @@
 //! `patina add <path>` brings an existing dotfile under management. It
 //! resolves the repository root, stages the target's bytes into a module
 //! subdirectory (`<repo>/<module>/<source>`), appends the table-array entry
-//! matching the source kind — a `[[file]]` for a file source, a
-//! `[[directory]]` for a directory source — to that module's
+//! matching the source kind (a `[[file]]` for a file source, a
+//! `[[directory]]` for a directory source) to that module's
 //! `patina.toml` (creating it if absent), and leaves the original target in
-//! place. The command does NOT drive the engine apply path —
-//! materialization (turning the target into a symlink / copy / rendered
-//! template) is deferred to a later `patina apply` (copy-on-add, resolved
-//! open-question (a): the bytes are copied into the repo, while the target
-//! stays in place so apply converges it).
+//! place. The command does NOT drive the engine apply path.
+//! Materialization (turning the target into a symlink / copy / rendered
+//! template) is deferred to a later `patina apply`: `add` copies the bytes
+//! into the repository and leaves the target where it is, so the next apply
+//! converges it.
 //!
 //! `add` is a mutating command: it acquires the engine's
 //! exclusive advisory lock at `<state>/lock` before any filesystem
@@ -377,7 +377,7 @@ fn stage_into_repo(from: &Utf8Path, to: &Utf8Path, kind: SourceKind) -> Result<(
 
 /// Recursively copy the directory at `from` into a freshly-created `to`,
 /// mirroring the tree (subdirectories and regular files). Symbolic links
-/// inside the tree are followed and copied as their target bytes — `add`
+/// inside the tree are followed and copied as their target bytes. `add`
 /// stages source content, not link structure.
 fn copy_dir_recursive(from: &Utf8Path, to: &Utf8Path) -> Result<()> {
     fs_err::create_dir_all(to.as_std_path()).with_context(|| format!("failed to create {to}"))?;

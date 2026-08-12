@@ -3,13 +3,13 @@
 //! The engine resolves a variable name by walking six layers in priority
 //! order from highest to lowest:
 //!
-//! 1. **CLI overrides** — `-v key=value` repeated on the command line.
-//! 2. **Per-machine** — variables persisted under the per-machine state
+//! 1. **CLI overrides**: `-v key=value` repeated on the command line.
+//! 2. **Per-machine**: variables persisted under the per-machine state
 //!    directory.
-//! 3. **Per-profile** — variables declared in the active profile's TOML.
-//! 4. **Per-module** — the module's `patina.toml` `[variables]` table.
-//! 5. **Repo-shared** — the root `patina.toml` `[variables]` table.
-//! 6. **Built-ins** — the `patina.*` namespace resolved at process start (plus
+//! 3. **Per-profile**: variables declared in the active profile's TOML.
+//! 4. **Per-module**: the module's `patina.toml` `[variables]` table.
+//! 5. **Repo-shared**: the root `patina.toml` `[variables]` table.
+//! 6. **Built-ins**: the `patina.*` namespace resolved at process start (plus
 //!    the dynamic `patina.env.*` map evaluated on every lookup).
 //!
 //! The first five layers carry only user-provided keys; any key starting
@@ -109,7 +109,7 @@ pub fn parse_cli_override(raw: &str) -> Result<(String, String), VariableError> 
 /// A flat string→string variable layer.
 ///
 /// `[variables]` tables are TOML, so values may technically be any TOML
-/// scalar. v1 narrows the contract to strings — the template engine
+/// scalar. v1 narrows the contract to strings: the template engine
 /// coerces what it renders, and richer value types can be added
 /// later without changing this resolver's shape.
 type Layer = BTreeMap<String, String>;

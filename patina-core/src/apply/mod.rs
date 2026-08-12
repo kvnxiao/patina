@@ -4,14 +4,14 @@
 //! materializes a single source path at one or more target paths. The
 //! six modes split across three submodules:
 //!
-//! - `symlink` — per-file [`Symlink`](crate::config::FileMode::Symlink) (with
+//! - `symlink`: per-file [`Symlink`](crate::config::FileMode::Symlink) (with
 //!   the directory-source per-file walk), atomic
 //!   [`SymlinkDir`](crate::config::FileMode::SymlinkDir), and per-leaf
 //!   [`SymlinkTree`](crate::config::FileMode::SymlinkTree) (walk the directory
 //!   source and link each leaf, leaving intermediate target directories real).
-//! - `copy` — [`Copy`](crate::config::FileMode::Copy) and recursive
+//! - `copy`: [`Copy`](crate::config::FileMode::Copy) and recursive
 //!   [`CopyTree`](crate::config::FileMode::CopyTree).
-//! - `template` — implicit
+//! - `template`: implicit
 //!   [`TemplateRender`](crate::config::FileMode::TemplateRender) of a `.tmpl`
 //!   source, rendered once and written to each declared (suffix-less) target.
 //!
@@ -70,10 +70,9 @@ pub(crate) use retry::with_sharing_violation_retry;
 /// recursive [`copy_tree`](copy::copy_tree) and per-leaf
 /// [`tree_symlink`](symlink::tree_symlink) executors:
 ///
-/// - [`LeafWrite::All`] — write every walked leaf, the pre-skip behaviour. Used
-///   for a fresh (`Create`) tree, by [`materialize`], and by the executor unit
-///   tests.
-/// - [`LeafWrite::Only`] — write only the leaves whose plan-time disposition is
+/// - [`LeafWrite::All`]: write every walked leaf. Used for a fresh (`Create`)
+///   tree, by [`materialize`], and by the executor unit tests.
+/// - [`LeafWrite::Only`]: write only the leaves whose plan-time disposition is
 ///   not `Unchanged`, leaving the clean leaves' inode/mtime untouched (the
 ///   churn-removal goal). The set holds paths relative to the declared target
 ///   directory, in the same form [`walk_files`] yields.
@@ -276,7 +275,7 @@ pub fn materialize(
 ///
 /// Returns an [`ExecutorError`] for the first leaf that fails, or
 /// [`ExecutorError::NotADirectory`] when handed a non-tree `mode` (a caller
-/// bug — the engine only routes tree targets here).
+/// bug, because the engine only routes tree targets here).
 pub(crate) fn materialize_tree(
     mode: FileMode,
     source: &Utf8Path,

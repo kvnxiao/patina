@@ -10,7 +10,7 @@
 //! states and calls `recover_orphans` directly, this suite spawns the actual
 //! binary and kills it via the debug-only `PATINA_TEST_ABORT_AFTER_OP` seam
 //! (the engine `std::process::exit`s after the k-th materialized operation,
-//! before writing the COMMIT sentinel — an approximation of `kill -9`). It then
+//! before writing the COMMIT sentinel, an approximation of `kill -9`). It then
 //! asserts the crash window (a flushed `<ts>.plan`, no `<ts>.COMMIT`) and
 //! drives `recover_orphans` to confirm the filesystem returns to its pre-apply
 //! state byte-for-byte. This exercises the engine's own recover-before-flush
@@ -60,7 +60,7 @@ fn count_suffix(journal: &Utf8Path, suffix: &str) -> usize {
 
 /// A `patina apply` killed after its first operation leaves a flushed plan and
 /// no COMMIT; the next run's recovery reverses the completed overwrite from its
-/// backup and leaves the un-started fresh create absent — the pre-apply state.
+/// backup and leaves the un-started fresh create absent: the pre-apply state.
 #[test]
 fn kill_after_first_op_converges_to_pre_apply_on_recovery() {
     let fx = setup();

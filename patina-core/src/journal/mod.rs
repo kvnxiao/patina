@@ -169,7 +169,7 @@ pub struct Journal {
 
 impl Journal {
     /// Serialize `plan`, write it to `<dir>/<timestamp>.plan`, then
-    /// `fsync` the plan file and the journal directory — in that order —
+    /// `fsync` the plan file and the journal directory, in that order,
     /// before returning. On return the plan is durable and the engine
     /// may begin mutating the filesystem.
     ///
@@ -313,9 +313,9 @@ fn unrolled_commit_timestamps(dir: &Utf8Path) -> Result<Vec<String>, JournalErro
 /// commit remains.
 ///
 /// The newest un-rolled-back `<ts>.COMMIT` is tried first. A sentinel that is
-/// present but **unreadable** — a torn or empty body
+/// present but **unreadable**, whether a torn or empty body
 /// ([`JournalError::Truncated`]) or a corrupt same-version body
-/// ([`JournalError::Decode`]) — is skipped with a `warn!` and the scan falls
+/// ([`JournalError::Decode`]), is skipped with a `warn!` and the scan falls
 /// back to the next-older commit. This keeps `patina status` and `patina
 /// rollback` working after a `kill -9` between creating a `<ts>.COMMIT` file
 /// and flushing its bytes leaves a torn sentinel, rather than failing the
@@ -348,7 +348,7 @@ pub(crate) fn read_latest_commit_with_ts(
             // A torn/empty (`Truncated`) or corrupt same-version (`Decode`)
             // sentinel is unreadable: warn and fall back to the previous
             // commit. `VersionMismatch` is intentionally NOT matched here so
-            // it flows to the propagating arm below — refusing a newer apply
+            // it flows to the propagating arm below: refusing a newer apply
             // is the whole point of the version envelope.
             Err(err @ (JournalError::Truncated { .. } | JournalError::Decode(_))) => {
                 tracing::warn!(
@@ -388,8 +388,8 @@ pub fn read_latest_commit(dir: impl AsRef<Utf8Path>) -> Result<Option<ApplyRecor
 /// have been garbage-collected.
 ///
 /// After [`backups::gc_retain`](crate::backups::gc_retain) prunes an apply's
-/// backup directory, that apply can no longer be faithfully reversed — the
-/// original bytes its overwrites would restore are gone — so rolling back to
+/// backup directory, that apply can no longer be faithfully reversed, because
+/// the original bytes its overwrites would restore are gone, so rolling back to
 /// it would *delete* targets it can no longer restore. Removing the
 /// `<ts>.COMMIT` (and any `<ts>.ROLLED_BACK`) sentinel drops the apply from
 /// both `patina status`'s "last apply" search ([`read_latest_commit`]) and
@@ -398,7 +398,7 @@ pub fn read_latest_commit(dir: impl AsRef<Utf8Path>) -> Result<Option<ApplyRecor
 ///
 /// Only timestamps whose backup *directory* was pruned are passed here. An
 /// all-fresh apply (no overwrites) writes no backup directory, so it is
-/// never pruned and remains rollbackable — and rolling back to it correctly
+/// never pruned and remains rollbackable, and rolling back to it correctly
 /// deletes its fresh-created targets, with nothing to restore. Absent
 /// sentinels are tolerated, so the call is idempotent.
 ///

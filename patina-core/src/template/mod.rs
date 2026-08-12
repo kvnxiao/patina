@@ -29,8 +29,8 @@
 //! # Why `SemiStrict`, not `Strict`
 //!
 //! `MiniJinja`'s [`UndefinedBehavior::Strict`] errors the moment an
-//! undefined value is *tested* — including the condition of an
-//! `{% if defined %}` block — which would break the `{% else %}`
+//! undefined value is *tested*, including the condition of an
+//! `{% if defined %}` block, which would break the `{% else %}`
 //! carve-out. [`UndefinedBehavior::SemiStrict`] is the exact behaviour
 //! we want by design: an undefined value still errors when
 //! it is *emitted* (`{{ user_email }}`) or coerced into a concrete type,
@@ -99,7 +99,7 @@ pub enum TemplateError {
 
 /// Wraps the single shared strict-undefined `MiniJinja` environment.
 ///
-/// Construct once per apply via [`Engine::new`] and clone freely — the
+/// Construct once per apply via [`Engine::new`] and clone freely: the
 /// inner [`Environment`] lives behind an [`Arc`], so every clone shares
 /// the same instance (the property under test).
 #[derive(Debug, Clone)]
@@ -125,7 +125,7 @@ impl Engine {
     }
 
     /// The shared environment handle. Two [`Engine`] clones return
-    /// [`Arc`] pointers to the same allocation — used to prove the
+    /// [`Arc`] pointers to the same allocation, which proves the
     /// single-instance wiring property.
     #[must_use = "inspect the shared environment handle"]
     pub fn shared_environment(&self) -> Arc<Environment<'static>> {
@@ -177,7 +177,7 @@ impl Engine {
 /// (a bare `missing_var`, or the short-circuit result of
 /// `true and missing_var`) returns `Ok(undefined)` rather than erroring.
 /// Such a `when` must be reported as an undefined-variable error naming
-/// the offending variable — not silently treated as false. A defined
+/// the offending variable, not silently treated as false. A defined
 /// result is returned as its truthiness.
 fn coerce_when_result(
     value: &Value,

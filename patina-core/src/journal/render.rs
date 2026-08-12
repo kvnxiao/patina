@@ -8,8 +8,8 @@
 //! the one user-facing path allowed to carry a wall-clock timestamp
 //! (the plan's recorded `<ts>`).
 //!
-//! The plan body records only the resolved file operations — symlink,
-//! render, and copy, each with a repo-relative `source` and an absolute
+//! The plan body records only the resolved file operations (symlink,
+//! render, and copy), each with a repo-relative `source` and an absolute
 //! `target`. Hooks and the resolved variable context are evaluated during
 //! apply but are not serialized into the plan, so they do not appear here.
 //!
@@ -53,7 +53,7 @@ pub enum PlanRenderError {
     },
 
     /// The bytes at the path could not be decoded as a plan. This carries a
-    /// [`JournalError`] — most notably
+    /// [`JournalError`], most notably
     /// [`JournalError::VersionMismatch`](super::JournalError::VersionMismatch)
     /// for a plan from a newer binary, which the CLI surfaces naming both
     /// versions.
@@ -111,10 +111,10 @@ pub fn render_plan(plan: &Plan, timestamp: &str) -> String {
     let mut out = String::new();
     // `write!`/`writeln!` into a `String` is infallible (the `fmt::Error`
     // path is for IO sinks), so dropping the `Result` here is correct and
-    // introduces no panic path — no `expect` in production.
+    // introduces no panic path, so no `expect` in production.
     ignore_fmt(writeln!(
         out,
-        "plan {timestamp} ({}) — {} operation(s)",
+        "plan {timestamp} ({}), {} operation(s)",
         timestamp_to_rfc3339(timestamp),
         plan.len()
     ));

@@ -1,8 +1,8 @@
 //! Shared version-envelope codec for Patina's `postcard`-encoded binary
 //! files.
 //!
-//! Several on-disk formats — the journal plan file, the committed apply
-//! record, and the drift cache — prefix their `postcard` body
+//! Several on-disk formats (the journal plan file, the committed apply
+//! record, and the drift cache) prefix their `postcard` body
 //! with a fixed-size major-version envelope so a reader can decide whether
 //! it can decode the body **before** invoking the full decoder. A file
 //! whose major version exceeds the reader's is refused rather than

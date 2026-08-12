@@ -1,16 +1,16 @@
 //! Windows Defender path-exclusion derivation, diffing, validation, and the
-//! per-machine ledger — the pure, cross-platform layer.
+//! per-machine ledger: the pure, cross-platform layer.
 //!
 //! An antivirus exclusion is a permanent blind spot, so this whole feature is
 //! deliberately explicit, opt-in, previewed, consented, and reversible. This
 //! module owns the parts that decide *which* exact paths Patina would exclude
-//! and *how* a run reconciles the current Defender state against that set —
+//! and *how* a run reconciles the current Defender state against that set,
 //! all of it IO-free and hostable on any platform, so the derivation and diff
 //! logic is unit-testable on Linux CI with no real Defender in the loop.
 //!
-//! The Windows-only side — reading the live exclusion list through
+//! The Windows-only side, reading the live exclusion list through
 //! `Get-MpPreference` (`HostDefenderProbe`) and launching the elevated
-//! helper that performs the add/remove (`launch_defender_helper`) — lives at
+//! helper that performs the add/remove (`launch_defender_helper`), lives at
 //! the bottom of this file behind `#[cfg(windows)]`, mirroring how
 //! `windows::elevate` splits the read side from the launch side.
 //!
@@ -22,7 +22,7 @@
 //! (`symlink` / `symlink-tree` / `copy` on a `[[directory]]`) and a
 //! [`ExclusionKind::File`] for a file mode (`symlink` / `copy` / template on a
 //! `[[file]]`). A `symlink-tree` of forty files contributes the **one**
-//! declared target directory, never forty leaf entries — see
+//! declared target directory, never forty leaf entries. See
 //! [`derive_exclusions`], which walks `resolved.operations` directly rather
 //! than [`crate::apply::engine::current_managed_targets`] (that helper expands
 //! trees to per-leaf keys, the opposite of the 1:1 decision here).
@@ -114,7 +114,7 @@ const RECEIPT_FAILED: &str = "failed";
 /// unset, so the structural checks still run and the denylist simply matches
 /// nothing). The `%SystemDrive%` root is covered by the separate drive-root
 /// rejection rather than listed here. Duplicated verbatim in
-/// `patina-elevate`'s independent validator — the helper cannot depend on
+/// `patina-elevate`'s independent validator: the helper cannot depend on
 /// `patina-core`, so the trust boundary is re-enforced there with its own copy.
 const SYSTEM_DIR_ENV_VARS: [&str; 4] = [
     "SystemRoot",
@@ -125,8 +125,8 @@ const SYSTEM_DIR_ENV_VARS: [&str; 4] = [
 
 /// Whether an excluded path names a single file or a whole folder.
 ///
-/// Defender's `-ExclusionPath` API does not itself distinguish the two — a path
-/// exclusion covers whatever lives at that path — so the kind is carried purely
+/// Defender's `-ExclusionPath` API does not itself distinguish the two; a path
+/// exclusion covers whatever lives at that path. The kind is carried purely
 /// to render an honest preview (the user sees *file* vs *folder* before
 /// consenting) and to round-trip through the ledger.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -155,7 +155,7 @@ impl ExclusionKind {
 /// Equality, ordering, and hashing use a **normalized key** (case-folded,
 /// separators unified, trailing separator stripped) so two exclusions that
 /// differ only in letter case or a
-/// trailing separator compare equal and collapse in a set — the guard that
+/// trailing separator compare equal and collapse in a set, the guard that
 /// keeps re-runs from churning. The stored `path` keeps its original casing for
 /// display and for the eventual add/remove call.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -212,7 +212,7 @@ impl Ord for Exclusion {
 /// Normalize a path into the comparison key used for exclusion identity.
 ///
 /// Forward slashes are unified to backslashes, trailing separators stripped,
-/// and the result ASCII-lowercased — the folding Windows itself applies when it
+/// and the result ASCII-lowercased, the folding Windows itself applies when it
 /// matches an excluded path, and the exact set of differences
 /// `Get-MpPreference` may introduce when it echoes a path back. ASCII
 /// case-folding (not full Unicode) matches how the Windows filesystem compares
@@ -247,14 +247,14 @@ pub fn exclusion_kind_for(mode: FileMode) -> ExclusionKind {
 /// The set is the repository root (always, as a [`ExclusionKind::Folder`]) plus
 /// one exclusion per declared target of every planned operation, its kind taken
 /// from the operation's mode via [`exclusion_kind_for`]. Because the walk is
-/// over `resolved.operations` — which already excludes `when`-false entries and
+/// over `resolved.operations`, which already excludes `when`-false entries and
 /// carries a tree entry's single declared target directory rather than its
-/// expanded leaves — gated entries contribute nothing and a `symlink-tree`
+/// expanded leaves, gated entries contribute nothing and a `symlink-tree`
 /// contributes exactly one folder exclusion.
 ///
 /// Any candidate (the repo root or a target) that fails
-/// [`validate_exclusion_path`] — a UNC path, a drive-relative path, a system
-/// directory — is skipped with a warning rather than aborting the whole run.
+/// [`validate_exclusion_path`] (a UNC path, a drive-relative path, a system
+/// directory) is skipped with a warning rather than aborting the whole run.
 #[must_use = "the desired set is the input to plan_defender"]
 pub fn derive_exclusions(resolved: &ResolvedPlan) -> BTreeSet<Exclusion> {
     let mut desired = BTreeSet::new();
@@ -410,9 +410,9 @@ impl ExclusionClassifier {
 /// helper enacts it.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DefenderDiff {
-    /// Desired exclusions not currently present — the helper adds these.
+    /// Desired exclusions not currently present: the helper adds these.
     pub to_add: Vec<Exclusion>,
-    /// Patina-owned exclusions no longer desired but still present — the
+    /// Patina-owned exclusions no longer desired but still present: the
     /// helper removes these. Never includes a user-added exclusion.
     pub to_remove: Vec<Exclusion>,
 }
@@ -435,7 +435,7 @@ impl DefenderDiff {
 ///   **and** are actually still present. Anchoring removals to the ledger is
 ///   what guarantees a user-added exclusion is never touched: a path Patina did
 ///   not record is never a removal candidate. Anchoring them to `current` too
-///   keeps the diff honest — an already-gone entry is not re-removed.
+///   keeps the diff honest: an already-gone entry is not re-removed.
 ///
 /// With the list withheld ([`CurrentExclusions::Unreadable`]) the ledger stands
 /// in for what is present, so `to_add` = `desired - ledger` and `to_remove` =
@@ -519,7 +519,7 @@ pub enum ExclusionPathError {
 
 /// Validate that a path is safe to hand to Defender as an exclusion.
 ///
-/// The checks are purely **lexical** — a managed target may not exist yet, so
+/// The checks are purely **lexical**: a managed target may not exist yet, so
 /// nothing here touches the filesystem. A path passes only when it is a
 /// drive-letter-absolute Windows path, is not UNC, contains no wildcard, is not
 /// a bare drive root, and does not fall under an env-derived system directory
@@ -539,7 +539,7 @@ pub fn validate_exclusion_path(path: &Utf8Path) -> Result<(), ExclusionPathError
 /// The env-derived system-directory denylist for the running process.
 ///
 /// Off Windows every variable is unset, so this is empty and only the
-/// structural checks in [`validate_exclusion_path_with`] apply — which is what
+/// structural checks in [`validate_exclusion_path_with`] apply, which is what
 /// keeps the structural rejections testable on Linux CI.
 fn system_dir_denylist() -> Vec<Utf8PathBuf> {
     SYSTEM_DIR_ENV_VARS
@@ -597,7 +597,7 @@ fn is_windows_absolute(s: &str) -> bool {
     drive.is_ascii_alphabetic() && (sep == b'\\' || sep == b'/')
 }
 
-/// Whether `s` is a bare drive root — a drive letter and colon followed by only
+/// Whether `s` is a bare drive root: a drive letter and colon followed by only
 /// separators (`C:`, `C:\`, `C:/`).
 fn is_drive_root(s: &str) -> bool {
     let bytes = s.as_bytes();
@@ -732,7 +732,7 @@ pub fn parse_receipt(content: &str) -> Option<DefenderReceipt> {
 ///
 /// Written only by the unprivileged CLI, never by the elevated helper. It is
 /// what lets a reconcile reap a stale Patina exclusion while leaving a
-/// user-added exclusion untouched — a path absent from the ledger is never a
+/// user-added exclusion untouched: a path absent from the ledger is never a
 /// removal candidate.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DefenderLedger {
@@ -784,7 +784,7 @@ pub fn defender_result_path(state_dir: &Utf8Path) -> Utf8PathBuf {
 ///
 /// One line per operation: `A <path>` to add, `R <path>` to remove, with the
 /// path written verbatim (it is read back as literal data, never interpreted as
-/// code). The ordering is the diff's own — deterministic — so the request file
+/// code). The ordering is the diff's own and deterministic, so the request file
 /// is byte-stable for an unchanged plan.
 #[must_use = "the serialized request is written to the request file"]
 pub fn serialize_request(diff: &DefenderDiff) -> String {
@@ -1660,7 +1660,7 @@ mod tests {
     #[test]
     fn exclusions_collapse_in_a_hash_set_on_the_normalized_key() {
         // Hash/Eq key on the normalized path, so entries differing only in case
-        // and a trailing separator are one member of a HashSet — the same
+        // and a trailing separator are one member of a HashSet, the same
         // identity the BTreeSet diff relies on, exercised through Hash.
         use std::collections::HashSet;
         let mut set = HashSet::new();

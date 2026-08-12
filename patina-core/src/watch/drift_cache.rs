@@ -11,9 +11,9 @@
 //!
 //! ## On-disk format
 //!
-//! The cache is laid out exactly like the journal's binary files — a
+//! The cache is laid out exactly like the journal's binary files, a
 //! fixed-size [`version_envelope`] prefix followed by the
-//! `postcard`-encoded body — but versions independently of the journal:
+//! `postcard`-encoded body, but versions independently of the journal:
 //! it carries its own [`DRIFT_CACHE_MAJOR_VERSION`], so a journal format
 //! bump never forces a drift-cache bump (or vice versa). A binary refuses
 //! any cache whose major exceeds its own, naming both versions.
@@ -64,7 +64,7 @@ pub const DRIFT_CACHE_MAJOR_VERSION: u16 = 1;
 pub struct DriftEntry {
     /// Canonical absolute path of the drifted target.
     pub target: Utf8PathBuf,
-    /// 32-byte `blake3` hash the journal recorded for this target — the
+    /// 32-byte `blake3` hash the journal recorded for this target: the
     /// bytes Patina materialized. Directly comparable to the journal's
     /// recorded hash.
     pub expected_hash: [u8; 32],
@@ -98,7 +98,7 @@ impl DriftEntry {
 
 /// The full drift-cache record: the journal timestamp this cache is bound
 /// to plus one [`DriftEntry`] per detected divergence. The version envelope
-/// is not a field — it is the fixed-size on-disk prefix
+/// is not a field; it is the fixed-size on-disk prefix
 /// [`encode`](DriftCache::encode) prepends and [`decode`](DriftCache::decode)
 /// strips.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -257,7 +257,7 @@ pub fn render_drift_cache(cache: &DriftCache) -> String {
     let mut out = String::new();
     // `write!`/`writeln!` into a `String` is infallible (the `fmt::Error`
     // path is for IO sinks), so discarding the `Result` introduces no panic
-    // path — no `expect` in production.
+    // path, so no `expect` in production.
     ignore_fmt(writeln!(
         out,
         "drift-cache version: {DRIFT_CACHE_MAJOR_VERSION}"

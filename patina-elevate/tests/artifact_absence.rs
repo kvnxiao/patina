@@ -3,8 +3,8 @@
 //!
 //! The `patina-elevate` bin is gated `required-features = ["windows"]`, off
 //! by default, so a plain `cargo build --release` skips it on macOS/Linux.
-//! This test proves the gate actually bites — the most error-prone item in
-//! the crate — rather than trusting it by inspection.
+//! This test proves the gate actually bites, the most error-prone item in
+//! the crate, rather than trusting it by inspection.
 //!
 //! Rather than scan the shared `target/release/` directory (which races every
 //! other build and may hold stale artifacts from an earlier `--features

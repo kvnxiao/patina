@@ -5,7 +5,7 @@
 //! exact exclusion set, writes it to a request file in the per-machine state
 //! directory, then launches this helper elevated with the absolute request path
 //! as its one argument. The helper reads that file, **independently
-//! re-validates every path** (this is the trust boundary — the CLI's validation
+//! re-validates every path** (this is the trust boundary: the CLI's validation
 //! is not trusted here), and applies the add/remove through PowerShell's
 //! `Defender` module, verifying with a mandatory re-read that the change
 //! actually took.
@@ -223,7 +223,7 @@ pub fn parse_request(content: &str) -> Result<(Vec<String>, Vec<String>), Defend
 /// Purely lexical, mirroring `patina_core`'s `validate_exclusion_path`: a path
 /// is accepted only when it is a drive-letter-absolute Windows path, is not
 /// UNC, contains no wildcard, is not a bare drive root, and does not fall under
-/// an env-derived system directory. This is the trust boundary — the helper
+/// an env-derived system directory. This is the trust boundary: the helper
 /// never trusts the CLI to have validated.
 ///
 /// # Errors
@@ -321,7 +321,7 @@ fn normalize(s: &str) -> String {
 /// verdict beside it.
 ///
 /// On Windows this reads the request file at the given absolute path (it must
-/// **not** recompute the state directory — a `runas` to a different admin has a
+/// **not** recompute the state directory: a `runas` to a different admin has a
 /// different `%LOCALAPPDATA%`, so the given path is authoritative),
 /// re-validates every path, then runs a single PowerShell invocation that
 /// batches `Add-MpPreference` / `Remove-MpPreference` and verifies the result
@@ -587,8 +587,8 @@ mod tests {
     #[test]
     fn cross_platform_errors_render_and_carry_no_source() {
         // The three host-independent variants must display a message naming the
-        // offending input (so the CLI can surface it) and expose no `source` —
-        // they wrap nothing.
+        // offending input (so the CLI can surface it) and expose no `source`,
+        // because they wrap nothing.
         let malformed = DefenderError::MalformedRequest {
             line: "bogus".to_owned(),
         };

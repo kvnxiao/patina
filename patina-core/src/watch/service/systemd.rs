@@ -59,10 +59,11 @@ impl SystemdBackend {
     /// The factory uses this to decide between the systemd backend and the
     /// [`super::unsupported`] fallback. A successful
     /// `systemctl --user is-system-running` *invocation* (any exit code, even
-    /// the `degraded` / `offline` non-zero ones — the bus answered) proves the
-    /// user bus is reachable; a spawn failure (no `systemctl` binary) or an
-    /// explicit "Failed to connect to bus" message means there is no user
-    /// manager to drive, so we fall back to the foreground escape hatch.
+    /// the `degraded` / `offline` non-zero ones, because the bus answered)
+    /// proves the user bus is reachable; a spawn failure (no `systemctl`
+    /// binary) or an explicit "Failed to connect to bus" message means
+    /// there is no user manager to drive, so we fall back to the foreground
+    /// escape hatch.
     #[must_use = "the availability decision selects the backend; ignoring it loses the dispatch"]
     pub fn is_available() -> bool {
         let Ok(output) = Command::new("systemctl")
@@ -224,7 +225,7 @@ impl ServiceBackend for SystemdBackend {
 /// The user bus is unreachable only when systemctl reports it cannot connect;
 /// that surfaces on stderr regardless of exit code (`is-system-running` exits
 /// non-zero for `degraded` / `offline` even when the bus *did* answer). Any
-/// other stderr — empty, or a benign state word — means the user manager
+/// other stderr, whether empty or a benign state word, means the user manager
 /// answered, so the host is a systemd host.
 fn bus_reachable(stderr: &str) -> bool {
     !stderr.contains("Failed to connect to bus")
@@ -285,7 +286,7 @@ fn write_unit(path: &Utf8Path, binary: &Utf8Path) -> Result<(), ServiceError> {
 /// Each `ExecStart` token is quoted and escaped through [`systemd_exec_quote`]
 /// so a binary path containing whitespace, a `%` specifier, or a newline lands
 /// as a single literal argument rather than being word-split, specifier-
-/// expanded, or injected as a fresh unit directive — mirroring how the launchd
+/// expanded, or injected as a fresh unit directive, mirroring how the launchd
 /// sibling XML-escapes the same path for its descriptor format.
 fn render_unit(binary: &Utf8Path) -> String {
     let exec_start = std::iter::once(binary.as_str())

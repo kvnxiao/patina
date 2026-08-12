@@ -96,7 +96,7 @@ fn state_token(state: ExclusionState) -> &'static str {
     }
 }
 
-/// Which reconcile a run performs — they differ only in the desired set.
+/// Which reconcile a run performs. They differ only in the desired set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Action {
     /// Reconcile to the plan's exclusion set (add missing, reap stale).
@@ -152,7 +152,7 @@ fn run_reconcile(
     reporter: &mut impl Reporter,
 ) -> Result<i32> {
     // `apply` derives its desired set from the plan, so it needs a resolvable
-    // repository. `clear` reconciles to the empty set — it must stay usable as
+    // repository. `clear` reconciles to the empty set, so it must stay usable as
     // the reversibility escape hatch even when the repository is broken or
     // gone, so it resolves the state directory directly and never plans.
     let (state_dir, repo_root, desired) = match action {
@@ -613,7 +613,7 @@ fn exclusions_json(exclusions: &[Exclusion]) -> Vec<serde_json::Value> {
         .collect()
 }
 
-/// The typed error for a blocked write — Defender returned success but the
+/// The typed error for a blocked write: Defender returned success but the
 /// helper's elevated re-read shows the exclusions did not change. Names the
 /// likely cause and an actionable next step.
 fn blocked_error(detail: &str) -> anyhow::Error {

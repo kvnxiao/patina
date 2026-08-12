@@ -97,7 +97,7 @@ assert_impl_all!(NodeId: Ord, Send, Sync);
 
 ## Auto-trait and drop-count tests
 
-Guard your public auto-trait surface — a stray `Rc` or raw pointer silently removing `Send`/`Sync` is a breaking change.
+Guard your public auto-trait surface: a stray `Rc` or raw pointer silently removing `Send`/`Sync` is a breaking change.
 
 ```rust
 #[test]
@@ -148,7 +148,7 @@ slow-timeout = { period = "1s", terminate-after = 60 } # terminate on deadlock
 
 ## CI-enforce generated-code freshness
 
-If you check in generated code, fail CI when regenerating it would produce a diff — otherwise the checked-in copy silently rots.
+If you check in generated code, fail CI when regenerating it would produce a diff. Otherwise the checked-in copy silently rots.
 
 ```sh
 cargo run -p my-cli -- generate

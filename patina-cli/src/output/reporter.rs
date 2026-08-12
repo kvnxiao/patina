@@ -1,8 +1,8 @@
 //! The `output::Reporter` abstraction: the only sanctioned site for
 //! user-facing output in `patina-cli`.
 //!
-//! Every byte the CLI prints for the user — the rendered diff, the JSON
-//! envelope, prompt text, and warnings — funnels through a [`Reporter`].
+//! Every byte the CLI prints for the user funnels through a [`Reporter`]:
+//! the rendered diff, the JSON envelope, prompt text, and warnings.
 //! Logs (via `tracing`) are a separate channel and never go here. Routing
 //! all output through one trait is what lets a test assert the
 //! deterministic-stdout property over a single seam, and lets these
@@ -11,7 +11,7 @@
 //! Two implementations ship:
 //!
 //! - [`StreamReporter`] writes the diff / JSON to stdout and prompts / warnings
-//!   / errors to stderr — the production wiring. It writes through an
+//!   / errors to stderr. That is the production wiring. It writes through an
 //!   `anstream` auto-stream, so ANSI styling emitted by the diff renderer and
 //!   the warn / error / prompt / confirm paths is stripped whenever the stream
 //!   is not a terminal (or `--color never` / `NO_COLOR` is in effect). The
@@ -92,7 +92,7 @@ fn ignore_io<T>(_result: std::io::Result<T>) {}
 /// brackets in the prompt style, the affirmative `y` and default `N` in their
 /// own styles so the two answers read distinctly. Under the plain palette
 /// every segment renders to zero bytes, so the result is exactly
-/// `"<question> [y/N] "` — the form the buffer reporter and `--color never`
+/// `"<question> [y/N] "`, the form the buffer reporter and `--color never`
 /// share. Shared by both reporters so the plain shape cannot drift between
 /// them.
 fn compose_confirm(styles: &Styles, question: &str) -> String {
@@ -110,7 +110,7 @@ impl StreamReporter {
     /// Write a message styled with `style` to stderr, one line, through the
     /// auto-stream. An empty style renders to nothing, so this is safe for
     /// the plain palette too. `newline` controls whether a trailing `\n` is
-    /// appended — prompts omit it so the answer is typed on the same line.
+    /// appended; prompts omit it so the answer is typed on the same line.
     fn styled_err(&self, style: Style, message: &str, newline: bool) {
         let mut err = AutoStream::new(std::io::stderr().lock(), self.choice);
         let nl = if newline { "\n" } else { "" };
@@ -243,9 +243,9 @@ mod tests {
     #[test]
     fn confirm_plain_is_exactly_the_question_and_bracketed_keys() {
         // Under the plain palette the composed confirm prompt must be the
-        // bare `<question> [y/N] ` — no escapes, trailing space intact — so
-        // `--color never` and the buffer reporter stay byte-identical to the
-        // pre-color prompt string.
+        // bare `<question> [y/N] `, with no escapes and the trailing space
+        // intact, so `--color never` and the buffer reporter emit the same
+        // bytes.
         let plain = compose_confirm(&Styles::plain(), "Apply?");
         assert_eq!(plain, "Apply? [y/N] ");
     }
@@ -254,8 +254,8 @@ mod tests {
     fn confirm_colored_highlights_y_and_n_distinctly_but_strips_to_plain() {
         // The colored composition must carry escapes and wrap the `y` and `N`
         // in different styles from the prose (and each other), yet reduce to
-        // the exact plain form once every escape is removed — proving color is
-        // purely additive over the stable bytes.
+        // the exact plain form once every escape is removed, which proves
+        // color is purely additive over the stable bytes.
         let colored = compose_confirm(&Styles::colored(), "Apply?");
         assert!(
             colored.contains('\u{1b}'),

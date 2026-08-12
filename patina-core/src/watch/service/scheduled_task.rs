@@ -3,7 +3,7 @@
 //! `install` registers a per-user Scheduled Task named `Patina Watcher` with a
 //! logon trigger, `RunLevel = Limited` (non-elevated), and an action pointing
 //! at the canonical `patina` binary invoked with `watch --foreground`, through
-//! `winsafe`'s `taskschd` COM surface — the same HKCU-scoped API that
+//! `winsafe`'s `taskschd` COM surface, the same HKCU-scoped API that
 //! `schtasks /create /sc onlogon` drives. `start` runs the task, `stop` ends
 //! it, `restart` is stop-then-start, `uninstall` deletes it; `status` queries
 //! the registered task for liveness, last-run time, and last-exit code, and
@@ -147,7 +147,7 @@ fn connect_service()
     )
     .map_err(|err| supervisor_err("CoCreateInstance(TaskScheduler)", err))?;
     // Connect to the local scheduler under the current user (all `None` args =
-    // local machine, current credentials — the HKCU-scoped, non-elevated path).
+    // local machine, current credentials: the HKCU-scoped, non-elevated path).
     service
         .Connect(None, None, None, None)
         .map_err(|err| supervisor_err("ITaskService::Connect", err))?;
@@ -186,7 +186,7 @@ fn register_task(xml: &str) -> Result<(), ServiceError> {
         .map_err(|err| supervisor_err("ITaskDefinition::put_XmlText", err))?;
 
     // Register under the current interactive user's token (no stored password,
-    // non-elevated). CREATE refuses to clobber an existing task — but `install`
+    // non-elevated). CREATE refuses to clobber an existing task, but `install`
     // has already screened for that with `task_exists`, so the AlreadyInstalled
     // error is surfaced before we get here.
     folder
@@ -272,7 +272,7 @@ fn query_task_status() -> Result<TaskStatus, ServiceError> {
 }
 
 /// The supervisor-derived fields mapped out of a registered task's three COM
-/// reads — `get_State`, `get_LastTaskResult`, and `get_LastRunTime`.
+/// reads: `get_State`, `get_LastTaskResult`, and `get_LastRunTime`.
 struct TaskReadout {
     /// Whether the task's state is `RUNNING`.
     running: bool,
@@ -285,9 +285,9 @@ struct TaskReadout {
 /// Map a registered task's `(get_State, get_LastTaskResult, get_LastRunTime)`
 /// triple to the liveness / last-fired / last-exit-code status fields.
 ///
-/// This is the pure value-mapping half of [`query_task_status`], extracted —
+/// This is the pure value-mapping half of [`query_task_status`], split out,
 /// mirroring the launchd / systemd siblings' `parse_launchctl_print` /
-/// `parse_systemctl_show` — so the three predicates are unit-testable without a
+/// `parse_systemctl_show`, so the three predicates are unit-testable without a
 /// live Task Scheduler:
 ///
 /// - `state == RUNNING` is the liveness test; every other state is stopped.
@@ -319,7 +319,7 @@ const SCHED_S_TASK_HAS_NOT_RUN: i32 = 0x0004_1303;
 /// Scheduler also surfaces `ERROR_PATH_NOT_FOUND` (`0x8007_0003`) for a missing
 /// task path. Treating both as not-found keeps a never-installed task off the
 /// error path. Taking the raw `u32` (the caller passes `err.raw()`) keeps this
-/// classification pure and unit-testable without constructing an `HRESULT` —
+/// classification pure and unit-testable without constructing an `HRESULT`:
 /// the workspace forbids `unsafe`, and `HRESULT::from_raw` is `unsafe`.
 fn is_not_found(raw: u32) -> bool {
     const FILE_NOT_FOUND: u32 = 0x8007_0002;

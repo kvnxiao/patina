@@ -3,8 +3,8 @@
     reason = "integration tests use .expect() on fixture setup and assertions; allow-expect-in-tests covers #[cfg(test)] modules but not the top level of a tests/*.rs integration crate."
 )]
 
-//! Every `when` site — including
-//! `[[auto_match]]` profile rules — is evaluated by the one shared
+//! Every `when` site, including
+//! `[[auto_match]]` profile rules, is evaluated by the one shared
 //! `MiniJinja` engine, and the narrow single-equality predicate evaluator
 //! is gone.
 //!
@@ -16,7 +16,7 @@
 //! - A `[[file]]` `when` using the wider grammar (`!=`) the narrow evaluator
 //!   rejected now evaluates true and materializes its target.
 //! - A `[[file]]` `when` misspelling a built-in (`patina.oss`) fails the apply
-//!   with a typed error naming the variable — never a silent drop.
+//!   with a typed error naming the variable, never a silent drop.
 //! - An `[[auto_match]]` `when` referencing `patina.profile` (unresolved during
 //!   profile resolution) fails with a typed undefined-variable error naming it,
 //!   rather than silently failing to match.
@@ -75,8 +75,8 @@ fn auto_match_rule_on_os_resolves_its_profile() {
 
 #[test]
 fn file_inequality_predicate_materializes_target() {
-    // A `[[file]]` `when` using `!=` (rejected by the removed
-    // narrow evaluator) now evaluates true and materializes the target —
+    // A `[[file]]` `when` using `!=` (which the narrow single-equality
+    // evaluator cannot express) evaluates true and materializes the target, with
     // no `UnsupportedPredicate` error.
     let f = Fixture::new();
     let module = f.module(
@@ -104,7 +104,7 @@ fn file_misspelled_builtin_fails_and_names_the_variable() {
     // A `[[file]]` `when` misspelling `patina.os` as `patina.oss`
     // accesses an undefined variable. The apply must exit non-zero, stderr
     // must name `patina.oss`, and the target must not be silently dropped
-    // (created or not — it must not be created, and the run must fail).
+    // (it must not be created, and the run must fail).
     let f = Fixture::new();
     let module = f.module(
         "shell",

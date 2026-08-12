@@ -3,8 +3,8 @@
 //! `patina watch install` registers the watcher as a per-user background
 //! service that launches the foreground watcher (`patina watch --foreground`)
 //! at login, and `uninstall` / `start` / `stop` / `restart` / `status` manage
-//! that registration. Each OS speaks to its own native supervisor — `launchd`
-//! on macOS, `systemd --user` on Linux, a per-user Scheduled Task on Windows —
+//! that registration. Each OS speaks to its own native supervisor (`launchd`
+//! on macOS, `systemd --user` on Linux, a per-user Scheduled Task on Windows)
 //! through a common [`ServiceBackend`] trait so the CLI command surface is
 //! written once.
 //!
@@ -302,7 +302,7 @@ use crate::watch::logging::LOGS_DIR;
 /// last `subscriptions=<n>` field (logged on each `watch_started` /
 /// `journal_rescan`) and counts the `re_apply` success events since the most
 /// recent `watch_started`. Returns `(None, None)` when the log directory is
-/// absent, empty, or unreadable — a missing log is not an error (the watcher
+/// absent, empty, or unreadable. A missing log is not an error (the watcher
 /// may never have started since the last rotation).
 ///
 /// The pair is `(subscriptions_count, re_applies_since_start)`.

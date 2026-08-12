@@ -4,7 +4,7 @@
 //! [`Symlink`](crate::config::FileMode::Symlink) links a single source
 //! file to each target; when the source is a directory it walks the tree
 //! and creates one symlink per file at the mirrored target path (the
-//! default mode's per-file walk — atomic directory
+//! default mode's per-file walk; atomic directory
 //! symlinks are reserved for an explicit [`SymlinkDir`]). [`SymlinkDir`]
 //! creates one symbolic link per target pointing at the source directory, never
 //! walking into it. [`SymlinkTree`](crate::config::FileMode::SymlinkTree)
@@ -74,7 +74,7 @@ pub(super) fn per_file_symlink(
 /// [`ExecutorError::NotADirectory`], the same way [`dir_symlink`] rejects a
 /// file source. Leaf enumeration uses the shared [`walk_files`] walk, which
 /// collects only regular files in deterministic sorted order, so an empty
-/// source subdirectory yields no entry — and therefore neither a target
+/// source subdirectory yields no entry, and therefore neither a target
 /// directory nor a link. Each leaf is linked through [`link_file`], which
 /// creates intermediate target directories on demand as real directories
 /// and clears any pre-existing entry first (the engine has already backed
@@ -133,7 +133,7 @@ pub(super) fn tree_symlink(
 /// Atomic [`SymlinkDir`](crate::config::FileMode::SymlinkDir) executor:
 /// one directory symlink per target, no walk. A pre-existing entry at the
 /// target is cleared first (the engine has already backed it up), so a
-/// re-apply — or an apply over an existing target — converges rather than
+/// re-apply, or an apply over an existing target, converges rather than
 /// failing with `EEXIST`.
 pub(super) fn dir_symlink(
     source: &Utf8Path,
@@ -165,8 +165,8 @@ pub(super) fn dir_symlink(
         // without this a re-apply (the target is already a directory symlink)
         // or a first apply over a pre-existing target would error rather than
         // converge. The engine runs `backup_before_overwrite` ahead of
-        // `materialize`, so whatever is here — a real directory, a foreign
-        // symlink — is already stashed and rollback can restore it; the removal
+        // `materialize`, so whatever is here, a real directory or a foreign
+        // symlink, is already stashed and rollback can restore it; the removal
         // only clears the path the new link will occupy. Mirrors `link_file`.
         crate::fsx::remove_entry(target).map_err(|source| ExecutorError::Io {
             path: target.to_path_buf(),

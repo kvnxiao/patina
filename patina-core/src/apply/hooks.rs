@@ -30,11 +30,11 @@
 //! journal, the rollback machinery, and the `output::Reporter` surface)
 //! decide. The mapping the orchestrator applies:
 //!
-//! - [`HookOutcome::Succeeded`] — the hook exited zero; proceed.
-//! - [`HookOutcome::Warned`] — the hook exited non-zero but degraded to a
+//! - [`HookOutcome::Succeeded`]: the hook exited zero; proceed.
+//! - [`HookOutcome::Warned`]: the hook exited non-zero but degraded to a
 //!   warning (either `must_succeed = false` or `--force-deploy` flipped it
 //!   off). The orchestrator surfaces the warning and proceeds.
-//! - [`HookOutcome::Failed`] — the hook exited non-zero with `must_succeed =
+//! - [`HookOutcome::Failed`]: the hook exited non-zero with `must_succeed =
 //!   true` and no `--force-deploy` override. For a `pre_apply` hook the
 //!   orchestrator aborts before any file operation (CLI exit 2); for a
 //!   `post_apply` hook it rolls back every file operation (CLI exit 3). The
@@ -221,7 +221,7 @@ pub fn should_run(
 /// # Errors
 ///
 /// Returns [`HookError::Spawn`] when the child cannot be spawned or waited
-/// on at the OS level. A non-zero *exit code* is not an error — it is a
+/// on at the OS level. A non-zero *exit code* is not an error; it is a
 /// successful classification into [`HookOutcome::Warned`] /
 /// [`HookOutcome::Failed`] so the orchestrator can act on it.
 pub async fn run_hook(

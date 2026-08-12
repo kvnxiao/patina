@@ -4,13 +4,13 @@
 //! advisory lock file at `<state>/patina/lock`. Two acquisition modes
 //! mirror the two classes of subcommand:
 //!
-//! - **Exclusive** ([`LockKind::Exclusive`]) — held by the mutating subcommands
+//! - **Exclusive** ([`LockKind::Exclusive`]): held by the mutating subcommands
 //!   (`apply`, `rollback`) for the full apply duration. A second exclusive
 //!   acquirer, or any shared acquirer, blocks until the holder releases. The
 //!   mutating subcommands cap their wait at [`EXCLUSIVE_TIMEOUT`]; on expiry
 //!   [`acquire`] returns [`LockError::Timeout`], which the CLI maps to process
 //!   exit code 4.
-//! - **Shared** ([`LockKind::Shared`]) — held by the read-only subcommand
+//! - **Shared** ([`LockKind::Shared`]): held by the read-only subcommand
 //!   (`status`). Multiple shared holders coexist, but a shared holder blocks an
 //!   exclusive acquirer and vice versa. `status` caps its wait at
 //!   [`SHARED_TIMEOUT`]; on expiry it warns and proceeds without the lock (the
@@ -23,7 +23,7 @@
 //! [`acquire`] loops on `fs2`'s non-blocking `try_lock_*` calls with a
 //! short sleep between attempts rather than calling the unbounded
 //! `lock_exclusive` / `lock_shared`. This is what makes the timeout cap
-//! enforceable — and parameterisable down to milliseconds so the
+//! enforceable, and parameterisable down to milliseconds so the
 //! integration suite can exercise the timeout path without waiting a real
 //! minute.
 //!
@@ -31,7 +31,7 @@
 //!
 //! The returned [`LockGuard`] owns the open lock-file handle. Dropping it
 //! drops the handle, and the operating system releases the advisory lock
-//! as a side effect of closing the descriptor — including when the
+//! as a side effect of closing the descriptor, including when the
 //! process dies abnormally (`SIGKILL` on POSIX, `TerminateProcess` on
 //! Windows). There is no "unlock" syscall the engine must remember to
 //! call, so a crashed holder never wedges the lock for the next process.
@@ -179,7 +179,7 @@ pub enum LockError {
 ///
 /// The guard is deliberately opaque: callers hold it for the duration of
 /// the critical section and let it drop at scope end. There is no manual
-/// `release` — relying on `Drop` is what guarantees release on both the
+/// `release`; relying on `Drop` is what guarantees release on both the
 /// happy path and on a panic-unwind.
 #[derive(Debug)]
 #[must_use = "the lock is released as soon as this guard is dropped; bind it for the critical section"]
@@ -211,7 +211,7 @@ impl LockGuard {
 /// up to `timeout` for a conflicting holder to release.
 ///
 /// The lock file is created if it does not exist (its byte contents are
-/// irrelevant — only the advisory lock on the handle matters). The call
+/// irrelevant; only the advisory lock on the handle matters). The call
 /// polls a non-blocking acquisition every `POLL_INTERVAL` until it
 /// succeeds or `timeout` elapses.
 ///
@@ -298,7 +298,7 @@ pub fn try_acquire(path: &Utf8Path, kind: LockKind) -> Result<LockGuard, LockErr
 }
 
 /// Open (creating if absent) the advisory-lock file at `path` for
-/// acquisition. The byte contents are irrelevant — only the advisory lock
+/// acquisition. The byte contents are irrelevant; only the advisory lock
 /// on the returned handle matters.
 fn open_lock_file(path: &Utf8Path) -> Result<std::fs::File, LockError> {
     Ok(fs_err::OpenOptions::new()

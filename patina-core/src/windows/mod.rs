@@ -3,13 +3,13 @@
 //!
 //! On Windows, an apply whose plan contains any
 //! `symlink` / `symlink-dir` operation only proceeds when the host can
-//! create symbolic links without elevation — which on Windows means
+//! create symbolic links without elevation, which on Windows means
 //! Developer Mode is enabled (the `AllowDevelopmentWithoutDevLicense`
 //! registry flag is `1`), or the invoking process is already elevated.
 //!
-//! The engine crate owns the *capability* — the IO-free
+//! The engine crate owns the *capability*: the IO-free
 //! reads of the registry flag, the process-token elevation check, and
-//! the OS-build query — while the *orchestration* (the UAC prompt, the
+//! the OS-build query. The *orchestration* (the UAC prompt, the
 //! decline → exit-5 path, re-driving `execute_plan`) lives in
 //! `patina-cli`. This module is therefore the read side only: it exposes
 //! the typed queries plus the pure gate-decision function.
@@ -109,13 +109,13 @@ pub enum WindowsError {
 /// per-operation elevation prompt.
 ///
 /// On non-Windows hosts this is always [`DevModeStatus::NotWindows`] and
-/// **no registry access is attempted** — the read returns immediately.
+/// **no registry access is attempted**: the read returns immediately.
 ///
 /// On Windows it reads `AllowDevelopmentWithoutDevLicense`. A successful
 /// read of `1` yields [`DevModeStatus::Enabled`]; an absent key or a `0`
 /// value yields [`DevModeStatus::Disabled`]; a read on a pre-1703 build
 /// yields [`DevModeStatus::Unsupported`]. A failed read is treated as
-/// [`DevModeStatus::Disabled`] — the safe default, since it routes the
+/// [`DevModeStatus::Disabled`], the safe default, since it routes the
 /// caller into the elevation flow rather than silently skipping a symlink
 /// the user asked for.
 #[must_use = "the Developer Mode status decides whether the symlink-elevation gate fires"]
@@ -129,7 +129,7 @@ pub fn dev_mode_status() -> DevModeStatus {
             Ok(Some(1)) => DevModeStatus::Enabled,
             // Everything else is Disabled: an absent key, an explicit 0,
             // any non-1 value, or a failed read. Treating a read error as
-            // Disabled is the safe default — it routes the caller into the
+            // Disabled is the safe default: it routes the caller into the
             // elevation flow rather than silently skipping a requested
             // symlink.
             Ok(_) | Err(_) => DevModeStatus::Disabled,
@@ -163,7 +163,7 @@ pub fn is_elevated() -> bool {
 /// Whether the running OS is Windows 10 build 1703 (15063) or newer, the
 /// first build to support Developer Mode symlink creation.
 ///
-/// On non-Windows hosts this is always `false` — Developer Mode is a
+/// On non-Windows hosts this is always `false`. Developer Mode is a
 /// Windows-only concept and callers should never reach the build check on
 /// another platform.
 #[must_use = "the build floor distinguishes Unsupported from Disabled on Windows"]
@@ -250,13 +250,13 @@ impl DevModeProbe for HostDevModeProbe {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GateDecision {
     /// No symlink in the plan, not on Windows, or Developer Mode is
-    /// already enabled — run the apply with no prompt.
+    /// already enabled: run the apply with no prompt.
     Proceed,
     /// Developer Mode is disabled but the process is already elevated, so
     /// symlink creation will succeed; proceed and warn that running
     /// elevated is discouraged.
     ProceedElevatedWarning,
-    /// Developer Mode is disabled and the process is not elevated — the
+    /// Developer Mode is disabled and the process is not elevated. The
     /// caller must drive the one-time UAC elevation flow before applying.
     RequireElevation,
 }
@@ -270,14 +270,14 @@ pub enum GateDecision {
 ///
 /// The rules:
 ///
-/// - A plan with no symbolic link operation always [`Proceed`]s — there is
-///   nothing that needs Developer Mode.
-/// - [`DevModeStatus::NotWindows`] always [`Proceed`]s — the check is
+/// - A plan with no symbolic link operation always [`Proceed`]s, because there
+///   is nothing that needs Developer Mode.
+/// - [`DevModeStatus::NotWindows`] always [`Proceed`]s, because the check is
 ///   Windows-only.
-/// - [`DevModeStatus::Enabled`] [`Proceed`]s — links create cleanly.
-/// - [`DevModeStatus::Unsupported`] [`Proceed`]s — there is no Developer Mode
-///   flag to toggle on this build, so the gate cannot help; the apply runs and
-///   any per-link failure surfaces from the executor.
+/// - [`DevModeStatus::Enabled`] [`Proceed`]s, because links create cleanly.
+/// - [`DevModeStatus::Unsupported`] [`Proceed`]s, because there is no Developer
+///   Mode flag to toggle on this build, so the gate cannot help; the apply runs
+///   and any per-link failure surfaces from the executor.
 /// - [`DevModeStatus::Disabled`] with an elevated process yields
 ///   [`ProceedElevatedWarning`]; otherwise [`RequireElevation`].
 ///

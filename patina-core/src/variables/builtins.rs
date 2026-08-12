@@ -5,7 +5,7 @@
 //! is constructed. The `patina.profile` field is left **unresolved**
 //! (`None`) by [`Builtins::current`] and filled in by
 //! [`crate::variables::Resolver::with_profile`] once the active profile
-//! is resolved — `Some(name)`, where the no-profile fallback is
+//! is resolved, to `Some(name)`, where the no-profile fallback is
 //! `Some("")`. While it is `None`, a `patina.profile` lookup is
 //! undefined: profile resolution itself evaluates `[[auto_match]]`
 //! predicates *before* the profile exists, so a rule referencing

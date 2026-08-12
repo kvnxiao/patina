@@ -5,12 +5,12 @@
 //! exclusive advisory lock with a single non-blocking attempt and, on
 //! contention, returns
 //! [`LockError::Contended`] having mutated
-//! nothing — not even orphan recovery (the lock is resolved before
+//! nothing, not even orphan recovery (the lock is resolved before
 //! recovery). The watcher therefore must **not**
 //! pre-acquire the lock and then call apply: doing so would self-contend
 //! against its own guard. It lets the engine acquire under `NonBlocking` and
 //! treats a contention error as "the CLI (or another holder) owns the lock
-//! right now" — it logs a `lock_contention_skip` event and skips the cycle. The
+//! right now": it logs a `lock_contention_skip` event and skips the cycle. The
 //! next FS event re-arms the debounce.
 //!
 //! A successful re-apply emits an info `re_apply` event carrying the

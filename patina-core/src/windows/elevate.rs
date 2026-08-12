@@ -14,7 +14,7 @@
 //!
 //! The helper is a standalone crate with no `patina-core`
 //! dependency; we invoke it purely as a sibling executable. The
-//! engine never renders the UAC *prompt* — that is the CLI's job — but the
+//! engine never renders the UAC *prompt*, which is the CLI's job, but the
 //! `ShellExecuteEx` launch and the post-launch flag re-read are an engine
 //! capability and live here.
 

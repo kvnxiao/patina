@@ -14,8 +14,8 @@
 //!
 //! - nested leaves materialize as symlinks while their intermediate target
 //!   directories stay real;
-//! - a pre-existing regular file at a leaf target is backed up — provable via
-//!   `patina rollback` restoring its prior bytes — and replaced by the link;
+//! - a pre-existing regular file at a leaf target is backed up (provable via
+//!   `patina rollback` restoring its prior bytes) and replaced by the link;
 //! - an empty source subdirectory produces no target directory;
 //! - a re-apply over unchanged source is a no-op for the entry (idempotent).
 
@@ -97,7 +97,7 @@ fn symlink_tree_links_each_leaf_and_keeps_intermediate_dirs_real() {
 fn symlink_tree_backs_up_pre_existing_leaf_and_replaces_it_with_a_link() {
     // A leaf target `~/d/a.conf` that already holds a regular file is
     // afterward a symbolic link to the source. The prior bytes were recorded
-    // in a backup — proven by `patina rollback` restoring the original file.
+    // in a backup, proven by `patina rollback` restoring the original file.
     let f = Fixture::new();
     let module = f.module(
         "cfg",

@@ -30,7 +30,7 @@ pub enum DevModeError {
 
     /// A Windows registry call failed. `call` names the failing API,
     /// `symbol` names the Win32 error constant (e.g. `ERROR_ACCESS_DENIED`
-    /// when the helper was launched without elevation — the
+    /// when the helper was launched without elevation, the
     /// non-elevated exit-1 path), and `source` carries the OS error with
     /// its formatted message.
     #[cfg(windows)]

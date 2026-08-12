@@ -1,7 +1,7 @@
 //! `patina status` command logic.
 //!
 //! Classifies every managed target as CLEAN / DRIFTED / MISSING /
-//! ORPHANED against the last committed apply and renders the result —
+//! ORPHANED against the last committed apply and renders the result as
 //! a human-readable table by default, a JSON envelope under `--json`.
 //! The engine semantics (journal read, current-plan recomputation,
 //! classification, shared lock) live in `patina_core::status`; this module

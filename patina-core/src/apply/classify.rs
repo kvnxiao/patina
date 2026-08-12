@@ -40,7 +40,7 @@ use camino::Utf8Path;
 /// cannot be read to hash it. A symlink leaf reads no source (it compares
 /// the link target string), and a template leaf compares against the
 /// caller-supplied `rendered` bytes, so neither hits this path. An absent
-/// or unreadable *target* is never an error — it classifies `Create` or
+/// or unreadable *target* is never an error; it classifies `Create` or
 /// `Update` respectively.
 pub(crate) fn classify_leaf(
     mode: FileMode,
@@ -50,7 +50,7 @@ pub(crate) fn classify_leaf(
 ) -> Result<Disposition, ClassifyError> {
     // A target that is not present on disk is always a Create, regardless of
     // mode. `symlink_metadata` (not `metadata`) so a symlink target counts as
-    // present even when it dangles — matching how `status::classify` decides
+    // present even when it dangles, matching how `status::classify` decides
     // existence.
     if fs_err::symlink_metadata(target).is_err() {
         return Ok(Disposition::Create);

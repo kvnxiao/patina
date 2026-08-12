@@ -9,10 +9,10 @@
 //!
 //! ## States
 //!
-//! - **CLEAN** — target exists and matches the recorded expectation.
-//! - **DRIFTED** — target exists but content / link target differs.
-//! - **MISSING** — target was applied but no longer exists on disk.
-//! - **ORPHANED** — target exists but the *current* plan no longer manages it
+//! - **CLEAN**: target exists and matches the recorded expectation.
+//! - **DRIFTED**: target exists but content / link target differs.
+//! - **MISSING**: target was applied but no longer exists on disk.
+//! - **ORPHANED**: target exists but the *current* plan no longer manages it
 //!   (it was in a prior apply, then removed from the repo).
 //!
 //! ## Multi-target counting
@@ -191,7 +191,7 @@ pub fn report(managed: &ManagedTargets) -> Result<StatusReport, EngineError> {
         let still_managed = managed.governs(&manage_key(&path));
         let state = classify(expected, still_managed);
         // A target the current plan dropped *and* that is already gone from
-        // disk is fully done — nothing to surface (it would classify
+        // disk is fully done, so there is nothing to surface (it would classify
         // Missing, but there is no managed target to be missing).
         if !still_managed && state == TargetState::Missing {
             continue;

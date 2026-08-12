@@ -46,7 +46,7 @@ impl TargetState {
 /// `still_managed` is `true` when the freshly-computed current plan still
 /// manages this target's path. A target the current plan has dropped is
 /// ORPHANED while it still exists on disk; once it is gone there is
-/// nothing left to report, so it classifies MISSING — but the status
+/// nothing left to report, so it classifies MISSING. The status
 /// module filters dropped-and-absent targets out before display, since a
 /// no-longer-managed, no-longer-present target is simply done.
 ///

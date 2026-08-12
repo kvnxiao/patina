@@ -110,19 +110,19 @@ impl Default for ApplyRequest {
 
 /// How [`execute`] obtains the exclusive advisory lock guarding the apply.
 ///
-/// The default ([`LockPolicy::Blocking`]) reproduces the pre-amendment
-/// behaviour byte-for-byte: acquire exclusive with [`exclusive_timeout`],
-/// mapping a timeout to exit code 4. The two added strategies let callers
-/// outside the CLI's `apply` path drive an apply differently:
+/// The default ([`LockPolicy::Blocking`]) acquires exclusive with
+/// [`exclusive_timeout`], mapping a timeout to exit code 4. The other two
+/// strategies let callers outside the CLI's `apply` path drive an apply
+/// differently:
 ///
-/// - [`LockPolicy::NonBlocking`] — make a single non-blocking attempt and, on
+/// - [`LockPolicy::NonBlocking`]: make a single non-blocking attempt and, on
 ///   contention, return [`crate::lock::LockError::Contended`] before any
 ///   filesystem mutation. The watcher uses this to skip a reapply while a CLI
 ///   run holds the lock.
-/// - [`LockPolicy::Held`] — reuse a guard the caller already acquired,
-///   acquiring nothing further. The `remove` / `promote` commands use this to
-///   re-journal while already holding the exclusive lock, without deadlocking
-///   against their own held lock.
+/// - [`LockPolicy::Held`]: reuse a guard the caller already acquired, acquiring
+///   nothing further. The `remove` / `promote` commands use this to re-journal
+///   while already holding the exclusive lock, without deadlocking against
+///   their own held lock.
 ///
 /// The guard variant carries a non-`Clone` [`LockGuard`], so the policy is
 /// passed to [`execute`] as a distinct argument rather than living on the
@@ -149,9 +149,9 @@ pub enum LockPolicy {
 /// For a single-target mode (`symlink`, `copy`, `template`, `symlink-dir`)
 /// the `aggregate` is simply that target's own disposition and `leaves` is
 /// empty. For a tree mode (`copy-tree`, `symlink-tree`) the `aggregate` is
-/// the per-op aggregate — `Unchanged` iff every materialized
+/// the per-op aggregate (`Unchanged` iff every materialized
 /// leaf is `Unchanged`, `Create` iff the target directory is absent,
-/// otherwise `Update` — and `leaves` carries the per-leaf disposition the
+/// otherwise `Update`), and `leaves` carries the per-leaf disposition the
 /// execute write-skip and the per-leaf diff / `--json` reporting
 /// consume.
 #[derive(Debug, Clone)]
@@ -199,8 +199,8 @@ pub struct ResolvedOperation {
     /// Index of the managed entry that produced this operation, assigned
     /// at plan time over the full declared sequence (every `[[file]]`
     /// entry across all modules first, then every `[[directory]]` entry)
-    /// as a single monotonic `u32` space. This index — not a re-derivation
-    /// from operation position — is what [`execute`] records on each
+    /// as a single monotonic `u32` space. This index, not a re-derivation
+    /// from operation position, is what [`execute`] records on each
     /// [`ExpectedTarget`], so a `[[file]]` and a `[[directory]]` entry can
     /// never collide on an index and per-entry atomic rollback
     /// groups targets by their declared entry.
@@ -327,8 +327,8 @@ pub fn plan(
     let mut registry = RemoteRegistry::new(&remotes, &repo_root, &state_dir, CachePolicy::Fetch);
 
     // Resolve every managed entry into its canonical source/targets, kept
-    // in two ordered buckets — `[[file]]` entries and `[[directory]]`
-    // entries — each in declaration order across all modules as the modules
+    // in two ordered buckets, `[[file]]` entries and `[[directory]]`
+    // entries, each in declaration order across all modules as the modules
     // are iterated. Emitting from these buckets files-then-directories
     // gives the single deterministic order while a managed
     // entry's canonicalization stays where it always was (per-module, under
@@ -338,7 +338,7 @@ pub fn plan(
     // contributes `None`, so it still occupies its position in the declared
     // sequence (and thus its `entry_index`) but emits no operation
     // and no diff line. The `when` gate runs at the top of the
-    // per-entry body, before `resolve_entry` canonicalizes the source — so a
+    // per-entry body, before `resolve_entry` canonicalizes the source, so a
     // gated-off entry whose source is absent or wrong-kind on this OS is
     // never canonicalized or validated (ordering).
     let mut file_entries: Vec<Option<ResolvedEntry>> = Vec::new();
@@ -407,7 +407,7 @@ pub fn plan(
 /// [`current_managed_targets`] (which recomputes the managed-target set for
 /// `patina status` and the apply-time orphan reap).
 ///
-/// Everything up to — but not including — the per-module entry loop is
+/// Everything up to the per-module entry loop, but not including it, is
 /// identical between the two passes (the repo-shared / per-profile
 /// layer pushes, the active-profile resolution, the shared `MiniJinja`
 /// engine). Factoring it here keeps the `when` gate seeing the same variable
@@ -681,7 +681,7 @@ fn declared_pins<'a>(
 /// Resolves the repository and state directory, the active profile, and the
 /// resolver's repo-shared (`[variables]`) and active-profile
 /// (`[profiles.<name>.variables]`) layers. The per-module layer is
-/// *not* pushed here — each pass pushes it during its own module loop, in
+/// *not* pushed here; each pass pushes it during its own module loop, in
 /// declaration order, so a module's `[variables]` is in scope for that
 /// module's entries' `when` predicates.
 ///
@@ -846,7 +846,7 @@ fn insert_managed_targets(
     // live source leaf and the journal records each leaf as its own target, so
     // the managed set must expand to those same leaves. Recording only the
     // declared directory would make every committed leaf look orphaned on the
-    // next apply — the reap pass would delete it (and `copy-tree`'s journal
+    // next apply, and the reap pass would delete it (`copy-tree`'s journal
     // hashing would then fail on the just-reaped file).
     if matches!(entry.mode, FileMode::SymlinkTree | FileMode::CopyTree) {
         let Some(source_root) = origin.source_root.as_deref() else {
@@ -1015,7 +1015,7 @@ fn expand_claims<'a>(
 /// occupies its index but emits no [`PlannedOperation`] and no
 /// [`ResolvedOperation`]. That index is carried on each
 /// [`ResolvedOperation`] so [`execute`] records the planned index rather
-/// than re-deriving one from operation position — guaranteeing no
+/// than re-deriving one from operation position. That guarantees no
 /// `[[file]]` and `[[directory]]` entry collide on an index and that
 /// targets sharing an entry form one atomic rollback unit. The
 /// returned [`PlannedOperation`] vec is the per-target
@@ -1058,7 +1058,7 @@ fn assemble_plan_operations(
     (operations, resolved_ops)
 }
 
-/// Evaluate one managed entry's `when` predicate, then — only if it holds —
+/// Evaluate one managed entry's `when` predicate, then, only if it holds,
 /// canonicalize the entry's source and resolve its targets by declared
 /// location.
 ///
@@ -1071,8 +1071,8 @@ fn assemble_plan_operations(
 /// entry the gate is above the target loop, so `when` gates all targets
 /// together.
 ///
-/// Step (3) of the order — the plan-time source existence-and-kind
-/// validation — runs inside [`resolve_entry`], right after the source is
+/// Step (3) of the order, the plan-time source existence-and-kind
+/// validation, runs inside [`resolve_entry`], right after the source is
 /// canonicalized, so a `when`-false entry (which returns `Ok(None)` here
 /// before `resolve_entry` is ever called) is never canonicalized or
 /// validated.
@@ -1146,7 +1146,7 @@ fn classify_entry(
     Ok(dispositions)
 }
 
-/// Classify one declared target — a single-target leaf, or a whole tree
+/// Classify one declared target: a single-target leaf, or a whole tree
 /// expanded per leaf.
 fn classify_target(
     mode: FileMode,
@@ -1415,20 +1415,19 @@ fn planned_operation(
 /// Materialize one declared target according to its plan-time disposition,
 /// upholding the write-and-backup skip.
 ///
-/// - **Aggregate `Unchanged`** — the target (single-target or whole tree)
+/// - **Aggregate `Unchanged`**: the target (single-target or whole tree)
 ///   matches desired state, so it is neither backed up nor written. No
 ///   [`CompletionRecord`] is produced; the commit records it from the resolved
 ///   plan instead.
-/// - **Single-target `Create` / `Update`** — back up the pre-existing target (a
+/// - **Single-target `Create` / `Update`**: back up the pre-existing target (a
 ///   no-op for an absent `Create` target, since [`backup_before_overwrite`]
-///   only stashes something that exists), then materialize it as today.
-/// - **Tree `Create` / `Update`** — back up the target directory as a unit
-///   (today's whole-directory backup, which captures every leaf's prior bytes),
-///   then (re)write only the leaves whose per-leaf disposition is not
-///   `Unchanged`. A `Create` aggregate carries no per-leaf entries, so every
-///   leaf is written ([`LeafWrite::All`]); an `Update` aggregate writes only
-///   the drifted leaves ([`LeafWrite::Only`]), leaving clean leaves'
-///   inode/mtime untouched.
+///   only stashes something that exists), then materialize it.
+/// - **Tree `Create` / `Update`**: back up the target directory as a unit (a
+///   whole-directory backup, which captures every leaf's prior bytes), then
+///   (re)write only the leaves whose per-leaf disposition is not `Unchanged`. A
+///   `Create` aggregate carries no per-leaf entries, so every leaf is written
+///   ([`LeafWrite::All`]); an `Update` aggregate writes only the drifted leaves
+///   ([`LeafWrite::Only`]), leaving clean leaves' inode/mtime untouched.
 ///
 /// # Errors
 ///
@@ -1500,7 +1499,7 @@ fn materialize_target(
 /// lock, flushes the
 /// journal, runs `pre_apply` hooks, materializes every operation (backing
 /// up each pre-existing target first), runs `post_apply` hooks, and
-/// commits — or rolls the file operations back when a `must_succeed`
+/// commits, or rolls the file operations back when a `must_succeed`
 /// `post_apply` hook fails.
 ///
 /// # Errors
@@ -1512,9 +1511,9 @@ fn materialize_target(
 /// code.
 #[expect(
     clippy::too_many_lines,
-    reason = "execute is the single linear apply orchestrator — lock, recover, \
+    reason = "execute is the single linear apply orchestrator: lock, recover, \
               no-op short-circuit, hooks, flush, materialize, commit/rollback, \
-              GC — in the fixed order the crash-safety contract depends on. \
+              and GC, in the fixed order the crash-safety contract depends on. \
               Splitting a phase into a helper would hide that ordering behind a \
               call without removing any step; the no-op gate is one such \
               step and pushed it four lines past the lint's ceiling."
@@ -1535,13 +1534,13 @@ pub async fn execute(
     // `patina remove` / `patina promote` under a caller-held lock: those
     // commands intentionally convert one managed target into an owned regular
     // file and drop its entry, so reaping would delete the very file they just
-    // promoted — they must not reap.
+    // promoted. They must not reap.
     let reap = !matches!(policy, LockPolicy::Held(_));
 
     // Resolve the exclusive lock per policy BEFORE any filesystem
     // mutation, including orphan recovery. On the `NonBlocking`
-    // contention path this returns early — before `recover_orphans` and
-    // the plan flush below — so a contended attempt mutates nothing
+    // contention path this returns early, before `recover_orphans` and
+    // the plan flush below, so a contended attempt mutates nothing
     // (no recovery, no plan, no COMMIT, no backup), upholding the
     // zero-write guarantee. Recovering only under the held lock also
     // prevents a second apply from reversing a live in-flight apply's
@@ -1565,7 +1564,7 @@ pub async fn execute(
     // needs Developer Mode cannot mutate the filesystem without consent.
     // This is the engine-side backstop: the CLI normally drives the UAC
     // prompt before calling `execute`, so a `RequireElevation` verdict here
-    // means the gate was reached without that orchestration — refuse to
+    // means the gate was reached without that orchestration. Refuse to
     // proceed with a typed signal. On a host that is already
     // elevated, proceed but warn (running Patina elevated is discouraged).
     // On macOS / Linux `HostDevModeProbe` reports `NotWindows`, so the
@@ -1612,7 +1611,7 @@ pub async fn execute(
         });
     }
 
-    // Flush the plan journal — the durability point before mutation.
+    // Flush the plan journal: the durability point before mutation.
     let mut journal = Journal::flush_plan_and_fsync(
         &journal_dir,
         &resolved.timestamp,
@@ -1621,7 +1620,7 @@ pub async fn execute(
     )?;
 
     // Materialize every operation, backing up each pre-existing target
-    // first — except a target classified `Unchanged` at plan time, which is
+    // first, except a target classified `Unchanged` at plan time, which is
     // neither backed up nor (re)written so its inode/mtime is preserved.
     // Track completion records (paired with the index of the
     // `[[file]]` entry that produced them) so a post_apply hook failure can
@@ -1629,8 +1628,8 @@ pub async fn execute(
     // rollback units. Only the targets actually written produce a
     // record; `Unchanged` targets are recorded in the commit from the
     // resolved plan instead (see `build_apply_record`).
-    // Test-only crash-injection seam. Compiled only in debug builds — so it is
-    // absent from the release binary users install — and dormant unless the
+    // Test-only crash-injection seam. Compiled only in debug builds, so it is
+    // absent from the release binary users install, and dormant unless the
     // `PATINA_TEST_ABORT_AFTER_OP` environment variable is set. When set to
     // `k`, the process exits abruptly after the k-th materialized operation,
     // before the COMMIT sentinel is written, simulating a `kill -9` so an
@@ -1705,7 +1704,7 @@ pub async fn execute(
         })
     } else {
         // Reap targets a prior apply committed that the current plan no
-        // longer manages — a removed entry, a `when` flipped to false
+        // longer manages: a removed entry, a `when` flipped to false
         // or a deleted `symlink-tree` source leaf. Each
         // orphan's prior bytes are backed up into this run's backup tree
         // before it is removed; a directory is never removed.
@@ -1723,7 +1722,7 @@ pub async fn execute(
         // commit whose backups are gone can no longer be faithfully reversed
         // (its overwrite-restores are gone), so it must not remain
         // rollback- or status-eligible. An all-fresh
-        // apply writes no backup directory and so is never pruned here —
+        // apply writes no backup directory and so is never pruned here, and
         // rolling back to it correctly deletes its fresh targets.
         let pruned = gc_retain(&backups_dir, crate::backups::RETENTION_COUNT)?;
         prune_cycles(&journal_dir, &pruned)?;
@@ -1776,14 +1775,14 @@ pub async fn execute(
 /// dispositions. `patina status` decodes this to classify the live
 /// filesystem against the last committed apply.
 ///
-/// Every managed target becomes one [`ExpectedTarget`] — **including
+/// Every managed target becomes one [`ExpectedTarget`], **including
 /// `Unchanged` targets** that the execute write-skip left untouched and that
 /// therefore produced no [`CompletionRecord`]. Sourcing the record
 /// from the resolved plan rather than from the written objects keeps an
 /// `Unchanged` target in the commit, so `status` reports it managed (`Clean`)
 /// and [`reap_orphans`] never removes it. A symlink records its canonical link
 /// target (which is also its source); a copy or render records its canonical
-/// source path and a `blake3` hash of the live target bytes — read back so the
+/// source path and a `blake3` hash of the live target bytes, read back so the
 /// recorded hash matches exactly what `status` computes; the live
 /// bytes hold the desired output whether the target was just written
 /// (`Create` / `Update`) or already matched (`Unchanged`). Each target carries
@@ -1916,10 +1915,10 @@ fn expected_target(
 /// `symlink-tree`-aware set `patina status` classifies against). A recorded
 /// target whose [`manage_key`](crate::status::manage_key) is absent from the
 /// current set is an orphan: the entry was removed, its `when` flipped false
-/// or — for a `symlink-tree` leaf — its source leaf was deleted.
+/// or, for a `symlink-tree` leaf, its source leaf was deleted.
 /// Each orphan still present on disk is backed up into
-/// this run's backup tree — the same never-overwrite-without-backup
-/// guarantee every mutating path upholds — and then removed.
+/// this run's backup tree, under the same never-overwrite-without-backup
+/// guarantee every mutating path upholds, and then removed.
 ///
 /// A directory is never removed, even one left empty after its last leaf
 /// link is reaped: Patina cannot prove it owns a directory that may also
@@ -1948,7 +1947,7 @@ fn reap_orphans(resolved: &ResolvedPlan, backups_dir: &Utf8Path) -> Result<(), E
 
 /// Whether `resolved` is a full no-op: every planned target classifies
 /// `Unchanged`, a prior committed apply exists to stay authoritative, and the
-/// reap set is empty. `reap` mirrors [`execute`]'s policy gate — a
+/// reap set is empty. `reap` mirrors [`execute`]'s policy gate: a
 /// `Held` run never reaps, so its orphan set is not consulted.
 ///
 /// This is the single source of truth for the condition, shared by
@@ -1964,8 +1963,8 @@ fn reap_orphans(resolved: &ResolvedPlan, backups_dir: &Utf8Path) -> Result<(), E
 /// recomputation fails.
 fn is_full_noop(resolved: &ResolvedPlan, reap: bool) -> Result<bool, EngineError> {
     // A non-reaping policy is the `Held` surgical re-journal (`patina remove` /
-    // `promote`): it deliberately re-records one target — often one whose bytes
-    // now match its just-rewritten source and so classify `Unchanged` — and
+    // `promote`): it deliberately re-records one target, often one whose bytes
+    // now match its just-rewritten source and so classify `Unchanged`, and
     // must always commit that fresh record. It is never a no-op, so the
     // short-circuit is disabled for it; only the whole-plan reconcile policies
     // (`Blocking` / `NonBlocking`) can no-op.
@@ -1998,7 +1997,7 @@ fn is_full_noop(resolved: &ResolvedPlan, reap: bool) -> Result<bool, EngineError
 }
 
 /// Whether a `patina apply` over `resolved` would be a full no-op under the
-/// CLI's default reaping (`Blocking`) policy — every target `Unchanged`, a
+/// CLI's default reaping (`Blocking`) policy: every target `Unchanged`, a
 /// prior commit present, and nothing to reap.
 ///
 /// The CLI calls this *before* prompting so a fully-satisfied repo skips the
@@ -2017,7 +2016,7 @@ pub fn plan_is_full_noop(resolved: &ResolvedPlan) -> Result<bool, EngineError> {
 }
 
 /// The targets a `patina apply` over `resolved` would reap this run, sorted by
-/// path — the orphan targets a prior committed apply materialized that the
+/// path: the orphan targets a prior committed apply materialized that the
 /// current plan no longer manages and that are still present on disk as
 /// non-directories.
 ///
@@ -2039,7 +2038,7 @@ pub fn plan_orphans(resolved: &ResolvedPlan) -> Result<Vec<Utf8PathBuf>, EngineE
     Ok(orphans)
 }
 
-/// The set of targets the reap phase would remove this run — the orphan
+/// The set of targets the reap phase would remove this run: the orphan
 /// targets a prior committed apply materialized that the current plan no
 /// longer manages and that are still present on disk as non-directories.
 ///
@@ -2226,14 +2225,14 @@ mod tests {
     //!
     //! These drive [`execute`] in-process so a `Held` policy can pass a
     //! test-controlled [`LockGuard`] and a `NonBlocking` policy can be
-    //! observed returning before any mutation — neither is expressible
+    //! observed returning before any mutation. Neither is expressible
     //! through the CLI binary, which cannot share a guard across processes.
     //! Each test builds a minimal empty-operation [`ResolvedPlan`] over a
     //! tempdir state directory, so no repository discovery or process-env
     //! mutation is needed (the workspace forbids `unsafe`, and env mutation
     //! is `unsafe` under edition 2024). An empty plan still flushes a
-    //! `<ts>.plan`, commits a `<ts>.COMMIT`, and then deletes the plan —
-    //! enough surface to assert the journal side effects the scenarios name.
+    //! `<ts>.plan`, commits a `<ts>.COMMIT`, and then deletes the plan, which
+    //! is enough surface to assert the journal side effects the scenarios name.
     //!
     //! The default `Blocking` policy preserving
     //! byte-identical stdout across two `patina apply --yes` runs is
@@ -2342,7 +2341,8 @@ mod tests {
         );
 
         // The two file entries own indices 0,1; the two directory entries own
-        // 2,3 — disjoint, so no file/directory entry collides on an index.
+        // 2,3. The two ranges are disjoint, so no file/directory entry
+        // collides on an index.
         let file_indices: Vec<u32> = resolved
             .iter()
             .filter(|op| matches!(op.mode, FileMode::Symlink | FileMode::Copy))
@@ -2397,8 +2397,8 @@ mod tests {
             "a `when`-false entry must emit no planned operation"
         );
 
-        // f1 still consumed index 1, so f2 keeps index 2 and d0 keeps index 3
-        // — the indices are not compacted to fill the gap.
+        // f1 still consumed index 1, so f2 keeps index 2 and d0 keeps index 3.
+        // The indices are not compacted to fill the gap.
         let indices: Vec<u32> = resolved.iter().map(|op| op.entry_index).collect();
         assert_eq!(
             indices,
@@ -2489,7 +2489,7 @@ mod tests {
     }
 
     /// A `[[file]]` source that is a file and a `[[directory]]`
-    /// source that is a directory both validate cleanly — the matched-kind
+    /// source that is a directory both validate cleanly: the matched-kind
     /// path raises no error.
     #[test]
     fn matching_kinds_validate_cleanly() {
@@ -2554,7 +2554,7 @@ mod tests {
         }
 
         /// Plant an orphan `<orphan_ts>.plan` and `<orphan_ts>.progress` in
-        /// the journal — a prior crashed apply with no COMMIT / `ROLLED_BACK`
+        /// the journal: a prior crashed apply with no COMMIT / `ROLLED_BACK`
         /// sibling, the shape `recover_orphans` would otherwise reverse.
         /// Returns the two paths so a test can assert their bytes are left
         /// untouched.
@@ -2683,7 +2683,7 @@ mod tests {
             "a NonBlocking apply against a held lock must return the typed contention error, got {result:?}"
         );
 
-        // The orphan is left exactly as planted — not reversed, not deleted.
+        // The orphan is left exactly as planted, neither reversed nor deleted.
         assert!(
             orphan_plan.exists() && orphan_progress.exists(),
             "the pending orphan plan and progress must survive a contended attempt"
@@ -2714,7 +2714,7 @@ mod tests {
 
     /// A `symlink-tree` entry expands to one managed key per *live* source
     /// leaf, mirrored under the declared target the same way the executor
-    /// materializes them — so a source leaf that no longer exists contributes
+    /// materializes them, so a source leaf that no longer exists contributes
     /// no key and its recorded target leaf will classify ORPHANED.
     #[test]
     fn insert_managed_targets_expands_symlink_tree_per_live_leaf() {
@@ -2817,7 +2817,7 @@ mod tests {
     }
 
     /// A non-`symlink-tree` entry contributes its declared target(s)
-    /// directly, with no source walk — the prior behaviour for `[[file]]`
+    /// directly, with no source walk. That covers `[[file]]`
     /// symlink/copy/template and atomic `[[directory]]` symlink entries.
     #[test]
     fn insert_managed_targets_inserts_declared_targets_for_non_tree_modes() {
@@ -2883,7 +2883,7 @@ mod tests {
 
     // --- plan-time disposition classification ------------
     //
-    // These drive `classify_entry` / `classify_target` — the unit `plan`
+    // These drive `classify_entry` / `classify_target`, the unit `plan`
     // calls during entry resolution to populate `ResolvedOperation` and the
     // durable `PlannedOperation`. They build tempdir fixtures matching the
     // scenarios so no repository discovery or

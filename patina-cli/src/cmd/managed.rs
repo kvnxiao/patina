@@ -8,7 +8,7 @@
 //! command-specific filesystem work, and then re-journal by driving the
 //! engine re-apply under [`LockPolicy::Held`] so the fresh `<ts>.COMMIT`
 //! reflects the new managed state. This module factors those two shared
-//! pieces — the lock acquisition and the re-apply — so neither command
+//! pieces, the lock acquisition and the re-apply, so neither command
 //! duplicates the lock path, the engine-error mapping, or the re-plan /
 //! re-execute sequence.
 

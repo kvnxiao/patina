@@ -1,4 +1,4 @@
-# Operating Environment
+# Operating environment
 
 This page covers two operational footguns Patina deliberately does
 **not** detect at runtime in v1.0. They live here so you can avoid
@@ -39,10 +39,11 @@ patina/
 ## Don't put state or your repo on a cloud-sync mount
 
 **Patina does not detect cloud-sync directories in v1.0.** No
-warning, no refusal, no doctor check. The detection was considered
-and explicitly removed because every detection strategy was either
-incomplete (hardcoded provider name list rots)
-or intrusive (process inspection, filesystem xattr probing).
+warning, no refusal, no doctor check. Patina carries no such check
+because every detection strategy is either incomplete or intrusive. A
+hardcoded list of provider names rots. Process inspection and filesystem
+xattr probing reach further into your machine than a dotfile manager
+should.
 
 You are responsible for keeping the **per-machine state directory**
 and your **dotfiles repository** off the following kinds of mounts:

@@ -92,7 +92,7 @@ pub struct FileAppender {
 /// Lazily create `<state>/patina/logs/` and build the watcher's
 /// daily-rotating, keep-7 non-blocking file appender.
 ///
-/// The directory is created on first call (idempotent — a pre-existing
+/// The directory is created on first call (idempotent, because a pre-existing
 /// directory is not an error). The appender rotates daily and prunes all but
 /// the seven most recent files. The caller must hold the returned
 /// [`FileAppender`] (specifically its `guard`) for as long as it logs.

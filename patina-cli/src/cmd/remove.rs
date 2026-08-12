@@ -22,8 +22,8 @@
 //! repository. For a template-rendered target (the journaled source ends in
 //! `.tmpl`) the journal records only a blake3 hash of the rendered bytes, so
 //! the content is reconstructed by re-rendering the source through `MiniJinja`
-//! against the variable context resolved at remove time — the deliberate
-//! "reset to current source intent" semantics.
+//! against the variable context resolved at remove time. That is the
+//! deliberate "reset to current source intent" semantics.
 //!
 //! Module-level engine semantics (planning, journaling, manifest editing,
 //! repo discovery, template rendering) live in `patina_core`; this module is

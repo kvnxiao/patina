@@ -3,7 +3,7 @@
 //!
 //! On every apply startup, before computing a fresh plan, the engine
 //! calls [`recover_orphans`]. It scans the journal directory for *orphan*
-//! plans — a `<ts>.plan` with neither a `<ts>.COMMIT` (the apply
+//! plans: a `<ts>.plan` with neither a `<ts>.COMMIT` (the apply
 //! committed) nor a `<ts>.ROLLED_BACK` (a prior rollback closed it
 //! out) sentinel. An orphan is the fingerprint of a `kill -9`
 //! mid-apply: the plan was made durable but the run never reached commit.
@@ -15,10 +15,10 @@
 //! 2. Probes the filesystem for each operation's target
 //!    ([`probe`](super::probe)) and consults the per-apply backup directory
 //!    ([`mirror_backup_path`](super::mirror_backup_path)).
-//! 3. **Reverses backward** — never forward. The disposition the plan recorded
+//! 3. **Reverses backward**, never forward. The disposition the plan recorded
 //!    for the operation decides the outcome, evaluated in this order:
 //!    - disposition == `Unchanged`: the apply neither backed up nor wrote this
-//!      target, so the live entry is already the pre-apply entry — leave it in
+//!      target, so the live entry is already the pre-apply entry. Leave it in
 //!      place and do **not** consult the backup directory.
 //!    - a target with a backup is an *overwrite*: restore the original bytes
 //!      from the backup.
@@ -30,7 +30,7 @@
 //!
 //! Recovery is **idempotent**: the second run finds no orphan (the plan
 //! file was removed by the first), so it is a no-op and yields the same
-//! filesystem state. Within a single run it is also self-idempotent —
+//! filesystem state. Within a single run it is also self-idempotent:
 //! restoring a backup over an already-restored target rewrites identical
 //! bytes, and deleting an already-absent fresh target is a no-op.
 //!
@@ -129,7 +129,7 @@ pub fn recover_orphans(
 /// a `COMMIT` nor a `ROLLED_BACK` sentinel beside it.
 fn orphan_timestamps(journal_dir: &Utf8Path) -> Result<Vec<String>, JournalError> {
     if !journal_dir.exists() {
-        // No journal directory yet means no prior apply — nothing to do.
+        // No journal directory yet means no prior apply, so nothing to do.
         return Ok(Vec::new());
     }
 
@@ -172,7 +172,7 @@ fn reverse_orphan(
 
     // The plan and progress files are removed only after every reversal
     // succeeds, so a crash mid-recovery leaves the orphan in place and the
-    // next startup retries it (still idempotent — restores rewrite the
+    // next startup retries it (still idempotent: restores rewrite the
     // same bytes, deletes of absent targets are no-ops).
     super::remove_if_present(&plan_path)?;
     super::remove_if_present(&journal_dir.join(format!("{timestamp}{PROGRESS_SUFFIX}")))?;
@@ -198,7 +198,7 @@ fn reverse_orphan(
 ///
 /// Both restore and delete go through the kind-preserving
 /// [`crate::fsx`] helpers, so the original is recreated as the same kind it
-/// was — a symlink as a symlink, a directory as a directory — and backup
+/// was (a symlink as a symlink, a directory as a directory), and backup
 /// presence is probed with [`crate::fsx::entry_present`] so a backed-up
 /// symlink whose destination is gone is still seen (`exists` would follow
 /// the dead link and wrongly delete the target).
@@ -302,7 +302,7 @@ mod tests {
     fn unchanged_marked_orphan_target_is_left_in_place() {
         // An orphan plan whose target is marked
         // `Unchanged` must be preserved by recovery even though no backup
-        // exists for it — apply skipped the write and the backup, so the
+        // exists for it: apply skipped the write and the backup, so the
         // live entry already is the pre-apply entry.
         let d = dirs();
         let root = d.journal.parent().expect("journal has a parent");
@@ -386,7 +386,7 @@ mod tests {
     fn overwrite_of_a_pre_existing_symlink_restores_the_symlink() {
         // C1 regression at the recovery layer: an orphan apply that
         // overwrote a pre-existing *symlink* target must, on recovery,
-        // restore the symlink — not leave a regular file holding the
+        // restore the symlink, not leave a regular file holding the
         // destination's bytes. The backup is a symlink (what
         // `backup_before_overwrite` now stashes), and its destination need
         // not exist for the restore to find and recreate the link.

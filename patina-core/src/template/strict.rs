@@ -7,7 +7,7 @@
 //! [`ErrorKind::UndefinedError`](minijinja::ErrorKind) (on emit/coercion)
 //! or an undefined *value* (as a `when`-expression result). Either way the
 //! `MiniJinja` error carries only the generic message `"undefined value"`
-//! — it does **not** name the variable that was missing. The typed
+//! and does **not** name the variable that was missing. The typed
 //! engine error's `Display` must name the offending variable
 //! (`user_email`, `missing_var`, …).
 //!
@@ -100,7 +100,7 @@ impl UndefinedTracker {
 ///
 /// Shared by every [`Object::get_value`] miss path so a missing variable
 /// is both surfaced to `MiniJinja` as undefined and remembered for the
-/// typed error. A poisoned tracker lock degrades to "do not record" — the
+/// typed error. A poisoned tracker lock degrades to "do not record": the
 /// lookup still reports undefined, so strict semantics hold even if the
 /// name is lost.
 fn record_undefined(tracker: &Mutex<UndefinedTracker>, name: &str) -> Option<Value> {

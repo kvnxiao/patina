@@ -9,8 +9,8 @@
 //! Two target shapes are refused (exit 1):
 //!
 //! - **Symbolic-link targets** ([`ExpectedTarget::Symlink`]). A symlink IS its
-//!   source — the bytes the user sees through the link are the repository bytes
-//!   — so there is nothing to copy back and promotion is meaningless.
+//!   source: the bytes the user sees through the link are the repository bytes,
+//!   so there is nothing to copy back and promotion is meaningless.
 //! - **Template-rendered targets** (the journaled source ends in `.tmpl`).
 //!   Templating is non-invertible: the rendered bytes cannot be turned back
 //!   into a template, so promotion cannot recover the source.

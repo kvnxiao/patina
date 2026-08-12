@@ -18,16 +18,16 @@
 //!
 //! The cache is the watcher's notification ledger; it is **never** read by
 //! `patina status`, which derives DRIFTED from its own live
-//! re-hash. The handler never auto-syncs the target back to source
-//! — it only observes and notifies.
+//! re-hash. The handler never auto-syncs the target back to source.
+//! It only observes and notifies.
 //!
 //! ## Clear-on-new-journal
 //!
 //! A drift entry is only meaningful relative to the apply it was measured
 //! against. When a fresh `patina apply` commits, its journal becomes the new
 //! truth, and any cache bound to the prior journal `<ts>` is stale. The handler
-//! detects this on the next batch — the persisted cache's `journal_ts` no
-//! longer matches the journal timestamp the watcher is now reading against —
+//! detects this on the next batch, because the persisted cache's `journal_ts`
+//! no longer matches the journal timestamp the watcher is now reading against,
 //! and clears the prior era's entries before binding the new timestamp and
 //! upserting this batch's divergences. A cache already bound to the current
 //! journal is left intact, so the per-target rate-limit ledger survives across
@@ -47,8 +47,8 @@
 //!
 //! ## The notification sink
 //!
-//! The emit path sits behind [`NotificationSink`] so headless CI — which has no
-//! notification daemon — drives a capture sink that records `(title, body)`
+//! The emit path sits behind [`NotificationSink`] so headless CI, which has no
+//! notification daemon, drives a capture sink that records `(title, body)`
 //! tuples in memory. Only the production [`NotifySink`] touches `notify-rust`.
 
 use crate::journal::content_hash;
@@ -168,7 +168,7 @@ pub enum DriftOutcome {
 ///
 /// Returns the per-target outcomes; a cache-write failure is logged at `warn`
 /// and folds the affected outcomes to their non-cached form rather than
-/// propagating — a transient cache-write failure must not crash the watcher.
+/// propagating; a transient cache-write failure must not crash the watcher.
 pub fn handle_target_events(
     content_targets: &[ContentTarget],
     batch_paths: &[Utf8PathBuf],
@@ -185,7 +185,7 @@ pub fn handle_target_events(
         .unwrap_or_else(|_| DriftCache::new(journal_ts, Vec::new()));
     // Clear-on-new-journal: when a fresh `patina apply`
     // commits, its journal becomes the new truth and the prior drift cache is
-    // stale — every entry was measured against the superseded apply's
+    // stale: every entry was measured against the superseded apply's
     // expectations, so it must be dropped rather than silently re-labeled with
     // the new timestamp. A persisted cache whose bound `journal_ts` no longer
     // matches the journal the watcher is now reading against is exactly that
@@ -360,7 +360,7 @@ mod tests {
     fn divergent_target_notifies_once_and_records_h1_h2() {
         let (_temp, dir) = temp_state();
         // The target lives outside the state dir in practice; co-locating it in
-        // the tempdir is fine — the handler reads it by absolute path.
+        // the tempdir is fine, because the handler reads it by absolute path.
         let target = write_target(&dir, ".gitconfig", b"H2");
         let h1 = content_hash(b"H1");
         let h2 = content_hash(b"H2");
@@ -394,7 +394,7 @@ mod tests {
     }
 
     /// A second drift detection on the same target within the
-    /// 60-second window is rate-limited — at most one notification, though the
+    /// 60-second window is rate-limited to at most one notification, though the
     /// cache entry is refreshed to the latest observation.
     #[test]
     fn second_detection_within_the_window_is_rate_limited() {
@@ -418,7 +418,7 @@ mod tests {
         assert_eq!(first, vec![DriftOutcome::Notified]);
 
         // Overwrite to a third distinct content so the target still diverges,
-        // then a second detection 30s later — within the 60s window.
+        // then a second detection 30s later, within the 60s window.
         fs_err::write(target.as_std_path(), b"H3").expect("rewrite target");
         let second = handle_target_events(
             std::slice::from_ref(&content),
@@ -462,7 +462,7 @@ mod tests {
             1000,
             &sink,
         );
-        // 61 seconds later — past the window.
+        // 61 seconds later, past the window.
         let later = handle_target_events(
             std::slice::from_ref(&content),
             std::slice::from_ref(&target),
@@ -498,7 +498,7 @@ mod tests {
         );
     }
 
-    /// A content target whose path is not in the batch is skipped entirely —
+    /// A content target whose path is not in the batch is skipped entirely:
     /// it produces no outcome and no notification.
     #[test]
     fn target_not_in_batch_is_skipped() {

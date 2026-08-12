@@ -2,7 +2,7 @@
 //!
 //! The command has two modes. `--foreground` runs the watcher loop inline
 //! ([`patina_core::run_foreground`]), attached to the invoking shell, until
-//! Ctrl-C (SIGINT) or — on POSIX — SIGTERM shuts it down. The
+//! Ctrl-C (SIGINT) or, on POSIX, SIGTERM shuts it down. The
 //! lifecycle subcommands (`install` / `uninstall` / `start` / `stop` /
 //! `restart` / `status`) manage the per-OS background service through the
 //! [`patina_core::watch::service`] backend.
@@ -106,8 +106,8 @@ fn run_lifecycle(command: &WatchCommand, json: bool, reporter: &mut impl Reporte
 /// Dispatch a mutating lifecycle subcommand to its backend method and render
 /// the outcome, returning the process exit code.
 ///
-/// Split from [`run_lifecycle`] — which owns state-directory resolution and
-/// lock acquisition — so the command→method routing is unit-testable against a
+/// Split from [`run_lifecycle`], which owns state-directory resolution and
+/// lock acquisition, so the command→method routing is unit-testable against a
 /// fake [`ServiceBackend`] with no real supervisor or lock. `status` is handled
 /// by [`run_lifecycle`] before this is reached (it takes the shared lock and
 /// returns early); the defensive `Status` arm here maps to a no-op.
@@ -260,7 +260,7 @@ fn emit_debounce_warning(reporter: &mut impl Reporter) {
 }
 
 /// The shutdown future for the foreground watcher: resolve on Ctrl-C
-/// (SIGINT) on every platform, or — on POSIX — on SIGTERM, whichever arrives
+/// (SIGINT) on every platform, or, on POSIX, on SIGTERM, whichever arrives
 /// first. A failure to install a handler resolves the future (shutting the
 /// watcher down) rather than leaving it unstoppable.
 async fn shutdown_signal() {
