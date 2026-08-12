@@ -138,7 +138,10 @@ diff-and-prompt loop by default:
    materialized but the current plan no longer manages (an entry you
    dropped from a `patina.toml`, or one whose `when` is now false) shows
    as a `remove <target>` block: it is backed up and deleted on apply, so
-   the reap is never hidden from the consent diff.
+   the reap is never hidden from the consent diff. A dropped target that
+   now sits inside another entry's target is left alone instead: that
+   entry owns the path, and where it is a whole-directory `symlink` the
+   dropped path leads through the link into the entry's source.
 3. **Prompt.** In an interactive terminal, Patina asks for
    confirmation before writing anything. In a non-interactive shell
    (CI, a piped invocation), it falls through to plan-only and writes
@@ -188,7 +191,8 @@ common flags:
 | `add`     | Bring an existing dotfile under management: copy it into a module and write a `[[file]]` entry for a file source or a `[[directory]]` entry for a directory source.|
 | `remove`  | Unmanage a target: drop its entry and replace the target with a regular file holding the last-applied content. |
 | `promote` | Copy a drifted copy-mode target's current bytes back into its repository source, then re-apply. |
-| `doctor`  | Inspect the environment for known problems (UNC repository paths, missing Windows Developer Mode, OS-too-old, missing default repo). |
+| `doctor`  | Inspect the environment for known problems (UNC repository paths, missing Windows Developer Mode, OS-too-old, missing default repo, missing `git`). |
+| `remote`  | Manage remote git sources: `list` the pins, `check` upstream tips, `update` a pin through the update gate, `prune` cached checkouts. See [Remote sources](#remote-sources). |
 
 `patina remove` has a `--purge` flag: instead of leaving a regular file
 behind with the last-applied content, `--purge` deletes the target
@@ -416,6 +420,60 @@ Resolve a drifted target either way:
 - `patina apply` reverts the target to the source content.
 - `patina promote` updates the source from the target's current bytes,
   then re-applies.
+
+## Remote sources
+
+An entry can draw its source from someone else's git repository instead
+of from your own. Declare the repository once in your root manifest, then
+name it from any entry that wants its bytes:
+
+```toml
+# patina.toml (root)
+[[remote]]
+url = "https://github.com/blader/humanizer"
+ref = "main"          # optional; defaults to the remote's default branch
+# name = "humanizer"  # optional; taken from the URL's last segment
+```
+
+```toml
+# agent-configs/patina.toml
+[[file]]
+source = "shared/AGENTS.md"          # no `remote`: this module's own tree
+target = "~/.claude/CLAUDE.md"
+
+[[file]]
+source = "SKILL.md"                  # a path inside the humanizer checkout
+remote = "humanizer"
+target = "~/.claude/skills/humanizer/SKILL.md"
+```
+
+Entries with and without a `remote` key sit side by side in one manifest,
+and one manifest may draw on several remotes. An entry with no `remote`
+key resolves against its module directory exactly as it always has.
+
+The commit each machine materializes lives in `patina.lock`, next to
+your root `patina.toml`, and is committed like any other file. That is
+what makes a remote update flow through your repository: you bump the pin
+on the machine you work from, commit it, and every other machine catches
+up with `git pull && patina apply`.
+
+Bumping a pin is the moment third-party code changes what lands on your
+machines, so `patina remote update` slows it down: a candidate commit
+must not be dated in the future, must descend from the pin you already
+have, must not predate the pin's own timestamp, and must be at least
+`min_age` old (72 hours unless you say otherwise). Every byte still
+passes the ordinary diff-and-prompt loop before it reaches your
+filesystem, and remote content is never treated as a template or read as
+configuration.
+
+Cached checkouts live in the per-machine [state
+directory](#state-directory), never in your repository, and are pruned
+automatically once no journal record needs them.
+
+Read [`REMOTE_SOURCES.md`](REMOTE_SOURCES.md) for the whole model: the
+lockfile format, the cache layout, each gate check and what it can and
+cannot stop, the shell snippets for the background update notice, and the
+multi-machine flow.
 
 ## State directory
 

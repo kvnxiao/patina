@@ -1,0 +1,5 @@
+---
+source: patina-core/src/apply/collisions.rs
+expression: err.to_string()
+---
+the directory entry `skills` in module `skills` links its whole target /home/u/.claude/skills, which contains the target /home/u/.claude/skills/humanizer/SKILL.md of `humanizer` in module `humanizer` (under its target /home/u/.claude/skills/humanizer). A `[[directory]]` `mode = "symlink"` replaces its target path outright, so move one of the two, or switch it to `symlink-tree`, which owns only the leaves it materializes

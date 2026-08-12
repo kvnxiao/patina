@@ -53,6 +53,7 @@ use patina_core::discover_modules;
 use patina_core::exclusive_timeout;
 use patina_core::is_unc_path;
 use patina_core::parse_module_config;
+use patina_core::parse_root_config;
 use patina_core::persisted_default_present;
 use patina_core::resolve_repository_root;
 use patina_core::resolve_state_dir;
@@ -92,6 +93,9 @@ pub enum FindingCode {
     WinOsOld,
     /// No `default_repo` pointer exists in the state directory.
     NoDefaultRepo,
+    /// The repository declares a remote-backed module but no `git` binary
+    /// resolves on `PATH`.
+    NoGit,
 }
 
 impl FindingCode {
@@ -104,6 +108,7 @@ impl FindingCode {
             FindingCode::WinDevMode => "DOC-WIN-DEVMODE",
             FindingCode::WinOsOld => "DOC-WIN-OSOLD",
             FindingCode::NoDefaultRepo => "DOC-NO-DEFAULT-REPO",
+            FindingCode::NoGit => "DOC-NO-GIT",
         }
     }
 }
@@ -163,6 +168,12 @@ pub struct Inputs {
     pub repo_declares_symlink: bool,
     /// Whether the `default_repo` pointer exists in the state directory.
     pub default_repo_present: bool,
+    /// Whether the resolved repository declares at least one remote-backed
+    /// module. Off, the git finding never fires: a repository with no remotes
+    /// never shells out to git.
+    pub repo_declares_remote: bool,
+    /// Whether a `git` binary resolves on `PATH`.
+    pub git_available: bool,
 }
 
 /// Run `patina doctor`. Returns the process exit code.
@@ -277,7 +288,7 @@ fn run_fix(
             }
             // Non-fixable findings: surface the warning, name why Patina
             // cannot remedy them, and move on.
-            FindingCode::WinUnc | FindingCode::WinOsOld => {
+            FindingCode::WinUnc | FindingCode::WinOsOld | FindingCode::NoGit => {
                 reporter.warn(&format!(
                     "[{}] {} is not auto-fixable: {}",
                     finding.level.label(),
@@ -443,6 +454,7 @@ fn gather_inputs(state: &Utf8Path) -> Inputs {
     let repo_declares_symlink = repo_root
         .as_deref()
         .is_some_and(repository_declares_symlink);
+    let repo_declares_remote = repo_root.as_deref().is_some_and(repository_declares_remote);
     Inputs {
         is_windows: cfg!(windows),
         dev_mode: dev_mode_status(),
@@ -450,7 +462,16 @@ fn gather_inputs(state: &Utf8Path) -> Inputs {
         repo_root,
         repo_declares_symlink,
         default_repo_present: persisted_default_present(state),
+        repo_declares_remote,
+        git_available: patina_core::git_available(),
     }
+}
+
+/// Whether `repo_root`'s manifest declares any `[[remote]]`. A root manifest
+/// that fails to parse yields `false`.
+fn repository_declares_remote(repo_root: &Utf8Path) -> bool {
+    let manifest = repo_root.join(crate::cmd::MANIFEST_FILENAME);
+    parse_root_config(&manifest).is_ok_and(|config| !config.remotes.is_empty())
 }
 
 /// Whether `repo_root`'s modules declare any `symlink` / `symlink-dir`
@@ -549,6 +570,18 @@ pub fn compute_findings(inputs: &Inputs) -> Vec<Finding> {
             code: FindingCode::NoDefaultRepo,
             level: Level::Info,
             message,
+            path: None,
+        });
+    }
+
+    if inputs.repo_declares_remote && !inputs.git_available {
+        findings.push(Finding {
+            code: FindingCode::NoGit,
+            level: Level::Warning,
+            message: "the repository declares remote-backed modules but no `git` binary \
+                      resolves on PATH; patina fetches remote sources by shelling out to \
+                      git, so `apply` cannot materialize a pin that is not already cached."
+                .to_owned(),
             path: None,
         });
     }
@@ -721,11 +754,46 @@ mod tests {
             repo_root: Some(Utf8PathBuf::from("/home/u/dotfiles")),
             repo_declares_symlink: false,
             default_repo_present: true,
+            repo_declares_remote: false,
+            git_available: true,
         }
     }
 
     fn codes(findings: &[Finding]) -> Vec<FindingCode> {
         findings.iter().map(|f| f.code).collect()
+    }
+
+    #[test]
+    fn missing_git_fires_only_when_a_remote_is_declared() {
+        let no_remotes = Inputs {
+            repo_declares_remote: false,
+            git_available: false,
+            ..base_inputs()
+        };
+        assert!(
+            !codes(&compute_findings(&no_remotes)).contains(&FindingCode::NoGit),
+            "a repository with no remotes must not be warned about git"
+        );
+
+        let with_remotes = Inputs {
+            repo_declares_remote: true,
+            git_available: false,
+            ..base_inputs()
+        };
+        assert_eq!(
+            codes(&compute_findings(&with_remotes)),
+            vec![FindingCode::NoGit]
+        );
+    }
+
+    #[test]
+    fn a_declared_remote_with_git_present_raises_nothing() {
+        let inputs = Inputs {
+            repo_declares_remote: true,
+            git_available: true,
+            ..base_inputs()
+        };
+        assert!(compute_findings(&inputs).is_empty());
     }
 
     #[test]
@@ -801,6 +869,8 @@ mod tests {
             repo_root: Some(Utf8PathBuf::from(r"\\server\share\dotfiles")),
             repo_declares_symlink: true,
             default_repo_present: true,
+            repo_declares_remote: false,
+            git_available: true,
         };
         let findings = compute_findings(&inputs);
         assert!(
@@ -924,6 +994,8 @@ mod tests {
             repo_root: Some(Utf8PathBuf::from(r"\\server\share\dotfiles")),
             repo_declares_symlink: true,
             default_repo_present: false,
+            repo_declares_remote: false,
+            git_available: true,
         };
         let findings = compute_findings(&inputs);
         assert_eq!(

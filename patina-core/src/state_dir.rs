@@ -12,8 +12,8 @@
 //! [`resolve`] is the public entry point — it inspects the running
 //! host, reads the process environment, materializes the directory
 //! tree (`<state>/patina/`, `<state>/patina/journal/`,
-//! `<state>/patina/backups/`) on first call, and returns the
-//! canonical absolute path. It is idempotent — a second call on the
+//! `<state>/patina/backups/`, `<state>/patina/remotes/`) on first call, and
+//! returns the canonical absolute path. It is idempotent: a second call on the
 //! same host returns the same path and is a filesystem no-op.
 //!
 //! The lazily-created files `profile`, `default_repo`, and `lock`
@@ -33,6 +33,7 @@
 //! let state = patina_core::state_dir::resolve()?;
 //! assert!(state.join("journal").is_dir());
 //! assert!(state.join("backups").is_dir());
+//! assert!(state.join("remotes").is_dir());
 //! # Ok::<(), patina_core::state_dir::StateDirError>(())
 //! ```
 
@@ -181,13 +182,14 @@ where
     }
 }
 
-/// Create the patina state root and its two required subdirectories
-/// (`journal/` and `backups/`). Idempotent — pre-existing directories
-/// are not an error.
+/// Create the patina state root and its three required subdirectories
+/// (`journal/`, `backups/`, and `remotes/`). Idempotent: pre-existing
+/// directories are not an error.
 fn create_tree(root: &Utf8Path) -> Result<(), StateDirError> {
     create_dir_idempotent(root)?;
     create_dir_idempotent(&root.join("journal"))?;
     create_dir_idempotent(&root.join("backups"))?;
+    create_dir_idempotent(&root.join("remotes"))?;
     Ok(())
 }
 

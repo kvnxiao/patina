@@ -16,7 +16,13 @@
 //! - the next `patina apply --yes` removes the orphan leaf link while its
 //!   surviving sibling leaf and the intermediate directory stay in place;
 //! - a reaped `[[file]]` target's prior bytes were backed up — provable by
-//!   finding the original bytes in the reaping run's backup tree.
+//!   finding the original bytes in the reaping run's backup tree;
+//! - a target respelled only in case or Unicode normal form is the same target,
+//!   so the reap leaves it alone rather than deleting what the respelled entry
+//!   just materialized;
+//! - a recorded leaf whose directory a whole-directory `symlink` entry has
+//!   since claimed is not reaped through that link, which would delete the
+//!   entry's source rather than a stale target.
 
 mod common;
 
@@ -64,6 +70,85 @@ fn state_for(doc: &serde_json::Value, suffix: &str) -> String {
         }
     }
     panic!("no files entry ending in `{suffix}` in {doc}");
+}
+
+/// Apply a `copy` entry at `first`, respell its target to `second`, and apply
+/// again. Returns the fixture and the `patina status --json` taken between the
+/// two applies.
+///
+/// The two spellings differ only in case or Unicode normal form, which a
+/// case-insensitive (or normalizing) filesystem resolves to one object.
+/// Recording the first spelling and re-deriving the second must therefore yield
+/// one managed key, or the reap deletes what the second apply just wrote.
+///
+/// The status document is the host-independent half of the proof: classifying
+/// the recorded target is a comparison of managed keys, so it answers ORPHANED
+/// under an unfolded key on every filesystem. The surviving bytes only prove
+/// anything where the two spellings name one object.
+fn respell_target(first: &str, second: &str) -> (common::Fixture, serde_json::Value) {
+    let f = Fixture::new();
+    let module = f.module("cfg", &copy_entry(first));
+    fs_err::write(module.join("conf"), b"body").expect("write source");
+
+    let applied = f.apply(&["--yes"]);
+    assert_eq!(
+        code(&applied),
+        0,
+        "the initial apply must succeed; stderr: {}",
+        String::from_utf8_lossy(&applied.stderr)
+    );
+
+    f.module("cfg", &copy_entry(second));
+    let doc = status_json(&f.run(&["status", "--json"], &[]));
+
+    let reapplied = f.apply(&["--yes"]);
+    assert_eq!(
+        code(&reapplied),
+        0,
+        "the respelled apply must succeed; stderr: {}",
+        String::from_utf8_lossy(&reapplied.stderr)
+    );
+    (f, doc)
+}
+
+/// A one-entry module manifest copying `conf` to `target`.
+fn copy_entry(target: &str) -> String {
+    format!("[[file]]\nsource = \"conf\"\ntarget = \"{target}\"\nmode = \"copy\"\n")
+}
+
+#[test]
+fn a_case_only_target_respelling_does_not_reap_the_live_target() {
+    let (f, doc) = respell_target("~/.Config", "~/.config");
+    assert_eq!(
+        state_for(&doc, "/.Config"),
+        "clean",
+        "the recorded target must still read as managed after a case-only respelling: {doc}"
+    );
+    assert_eq!(
+        fs_err::read(f.home.join(".config").as_std_path()).expect("the respelled target exists"),
+        b"body",
+        "the reap must not delete the object the respelled entry manages"
+    );
+}
+
+#[test]
+fn a_normalization_only_target_respelling_does_not_reap_the_live_target() {
+    // `é` precomposed against `e` plus a combining acute. APFS resolves the two
+    // to one file; elsewhere they are two files and only the classification
+    // above can fail.
+    let (f, doc) = respell_target("~/.caf\u{e9}", "~/.cafe\u{301}");
+    assert_eq!(
+        state_for(&doc, "/.caf\u{e9}"),
+        "clean",
+        "the recorded target must still read as managed after a normalization-only \
+         respelling: {doc}"
+    );
+    assert_eq!(
+        fs_err::read(f.home.join(".cafe\u{301}").as_std_path())
+            .expect("the respelled target exists"),
+        b"body",
+        "the reap must not delete the object the respelled entry manages"
+    );
 }
 
 #[test]
@@ -239,6 +324,62 @@ fn when_flipped_to_false_orphans_then_reaps_target_with_backup() {
     assert!(
         backup.is_some(),
         "the reaped target's prior bytes must be recorded in a backup under {state_root}"
+    );
+}
+
+#[test]
+fn a_directory_symlink_entry_shields_its_source_from_the_reap() {
+    // A `symlink-tree` entry materialized `~/skills/pack/SKILL.md`. The source
+    // leaf is then deleted and a whole-directory `symlink` entry claims
+    // `~/skills/pack`, so the recorded leaf path now resolves through the new
+    // link into that entry's source. Reaping it would delete the source file.
+    let f = Fixture::new();
+    let tree_only =
+        "[[directory]]\nsource = \"tree\"\ntarget = \"~/skills\"\nmode = \"symlink-tree\"\n";
+    let module = f.module("cfg", tree_only);
+    let tree = module.join("tree");
+    fs_err::create_dir_all(tree.join("pack")).expect("mkdir pack");
+    fs_err::write(tree.join("pack").join("SKILL.md"), b"old").expect("write tree leaf");
+
+    let applied = f.apply(&["--yes"]);
+    assert_eq!(
+        code(&applied),
+        0,
+        "the initial symlink-tree apply must succeed; stderr: {}",
+        String::from_utf8_lossy(&applied.stderr)
+    );
+
+    // Hand `~/skills/pack` to a whole-directory `symlink` entry backed by a
+    // different source, and drop the tree leaf that used to occupy it.
+    fs_err::remove_dir_all(tree.join("pack").as_std_path()).expect("delete tree leaf");
+    let pack = module.join("pack");
+    fs_err::create_dir_all(&pack).expect("mkdir pack source");
+    fs_err::write(pack.join("SKILL.md"), b"new").expect("write pack source");
+    f.module(
+        "cfg",
+        &format!(
+            "{tree_only}\n[[directory]]\nsource = \"pack\"\ntarget = \"~/skills/pack\"\nmode = \"symlink\"\n"
+        ),
+    );
+
+    let reapplied = f.apply(&["--yes"]);
+    assert_eq!(
+        code(&reapplied),
+        0,
+        "the directory-symlink apply must succeed; stderr: {}",
+        String::from_utf8_lossy(&reapplied.stderr)
+    );
+
+    let link = f.home.join("skills").join("pack");
+    let link_meta = fs_err::symlink_metadata(link.as_std_path()).expect("stat the claimed target");
+    assert!(
+        link_meta.file_type().is_symlink(),
+        "`~/skills/pack` must be the directory symlink the new entry declares"
+    );
+    assert_eq!(
+        fs_err::read(pack.join("SKILL.md").as_std_path()).expect("the entry's source survives"),
+        b"new",
+        "the reap must not follow the directory symlink into the entry's source"
     );
 }
 

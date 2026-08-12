@@ -9,6 +9,7 @@
 
 pub mod apply;
 pub mod backups;
+pub mod caseless;
 pub mod clock;
 pub mod config;
 pub mod discovery;
@@ -18,16 +19,20 @@ pub mod journal;
 pub mod lock;
 pub mod paths;
 pub mod profile;
+pub mod remote;
 pub mod rollback;
 pub mod state_dir;
 pub mod status;
 pub mod template;
+#[cfg(test)]
+mod test_util;
 pub mod variables;
 pub mod version_envelope;
 pub mod watch;
 pub mod windows;
 
 pub use apply::ClassifyError;
+pub use apply::CollisionError;
 pub use apply::CompletionRecord;
 pub use apply::ExecutorError;
 pub use apply::ForceDeploy;
@@ -35,6 +40,7 @@ pub use apply::HookError;
 pub use apply::HookOutcome;
 pub use apply::Materialization;
 pub use apply::ResolvedHook;
+pub use apply::TargetClaim;
 pub use apply::engine::ApplyRequest;
 pub use apply::engine::ApplyResult;
 pub use apply::engine::LockPolicy;
@@ -55,19 +61,27 @@ pub use backups::BackupError;
 pub use backups::RETENTION_COUNT;
 pub use backups::backup_before_overwrite;
 pub use backups::gc_retain;
+pub use clock::current_epoch_seconds;
+pub use clock::current_rfc3339;
 pub use clock::current_timestamp;
 pub use config::ConfigParseError;
 pub use config::ConfigWriteError;
+pub use config::DEFAULT_MIN_AGE;
 pub use config::FileEntry;
 pub use config::FileMode;
 pub use config::HookEntry;
 pub use config::HookEvent;
 pub use config::ModuleConfig;
+pub use config::RemoteConfigError;
+pub use config::RemoteName;
+pub use config::RemoteSpec;
 pub use config::RootConfig;
 pub use config::RootConfigError;
 pub use config::append_directory_entry;
 pub use config::append_file_entry;
+pub use config::parse_duration;
 pub use config::parse_module_config;
+pub use config::parse_module_config_str;
 pub use config::parse_root_config;
 pub use config::parse_root_config_str;
 pub use config::remove_file_entry;
@@ -117,6 +131,9 @@ pub use profile::ProfileSource;
 pub use profile::Resolution as ProfileResolution;
 pub use profile::load_auto_match_rules;
 pub use profile::resolve as resolve_profile;
+pub use remote::RemoteError;
+pub use remote::git::GitError;
+pub use remote::git::git_available;
 pub use rollback::RollbackError;
 pub use rollback::run as run_rollback;
 pub use state_dir::HostOs;
@@ -254,8 +271,8 @@ pub async fn apply(options: ApplyOptions) -> Result<ApplyResult, EngineError> {
     reason = "An async signature is required; the status read itself is synchronous."
 )]
 pub async fn status(_options: StatusOptions) -> Result<StatusReport, EngineError> {
-    let targets = current_plan_targets()?;
-    status_report(&targets)
+    let managed = current_plan_targets()?;
+    status_report(&managed)
 }
 
 /// Roll back the most recent committed apply to its pre-apply filesystem

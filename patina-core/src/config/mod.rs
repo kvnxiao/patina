@@ -17,6 +17,7 @@
 
 pub mod file_entry;
 pub mod hook_entry;
+pub mod remote;
 pub mod root;
 pub mod writer;
 
@@ -30,6 +31,11 @@ pub use file_entry::ManagedEntry;
 pub use hook_entry::HookEntry;
 pub use hook_entry::HookEntryError;
 pub use hook_entry::HookEvent;
+pub use remote::DEFAULT_MIN_AGE;
+pub use remote::RemoteConfigError;
+pub use remote::RemoteName;
+pub use remote::RemoteSpec;
+pub use remote::parse_duration;
 pub use root::RootConfig;
 pub use root::RootConfigError;
 pub use root::parse_root_config;
@@ -95,6 +101,11 @@ pub enum ConfigParseError {
     /// `patina.*` namespace.
     #[error(transparent)]
     Variable(#[from] crate::variables::VariableError),
+
+    /// The manifest carries a module-level `[remote]` table; remotes are
+    /// declared only in the root manifest.
+    #[error(transparent)]
+    Remote(#[from] remote::RemoteConfigError),
 }
 
 /// Read and parse a module manifest at `path`, returning a fully
@@ -130,6 +141,13 @@ pub fn parse_module_config_str(text: &str) -> Result<ModuleConfig, ConfigParseEr
         path: Utf8PathBuf::from("<memory>"),
         source: Box::new(source),
     })?;
+
+    // The parser accepts unknown keys, so a module-level `[remote]` table
+    // would otherwise parse clean and resolve every one of its entries against
+    // the module directory.
+    if raw.remote.is_some() {
+        return Err(remote::RemoteConfigError::ModuleRemoteTable.into());
+    }
 
     let mut files = Vec::with_capacity(raw.file.len());
     for raw_file in raw.file {
@@ -173,6 +191,11 @@ struct RawModule {
     /// Per-module `[variables]` table, preserved verbatim for the resolver.
     #[serde(default)]
     variables: Option<toml::value::Table>,
+
+    /// A module-level `[remote]` table (or `[[remote]]` array), captured only
+    /// so it can be rejected by name.
+    #[serde(default)]
+    remote: Option<toml::Value>,
 
     /// Raw `[[file]]` table-array entries; validated by
     /// [`ManagedEntry::from_raw_file`].

@@ -79,6 +79,7 @@ fn json_envelope(report: &StatusReport) -> String {
         "drifted": report.drifted,
         "missing": report.missing,
         "orphaned": report.orphaned,
+        "remotes_pending": report.remotes_pending,
     });
     serde_json::to_string_pretty(&envelope).unwrap_or_else(|_| "{}".to_owned())
 }
@@ -88,6 +89,7 @@ fn json_envelope(report: &StatusReport) -> String {
 fn render_human(report: &StatusReport, reporter: &mut impl Reporter) {
     if report.last_apply.is_none() {
         reporter.line("No apply has been recorded yet; nothing to report.");
+        render_remotes_pending(report, reporter);
         return;
     }
     for entry in &report.files {
@@ -97,6 +99,18 @@ fn render_human(report: &StatusReport, reporter: &mut impl Reporter) {
         "clean: {}  drifted: {}  missing: {}  orphaned: {}",
         report.clean, report.drifted, report.missing, report.orphaned
     ));
+    render_remotes_pending(report, reporter);
+}
+
+/// Report the remotes whose upstream has moved past their pin, as of the last
+/// `patina remote check`. The wording is the notice subsystem's own, so status
+/// and the shell notice can never phrase the same fact two ways.
+fn render_remotes_pending(report: &StatusReport, reporter: &mut impl Reporter) {
+    if report.remotes_pending.is_empty() {
+        return;
+    }
+    let names: Vec<&str> = report.remotes_pending.iter().map(String::as_str).collect();
+    reporter.line(patina_core::remote::notice::pending_updates_message(&names).trim_end());
 }
 
 /// Stable lowercase label for a target state, shared by both renderers.
@@ -187,5 +201,69 @@ mod tests {
         let mut r = BufferReporter::new();
         render_human(&report, &mut r);
         assert!(r.out.contains("No apply has been recorded"));
+    }
+
+    #[test]
+    fn pending_remotes_reach_stdout_in_both_renderers() {
+        let mut report = report_with_entries();
+        report.remotes_pending = vec!["humanizer".to_owned(), "prompts".to_owned()];
+
+        let mut r = BufferReporter::new();
+        render_human(&report, &mut r);
+        assert!(
+            r.out.contains("humanizer") && r.out.contains("prompts"),
+            "the human render must name every pending remote: {}",
+            r.out
+        );
+
+        let doc: serde_json::Value =
+            serde_json::from_str(&json_envelope(&report)).expect("valid JSON");
+        assert_eq!(
+            doc.get("remotes_pending")
+                .and_then(serde_json::Value::as_array)
+                .map(|names| names.iter().filter_map(serde_json::Value::as_str).collect()),
+            Some(vec!["humanizer", "prompts"]),
+            "the envelope must carry the whole pending set, in order: {doc}"
+        );
+    }
+
+    #[test]
+    fn pending_remotes_are_reported_before_the_first_apply() {
+        // The pre-apply early return is a separate path through `render_human`,
+        // and a fresh machine with a pending pin is exactly where the reminder
+        // is most useful.
+        let report = StatusReport {
+            remotes_pending: vec!["humanizer".to_owned()],
+            ..StatusReport::default()
+        };
+        let mut r = BufferReporter::new();
+        render_human(&report, &mut r);
+        assert!(
+            r.out.contains("No apply has been recorded") && r.out.contains("humanizer"),
+            "a repository with no apply must still report its pending remotes: {}",
+            r.out
+        );
+    }
+
+    #[test]
+    fn an_empty_pending_set_adds_no_line() {
+        // Counting lines rather than matching the notice wording: the wording
+        // belongs to the notice subsystem and may change, but an empty set must
+        // print nothing extra whatever it says.
+        let mut quiet = BufferReporter::new();
+        render_human(&report_with_entries(), &mut quiet);
+
+        let mut report = report_with_entries();
+        report.remotes_pending = vec!["humanizer".to_owned()];
+        let mut noisy = BufferReporter::new();
+        render_human(&report, &mut noisy);
+
+        assert_eq!(
+            noisy.out.lines().count(),
+            quiet.out.lines().count() + 1,
+            "the pending set must add exactly one line, and none when it is empty:\n{}\n---\n{}",
+            quiet.out,
+            noisy.out
+        );
     }
 }

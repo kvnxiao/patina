@@ -28,6 +28,57 @@ pub fn current_timestamp() -> String {
         .to_string()
 }
 
+/// The current time as Unix seconds.
+///
+/// The remote update gate compares a candidate commit's committer time against
+/// "now" and against a lockfile timestamp, all in Unix seconds. Reading the
+/// clock here, rather than at each comparison site, keeps every time read in
+/// this one module, so the gate's own logic stays a pure function of its inputs
+/// and is unit-testable without touching the clock.
+///
+/// # Examples
+///
+/// ```
+/// // Comfortably after 2020-01-01 and before 2100-01-01.
+/// let now = patina_core::clock::current_epoch_seconds();
+/// assert!((1_577_836_800..4_102_444_800).contains(&now));
+/// ```
+#[must_use = "the epoch is what the update gate compares committer times against"]
+pub fn current_epoch_seconds() -> i64 {
+    jiff::Timestamp::now().as_second()
+}
+
+/// The current time as an RFC 3339 UTC timestamp, the form `patina.lock`
+/// records in `updated_at`.
+#[must_use = "the timestamp is written into the lockfile entry"]
+pub fn current_rfc3339() -> String {
+    crate::journal::timestamp_to_rfc3339(&current_timestamp())
+}
+
+/// Render Unix seconds as an RFC 3339 UTC instant, falling back to the raw
+/// integer for a value outside the representable range.
+///
+/// The one spelling Patina renders an epoch in, so the cooldown message, the
+/// watch drift report, and the lockfile timestamps can never disagree on
+/// format.
+///
+/// # Examples
+///
+/// ```
+/// // 2026-08-11T14:00:00Z, the epoch the remote-update tests pin.
+/// assert_eq!(
+///     patina_core::clock::epoch_to_rfc3339(1_786_456_800),
+///     "2026-08-11T14:00:00Z"
+/// );
+/// ```
+#[must_use = "the rendered instant is user-facing output"]
+pub fn epoch_to_rfc3339(epoch: i64) -> String {
+    jiff::Timestamp::from_second(epoch).map_or_else(
+        |_out_of_range| epoch.to_string(),
+        |ts| ts.strftime("%Y-%m-%dT%H:%M:%SZ").to_string(),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

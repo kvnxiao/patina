@@ -65,6 +65,10 @@ async fn main() -> ! {
             let mut reader = StdinReader;
             cmd::rollback::run(&args, detect_tty(), &mut reader, &mut reporter).await
         }
+        Command::Remote(args) => {
+            let mut reader = StdinReader;
+            cmd::remote::run(&args, detect_tty(), &mut reader, &mut reporter)
+        }
         Command::Watch(args) => cmd::watch::run(&args, &mut reporter).await,
         #[cfg(windows)]
         Command::Defender(args) => {
