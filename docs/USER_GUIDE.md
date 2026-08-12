@@ -138,7 +138,10 @@ diff-and-prompt loop by default:
    materialized but the current plan no longer manages (an entry you
    dropped from a `patina.toml`, or one whose `when` is now false) shows
    as a `remove <target>` block: it is backed up and deleted on apply, so
-   the reap is never hidden from the consent diff.
+   the reap is never hidden from the consent diff. A dropped target that
+   now sits inside another entry's target is left alone instead: that
+   entry owns the path, and where it is a whole-directory `symlink` the
+   dropped path leads through the link into the entry's source.
 3. **Prompt.** In an interactive terminal, Patina asks for
    confirmation before writing anything. In a non-interactive shell
    (CI, a piped invocation), it falls through to plan-only and writes

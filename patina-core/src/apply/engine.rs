@@ -1927,6 +1927,10 @@ fn expected_target(
 /// entry's kind, so an intermediate `symlink-tree` directory survives while
 /// its orphaned leaf links are removed.
 ///
+/// Nor is a recorded target that now lies inside a live entry's target: the
+/// live entry owns those bytes, and where it materializes a whole-directory
+/// symlink the recorded path resolves through the link into its source.
+///
 /// # Errors
 ///
 /// Returns an [`EngineError`] when the commit read, the managed-set
@@ -2042,13 +2046,13 @@ pub fn plan_orphans(resolved: &ResolvedPlan) -> Result<Vec<Utf8PathBuf>, EngineE
 /// Reads the last committed [`ApplyRecord`] and the current managed-target
 /// set ([`current_managed_targets`]), returning each recorded target whose
 /// [`manage_key`](crate::status::manage_key) is absent from the current set,
-/// is still on disk, and is not a directory. Shared by
-/// [`reap_orphans`] — which backs up and removes each returned target — and
-/// by the full-no-op short-circuit in [`execute`], which only needs
-/// to know whether this set is empty (a non-empty reap set means there is
-/// work to do, so the run is not a no-op). Splitting the detection out keeps
-/// the "what counts as an orphan" rule in one place rather than copying the
-/// walk into the short-circuit.
+/// is still on disk, is not a directory, and lies under no currently-managed
+/// target. Shared by [`reap_orphans`], which backs up and removes each
+/// returned target, and by the full-no-op short-circuit in [`execute`], which
+/// only needs to know whether this set is empty (a non-empty reap set means
+/// there is work to do, so the run is not a no-op). Splitting the detection out
+/// keeps the "what counts as an orphan" rule in one place rather than copying
+/// the walk into the short-circuit.
 ///
 /// # Errors
 ///
@@ -2083,6 +2087,26 @@ fn detect_orphans(resolved: &ResolvedPlan) -> Result<Vec<Utf8PathBuf>, EngineErr
         // is the guard that keeps a `symlink-tree` intermediate directory in
         // place while its orphaned leaf links are reaped.
         if meta.is_dir() {
+            continue;
+        }
+        // A recorded target that now lies *under* a target the current plan
+        // manages belongs to that entry, not to the record: a whole-directory
+        // `symlink` entry can claim the directory a prior apply's leaf lived
+        // in, and the recorded leaf path then resolves through the new link
+        // into that entry's source, a remote checkout or the repository itself.
+        // Removing it would delete source bytes, and back them up as if they
+        // were the target's.
+        //
+        // Containment is tested one ancestor at a time rather than as a prefix
+        // relation between keys: `manage_key` canonicalizes a path's parent, so
+        // the leaf's key already resolves through the link while each
+        // ancestor's own key does not. Tested last, so only a path that passed
+        // every cheaper test pays for the canonicalizations.
+        if target
+            .ancestors()
+            .skip(1)
+            .any(|ancestor| managed.governs(&manage_key(ancestor)))
+        {
             continue;
         }
         orphans.push(target);

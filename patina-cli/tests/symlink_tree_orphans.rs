@@ -19,7 +19,10 @@
 //!   finding the original bytes in the reaping run's backup tree;
 //! - a target respelled only in case or Unicode normal form is the same target,
 //!   so the reap leaves it alone rather than deleting what the respelled entry
-//!   just materialized.
+//!   just materialized;
+//! - a recorded leaf whose directory a whole-directory `symlink` entry has
+//!   since claimed is not reaped through that link, which would delete the
+//!   entry's source rather than a stale target.
 
 mod common;
 
@@ -321,6 +324,62 @@ fn when_flipped_to_false_orphans_then_reaps_target_with_backup() {
     assert!(
         backup.is_some(),
         "the reaped target's prior bytes must be recorded in a backup under {state_root}"
+    );
+}
+
+#[test]
+fn a_directory_symlink_entry_shields_its_source_from_the_reap() {
+    // A `symlink-tree` entry materialized `~/skills/pack/SKILL.md`. The source
+    // leaf is then deleted and a whole-directory `symlink` entry claims
+    // `~/skills/pack`, so the recorded leaf path now resolves through the new
+    // link into that entry's source. Reaping it would delete the source file.
+    let f = Fixture::new();
+    let tree_only =
+        "[[directory]]\nsource = \"tree\"\ntarget = \"~/skills\"\nmode = \"symlink-tree\"\n";
+    let module = f.module("cfg", tree_only);
+    let tree = module.join("tree");
+    fs_err::create_dir_all(tree.join("pack")).expect("mkdir pack");
+    fs_err::write(tree.join("pack").join("SKILL.md"), b"old").expect("write tree leaf");
+
+    let applied = f.apply(&["--yes"]);
+    assert_eq!(
+        code(&applied),
+        0,
+        "the initial symlink-tree apply must succeed; stderr: {}",
+        String::from_utf8_lossy(&applied.stderr)
+    );
+
+    // Hand `~/skills/pack` to a whole-directory `symlink` entry backed by a
+    // different source, and drop the tree leaf that used to occupy it.
+    fs_err::remove_dir_all(tree.join("pack").as_std_path()).expect("delete tree leaf");
+    let pack = module.join("pack");
+    fs_err::create_dir_all(&pack).expect("mkdir pack source");
+    fs_err::write(pack.join("SKILL.md"), b"new").expect("write pack source");
+    f.module(
+        "cfg",
+        &format!(
+            "{tree_only}\n[[directory]]\nsource = \"pack\"\ntarget = \"~/skills/pack\"\nmode = \"symlink\"\n"
+        ),
+    );
+
+    let reapplied = f.apply(&["--yes"]);
+    assert_eq!(
+        code(&reapplied),
+        0,
+        "the directory-symlink apply must succeed; stderr: {}",
+        String::from_utf8_lossy(&reapplied.stderr)
+    );
+
+    let link = f.home.join("skills").join("pack");
+    let link_meta = fs_err::symlink_metadata(link.as_std_path()).expect("stat the claimed target");
+    assert!(
+        link_meta.file_type().is_symlink(),
+        "`~/skills/pack` must be the directory symlink the new entry declares"
+    );
+    assert_eq!(
+        fs_err::read(pack.join("SKILL.md").as_std_path()).expect("the entry's source survives"),
+        b"new",
+        "the reap must not follow the directory symlink into the entry's source"
     );
 }
 
