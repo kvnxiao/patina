@@ -31,7 +31,7 @@ fn current_os_family() -> &'static str {
 }
 
 /// Assert that the apply wrote no `*.plan` or `*.COMMIT` journal file for the
-/// run — the plan-time-failure guarantee that a mismatched entry mutates
+/// run: the plan-time-failure guarantee that a mismatched entry mutates
 /// nothing. The journal directory is `<state>/patina/journal`; it
 /// may not exist at all on a plan-phase failure, which is itself proof that
 /// nothing was flushed.
@@ -157,7 +157,7 @@ fn when_true_entry_with_absent_source_fails_as_source_not_found() {
 fn when_false_entry_with_absent_wrong_kind_source_is_not_validated() {
     // A `[[directory]]` entry gated off on this OS
     // (`when = "patina.os == 'definitely-not-this-os'"`) with an absent
-    // source exits 0 with no missing-source or kind error — step (3) never
+    // source exits 0 with no missing-source or kind error: step (3) never
     // runs on a `when`-false entry (the ordering guarantee).
     let f = Fixture::new();
     f.module(

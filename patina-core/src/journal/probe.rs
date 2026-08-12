@@ -19,7 +19,7 @@
 //! that completed operations be reversed to the pre-apply state using
 //! backups and inverse ops; it does not require distinguishing a
 //! half-written copy from a fully-written one, because the reversal is
-//! the same either way — restore the backup (overwrite) or delete the
+//! the same either way: restore the backup (overwrite) or delete the
 //! target (fresh creation). A finer pre-state-hash probe can layer on
 //! later when the plan records per-operation hashes; the `Probe` enum is
 //! `non_exhaustive` to keep that door open.
@@ -32,7 +32,7 @@ use camino::Utf8PathBuf;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Probe {
-    /// The target path currently resolves to an entry on disk — a
+    /// The target path currently resolves to an entry on disk: a
     /// regular file, directory, or symlink. (Symlinks are detected via
     /// `symlink_metadata`, so a dangling link still counts as present.)
     Present,
@@ -42,8 +42,8 @@ pub enum Probe {
 
 /// Probe the filesystem for the current state of an operation's target.
 ///
-/// Uses `symlink_metadata` so a symbolic link — including a dangling one
-/// a partially-applied symlink op may have left — is reported as
+/// Uses `symlink_metadata` so a symbolic link, including a dangling one
+/// a partially-applied symlink op may have left, is reported as
 /// [`Probe::Present`] rather than being followed to a missing destination.
 #[must_use = "the probe result decides whether the operation is reversed"]
 pub fn classify_target(target: &Utf8Path) -> Probe {
@@ -66,10 +66,10 @@ pub fn operation_target(op: &PlannedOperation) -> &str {
 /// Compute the backup path for `target` under the per-apply backup root
 /// `<backups_dir>/<ts>/`.
 ///
-/// The target's absolute path is mirrored beneath the timestamped root:
-/// the platform's path prefix (the leading `/` on Unix, the `C:\` drive
-/// prefix on Windows) is folded into ordinary path components so the
-/// backup tree can hold targets from any volume without collision. This
+/// The target's absolute path is mirrored beneath the timestamped root. The
+/// platform's path prefix is folded into ordinary path components, so the
+/// backup tree can hold targets from any volume without collision. That prefix
+/// is the leading `/` on Unix, and the `C:\` drive prefix on Windows. This
 /// is the inverse map the backup writer applies before an overwrite,
 /// and the map recovery applies to find the original bytes.
 ///
@@ -98,9 +98,9 @@ pub fn mirror_backup_path(
 }
 
 /// Decompose an absolute target path into the ordinary directory/file
-/// components that mirror beneath the backup root, dropping the platform
-/// root/prefix and any `.` / `..` so the mirror is a pure containment of
-/// the target beneath `<backups>/<ts>/`.
+/// components that mirror beneath the backup root. The platform root/prefix
+/// and any `.` / `..` are dropped, so the mirror is a pure containment of the
+/// target beneath `<backups>/<ts>/`.
 fn mirror_components(target: &Utf8Path) -> Vec<String> {
     use camino::Utf8Component;
 
@@ -147,7 +147,7 @@ mod tests {
     fn mirror_strips_dot_and_parent_segments() {
         let backups = Utf8Path::new("/b");
         // A `..` in the target must not let the mirror escape the backup
-        // root — recovery would otherwise look outside `<backups>/<ts>/`.
+        // root; recovery would otherwise look outside `<backups>/<ts>/`.
         let got = mirror_backup_path(backups, "TS", Utf8Path::new("/home/../home/u/x"));
         assert!(got.starts_with("/b/TS"));
         assert!(!got.as_str().contains(".."));

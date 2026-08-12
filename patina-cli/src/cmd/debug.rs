@@ -75,7 +75,7 @@ fn run_drift_cache(args: &DebugDriftCacheArgs, reporter: &mut impl Reporter) -> 
             // truth for the failure reason (its `VersionMismatch` arm names
             // both the found and supported majors). Its `Filesystem` arm,
             // however, is a `#[from] std::io::Error` that does not carry the
-            // path, so this control-flow layer — which holds `args.path` —
+            // path, so this control-flow layer, which holds `args.path`,
             // prefixes it to honour the contract that a debug failure names
             // the file it was pointed at.
             reporter.warn(&format!("{}: {err}", args.path));

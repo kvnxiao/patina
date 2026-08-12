@@ -64,10 +64,10 @@ type FxHashMap<K, V> = HashMap<K, V, BuildHasherDefault<FxHasher>>;
 ## Arena indices instead of pointer graphs
 
 ```rust
-// Bad: `Rc<RefCell<Node>>` graphs — an allocation per node, runtime borrow checks.
+// Bad: `Rc<RefCell<Node>>` graphs: an allocation per node, runtime borrow checks.
 
 // Good: newtype Copy indices into a flat arena. NonZeroU32 gives `Option<NodeId>`
-// the same size as `NodeId` via the 0 niche — free optionality.
+// the same size as `NodeId` via the 0 niche, so optionality is free.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct NodeId(std::num::NonZeroU32);
 
@@ -95,7 +95,7 @@ type Assertions = smallvec::SmallVec<[Assertion; 1]>;
 ```rust
 vec.shrink_to_fit();
 
-// Immutable payloads: convert to a boxed slice / str — no capacity field
+// Immutable payloads: convert to a boxed slice / str, with no capacity field
 // (one fewer word), and it can never grow.
 let payload: Box<[u8]> = data.into_boxed_slice();
 let name: Box<str> = s.into_boxed_str();

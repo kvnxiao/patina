@@ -6,9 +6,9 @@
 //! last apply, recovered via [`read_latest_commit`]) and from that record
 //! alone derives exactly which paths to subscribe to:
 //!
-//! - every target's canonical **source** ([`ExpectedTarget::source`]) — the
+//! - every target's canonical **source** ([`ExpectedTarget::source`]), the
 //!   repository path the target was materialized from;
-//! - every **content** (copy- or template-mode) target's path — a regular file
+//! - every **content** (copy- or template-mode) target's path, a regular file
 //!   Patina owns and must re-hash on change;
 //! - the per-machine state directory's `journal/` subdirectory itself, so a new
 //!   `.plan` / `.COMMIT` from any apply re-triggers a journal rescan (the
@@ -19,7 +19,7 @@
 //! watched via the source path above. Only the source side of a symlink
 //! entry appears in the set.
 //!
-//! This module is the pure mapping from record to path set — it does no
+//! This module is the pure mapping from record to path set; it does no
 //! `notify` wiring. The foreground watcher hands the computed set to
 //! the debouncer.
 //!
@@ -48,11 +48,11 @@ pub struct ContentTarget {
 /// re-deriving the record.
 ///
 /// - `watched` is the flat path list handed to the debouncer (every source,
-///   every content-target, and the journal directory) — identical to what
+///   every content-target, and the journal directory), identical to what
 ///   [`compute_subscriptions`] returns.
 /// - `sources` is the subset of `watched` that are repository **source** paths:
 ///   an FS event on one of these is a source edit and drives a re-apply.
-///   Content-target events do **not** re-apply — they feed drift detection — so
+///   Content-target events do **not** re-apply; they feed drift detection, so
 ///   routing on `sources` is what stops a re-apply's own content-target rewrite
 ///   from re-triggering itself in an unbounded loop.
 /// - `content_targets` is the subset of `watched` that are content-target paths
@@ -73,11 +73,11 @@ pub struct WatchSet {
 
 /// Compute the watcher's partitioned [`WatchSet`] from a committed record.
 ///
-/// `watched` is exactly [`compute_subscriptions`]'s output (so the debouncer
-/// behaviour is unchanged); `sources` additionally captures which of those
-/// paths are repository source paths, so the foreground loop can tell a source
-/// edit (re-apply) from a content-target edit (drift) and a
-/// journal-directory event (rescan).
+/// `watched` is exactly [`compute_subscriptions`]'s output, so the debouncer
+/// sees the same set. `sources` additionally captures which of those paths are
+/// repository source paths. The foreground loop can then tell a source edit
+/// (re-apply) from a content-target edit (drift) and a journal-directory event
+/// (rescan).
 ///
 /// # Arguments
 ///
@@ -119,13 +119,13 @@ pub fn compute_watch_set(record: &ApplyRecord, state_dir: &Utf8Path) -> WatchSet
 /// The returned vector preserves apply order: for each recorded target, its
 /// source path appears (and, for a content target, the target path follows),
 /// then the `<state>/patina/journal/` directory is appended last. Duplicate
-/// paths — e.g. two entries sharing one source — collapse to their first
+/// paths, for example two entries sharing one source, collapse to their first
 /// occurrence. Symlink target paths never appear.
 ///
 /// The computed set is emitted as a `tracing` info event
-/// (`watch_subscriptions`, target `patina_core`) carrying the entry count and
-/// the tab-joined paths so the foreground watcher can
-/// inspect it from the log.
+/// (`watch_subscriptions`, target `patina_core`). It carries the entry count
+/// and the tab-joined paths, so the foreground watcher can inspect it from the
+/// log.
 ///
 /// # Arguments
 ///
@@ -223,9 +223,9 @@ mod tests {
         }
     }
 
-    /// Two symlink targets and one content target yield exactly the
-    /// three source paths, the one content target path, and the journal
-    /// directory — five entries — and contain neither symlink target path.
+    /// Two symlink targets and one content target yield exactly five entries:
+    /// the three source paths, the one content target path, and the journal
+    /// directory. Neither symlink target path appears.
     #[test]
     fn two_symlinks_one_content_yields_five_subscriptions() {
         let record = ApplyRecord::new(
@@ -321,7 +321,7 @@ mod tests {
     /// `compute_watch_set` partitions the flat set into the debouncer's
     /// `watched` list (unchanged) and the `sources` whose events drive a
     /// re-apply. A content target's own path is watched but is NOT a source, so
-    /// it does not appear in `sources` — that is what keeps a re-apply's own
+    /// it does not appear in `sources`. That is what keeps a re-apply's own
     /// target rewrite from re-triggering itself (loop prevention).
     #[test]
     fn watch_set_separates_sources_from_content_targets() {

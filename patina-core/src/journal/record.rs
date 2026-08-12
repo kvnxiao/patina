@@ -2,7 +2,7 @@
 //!
 //! Earlier the commit sentinel was an empty marker file: its mere
 //! presence beside a `<ts>.plan` told crash recovery the apply
-//! had committed. `patina status` needs more than presence — it must know
+//! had committed. `patina status` needs more than presence: it must know
 //! *what* the last committed apply materialized, and the expected state
 //! of each target, so it can classify the live filesystem against it. The
 //! plan file is deleted at commit, so the record cannot live there.
@@ -20,17 +20,17 @@
 //!   derived from the journal `<ts>`), the `user`, and the `host`.
 //! - One [`ExpectedTarget`] per materialized object, in apply order. Each
 //!   records the canonical absolute target path, the canonical source the
-//!   target was materialized from, and — for content targets — the content hash
+//!   target was materialized from, and, for content targets, the content hash
 //!   `status` compares the live filesystem against:
 //!   - a [`ExpectedTarget::Symlink`] records the canonical link target the
 //!     symlink should point at; that link target is also the symlink's source.
 //!   - a [`ExpectedTarget::Content`] records the canonical source path the
-//!     bytes were copied or rendered from plus a 32-byte `blake3` hash of the
-//!     bytes written (copy / render), so an external edit changes the hash and
-//!     surfaces as drift.
+//!     bytes were copied or rendered from, plus a 32-byte `blake3` hash of the
+//!     bytes written. An external edit therefore changes the hash, and surfaces
+//!     as drift.
 //!
-//! The content hash is `blake3` rather than a `std::hash` fingerprint so the
-//! same hash serves the journal here and the drift cache, which
+//! The content hash is `blake3` rather than a `std::hash` fingerprint, so the
+//! same hash serves both the journal here and the drift cache. The drift cache
 //! compares a freshly computed `blake3` of a target against this recorded
 //! value. The record shares the journal's
 //! [`FILE_MAJOR_VERSION`](super::FILE_MAJOR_VERSION); per the pre-release
@@ -207,7 +207,7 @@ impl ApplyRecord {
 pub fn timestamp_to_rfc3339(ts: &str) -> String {
     // The compact form is produced by `clock::current_timestamp` via jiff's
     // `strftime`, so jiff round-trips it: parse it back as a civil datetime
-    // (the trailing `Z` is matched as a literal — no timezone math) and
+    // (the trailing `Z` is matched as a literal, with no timezone math) and
     // re-emit it hyphenated. An input that does not match the compact shape
     // fails to parse and is returned unchanged.
     jiff::civil::DateTime::strptime("%Y%m%dT%H%M%SZ", ts).map_or_else(

@@ -2,7 +2,7 @@
 //!
 //! The command has two modes. `--foreground` runs the watcher loop inline
 //! ([`patina_core::run_foreground`]), attached to the invoking shell, until
-//! Ctrl-C (SIGINT) or — on POSIX — SIGTERM shuts it down. The
+//! Ctrl-C (SIGINT) or, on POSIX, SIGTERM shuts it down. The
 //! lifecycle subcommands (`install` / `uninstall` / `start` / `stop` /
 //! `restart` / `status`) manage the per-OS background service through the
 //! [`patina_core::watch::service`] backend.
@@ -40,10 +40,10 @@ use patina_core::exclusive_timeout;
 ///
 /// # Errors
 ///
-/// Returns an error when the foreground watcher fails to start or run
-/// (state-directory resolution, log appender, journal read, or watcher
-/// arming), or when a lifecycle action fails (lock acquisition, the platform
-/// supervisor, or descriptor I/O).
+/// Returns an error when the foreground watcher fails to start or run, which
+/// covers state-directory resolution, the log appender, the journal read, and
+/// watcher arming. Also returns an error when a lifecycle action fails, which
+/// covers lock acquisition, the platform supervisor, and descriptor I/O.
 pub async fn run(args: &WatchArgs, reporter: &mut impl Reporter) -> Result<i32> {
     emit_debounce_warning(reporter);
 
@@ -69,9 +69,9 @@ pub async fn run(args: &WatchArgs, reporter: &mut impl Reporter) -> Result<i32> 
 
 /// Run a background-service lifecycle subcommand.
 ///
-/// Resolves the per-machine state directory, acquires the advisory lock the
-/// subcommand requires (exclusive for every mutating action, shared for the
-/// read-only `status`), then drives the matching
+/// Resolves the per-machine state directory, then acquires the advisory lock
+/// the subcommand requires. That lock is exclusive for every mutating action,
+/// and shared for the read-only `status`. It then drives the matching
 /// [`patina_core::ServiceBackend`] method and renders the outcome. A
 /// not-installed service is a no-op with a clear stderr message rather than a
 /// supervisor error; an already-installed `install` exits 1 with a
@@ -106,8 +106,8 @@ fn run_lifecycle(command: &WatchCommand, json: bool, reporter: &mut impl Reporte
 /// Dispatch a mutating lifecycle subcommand to its backend method and render
 /// the outcome, returning the process exit code.
 ///
-/// Split from [`run_lifecycle`] — which owns state-directory resolution and
-/// lock acquisition — so the command→method routing is unit-testable against a
+/// Split from [`run_lifecycle`], which owns state-directory resolution and
+/// lock acquisition, so the command→method routing is unit-testable against a
 /// fake [`ServiceBackend`] with no real supervisor or lock. `status` is handled
 /// by [`run_lifecycle`] before this is reached (it takes the shared lock and
 /// returns early); the defensive `Status` arm here maps to a no-op.
@@ -243,9 +243,10 @@ fn opt_to_string<T: std::fmt::Display>(value: Option<T>) -> String {
 /// Read the root manifest and, if it declares the ignored `[watcher]
 /// debounce_ms` key, surface the typed warning.
 ///
-/// Best-effort: a repository that cannot be discovered or a manifest that
-/// cannot be read is not this warning's concern (the foreground start path
-/// surfaces real discovery errors), so a lookup miss is silently skipped.
+/// Best-effort. A repository that cannot be discovered, or a manifest that
+/// cannot be read, is not this warning's concern; the foreground start path
+/// surfaces real discovery errors. A lookup miss is therefore silently
+/// skipped.
 fn emit_debounce_warning(reporter: &mut impl Reporter) {
     let Ok(repo_root) = patina_core::resolve_repository_root() else {
         return;
@@ -260,7 +261,7 @@ fn emit_debounce_warning(reporter: &mut impl Reporter) {
 }
 
 /// The shutdown future for the foreground watcher: resolve on Ctrl-C
-/// (SIGINT) on every platform, or — on POSIX — on SIGTERM, whichever arrives
+/// (SIGINT) on every platform, or, on POSIX, on SIGTERM, whichever arrives
 /// first. A failure to install a handler resolves the future (shutting the
 /// watcher down) rather than leaving it unstoppable.
 async fn shutdown_signal() {

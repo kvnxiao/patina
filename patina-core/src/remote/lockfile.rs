@@ -17,9 +17,9 @@
 //! across machines and runs; `updated_at` exists solely for the update gate's
 //! backdating check and is written only by `patina remote update`.
 //!
-//! Serialization is deterministic (entries in name order, a fixed field order,
-//! one canonical timestamp spelling), so re-writing an unchanged lockfile
-//! produces the same bytes and never shows up as a spurious diff.
+//! Serialization is deterministic: entries in name order, a fixed field order,
+//! and one canonical timestamp spelling. Re-writing an unchanged lockfile
+//! therefore produces the same bytes, and never shows up as a spurious diff.
 //!
 //! See `docs/REMOTE_SOURCES.md` "The lockfile".
 

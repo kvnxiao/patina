@@ -17,9 +17,10 @@
 //! `sudo loginctl enable-linger $USER` themselves. None of these paths require
 //! admin or sudo: a `systemd --user` unit is owned by the invoking user.
 //!
-//! On a host where `systemd --user` is unavailable (a non-systemd init, or a
-//! systemd build without the user bus reachable), the [`super::current`]
-//! factory returns the [`super::unsupported`] stub instead of this backend, so
+//! On some hosts `systemd --user` is unavailable, either a non-systemd init or
+//! a systemd build without the user bus reachable. The [`super::current`]
+//! factory then returns the [`super::unsupported`] stub instead of this
+//! backend, so
 //! the user is directed at `patina watch --foreground` under their own
 //! supervisor.
 
@@ -59,10 +60,11 @@ impl SystemdBackend {
     /// The factory uses this to decide between the systemd backend and the
     /// [`super::unsupported`] fallback. A successful
     /// `systemctl --user is-system-running` *invocation* (any exit code, even
-    /// the `degraded` / `offline` non-zero ones — the bus answered) proves the
-    /// user bus is reachable; a spawn failure (no `systemctl` binary) or an
-    /// explicit "Failed to connect to bus" message means there is no user
-    /// manager to drive, so we fall back to the foreground escape hatch.
+    /// the `degraded` / `offline` non-zero ones, because the bus answered)
+    /// proves the user bus is reachable. A spawn failure (no `systemctl`
+    /// binary), or an explicit "Failed to connect to bus" message, means there
+    /// is no user manager to drive. We then fall back to the foreground
+    /// escape hatch.
     #[must_use = "the availability decision selects the backend; ignoring it loses the dispatch"]
     pub fn is_available() -> bool {
         let Ok(output) = Command::new("systemctl")
@@ -224,7 +226,7 @@ impl ServiceBackend for SystemdBackend {
 /// The user bus is unreachable only when systemctl reports it cannot connect;
 /// that surfaces on stderr regardless of exit code (`is-system-running` exits
 /// non-zero for `degraded` / `offline` even when the bus *did* answer). Any
-/// other stderr — empty, or a benign state word — means the user manager
+/// other stderr, whether empty or a benign state word, means the user manager
 /// answered, so the host is a systemd host.
 fn bus_reachable(stderr: &str) -> bool {
     !stderr.contains("Failed to connect to bus")
@@ -282,11 +284,11 @@ fn write_unit(path: &Utf8Path, binary: &Utf8Path) -> Result<(), ServiceError> {
 /// `WantedBy=default.target`, and `ExecStart` of the canonical `binary` plus
 /// `watch --foreground`.
 ///
-/// Each `ExecStart` token is quoted and escaped through [`systemd_exec_quote`]
-/// so a binary path containing whitespace, a `%` specifier, or a newline lands
-/// as a single literal argument rather than being word-split, specifier-
-/// expanded, or injected as a fresh unit directive — mirroring how the launchd
-/// sibling XML-escapes the same path for its descriptor format.
+/// Each `ExecStart` token is quoted and escaped through
+/// [`systemd_exec_quote`]. A binary path containing whitespace, a `%`
+/// specifier, or a newline therefore lands as a single literal argument. It is
+/// not word-split, specifier-expanded, or injected as a fresh unit directive.
+/// The launchd sibling XML-escapes the same path for its descriptor format.
 fn render_unit(binary: &Utf8Path) -> String {
     let exec_start = std::iter::once(binary.as_str())
         .chain(FOREGROUND_ARGS)
@@ -319,9 +321,9 @@ WantedBy=default.target\n"
 ///
 /// - the whole token is wrapped in `"…"`, so embedded whitespace stays part of
 ///   one argument;
-/// - inside the quotes, `\` and `"` are backslash-escaped (systemd's
-///   double-quote escapes), and a literal newline / carriage return / tab is
-///   rendered as its C-style escape (`\n` / `\r` / `\t`) so it can never
+/// - inside the quotes, `\` and `"` are backslash-escaped, which are systemd's
+///   double-quote escapes. A literal newline, carriage return, or tab is
+///   rendered as its C-style escape (`\n` / `\r` / `\t`), so it can never
 ///   terminate the line;
 /// - `%` is doubled to `%%` so systemd takes it literally instead of expanding
 ///   it as a specifier (`%` expansion happens regardless of quoting).

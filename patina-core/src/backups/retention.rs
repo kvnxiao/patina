@@ -14,7 +14,7 @@ use camino::Utf8Path;
 /// considered; stray files directly under `backups_dir` are ignored.
 ///
 /// Call this *after* an apply's `COMMIT` sentinel is durable. A failed
-/// apply — one that never committed — simply does not call this, so its
+/// apply, one that never committed, simply does not call this, so its
 /// historical backups are left intact.
 ///
 /// A missing `backups_dir`, or one holding `keep` or fewer subdirectories,
@@ -43,7 +43,7 @@ pub fn gc_retain(
     let backups_dir = backups_dir.as_ref();
 
     if !backups_dir.exists() {
-        // No backup tree yet — nothing to prune.
+        // No backup tree yet, so nothing to prune.
         return Ok(Vec::new());
     }
 

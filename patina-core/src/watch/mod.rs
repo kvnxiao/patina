@@ -3,21 +3,21 @@
 //! The watcher reapplies on source changes and surfaces files modified
 //! outside Patina. The subsystem is built from several pieces:
 //!
-//! - the drift-cache format — the watcher's notification ledger at
-//!   `<state>/patina/drift.cache` — via the [`drift_cache`] submodule;
-//! - the structured-log sink — the daily-rotating `<state>/patina/logs/` stack
-//!   the watcher writes its metrics into — via the [`logging`] submodule;
+//! - the drift-cache format, the watcher's notification ledger at
+//!   `<state>/patina/drift.cache`, via the [`drift_cache`] submodule;
+//! - the structured-log sink, the daily-rotating `<state>/patina/logs/` stack
+//!   the watcher writes its metrics into, via the [`logging`] submodule;
 //! - the pure mapping from a committed journal record to the watcher's FS
-//!   subscription set — via the [`subscriptions`] submodule;
-//! - the 500ms debounce wrapper and the OS-thread→async bridge — via the
+//!   subscription set, via the [`subscriptions`] submodule;
+//! - the 500ms debounce wrapper and the OS-thread→async bridge, via the
 //!   [`debounce`] submodule;
-//! - the `NonBlocking` re-apply handler driven on a source edit — via the
+//! - the `NonBlocking` re-apply handler driven on a source edit, via the
 //!   [`reapply`] submodule;
-//! - the drift-detection handler driven on a content-target edit — via the
+//! - the drift-detection handler driven on a content-target edit, via the
 //!   [`drift`] submodule;
 //! - the foreground watcher loop itself ([`run_foreground`]), which classifies
 //!   each debounced batch and dispatches it;
-//! - the per-OS background-service abstraction and lifecycle backends — via the
+//! - the per-OS background-service abstraction and lifecycle backends, via the
 //!   [`service`] submodule.
 //!
 //! The foreground watcher is the end-to-end engine the per-OS service
@@ -86,7 +86,7 @@ pub enum WatchError {
 /// repository that sets it keeps working and a future version can add the knob
 /// without breaking older repositories. A malformed manifest, a missing
 /// `[watcher]` table, or a `[watcher]` table without `debounce_ms` all yield
-/// `None` — this helper diagnoses only the one forward-compatible key and
+/// `None`. This helper diagnoses only the one forward-compatible key and
 /// leaves real parse errors to the apply path.
 ///
 /// # Examples
@@ -115,12 +115,13 @@ pub fn watcher_config_warning(manifest_text: &str) -> Option<String> {
 
 /// Run the foreground watcher loop inline until `shutdown` resolves.
 ///
-/// The watcher: resolves the per-machine state directory, initializes the
-/// structured-log stack (a rotating file layer plus a stderr layer), reads the
-/// most recent committed apply and computes its FS subscription set
-/// ([`subscriptions::compute_watch_set`]), arms the 500ms debouncer over
-/// that set ([`debounce::spawn`]), and runs a single `tokio::select!` loop that
-/// awaits either the next debounced event batch or `shutdown`. On `shutdown` it
+/// The watcher resolves the per-machine state directory and initializes the
+/// structured-log stack (a rotating file layer plus a stderr layer). It reads
+/// the most recent committed apply and computes its FS subscription set
+/// ([`subscriptions::compute_watch_set`]). It then arms the 500ms debouncer
+/// over that set ([`debounce::spawn`]), and runs a single `tokio::select!`
+/// loop that awaits either the next debounced event batch or `shutdown`. On
+/// `shutdown` it
 /// logs a `shutdown` event, drops the debouncer (releasing every FS
 /// subscription), and returns `Ok(())`.
 ///
@@ -146,9 +147,10 @@ pub fn watcher_config_warning(manifest_text: &str) -> Option<String> {
 /// # Errors
 ///
 /// Returns [`WatchError::StateDir`] when the state directory cannot be
-/// resolved, [`WatchError::Logging`] when the log appender cannot be built,
-/// [`WatchError::Journal`] when the latest commit cannot be read, and
-/// [`WatchError::Debounce`] when the debouncer cannot be built or armed.
+/// resolved, and [`WatchError::Logging`] when the log appender cannot be
+/// built. Returns [`WatchError::Journal`] when the latest commit cannot be
+/// read, and [`WatchError::Debounce`] when the debouncer cannot be built or
+/// armed.
 pub async fn run_foreground<F>(shutdown: F) -> Result<(), WatchError>
 where
     F: Future<Output = ()>,
@@ -160,9 +162,9 @@ where
 /// The testable core of [`run_foreground`]: run the loop against an explicit
 /// state directory rather than the process-resolved one.
 ///
-/// Split out so tests can drive the loop against an isolated tempdir state tree
-/// without touching the developer's real state directory or relying on a global
-/// `tracing` subscriber being installable more than once per process.
+/// Split out so tests can drive the loop against an isolated tempdir state
+/// tree. They then touch neither the developer's real state directory, nor a
+/// global `tracing` subscriber that installs only once per process.
 async fn run_foreground_in<F>(state: &Utf8Path, shutdown: F) -> Result<(), WatchError>
 where
     F: Future<Output = ()>,
@@ -192,9 +194,9 @@ where
     // `WithSubscriber::with_subscriber`, NOT installed thread-locally with
     // `tracing::subscriber::set_default`. `WithSubscriber` re-enters the
     // dispatcher on *every* poll of the wrapped future, so every event the run
-    // emits — `watch_subscriptions` (from `compute_subscriptions`),
+    // emits (`watch_subscriptions` from `compute_subscriptions`,
     // `watch_started`, `watch_event`, `shutdown`, and the future `re_apply` /
-    // `drift` events — routes through our layers regardless of which runtime
+    // `drift` events) routes through our layers regardless of which runtime
     // thread polls the future. The whole run body (journal read, subscription
     // compute, debouncer arm, select-loop) lives inside the future so its
     // events all route through the watcher's layers, not just the loop's.
@@ -268,7 +270,7 @@ where
                             //   path is a source edit: drive a `NonBlocking`
                             //   re-apply.
                             // - Otherwise the batch touched only content-target
-                            //   paths — a re-apply's own target rewrite or an
+                            //   paths: a re-apply's own target rewrite or an
                             //   external edit. That is drift detection's concern,
                             //   NOT a re-apply: a content-target event
                             //   re-hashes the live bytes and notifies on
@@ -320,19 +322,20 @@ fn env_filter() -> tracing_subscriber::EnvFilter {
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"))
 }
 
-/// Whether a debounced batch is a journal-directory event — a new
+/// Whether a debounced batch is a journal-directory event: a new
 /// `.plan`/`.COMMIT` written under `<state>/patina/journal/` by some apply
 /// (the watcher's own re-apply, or a parallel CLI invocation). Such a batch
 /// triggers a subscription rescan rather than a re-apply, so the
 /// watcher's own journal writes cannot drive an unbounded re-apply loop.
 ///
 /// A batch counts as a journal event when any touched path is a journal
-/// sentinel (a file with a `.plan` / `.COMMIT` / `.progress` /
-/// `.ROLLED_BACK` suffix) whose parent directory is named `journal`. The
+/// sentinel whose parent directory is named `journal`. A sentinel is a file
+/// with a `.plan` / `.COMMIT` / `.progress` / `.ROLLED_BACK` suffix. The
 /// classifier matches on the path *leaf* rather than a `starts_with` against
-/// the resolved journal directory because `notify` reports canonicalized event
-/// paths (on macOS `/tmp` resolves to `/private/tmp`), which would never share
-/// a prefix with the un-canonicalized state directory the watcher resolved.
+/// the resolved journal directory. `notify` reports canonicalized event paths,
+/// so on macOS `/tmp` resolves to `/private/tmp`. Such a path would never
+/// share a prefix with the un-canonicalized state directory the watcher
+/// resolved.
 fn journal_event(batch: &debounce::EventBatch) -> bool {
     batch.paths.iter().any(|p| is_journal_sentinel(p))
 }
@@ -353,7 +356,7 @@ fn is_journal_sentinel(path: &Utf8Path) -> bool {
     in_journal_dir && is_sentinel
 }
 
-/// Whether a debounced batch touched a repository **source** path — the only
+/// Whether a debounced batch touched a repository **source** path, the only
 /// kind of event that drives a re-apply. Content-target events route
 /// to drift detection, not re-apply, so a re-apply's own target rewrite
 /// does not re-trigger itself.
@@ -371,7 +374,7 @@ fn source_event(batch: &debounce::EventBatch, sources: &[Utf8PathBuf]) -> bool {
 /// apply's `at`, empty when none committed) for the caller to install. On a
 /// journal read failure or a debouncer rebuild failure it logs a warning and
 /// returns `None`, leaving the existing debouncer, watch set, and timestamp in
-/// place — a transient rescan failure must not crash the watcher.
+/// place; a transient rescan failure must not crash the watcher.
 fn rescan(
     journal_dir: &Utf8Path,
     state: &Utf8Path,
@@ -445,7 +448,7 @@ mod tests {
     #[test]
     fn watcher_table_without_debounce_ms_yields_no_warning() {
         // A `[watcher]` table that does not set the rejected key is not warned
-        // about — only `debounce_ms` is diagnosed.
+        // about; only `debounce_ms` is diagnosed.
         assert!(watcher_config_warning("[watcher]\nother = 1\n").is_none());
     }
 
@@ -510,7 +513,7 @@ mod tests {
     fn only_source_paths_classify_as_source_events() {
         // The re-apply trigger fires only for a repository source path. A
         // content-target path is watched (for drift) but is NOT a source, so a
-        // batch naming only the target does not re-apply — this is the loop
+        // batch naming only the target does not re-apply. This is the loop
         // guard that stops a re-apply's own target rewrite from re-triggering.
         let sources = vec![Utf8PathBuf::from("/repo/git/gitconfig")];
         assert!(source_event(&batch(&["/repo/git/gitconfig"]), &sources));

@@ -15,7 +15,7 @@
 //! - `patina status` classifies the now-unmanaged target ORPHANED;
 //! - the next `patina apply --yes` removes the orphan leaf link while its
 //!   surviving sibling leaf and the intermediate directory stay in place;
-//! - a reaped `[[file]]` target's prior bytes were backed up — provable by
+//! - a reaped `[[file]]` target's prior bytes were backed up, provable by
 //!   finding the original bytes in the reaping run's backup tree;
 //! - a target respelled only in case or Unicode normal form is the same target,
 //!   so the reap leaves it alone rather than deleting what the respelled entry
@@ -155,7 +155,7 @@ fn a_normalization_only_target_respelling_does_not_reap_the_live_target() {
 fn deleted_symlink_tree_source_leaf_is_reported_orphaned() {
     // An applied `symlink-tree` whose source contained `sub/b.conf`,
     // with that source leaf then deleted, makes `patina status` classify
-    // `~/d/sub/b.conf` as orphaned — the managed set walks the *live* source
+    // `~/d/sub/b.conf` as orphaned: the managed set walks the *live* source
     // and the deleted leaf is no longer in it.
     let f = Fixture::new();
     let module = f.module(
@@ -315,8 +315,8 @@ fn when_flipped_to_false_orphans_then_reaps_target_with_backup() {
     // `<ts>` directory) proves the never-overwrite-without-backup guarantee
     // held for the reap without coupling the test to the timestamp layout.
     // The backup tree lives under the *resolved* state root, which differs
-    // per platform — `XDG_STATE_HOME`/`LOCALAPPDATA` on Linux/Windows but
-    // `$HOME/Library/Application Support/patina` on macOS — so search
+    // per platform (`XDG_STATE_HOME`/`LOCALAPPDATA` on Linux/Windows but
+    // `$HOME/Library/Application Support/patina` on macOS), so search
     // `f.state_root()` (the per-platform resolver) rather than the raw
     // `f.state` env value, which only backs the state dir on Linux/Windows.
     let state_root = f.state_root();

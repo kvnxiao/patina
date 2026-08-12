@@ -3,10 +3,10 @@
 //!
 //! The real registry write is `#[cfg(windows)]`-gated. On any other host
 //! the action returns [`DevModeError::NotWindows`] without touching the
-//! registry, which keeps the binary's argument-parsing surface exercisable
-//! by the cross-platform integration tests (the `enable-developer-mode`
+//! registry. That keeps the binary's argument-parsing surface exercisable
+//! by the cross-platform integration tests: the `enable-developer-mode`
 //! arm resolves to a clean error path on Linux/macOS rather than failing
-//! to compile).
+//! to compile.
 //!
 //! ## Duplicated constants
 //!
@@ -30,7 +30,7 @@ pub enum DevModeError {
 
     /// A Windows registry call failed. `call` names the failing API,
     /// `symbol` names the Win32 error constant (e.g. `ERROR_ACCESS_DENIED`
-    /// when the helper was launched without elevation — the
+    /// when the helper was launched without elevation, the
     /// non-elevated exit-1 path), and `source` carries the OS error with
     /// its formatted message.
     #[cfg(windows)]

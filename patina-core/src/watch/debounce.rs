@@ -18,9 +18,9 @@
 //! process lifetime and drops it on shutdown, satisfying the
 //! release-subscriptions-on-exit contract).
 //!
-//! This module wires the debounce and the bridge only. Interpreting a batch —
+//! This module wires the debounce and the bridge only. Interpreting a batch,
 //! deciding whether it is a source edit (re-apply), a content-target
-//! edit (drift check), or a journal-directory event (rescan) —
+//! edit (drift check), or a journal-directory event (rescan),
 //! is the select-loop's job, not this module's.
 
 use camino::Utf8Path;
@@ -156,7 +156,7 @@ pub fn spawn(subscriptions: &[Utf8PathBuf]) -> Result<Debouncer, DebounceError> 
 /// A subscription path may not yet exist on disk at watch time (e.g. a content
 /// target a future apply will create); `notify` errors on a missing path, so a
 /// path that cannot be registered is surfaced as [`DebounceError::Watch`]
-/// rather than silently skipped — the caller (the rescan) re-derives the
+/// rather than silently skipped; the caller (the rescan) re-derives the
 /// set after each apply, when the recorded paths do exist.
 fn watch_path(
     debouncer: &mut InnerDebouncer<RecommendedWatcher, RecommendedCache>,

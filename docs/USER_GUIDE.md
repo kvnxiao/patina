@@ -33,10 +33,10 @@ when it lacks the privilege rather than failing cryptically.
 
 Configuration lives in `patina.toml` files inside your dotfiles
 repository. Each entry declares a source path in the repo and one or
-more targets on the machine. Entries are declared under one of two
-kind-typed table-arrays (`[[file]]` for a file source, `[[directory]]`
-for a directory source), and each carries an optional `mode` choosing
-how Patina materializes it.
+more targets on the machine. You declare entries under one of two
+kind-typed table-arrays: `[[file]]` for a file source, `[[directory]]`
+for a directory source. Each entry carries an optional `mode` that
+chooses how Patina materializes it.
 
 A minimal example:
 
@@ -67,10 +67,11 @@ context:
 - A `[[file]]` accepts `mode = "symlink"` (the default, a symbolic link
   to the source file) or `mode = "copy"` (a byte copy). A `.tmpl` source
   is always rendered as a template and takes no explicit `mode`.
-- A `[[directory]]` accepts `mode = "symlink"` (the default, a single
-  atomic symbolic link to the whole directory), `mode = "symlink-tree"`
-  (one symbolic link per leaf file, mirroring the source tree), or
-  `mode = "copy"` (a recursive byte copy of the tree).
+- A `[[directory]]` accepts three modes. `mode = "symlink"` is the
+  default: a single atomic symbolic link to the whole directory.
+  `mode = "symlink-tree"` makes one symbolic link per leaf file, so the
+  target mirrors the source tree. `mode = "copy"` makes a recursive byte
+  copy of the tree.
 
 Use `target` for a single destination or `targets = [...]` to fan one
 source out to many. (The earlier single `[[file]]` table with the
@@ -81,8 +82,8 @@ source out to many. (The earlier single `[[file]]` table with the
 
 Any entry may carry a `when` expression, a MiniJinja predicate gating
 whether the entry applies on this host. When `when` evaluates false, the
-entry contributes no operations and its target is left untouched (and is
-classified orphaned if a prior apply had materialized it):
+entry contributes no operations and Patina leaves its target untouched.
+A target a prior apply had materialized is classified orphaned:
 
 ```toml
 # Only symlinked on Windows.
@@ -95,9 +96,10 @@ when = "patina.os == 'windows'"
 `when` expressions are evaluated by the same MiniJinja engine that
 renders templates and resolves `[[auto_match]]` profile rules. The same
 predicate engine runs at every `when` site. It uses
-strict-undefined semantics: referencing a variable that was never
-defined (for example a typo like `patina.oss` instead of `patina.os`)
-is an error that fails the run, not a silently-false predicate. Built-in
+strict-undefined semantics. A reference to a variable that was never
+defined fails the run with an error, rather than yielding a
+silently-false predicate. A typo like `patina.oss` instead of
+`patina.os` is such a reference. Built-in
 facts such as `patina.os` and `patina.hostname` are always available;
 `patina.profile` is not defined during profile resolution, so an
 `[[auto_match]]` rule must not reference it.
@@ -135,10 +137,11 @@ diff-and-prompt loop by default:
    renders templates into a concrete list of operations.
 2. **Diff.** Patina compares the planned end-state against what is
    actually on disk and prints the diff. A target a prior apply
-   materialized but the current plan no longer manages (an entry you
-   dropped from a `patina.toml`, or one whose `when` is now false) shows
-   as a `remove <target>` block: it is backed up and deleted on apply, so
-   the reap is never hidden from the consent diff. A dropped target that
+   materialized, but the current plan no longer manages, shows as a
+   `remove <target>` block. That covers an entry you dropped from a
+   `patina.toml`, and one whose `when` is now false. Patina backs the
+   target up and deletes it on apply, so the reap is never hidden from
+   the consent diff. A dropped target that
    now sits inside another entry's target is left alone instead: that
    entry owns the path, and where it is a whole-directory `symlink` the
    dropped path leads through the link into the entry's source.
@@ -180,10 +183,10 @@ common flags:
   `init` and `add` do not have a confirm-before-mutate gate. `init`
   writes unconditionally (it refuses only if a manifest already
   exists), and accepts `--yes` for parity without acting on it. `add`
-  prompts only for an omitted mode or module when run in an interactive
-  terminal, and refuses *those specific* missing inputs in a
-  non-interactive shell, so once mode and module are supplied it
-  writes without prompting.
+  prompts only for an omitted mode or module, and only in an interactive
+  terminal. In a non-interactive shell it refuses *those specific*
+  missing inputs. Once mode and module are supplied it writes without
+  prompting.
 
 | Command   | Purpose                                                                                       |
 | --------- | --------------------------------------------------------------------------------------------- |
@@ -232,8 +235,8 @@ decline the UAC prompt, Patina exits with code `5` and points you at
 
 On Windows, Microsoft Defender scans file I/O in real time. A dotfiles
 repository is a pile of small git objects, and `apply` reads and writes
-many links and copies, so that per-access scan is pure overhead for paths
-you already trust. `patina defender` adds Defender **path exclusions** for
+many links and copies. That per-access scan is therefore pure overhead
+for paths you already trust. `patina defender` adds Defender **path exclusions** for
 the repository and its deployed targets to remove it. The command is
 Windows-only and does not appear in `--help` on macOS or Linux.
 
@@ -257,8 +260,8 @@ Without administrator, Patina reports state from its own ledger and labels
 it as such: `recorded` and `not recorded` rather than `present` and
 `missing`, under a note saying where the state came from. `--json` carries
 the same distinction as `current_readable: false`. The practical limit is
-that an exclusion you delete by hand in the Defender UI goes unnoticed
-until you run `patina defender status` from an elevated shell, which reads
+that an exclusion you delete by hand in the Defender UI goes unnoticed.
+Run `patina defender status` from an elevated shell to see it: that reads
 the live list and reports `present` or `missing` against it.
 
 The desired set is exactly the repository root plus **one** exclusion per
@@ -289,8 +292,8 @@ state as a colored tag after it:
 | Red `[not recorded]`                       | Ledger does not record it; the live list was not readable  |
 
 `[present, not recorded by patina]` is worth acting on. The path is already
-excluded, so `apply` will not touch Defender for it, but the ledger does not
-own it and **`clear` will not reap it**. You get this when you excluded the
+excluded, so `apply` will not touch Defender for it. But the ledger does
+not own it, and **`clear` will not reap it**. You get this when you excluded the
 path by hand, or when a Patina run applied it without recording the result.
 Running `apply` adopts it: the ledger converges on the whole desired set, so
 the entry becomes `present` and `clear` can reverse it afterwards.
@@ -325,18 +328,18 @@ The distinction matters because the fix differs. Patina will not report a
 success it could not confirm, and it will not blame Defender for an outcome
 it never saw.
 
-Patina records only the exclusions it added in a per-machine ledger, so
-`apply` reaps a stale patina-owned exclusion while a **user-added
-exclusion is never touched**, and `clear` removes only what Patina owns.
+Patina records only the exclusions it added, in a per-machine ledger.
+`apply` therefore reaps a stale patina-owned exclusion, and **never
+touches a user-added exclusion**. `clear` removes only what Patina owns.
 
-If you are on Windows 11, a [Dev Drive](https://learn.microsoft.com/windows/dev-drive/)
-(ReFS) in Defender *performance mode* scans asynchronously instead of not
-at all, and is the lower-risk choice where it applies.
+If you are on Windows 11, consider a [Dev Drive](https://learn.microsoft.com/windows/dev-drive/)
+(ReFS) in Defender *performance mode*. It scans asynchronously instead of
+not at all, so it is the lower-risk choice where it applies.
 
 ## Watch service
 
-`patina watch` runs a per-user background watcher that re-applies your
-configuration when the source repository changes and surfaces drift when
+`patina watch` runs a per-user background watcher. It re-applies your
+configuration when the source repository changes, and surfaces drift when
 a managed target is edited outside Patina. It never needs admin or sudo
 on its default path.
 
@@ -369,9 +372,9 @@ the OS:
 ### Surviving logout on Linux
 
 A `systemd --user` service stops when you log out and starts again when
-you next log in. If you want the watcher to keep running across logout
-(for example, on a server you SSH in and out of), enable lingering for
-your user once:
+you next log in. You may want the watcher to keep running across logout,
+for example on a server you SSH in and out of. Enable lingering for your
+user once:
 
 ```sh
 sudo loginctl enable-linger $USER
@@ -393,9 +396,10 @@ these init systems in v1.0.
 
 ### Drift notifications
 
-For every non-symlink managed target (copy-mode files, copied directory
-trees, rendered templates), the watcher hashes the target when it changes and
-compares against the hash recorded at the last apply. On divergence it
+The watcher hashes every non-symlink managed target when it changes, and
+compares the result against the hash recorded at the last apply. Those
+targets are copy-mode files, copied directory trees, and rendered
+templates. On divergence it
 emits a desktop notification titled "Patina: drift detected" naming the
 target, and records the event in a drift cache at
 `<state>/patina/drift.cache`. Notifications are rate-limited to at most
@@ -409,9 +413,10 @@ it the second way:
 - As the desktop notification above, **only while the watcher is
   running**.
 - As `drifted` in `patina status`, **always**. `patina status` decides
-  drift by re-hashing the target live, independent of the watcher, so a
-  file you edit and then revert to its recorded bytes reports `clean`
-  even though the watcher logged the intervening edit. The drift cache is
+  drift by re-hashing the target live, independent of the watcher. A
+  file you edit and then revert to its recorded bytes therefore reports
+  `clean`, even though the watcher logged the intervening edit. The
+  drift cache is
   the watcher's own notification ledger; `patina status` does not read
   it.
 
@@ -458,22 +463,22 @@ on the machine you work from, commit it, and every other machine catches
 up with `git pull && patina apply`.
 
 Bumping a pin is the moment third-party code changes what lands on your
-machines, so `patina remote update` slows it down: a candidate commit
-must not be dated in the future, must descend from the pin you already
-have, must not predate the pin's own timestamp, and must be at least
-`min_age` old (72 hours unless you say otherwise). Every byte still
+machines, so `patina remote update` slows it down. A candidate commit
+must not be dated in the future, and must descend from the pin you
+already have. It must not predate the pin's own timestamp, and must be at
+least `min_age` old (72 hours unless you say otherwise). Every byte still
 passes the ordinary diff-and-prompt loop before it reaches your
-filesystem, and remote content is never treated as a template or read as
-configuration.
+filesystem. Patina never treats remote content as a template, and never
+reads it as configuration.
 
 Cached checkouts live in the per-machine [state
 directory](#state-directory), never in your repository, and are pruned
 automatically once no journal record needs them.
 
-Read [`REMOTE_SOURCES.md`](REMOTE_SOURCES.md) for the whole model: the
-lockfile format, the cache layout, each gate check and what it can and
-cannot stop, the shell snippets for the background update notice, and the
-multi-machine flow.
+Read [`REMOTE_SOURCES.md`](REMOTE_SOURCES.md) for the whole model. It
+covers the lockfile format, the cache layout, and each gate check with
+what it can and cannot stop. It also covers the shell snippets for the
+background update notice, and the multi-machine flow.
 
 ## State directory
 
@@ -530,10 +535,10 @@ For a post-mortem, `patina debug journal <path>` decodes the binary
 journal into human-readable form so you can see exactly what the
 interrupted or completed apply intended to do. The parallel
 `patina debug drift-cache <path>` decodes the watcher's binary drift
-cache (`<state>/patina/drift.cache`), printing its version envelope, the
-journal timestamp it is bound to, and one block per recorded divergence
-naming the target path, the expected and actual hashes, and the
-detection time. Both refuse a file written by a newer Patina with a typed
+cache (`<state>/patina/drift.cache`). It prints the version envelope, the
+journal timestamp the cache is bound to, and one block per recorded
+divergence. Each block names the target path, the expected and actual
+hashes, and the detection time. Both refuse a file written by a newer Patina with a typed
 error naming the version mismatch, and exit 1 on an invalid path.
 
 ## Troubleshooting

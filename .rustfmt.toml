@@ -11,7 +11,7 @@
 #
 # `unstable_features = true` is required to enable the unstable options.
 # On *stable* rustfmt this line warns and the unstable options are
-# silently ignored — i.e. running `cargo fmt` on stable will partially
+# silently ignored, so running `cargo fmt` on stable will partially
 # format the code. Always use `cargo +nightly fmt` to match CI.
 
 unstable_features = true

@@ -27,7 +27,7 @@ fn partial_apply_diff_omits_unchanged_bodies_and_summarizes_the_count() {
     let f = Fixture::new();
     // Four `copy` entries. After the first apply all four targets match their
     // source bytes. We then drift exactly one (`b_out`) so the next plan
-    // classifies `b` as Update and the other three as Unchanged — the
+    // classifies `b` as Update and the other three as Unchanged: the
     // shape of one Update + three Unchanged.
     let m = f.module(
         "m",
@@ -91,7 +91,7 @@ mode = "copy"
 
 /// An entry dropped from a `patina.toml` after a prior apply is reaped on the
 /// next apply. The preview must render that removal as a `remove <target>`
-/// block carrying the deleted content — not omit it and summarize only the
+/// block carrying the deleted content, not omit it and summarize only the
 /// surviving entry as unchanged.
 #[test]
 fn dropped_entry_renders_as_a_remove_block_in_the_preview() {
@@ -150,7 +150,7 @@ mode = "copy"
 ///
 /// The renderer prints the target resolved through `resolve_location`, which
 /// canonicalizes the parent (this home dir) and strips the Windows verbatim
-/// prefix — so the printed prefix is the *canonical* home, not the raw env
+/// prefix, so the printed prefix is the *canonical* home, not the raw env
 /// value: on macOS the tempdir's `/var/...` resolves to `/private/var/...`,
 /// and on Windows a junction / short-name / `\\?\` form can differ from the
 /// env string (Linux `/tmp` canonicalizes to a no-op, which is why only it

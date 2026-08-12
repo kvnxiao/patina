@@ -27,8 +27,8 @@ use thiserror::Error;
 
 /// Every way the remote subsystem can fail.
 ///
-/// Opaque over a boxed private repr for two reasons: the failure set grows as
-/// the subsystem does, and [`EngineError`](crate::error::EngineError) is
+/// Opaque over a boxed private repr for two reasons. The failure set grows as
+/// the subsystem does. And [`EngineError`](crate::error::EngineError) is
 /// returned by value from every fallible engine entry point, so a wide variant
 /// here would widen every `Result` in the crate.
 #[derive(Debug, Error)]
@@ -111,11 +111,11 @@ impl RemoteError {
     /// Restate a fetch failure as the cold-cache failure, naming the remote and
     /// the rev this machine could not materialize.
     ///
-    /// The underlying `git` error alone says a fetch failed; the user needs to
-    /// know *which pin* they cannot converge to, since that is what a `git
-    /// pull` or a network fix has to satisfy. A failure that is not a `git`
-    /// failure (a cache write, say) already names its own path and passes
-    /// through.
+    /// The underlying `git` error alone says a fetch failed. The user needs to
+    /// know *which pin* they cannot converge to, because that is what a
+    /// `git pull` or a network fix has to satisfy. A failure that is not a
+    /// `git` failure, a cache write for instance, already names its own path
+    /// and passes through.
     #[must_use = "the restated error is what the user sees"]
     pub fn into_cold_cache(self, name: &str, rev: &str) -> Self {
         match *self.0 {

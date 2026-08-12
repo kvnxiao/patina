@@ -34,9 +34,9 @@ use patina_core::RollbackOptions;
 /// # Errors
 ///
 /// Returns an error when the engine-level rollback fails for a reason other
-/// than the two typed user-facing outcomes (`NoPriorApply`,
-/// `RollbackPartial`), which are surfaced as a stderr warning and exit
-/// code 1 rather than an `Err`. A declined prompt maps to exit code 5.
+/// than the two typed user-facing outcomes, `NoPriorApply` and
+/// `RollbackPartial`. Those two surface as a stderr warning and exit code 1,
+/// rather than as an `Err`. A declined prompt maps to exit code 5.
 pub async fn run(
     args: &RollbackArgs,
     tty: Tty,

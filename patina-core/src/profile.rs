@@ -23,7 +23,7 @@
 //! # Predicate evaluation
 //!
 //! `[[auto_match]]` `when` predicates are evaluated by the shared
-//! `MiniJinja` [`Engine`] — the same evaluator
+//! `MiniJinja` [`Engine`], the same evaluator
 //! `[[file]]` / `[[directory]]` / `[[hook]]` `when` predicates and
 //! `*.tmpl` bodies use. One grammar, one
 //! strict-undefined behavior, one place to reason about predicates. The
@@ -36,14 +36,14 @@
 //! per-machine, per-profile, per-module, repo-shared) are assembled, so
 //! the predicate is evaluated against a built-ins-only
 //! [`Resolver`]. A predicate that
-//! accesses a variable absent from that context — including a
-//! user-defined variable, or `patina.profile` (which is precisely what
-//! this resolution computes and so cannot be read here) — is a typed
-//! [`ProfileError::Predicate`] naming the offending variable,
-//! not a silent non-match. The undefined-access error and the
-//! short-circuit carve-out (a variable on a not-taken `and` / `or`
-//! branch is never accessed and does not error) fall out of routing
-//! through the shared engine; this module adds no evaluator of its own.
+//! accesses a variable absent from that context is a typed
+//! [`ProfileError::Predicate`] naming the offending variable. That covers a
+//! user-defined variable, and `patina.profile`, which is precisely what this
+//! resolution computes and so cannot be read here. The error is
+//! not a silent non-match. The undefined-access error and the short-circuit
+//! carve-out both fall out of routing through the shared engine. Under the
+//! carve-out, a variable on a not-taken `and` / `or` branch is never accessed
+//! and does not error. This module adds no evaluator of its own.
 //!
 //! [`state_dir`]: crate::state_dir
 
@@ -136,7 +136,7 @@ pub enum ProfileError {
     },
 
     /// Evaluating an `[[auto_match]]` rule's `when` predicate through the
-    /// shared `MiniJinja` engine failed — a syntax error, a type error,
+    /// shared `MiniJinja` engine failed: a syntax error, a type error,
     /// or (most commonly) a reference to a variable undefined in the
     /// built-ins-only context profile resolution runs against.
     /// The wrapped [`TemplateError`](crate::template::TemplateError)
@@ -163,30 +163,30 @@ pub enum ProfileError {
 ///
 /// # Arguments
 ///
-/// * `env_value` — `Some(value)` when `PATINA_PROFILE` is set in the process
+/// * `env_value`: `Some(value)` when `PATINA_PROFILE` is set in the process
 ///   environment, `None` when unset. An empty `value` is treated the same as
 ///   `None`.
-/// * `persisted_path` — absolute path to `<state>/patina/profile`. `NotFound`
-///   is silent fall-through; other IO errors surface as
+/// * `persisted_path`: absolute path to `<state>/patina/profile`. `NotFound` is
+///   silent fall-through; other IO errors surface as
 ///   [`ProfileError::PersistedRead`].
-/// * `auto_match_rules` — rules parsed from the root `patina.toml`, in
+/// * `auto_match_rules`: rules parsed from the root `patina.toml`, in
 ///   declaration order. The first whose `when` matches wins.
-/// * `builtins` — built-in variable context (`patina.os`, `patina.hostname`, …)
+/// * `builtins`: built-in variable context (`patina.os`, `patina.hostname`, …)
 ///   the predicate evaluates against. Profile resolution runs before the user
 ///   variable layers are assembled, so the predicate sees a built-ins-only
 ///   [`Resolver`].
-/// * `engine` — the shared `MiniJinja` [`Engine`] that evaluates every `when`
+/// * `engine`: the shared `MiniJinja` [`Engine`] that evaluates every `when`
 ///   site.
 ///
 /// # Errors
 ///
 /// Returns [`ProfileError::PersistedRead`] when the persisted-profile
-/// file exists but cannot be read, and [`ProfileError::Predicate`] when
-/// an `[[auto_match]]` rule's `when` expression fails to evaluate —
-/// notably when it accesses a variable undefined in the built-ins-only
-/// context (a misspelled built-in, a user-defined variable, or
-/// `patina.profile`), which is a typed error naming the variable rather
-/// than a silent non-match. When predicates evaluate cleanly
+/// file exists but cannot be read. Returns [`ProfileError::Predicate`] when
+/// an `[[auto_match]]` rule's `when` expression fails to evaluate. The
+/// common case is a variable undefined in the built-ins-only context: a
+/// misspelled built-in, a user-defined variable, or `patina.profile`. That is
+/// a typed error naming the variable, not a silent non-match. When predicates
+/// evaluate cleanly
 /// to `false`, the function continues to the next rule and ultimately to
 /// the fallback.
 ///
@@ -483,8 +483,8 @@ mod tests {
         assert_eq!(resolution.source, ProfileSource::AutoMatch);
     }
 
-    /// An `or` of two equalities — previously rejected by the narrow
-    /// evaluator — now evaluates and selects when either disjunct holds.
+    /// An `or` of two equalities evaluates and selects when either disjunct
+    /// holds.
     #[test]
     fn auto_match_or_predicate_now_selects() {
         let dir = TempDir::new().expect("tempdir");
@@ -504,11 +504,10 @@ mod tests {
         assert_eq!(resolution.source, ProfileSource::AutoMatch);
     }
 
-    /// A `when` that accesses `patina.profile` — unresolved during profile
-    /// resolution because it is precisely what this pass computes — is a
-    /// typed [`ProfileError::Predicate`] naming the variable, not a silent
-    /// non-match (replaces the narrow evaluator's reject tests
-    /// and `missing_builtin_compares_as_empty_string`).
+    /// A `when` that accesses `patina.profile` is a typed
+    /// [`ProfileError::Predicate`] naming the variable, not a silent
+    /// non-match. `patina.profile` is unresolved during profile resolution,
+    /// because it is precisely what this pass computes.
     #[test]
     fn auto_match_referencing_patina_profile_errors() {
         let dir = TempDir::new().expect("tempdir");

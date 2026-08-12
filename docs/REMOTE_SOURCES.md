@@ -1,4 +1,4 @@
-# Local and Remote Sources
+# Local and remote sources
 
 Patina materializes declarations from two kinds of sources. A **local
 source** is a path inside your dotfiles repository, the model the rest
@@ -8,11 +8,11 @@ current for you: a third-party skill or prompt library you want
 deployed like a dotfile without hand-copying it on every upstream
 change.
 
-This page describes the remote model end to end: how the root manifest
-declares a remote, how an entry selects one, where the content is
-cached, how updates are gated against supply-chain risk, and how
-several machines share one deterministic view of it all through a
-committed lockfile.
+This page describes the remote model end to end. It covers how the root
+manifest declares a remote, how an entry selects one, and where the
+content is cached. It also covers how updates are gated against
+supply-chain risk, and how several machines share one deterministic view
+through a committed lockfile.
 
 ## Local sources
 
@@ -21,7 +21,7 @@ everywhere else in these docs: a path relative to the module directory,
 materialized as a symlink, rendered template, or byte copy. See
 `docs/USER_GUIDE.md` "Declaring dotfiles" for the entry kinds and
 modes. Everything on this page is additive; a repository that declares
-no remotes behaves exactly as before.
+no remotes is unaffected by any of it.
 
 ## The remote registry
 
@@ -41,8 +41,8 @@ min_age = "0s"           # optional; overrides remote_min_age for this remote
 # name = "humanizer"     # optional; derived from the URL
 ```
 
-A remote's **name** is what entries refer to it by, and what keys its
-pin in the lockfile, its directory in the cache, and every
+A remote's **name** is what entries refer to it by. It also keys the
+remote's pin in the lockfile, its directory in the cache, and every
 `patina remote` verb. Write `name` outright, or let Patina take it from
 the last path segment of the URL with any trailing `.git` removed.
 That gives `humanizer` for all of
@@ -51,14 +51,15 @@ That gives `humanizer` for all of
 name may contain letters, digits, `.`, `_`, and `-`, because it becomes
 a directory name; a URL with no legal last segment is refused with a
 message telling you to write `name`. For the same reason a name may not
-end in a dot, and may not be a DOS device name (`CON`, `PRN`, `AUX`,
-`NUL`, `COM0`-`COM9`, `LPT0`-`LPT9`, with or without an extension):
-Windows resolves both to something other than the directory you asked
-for, and `notice.` would land on Patina's own notice file. Those are
-refused on every platform, so manifest validity never depends on which
-machine reads it. Two remotes may not answer to one
-name, compared ignoring case and Unicode normalization so a manifest
-cannot mean two things on Linux and one thing on macOS. Every
+end in a dot, and may not be a DOS device name. The device names are
+`CON`, `PRN`, `AUX`, `NUL`, `COM0`-`COM9`, and `LPT0`-`LPT9`, with or
+without an extension. Windows resolves both shapes to something other
+than the directory you asked for, and `notice.` would land on Patina's
+own notice file. Those are refused on every platform, so manifest
+validity never depends on which machine reads it. Two remotes may not
+answer to one name. The comparison ignores case and Unicode
+normalization, so a manifest cannot mean two things on Linux and one
+thing on macOS. Every
 reference is matched the same way: an entry's `remote` key, a
 `patina remote update <name>` argument, and a `patina.lock` key all
 find a declaration whose spelling differs only in case. The names
@@ -85,7 +86,7 @@ target = "~/.claude/skills/humanizer/SKILL.md"
 ```
 
 An entry with no `remote` key resolves its source against its module
-directory, exactly as before. An entry with one resolves against the
+directory. An entry with one resolves against the
 cached checkout of that remote's pinned rev, so its module directory
 contributes only the manifest line. The two live side by side in one
 manifest, and one manifest may draw on several remotes.
@@ -117,9 +118,9 @@ Remote content is third-party input, and Patina holds these lines:
   explode under strict-undefined rendering, or worse, render. The rule
   is per entry, so a local `.tmpl` still renders in the same manifest.
 - A remote source may supply only bytes from within its own checkout.
-  An entry whose source resolves outside the checkout, whether through
-  a `..` in the declared source or a symbolic link the checkout ships,
-  is refused at plan time. Symlinks in a checkout are materialized as
+  An entry whose source resolves outside the checkout is refused at plan
+  time. That covers both a `..` in the declared source and a symbolic
+  link the checkout ships. Symlinks in a checkout are materialized as
   inert files holding their target text, so the resolver cannot follow
   one out of the checkout. Should a cached checkout hold a real
   symbolic link anyway, a directory source containing one fails the
@@ -127,8 +128,8 @@ Remote content is third-party input, and Patina holds these lines:
   link, so its presence means the cache was made or altered by
   something else.
 - A remote's `url` and `ref` are passed to `git` as positional
-  arguments and may not begin with `-`, so a manifest cannot smuggle a
-  git option (for example `--upload-pack`) into a fetch.
+  arguments, and may not begin with `-`. A manifest therefore cannot
+  smuggle a git option (for example `--upload-pack`) into a fetch.
 - Every byte still passes the consent diff. Remote updates reach your
   filesystem only through the same diff-and-prompt loop as local
   changes.
@@ -163,23 +164,24 @@ updated_at = "2026-08-11T14:00:00Z"
   first pin.
 - Two `[remotes.<name>]` tables that address one remote are refused
   rather than resolved. Patina's own writer replaces a pin instead of
-  joining a second one, so a folded-equivalent pair means a hand-edit or
-  an unfinished merge, and guessing which one wins would apply a
+  joining a second one. A folded-equivalent pair therefore means a
+  hand-edit or an unfinished merge. Guessing which one wins would apply a
   different commit than the machine that wrote the file.
 
-The file is written through a same-directory temporary and a rename, so
-a process killed mid-write leaves either the old pins or the new ones,
-never a truncated file with no pins at all.
+The file is written through a same-directory temporary and a rename. A
+process killed mid-write therefore leaves either the old pins or the new
+ones, never a truncated file with no pins at all.
 
 The lockfile is a statement about the root manifest's declarations, not
 about what this machine happens to use. Two consequences follow.
 `patina remote update` with no argument covers **every** declaration,
-including one no entry currently names, so the committed lock stays
-complete for machines whose active entries differ from yours. And a pin
-whose `[[remote]]` you deleted is stale by definition: a `patina apply`
-that may write drops it and says so. A preview (a non-interactive
-apply without `--yes`, or any `--json` run) reports the stale pin and
-leaves the file alone, because a preview never writes your repository.
+including one no entry currently names. The committed lock therefore
+stays complete for machines whose active entries differ from yours. And a
+pin whose `[[remote]]` you deleted is stale by definition: a
+`patina apply` that may write drops it and says so. A preview reports the
+stale pin and leaves the file alone, because a preview never writes your
+repository. A preview here means a non-interactive apply without `--yes`,
+or any `--json` run.
 
 Reading `patina.lock` is itself lazy: it happens on the first entry
 that selects a remote, so a repository that uses none never reads (or
@@ -200,8 +202,8 @@ repository:
     └── <sha>/                   immutable checkout, one per pinned rev
 ```
 
-A checkout is materialized on demand: the first entry that actually
-selects a remote on this machine fetches it, and a remote only a
+A checkout is materialized on demand. The first entry that actually
+selects a remote on this machine fetches it. A remote that only a
 `when`-false entry names is never fetched at all. Pins are global,
 checkouts are local.
 
@@ -214,8 +216,8 @@ target: the lockfile rewrites are held back for exactly that reason.
 
 The directory under `<state>/remotes/` is named by the remote's
 folded name (one case, one Unicode normal form), not by the spelling
-in the manifest, so respelling a declaration keeps addressing the
-checkouts already on disk instead of cold-starting a second tree.
+in the manifest. Respelling a declaration therefore keeps addressing the
+checkouts already on disk, instead of cold-starting a second tree.
 
 Git runs as a subprocess (`git` on `PATH`, verified by
 `patina doctor`), so your existing authentication (SSH agent,
@@ -225,17 +227,17 @@ update never mutates content behind a live symlink: apply re-points
 links to the new checkout under the ordinary journaled flow, and
 `patina rollback` can re-point them back.
 
-A checkout is written with line-ending translation off and external
-git attribute sources (system and per-user) neutralized, so the same
-pinned commit materializes the same bytes on every machine regardless
-of a user's `core.autocrlf` or `core.attributesFile`. This does not
+A checkout is written with line-ending translation off, and with
+external git attribute sources (system and per-user) neutralized. The
+same pinned commit therefore materializes the same bytes on every
+machine, whatever a user's `core.autocrlf` or `core.attributesFile` says. This does not
 yet cover an in-tree `.gitattributes` shipped in the remote, which can
 still apply an `eol` or `filter` rule; against such a repository a
 checkout is not byte-verbatim. Fully attribute-blind materialization
 is a post-1.0 item.
 
-After each successful apply, the cache is swept automatically:
-checkouts that no journal record on disk references are removed, and a
+After each successful apply, the cache is swept automatically.
+Checkouts that no journal record on disk references are removed. A
 remote the root manifest no longer declares loses its whole cache
 directory, bare repository included, once no journal record points
 into it. Rollback always has what it needs, and disk stays bounded at
@@ -272,10 +274,11 @@ humanizer  main              1f0c6c9b9f2e8a1d4b7c0e3a5d8f2b6c9e1a4d70  https://g
 starship   (default branch)  (unpinned)                                https://github.com/starship/starship  (update pending)
 ```
 
-A terminal additionally gets color: the name cyan, a declared ref bright
-yellow, a recorded rev green, the URL bright blue, `(unpinned)` and
-`(update pending)` yellow, and a ref the manifest left to the remote's
-own default dim. Every one of those facts is in the text
+A terminal additionally gets color. The name is cyan, a declared ref
+bright yellow, a recorded rev green, and the URL bright blue.
+`(unpinned)` and `(update pending)` are yellow, and a ref the manifest
+left to the remote's own default is dim. Every one of those facts is in
+the text
 as well, so a piped run, `--color never`, and `NO_COLOR` lose the color
 and nothing else. `--json` carries the same rows plus each pin's
 `updated_at`.
@@ -373,10 +376,10 @@ and spawning one detached process per session, after the first
 command rather than at startup.
 
 A hook holds the shared lock only while it reads the manifest and the
-lockfile, never across `ls-remote`. `git` has no timeout of its own, so
-a hook that kept the lock over the network could make a concurrent
-`apply` wait out its own lock timeout and fail because a server went
-quiet.
+lockfile, never across `ls-remote`. `git` has no timeout of its own. A
+hook that kept the lock over the network could make a concurrent
+`apply` wait out its own lock timeout. The `apply` would then fail
+because a server went quiet.
 
 fish (`conf.d/patina-remotes.fish`):
 
@@ -434,8 +437,8 @@ pins), it says so and suggests `git pull && patina apply`
 instead, since the pending changes are already decided and gated.
 `patina status` surfaces the same pending-update state. A successful
 `remote update` (including the one inside `apply --update`) drops the
-remotes it settled from the notice on the spot, so a stale
-announcement never outlives the bump it asked for.
+remotes it settled from the notice on the spot. A stale announcement
+therefore never outlives the bump it asked for.
 
 ## Target collision validation
 
@@ -459,10 +462,10 @@ the run before anything is written.
 Only a whole-directory `symlink` owns everything under its target,
 because it is the one mode that replaces the target path with a single
 object. A `symlink-tree` or `copy` `[[directory]]` materializes one
-object per source leaf and journals each leaf as its own target, so it
-claims those leaves and nothing between them. Another entry may
+object per source leaf, and journals each leaf as its own target. It
+therefore claims those leaves and nothing between them. Another entry may
 therefore deploy into a part of the same directory the tree does not
-fill, which is what makes "add one upstream file to a directory my
+fill. That is what makes "add one upstream file to a directory my
 repository also populates" expressible. Two entries writing one leaf is
 still refused, naming the leaf and the directory target it came from.
 
@@ -474,9 +477,9 @@ any write, which is what a tree growing an unexpected file should do.
 Both comparisons ignore case and Unicode normal form, on every
 platform. Windows and macOS resolve two targets differing only in case
 to one file, and APFS does the same for two differing only in NFC/NFD
-spelling. Linux resolves each pair to two files, but folding only where
-the host needs it would let one manifest plan clean on Linux and fail
-on macOS. The verdict belongs to the manifest, not the machine, so two
+spelling. Linux resolves each pair to two files. Folding only where the
+host needs it would let one manifest plan clean on Linux and fail on
+macOS. The verdict belongs to the manifest, not the machine, so two
 targets differing only in case or normalization are an error
 everywhere; rename one.
 

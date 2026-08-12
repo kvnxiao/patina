@@ -10,7 +10,7 @@
 
 set -e
 
-# Phase 0 hasn't landed yet — no Cargo.toml means there's nothing to check.
+# No Cargo.toml means there is nothing to check.
 # Once Phase 0 of SPEC 0001 lands, this guard becomes a no-op.
 if [ ! -f Cargo.toml ]; then
     exit 0

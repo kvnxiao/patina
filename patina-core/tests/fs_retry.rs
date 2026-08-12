@@ -27,7 +27,7 @@
 //! on a non-Windows host an ordinary write failure surfaces on the
 //! first attempt with no `fs_write_retry` `tracing` event emitted. The
 //! contract is asserted at two of the three engine write sites the wrapper
-//! guards — the byte-copy site and the forward-apply symlink site — so a
+//! guards, the byte-copy site and the forward-apply symlink site, so a
 //! regression that drops the wrapper from either path is caught here. The
 //! Windows-only retry behaviour is exercised by the unit tests gated behind
 //! `#[cfg(windows)]` in `patina-core::apply::retry`; the symlink site routes
@@ -115,7 +115,7 @@ impl Subscriber for RecordingSubscriber {
 /// first attempt and the `tracing` log contains no `fs_write_retry` event.
 ///
 /// We make the parent directory non-writable so the byte-copy write fails
-/// with the OS's normal permission error — the closest portable analogue to
+/// with the OS's normal permission error, the closest portable analogue to
 /// the Windows `FILE_SHARE_NONE` scenario. The retry
 /// wrapper is a pass-through off Windows, so the error must surface
 /// immediately and no `fs_write_retry` event may be recorded.

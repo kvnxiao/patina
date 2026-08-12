@@ -4,14 +4,14 @@
 //! materializes a single source path at one or more target paths. The
 //! six modes split across three submodules:
 //!
-//! - `symlink` — per-file [`Symlink`](crate::config::FileMode::Symlink) (with
+//! - `symlink`: per-file [`Symlink`](crate::config::FileMode::Symlink) (with
 //!   the directory-source per-file walk), atomic
 //!   [`SymlinkDir`](crate::config::FileMode::SymlinkDir), and per-leaf
 //!   [`SymlinkTree`](crate::config::FileMode::SymlinkTree) (walk the directory
 //!   source and link each leaf, leaving intermediate target directories real).
-//! - `copy` — [`Copy`](crate::config::FileMode::Copy) and recursive
+//! - `copy`: [`Copy`](crate::config::FileMode::Copy) and recursive
 //!   [`CopyTree`](crate::config::FileMode::CopyTree).
-//! - `template` — implicit
+//! - `template`: implicit
 //!   [`TemplateRender`](crate::config::FileMode::TemplateRender) of a `.tmpl`
 //!   source, rendered once and written to each declared (suffix-less) target.
 //!
@@ -20,11 +20,10 @@
 //! Every executor returns a `Vec<`[`CompletionRecord`]`>`: one record per
 //! materialized filesystem object. A single-file source produces one
 //! record per target; a directory-source symlink walk produces one record
-//! per walked file per target. Keeping this per-target (and per-walked-file)
-//! granularity throughout lets the progress cursor record one entry per
-//! materialized object so backups, status, and rollback
-//! inherit the same unit without special-casing the multi-target
-//! shape.
+//! per walked file per target. Keeping that granularity throughout lets the
+//! progress cursor record one entry per materialized object. Backups, status,
+//! and rollback therefore inherit the same unit, with no special case for the
+//! multi-target shape.
 //!
 //! # Scope
 //!
@@ -70,10 +69,9 @@ pub(crate) use retry::with_sharing_violation_retry;
 /// recursive [`copy_tree`](copy::copy_tree) and per-leaf
 /// [`tree_symlink`](symlink::tree_symlink) executors:
 ///
-/// - [`LeafWrite::All`] — write every walked leaf, the pre-skip behaviour. Used
-///   for a fresh (`Create`) tree, by [`materialize`], and by the executor unit
-///   tests.
-/// - [`LeafWrite::Only`] — write only the leaves whose plan-time disposition is
+/// - [`LeafWrite::All`]: write every walked leaf. Used for a fresh (`Create`)
+///   tree, by [`materialize`], and by the executor unit tests.
+/// - [`LeafWrite::Only`]: write only the leaves whose plan-time disposition is
 ///   not `Unchanged`, leaving the clean leaves' inode/mtime untouched (the
 ///   churn-removal goal). The set holds paths relative to the declared target
 ///   directory, in the same form [`walk_files`] yields.
@@ -179,8 +177,8 @@ pub enum ExecutorError {
     },
 
     /// A symlink-family mode was asked to point at a source that does not
-    /// exist (the engine canonicalizes before reaching here, so this is a
-    /// genuine missing source rather than a relative-path slip).
+    /// exist. The engine canonicalizes before reaching here, so this is a
+    /// genuine missing source rather than a relative-path slip.
     #[error("symlink source {path} does not exist")]
     SourceMissing {
         /// The missing source path.
@@ -276,7 +274,7 @@ pub fn materialize(
 ///
 /// Returns an [`ExecutorError`] for the first leaf that fails, or
 /// [`ExecutorError::NotADirectory`] when handed a non-tree `mode` (a caller
-/// bug — the engine only routes tree targets here).
+/// bug, because the engine only routes tree targets here).
 pub(crate) fn materialize_tree(
     mode: FileMode,
     source: &Utf8Path,
@@ -313,9 +311,9 @@ fn ensure_parent(target: &Utf8Path) -> Result<(), ExecutorError> {
     Ok(())
 }
 
-/// Walk `root` and collect every regular file as a path relative to
-/// `root`, in deterministic (sorted) order so the same source tree
-/// produces the same record sequence across runs and platforms.
+/// Walk `root` and collect every regular file as a path relative to `root`, in
+/// deterministic sorted order. The same source tree therefore produces the
+/// same record sequence across runs and platforms.
 ///
 /// Shared by the directory-source symlink walk ([`symlink`]), the recursive
 /// copy ([`copy`]), and the status managed-set's `symlink-tree` leaf

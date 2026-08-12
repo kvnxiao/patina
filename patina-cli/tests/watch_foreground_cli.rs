@@ -2,7 +2,7 @@
 // methods below (their `.expect()` calls and the `&buf[..n]` read slice);
 // `allow-*-in-tests` covers `#[cfg(test)]` modules but not the helper methods
 // in tests/*.rs integration crates. On non-unix targets that module is absent,
-// so the expectation would be unfulfilled — gate it to unix to match.
+// so the expectation would be unfulfilled. Gate it to unix to match.
 #![cfg_attr(
     unix,
     expect(
@@ -346,7 +346,7 @@ mod foreground {
         // stretched (a 20ms `sleep` is a yield point and can be descheduled into
         // hundreds of ms), spreading the burst across more than the 500ms
         // window. It then split into several debounce batches and fired one
-        // re-apply per straggler — up to one per write — flaking the `== 1`
+        // re-apply per straggler, up to one per write, flaking the `== 1`
         // assertion below. A bare `write` loop has no yield point, so the burst
         // stays well inside one window regardless of scheduler load; do not
         // reintroduce a per-write sleep here.
@@ -414,7 +414,7 @@ mod foreground {
         // record under the watched journal dir and rescan. Since
         // an unchanged re-apply is a full no-op that writes no
         // journal, the parallel apply must change committed state
-        // to produce the `.COMMIT` this scenario is about — an idempotent
+        // to produce the `.COMMIT` this scenario is about: an idempotent
         // re-apply correctly produces neither a journal nor a rescan.
         //
         // Introduce a brand-new entry AFTER the watcher has subscribed, so it
@@ -539,7 +539,7 @@ mod foreground {
             watcher.stderr_snapshot()
         );
 
-        // `patina status --json` reports the target DRIFTED — derived
+        // `patina status --json` reports the target DRIFTED, derived
         // from the live re-hash, independent of the cache.
         let status = f.run(&["status", "--json"], &[]);
         assert_eq!(
@@ -605,7 +605,7 @@ mod foreground {
         // `current_timestamp`), so a re-apply landing in the same wall-clock
         // second as the fixture apply would reuse its timestamp and overwrite
         // the COMMIT rather than add a second one. Wait past the current second
-        // boundary before editing so the re-apply gets a distinct timestamp —
+        // boundary before editing so the re-apply gets a distinct timestamp,
         // the same separation a real user edit (≥500ms debounce after any prior
         // apply) gets in practice.
         std::thread::sleep(Duration::from_millis(1100));

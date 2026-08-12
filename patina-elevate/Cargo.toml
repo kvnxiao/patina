@@ -24,7 +24,7 @@ required-features = ["windows"]
 [features]
 # Gates the bin via `required-features` above. OFF by
 # default, so a plain `cargo build --release` produces no `patina-elevate`
-# artifact on macOS/Linux — Cargo silently skips a bin whose required feature
+# artifact on macOS/Linux: Cargo silently skips a bin whose required feature
 # is off (proven by `tests/artifact_absence.rs`). Windows release packaging
 # turns it on with `--features windows`; the crate's own test harness does the
 # same to exercise the binary cross-platform. This explicit
@@ -35,7 +35,7 @@ required-features = ["windows"]
 windows = []
 
 [dependencies]
-# no `patina-core` / `patina-cli` dependency — the helper keeps the
+# no `patina-core` / `patina-cli` dependency: the helper keeps the
 # smallest possible trust surface so UAC has the least to audit.
 clap = { workspace = true }
 

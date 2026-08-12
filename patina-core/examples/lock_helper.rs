@@ -2,7 +2,7 @@
 //!
 //! The `lock_concurrency` integration test spawns this example as a child
 //! process to exercise behaviours that only manifest across real OS
-//! processes — exclusive serialization, OS lock release on process death,
+//! processes: exclusive serialization, OS lock release on process death,
 //! and the shared/exclusive interaction. A child process is the only way
 //! to test the "process holding the lock is killed; the OS releases it"
 //! invariant, because dropping a guard in-process can never reproduce an
@@ -19,14 +19,14 @@
 //! lock_helper <state_dir> <kind> <hold_ms> <timeout_ms> [--abort]
 //! ```
 //!
-//! - `state_dir` — the per-machine state directory; the lock lives at
+//! - `state_dir`: the per-machine state directory; the lock lives at
 //!   `<state_dir>/lock` and a journal `.plan` marker is written under
 //!   `<state_dir>/journal/`.
-//! - `kind` — `exclusive` or `shared`.
-//! - `hold_ms` — how long to hold the lock after acquiring, in milliseconds.
-//! - `timeout_ms` — the acquisition cap, in milliseconds.
-//! - `--abort` — terminate the process abnormally (`process::abort`) while
-//!   still holding the lock, so the test can assert the OS releases it.
+//! - `kind`: `exclusive` or `shared`.
+//! - `hold_ms`: how long to hold the lock after acquiring, in milliseconds.
+//! - `timeout_ms`: the acquisition cap, in milliseconds.
+//! - `--abort`: terminate the process abnormally (`process::abort`) while still
+//!   holding the lock, so the test can assert the OS releases it.
 //!
 //! On a clean acquisition the helper prints the acquire and release
 //! timestamps as `ACQUIRED <nanos>` / `RELEASED <nanos>` on stdout and

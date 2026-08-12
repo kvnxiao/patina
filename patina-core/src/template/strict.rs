@@ -7,7 +7,7 @@
 //! [`ErrorKind::UndefinedError`](minijinja::ErrorKind) (on emit/coercion)
 //! or an undefined *value* (as a `when`-expression result). Either way the
 //! `MiniJinja` error carries only the generic message `"undefined value"`
-//! — it does **not** name the variable that was missing. The typed
+//! and does **not** name the variable that was missing. The typed
 //! engine error's `Display` must name the offending variable
 //! (`user_email`, `missing_var`, …).
 //!
@@ -75,10 +75,10 @@ struct PatinaEnv {
 /// Records the names of variables that resolved to undefined during a
 /// single render or `when` evaluation.
 ///
-/// Always accessed behind a [`Mutex`], which both satisfies the
-/// `Send + Sync` bound `MiniJinja` requires of an [`Object`] and grants
-/// the exclusive `&mut` access the [`Object::get_value`] implementors (which
-/// receive `&self`) need to push names.
+/// Always accessed behind a [`Mutex`]. That satisfies the `Send + Sync` bound
+/// `MiniJinja` requires of an [`Object`]. It also grants the exclusive `&mut`
+/// access that [`Object::get_value`] implementors need to push names, since
+/// they receive `&self`.
 #[derive(Debug, Default)]
 pub(crate) struct UndefinedTracker {
     names: BTreeSet<String>,
@@ -100,7 +100,7 @@ impl UndefinedTracker {
 ///
 /// Shared by every [`Object::get_value`] miss path so a missing variable
 /// is both surfaced to `MiniJinja` as undefined and remembered for the
-/// typed error. A poisoned tracker lock degrades to "do not record" — the
+/// typed error. A poisoned tracker lock degrades to "do not record": the
 /// lookup still reports undefined, so strict semantics hold even if the
 /// name is lost.
 fn record_undefined(tracker: &Mutex<UndefinedTracker>, name: &str) -> Option<Value> {

@@ -225,7 +225,7 @@ fn missing_pager_falls_back_with_warning() {
 #[test]
 fn non_windows_symlink_apply_skips_dev_mode_flow() {
     // On macOS or Linux, a symlink
-    // `[[file]]` apply proceeds exactly as on the prior platforms — the Developer
+    // `[[file]]` apply proceeds with no gate: the Developer
     // Mode gate reports `Proceed` (the probe is `NotWindows`), so no
     // registry read happens and `patina-elevate` is never spawned. The
     // proof is positive: the symlink lands and the command exits 0, which
@@ -255,8 +255,8 @@ fn non_windows_symlink_apply_skips_dev_mode_flow() {
         "the target must be a symbolic link, proving the apply mutated"
     );
 
-    // Nothing in the output mentions the elevation helper or Developer Mode
-    // — the Windows-only flow was not entered.
+    // Nothing in the output mentions the elevation helper or Developer Mode,
+    // so the Windows-only flow was not entered.
     let combined = format!(
         "{}{}",
         String::from_utf8_lossy(&out.stdout),

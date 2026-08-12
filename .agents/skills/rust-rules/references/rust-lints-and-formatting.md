@@ -7,7 +7,7 @@ description: "Clippy and rustfmt config; pedantic with justified allows, promote
 
 ## Enable `pedantic` group-wide, then allow back with a reason
 
-Turn on the whole `clippy::pedantic` group at a low priority, then `allow` the handful you reject — each with a one-line reason. `priority = -2` makes the group lose to individual lint lines, so your overrides win regardless of order.
+Turn on the whole `clippy::pedantic` group at a low priority, then `allow` the handful you reject, each with a one-line reason. `priority = -2` makes the group lose to individual lint lines, so your overrides win regardless of order.
 
 ```toml
 [workspace.lints.clippy]
@@ -51,7 +51,7 @@ doc-valid-idents = ["NumPy", "PyCharm", "SQLAlchemy"]
 
 ## Justify every `allow`
 
-Group `#![allow(...)]` by reason and annotate each entry. Prefer `#[expect(...)]` over `#[allow(...)]` where the toolchain supports it — an `expect` that stops firing is itself a warning, so stale suppressions surface instead of lingering.
+Group `#![allow(...)]` by reason and annotate each entry. Prefer `#[expect(...)]` over `#[allow(...)]` where the toolchain supports it: an `expect` that stops firing is itself a warning, so stale suppressions surface instead of lingering.
 
 ```rust
 #![allow(

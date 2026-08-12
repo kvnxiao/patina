@@ -1,9 +1,8 @@
 //! The clap-derived command-line surface for `patina`.
 //!
-//! `apply`, `status`, and `rollback` land so far; the `debug` family is
-//! wired by its own task. The derive surface is kept thin — parsing only —
-//! so the command logic lives in [`crate::cmd`] and stays unit-testable
-//! without going through clap.
+//! The derive surface is kept thin, parsing only, so the command logic
+//! lives in [`crate::cmd`] and stays unit-testable without going through
+//! clap.
 
 use crate::exit_code::ExitCode;
 use crate::output::reporter::Reporter;
@@ -21,7 +20,7 @@ use clap::ValueEnum;
 /// successful apply, an aborted-by-hook apply, a declined prompt); the
 /// code is returned verbatim. An `Err` is an engine-level failure: its
 /// error chain is rendered to the reporter's err stream and mapped to an
-/// [`ExitCode`] via [`ExitCode::from_error_chain`] — the lock timeout
+/// [`ExitCode`] via [`ExitCode::from_error_chain`]: the lock timeout
 /// becomes `4`, every other failure `1`.
 ///
 /// The returned `i32` is what [`crate::main`] hands to
@@ -42,7 +41,7 @@ pub fn resolve_exit_code(outcome: anyhow::Result<i32>, reporter: &mut impl Repor
     }
 }
 
-/// `patina` — a cross-platform dotfile manager.
+/// `patina`, a cross-platform dotfile manager.
 #[derive(Debug, Parser)]
 #[command(name = "patina", version, about, disable_help_subcommand = true)]
 pub struct Cli {
@@ -120,8 +119,8 @@ pub enum Command {
     /// findings.
     Doctor(DoctorArgs),
 
-    /// Manage remote git sources. `list` reports each remote's pin, `check`
-    /// compares upstream tips against the lock without downloading objects,
+    /// Manage remote git sources. `list` reports each remote's pin, and `check`
+    /// compares upstream tips against the lock without downloading objects.
     /// `update` bumps pins through the update gate, and `prune` removes cached
     /// checkouts no journal record references.
     Remote(RemoteArgs),
@@ -535,9 +534,9 @@ pub enum DefenderCommand {
 /// External pager tools `--pager` accepts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum Pager {
-    /// `delta` — a syntax-highlighting diff pager.
+    /// `delta`, a syntax-highlighting diff pager.
     Delta,
-    /// `difft` — difftastic, a structural diff tool.
+    /// `difft`, the difftastic structural diff tool.
     Difft,
 }
 

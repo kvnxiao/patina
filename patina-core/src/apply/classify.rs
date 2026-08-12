@@ -1,10 +1,10 @@
 //! Plan-time classification of one resolved leaf into a [`Disposition`].
 //!
 //! Given a resolved leaf `(mode, source, target, rendered-bytes?)`, the
-//! classifier reads the live target state and decides whether applying
-//! would **create** the target (it is absent), **update** it (present but
-//! differs from what Patina would write), or leave it **unchanged** (present
-//! and already matches).
+//! classifier reads the live target state and picks one of three outcomes.
+//! Applying would **create** an absent target. It would **update** a target
+//! that is present but differs from what Patina would write. It leaves a
+//! target **unchanged** when it is present and already matches.
 //!
 //! The "matches" test is the same one `status` uses to classify `Clean`:
 //! the symlink and content comparisons route through the shared
@@ -40,7 +40,7 @@ use camino::Utf8Path;
 /// cannot be read to hash it. A symlink leaf reads no source (it compares
 /// the link target string), and a template leaf compares against the
 /// caller-supplied `rendered` bytes, so neither hits this path. An absent
-/// or unreadable *target* is never an error — it classifies `Create` or
+/// or unreadable *target* is never an error; it classifies `Create` or
 /// `Update` respectively.
 pub(crate) fn classify_leaf(
     mode: FileMode,
@@ -50,7 +50,7 @@ pub(crate) fn classify_leaf(
 ) -> Result<Disposition, ClassifyError> {
     // A target that is not present on disk is always a Create, regardless of
     // mode. `symlink_metadata` (not `metadata`) so a symlink target counts as
-    // present even when it dangles — matching how `status::classify` decides
+    // present even when it dangles, matching how `status::classify` decides
     // existence.
     if fs_err::symlink_metadata(target).is_err() {
         return Ok(Disposition::Create);

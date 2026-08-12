@@ -5,12 +5,12 @@
 //! exclusive advisory lock with a single non-blocking attempt and, on
 //! contention, returns
 //! [`LockError::Contended`] having mutated
-//! nothing — not even orphan recovery (the lock is resolved before
+//! nothing, not even orphan recovery (the lock is resolved before
 //! recovery). The watcher therefore must **not**
 //! pre-acquire the lock and then call apply: doing so would self-contend
 //! against its own guard. It lets the engine acquire under `NonBlocking` and
 //! treats a contention error as "the CLI (or another holder) owns the lock
-//! right now" — it logs a `lock_contention_skip` event and skips the cycle. The
+//! right now": it logs a `lock_contention_skip` event and skips the cycle. The
 //! next FS event re-arms the debounce.
 //!
 //! A successful re-apply emits an info `re_apply` event carrying the
@@ -58,9 +58,9 @@ pub enum ReapplyOutcome {
 
 /// Drive one watcher re-apply cycle under [`LockPolicy::NonBlocking`].
 ///
-/// Plans the apply from the process-resolved repository and state directory
-/// (the watcher inherits the same `PATINA_REPO` / state-dir resolution the CLI
-/// uses), keys the journal `<ts>` with [`current_timestamp`], then executes
+/// Plans the apply from the process-resolved repository and state directory.
+/// The watcher inherits the same `PATINA_REPO` / state-dir resolution the CLI
+/// uses. It keys the journal `<ts>` with [`current_timestamp`], then executes
 /// under `NonBlocking`:
 ///
 /// - On success it emits an info `re_apply` event with `re_apply_id`,
@@ -73,9 +73,9 @@ pub enum ReapplyOutcome {
 ///   returns [`ReapplyOutcome::Failed`]; a failed re-apply never crashes the
 ///   watcher.
 ///
-/// `re_apply_id` is the journal timestamp, which is unique per cycle and keys
-/// the journal and backups this re-apply wrote, so a log reader can join the
-/// metric event to the on-disk artifacts.
+/// `re_apply_id` is the journal timestamp. It is unique per cycle, and keys
+/// the journal and backups this re-apply wrote. A log reader can therefore
+/// join the metric event to the on-disk artifacts.
 pub async fn run_reapply() -> ReapplyOutcome {
     let id = current_timestamp();
     let request = ApplyRequest::default();

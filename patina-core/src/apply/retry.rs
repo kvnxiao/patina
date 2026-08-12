@@ -5,7 +5,7 @@
 //! otherwise succeed fails with `ERROR_SHARING_VIOLATION` (Win32 error code
 //! 32). [`with_sharing_violation_retry`] wraps a single write operation and,
 //! on Windows only, retries that specific failure with a fixed exponential
-//! backoff (`50, 100, 200, 400, 800, 1600` ms — six retries, ~3.15s total).
+//! backoff (`50, 100, 200, 400, 800, 1600` ms: six retries, ~3.15s total).
 //! Any other error is re-raised immediately, and the violation is re-raised
 //! unchanged after the sixth failed retry so the normal apply
 //! failure/rollback path handles it.
@@ -18,7 +18,7 @@
 //! `attempt`, `delay_ms`, and `error` fields, so the retry behaviour is
 //! observable under `RUST_LOG=patina_core=debug`.
 
-/// `ERROR_SHARING_VIOLATION` — the Win32 error code (32) a write hits when
+/// `ERROR_SHARING_VIOLATION`, the Win32 error code (32) a write hits when
 /// another process holds the target open with no sharing. Matched via
 /// [`std::io::Error::raw_os_error`] exactly as `lock::is_contended` matches
 /// `fs2`'s contended-lock error by its raw OS code.
@@ -44,13 +44,13 @@ const BACKOFF_SCHEDULE_MS: &[u64] = &[50, 100, 200, 400, 800, 1600];
 /// `fs_write_retry` `tracing` event with `attempt`, `delay_ms`, and `error`.
 ///
 /// On every other platform this runs `op` exactly once and returns its
-/// result verbatim — no retry, no sleep, no `tracing` event.
+/// result verbatim, with no retry, no sleep, and no `tracing` event.
 ///
 /// # Errors
 ///
 /// Returns the [`std::io::Error`] produced by `op`: the first non-violation
-/// error on any platform, or — on Windows after the retry budget is
-/// exhausted — the final `ERROR_SHARING_VIOLATION` error.
+/// error on any platform, or, on Windows after the retry budget is
+/// exhausted, the final `ERROR_SHARING_VIOLATION` error.
 pub(crate) fn with_sharing_violation_retry<T>(
     mut op: impl FnMut() -> std::io::Result<T>,
 ) -> std::io::Result<T> {
@@ -78,7 +78,7 @@ pub(crate) fn with_sharing_violation_retry<T>(
             }
         }
         // Six-retry budget spent: make the final attempt and surface its
-        // result verbatim — the last `ERROR_SHARING_VIOLATION`, any other
+        // result verbatim: the last `ERROR_SHARING_VIOLATION`, any other
         // error, or a success if the contention just cleared.
         op()
     }

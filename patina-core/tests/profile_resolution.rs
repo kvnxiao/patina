@@ -9,7 +9,7 @@
 //! `patina apply --yes --json` JSON output, but the clap-derived CLI
 //! surface and the `apply` plan computation don't land yet. The engine's
 //! contract is the resolution
-//! function and the auto-match parse path — these tests exercise that
+//! function and the auto-match parse path. These tests exercise that
 //! contract directly so the per-source priority order, the shared-engine
 //! `when` evaluation, and the root-`patina.toml` parser cannot
 //! regress before the CLI is wired in.

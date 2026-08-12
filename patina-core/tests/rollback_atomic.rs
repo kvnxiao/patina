@@ -14,7 +14,7 @@
 //! The failure is injected without privileges: the second target's parent
 //! directory is replaced by a *regular file*, so the restore's
 //! `create_dir_all(parent)` fails with a deterministic, cross-platform IO
-//! error — the harness's stand-in for a "permission error".
+//! error, the harness's stand-in for a "permission error".
 
 use camino::Utf8Path;
 use camino::Utf8PathBuf;

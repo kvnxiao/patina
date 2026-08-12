@@ -46,7 +46,7 @@ fn resolve_creates_journal_and_backups_but_not_logs() {
     assert!(root.join("backups").is_dir(), "backups/ must exist");
     assert!(
         !root.join("logs").exists(),
-        "resolve must NOT create logs/ — the watcher owns it"
+        "resolve must NOT create logs/; the watcher owns it"
     );
 }
 

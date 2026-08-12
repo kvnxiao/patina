@@ -10,7 +10,7 @@
 //! fixture repo whose root `patina.toml` declares `[variables]` (and, for
 //! the profile case, `[profiles.<name>.variables]`), and asserts the value
 //! that renders into a module's `.tmpl` target. These are the only sites
-//! that exercise the two layers `plan()` previously omitted; the per-module
+//! that exercise the repo-shared and per-profile layers; the per-module
 //! and CLI layers are covered by `apply_cli.rs`.
 
 mod common;

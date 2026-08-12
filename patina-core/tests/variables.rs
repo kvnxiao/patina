@@ -124,7 +124,7 @@ fn profile_injection_round_trips() {
 }
 
 /// Lower-precedence layers still surface when no higher layer sets the
-/// key — exercises the per-module → repo-shared fall-through.
+/// key. Exercises the per-module → repo-shared fall-through.
 #[test]
 fn lookup_falls_through_to_lower_layers() {
     let resolver = Resolver::new(Builtins::for_tests())

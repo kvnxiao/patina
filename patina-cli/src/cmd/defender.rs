@@ -60,10 +60,10 @@ use std::collections::BTreeSet;
 /// Told to the user whenever a rendered state was inferred from the ledger
 /// rather than read from Defender, so no reader mistakes the one for the other.
 ///
-/// It names the remedy, not just the constraint. Nothing on this path ever
-/// raises a UAC prompt (`status` is read-only by contract), so a reader told
-/// only that administrator is required is left waiting for a prompt that will
-/// never come. Elevating is the user's move, and the note has to say so.
+/// It names the remedy, not only the constraint. Nothing on this path ever
+/// raises a UAC prompt, because `status` is read-only by contract. A reader
+/// told only that administrator is required would wait for a prompt that never
+/// comes. Elevating is the user's move, and the note has to say so.
 const LEDGER_SOURCE_NOTE: &str =
     "  (showing what Patina recorded; re-run elevated to compare against Defender's list)";
 
@@ -96,7 +96,7 @@ fn state_token(state: ExclusionState) -> &'static str {
     }
 }
 
-/// Which reconcile a run performs — they differ only in the desired set.
+/// Which reconcile a run performs. They differ only in the desired set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Action {
     /// Reconcile to the plan's exclusion set (add missing, reap stale).
@@ -152,7 +152,7 @@ fn run_reconcile(
     reporter: &mut impl Reporter,
 ) -> Result<i32> {
     // `apply` derives its desired set from the plan, so it needs a resolvable
-    // repository. `clear` reconciles to the empty set — it must stay usable as
+    // repository. `clear` reconciles to the empty set, so it must stay usable as
     // the reversibility escape hatch even when the repository is broken or
     // gone, so it resolves the state directory directly and never plans.
     let (state_dir, repo_root, desired) = match action {
@@ -613,7 +613,7 @@ fn exclusions_json(exclusions: &[Exclusion]) -> Vec<serde_json::Value> {
         .collect()
 }
 
-/// The typed error for a blocked write — Defender returned success but the
+/// The typed error for a blocked write: Defender returned success but the
 /// helper's elevated re-read shows the exclusions did not change. Names the
 /// likely cause and an actionable next step.
 fn blocked_error(detail: &str) -> anyhow::Error {

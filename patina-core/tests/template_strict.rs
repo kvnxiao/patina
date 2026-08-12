@@ -120,7 +120,7 @@ fn render_and_when_share_one_environment_instance() {
     );
 }
 
-/// A defined user variable renders through under strict-undefined — the
+/// A defined user variable renders through under strict-undefined: the
 /// happy path the executor relies on.
 #[test]
 fn defined_variable_renders_through() {

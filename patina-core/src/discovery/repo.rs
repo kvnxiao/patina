@@ -6,8 +6,8 @@
 //! path stored under the per-machine state directory.
 //!
 //! When all three sources fail, [`RepoDiscoveryError::AllSourcesFailed`]
-//! is returned, naming each source attempt so the CLI can map it to
-//! exit code 1 with a stderr message containing the substrings
+//! is returned, naming each source attempt. The CLI can then map it to
+//! exit code 1, with a stderr message containing the substrings
 //! `PATINA_REPO`, `walk-up`, and `persisted default`.
 
 use super::MANIFEST_FILENAME;
@@ -167,7 +167,7 @@ pub fn resolve_repository_root_with(
 ///
 /// Takes the resolved per-machine state directory (the output of
 /// `state_dir::resolve()`) rather than re-resolving from the
-/// environment, so callers — including the integration harness — can
+/// environment, so callers, including the integration harness, can
 /// point it at an isolated tempdir. Reuses
 /// [`PERSISTED_DEFAULT_FILENAME`] so the write path cannot drift from
 /// the read path on the filename.
@@ -214,7 +214,7 @@ pub fn persisted_default_present(state_dir: &Utf8Path) -> bool {
 /// Writes the path as one UTF-8 line with a trailing newline to
 /// `<state_dir>/default_repo`, matching the format the private
 /// `read_persisted_default` reader trims and parses. `repo` must already be
-/// the canonical absolute repository path — callers canonicalize via
+/// the canonical absolute repository path; callers canonicalize via
 /// [`crate::paths::canonicalize`] before calling; this function does
 /// not canonicalize.
 ///

@@ -146,7 +146,7 @@ pub fn discover_modules(root: &Utf8Path) -> Result<Vec<ModuleHandle>, ModuleDisc
         check_no_deep_manifests(&child)?;
 
         if !module_manifest.is_file() {
-            // Subdirectory without a patina.toml is silently skipped —
+            // Subdirectory without a patina.toml is silently skipped:
             // not every directory under the root is a module (e.g.
             // `.git/`, scratch files).
             continue;

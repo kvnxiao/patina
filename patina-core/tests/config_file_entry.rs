@@ -213,7 +213,7 @@ mode = "{removed}"
 
 #[test]
 fn directory_with_tmpl_source_is_rejected() {
-    // A [[directory]] whose source ends in `.tmpl` is rejected —
+    // A [[directory]] whose source ends in `.tmpl` is rejected:
     // template render is file-only.
     let toml = r#"
 [[directory]]

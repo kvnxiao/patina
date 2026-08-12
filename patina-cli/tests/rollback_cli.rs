@@ -321,8 +321,8 @@ fn rollback_with_no_prior_apply_exits_one_and_names_no_prior_apply() {
 
 #[test]
 fn multi_target_copy_entry_rolls_back_to_pre_apply_state() {
-    // A [[file]] copy entry with two targets — one pre-existing
-    // (~/.claude/agent.toml = "old"), one fresh (~/.codex/agent.toml) — is
+    // A [[file]] copy entry with two targets, one pre-existing
+    // (~/.claude/agent.toml = "old") and one fresh (~/.codex/agent.toml), is
     // rolled back so the pre-existing target is restored to "old" and the
     // fresh one is deleted, with a ROLLED_BACK sentinel written.
     let f = Fixture::new();

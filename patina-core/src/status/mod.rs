@@ -2,17 +2,17 @@
 //! MISSING / ORPHANED against the last committed apply.
 //!
 //! Status is the read-only mirror of apply. It reads the most recent
-//! committed apply record from the journal (the `<ts>.COMMIT` sentinel the
-//! commit path populates), recomputes the *current*
-//! repository plan to know which targets are still managed, and compares
-//! each recorded target to the live filesystem.
+//! committed apply record from the journal, which is the `<ts>.COMMIT`
+//! sentinel the commit path populates. It recomputes the *current* repository
+//! plan to know which targets are still managed. It then compares each
+//! recorded target to the live filesystem.
 //!
 //! ## States
 //!
-//! - **CLEAN** — target exists and matches the recorded expectation.
-//! - **DRIFTED** — target exists but content / link target differs.
-//! - **MISSING** — target was applied but no longer exists on disk.
-//! - **ORPHANED** — target exists but the *current* plan no longer manages it
+//! - **CLEAN**: target exists and matches the recorded expectation.
+//! - **DRIFTED**: target exists but content / link target differs.
+//! - **MISSING**: target was applied but no longer exists on disk.
+//! - **ORPHANED**: target exists but the *current* plan no longer manages it
 //!   (it was in a prior apply, then removed from the repo).
 //!
 //! ## Multi-target counting
@@ -57,12 +57,12 @@ pub struct StatusEntry {
 /// The current plan's managed-target set, plus the regions it cannot see.
 ///
 /// A tree-mode entry backed by a remote expands into one managed key per
-/// checkout leaf, but read-only passes (status, the orphan reap) must not
-/// fetch, so when the pinned checkout is not materialized the entry's leaves
-/// are unknowable rather than absent. Treating them as absent would report
-/// every previously-applied leaf ORPHANED, and let the reap delete it, so
-/// those entries' declared target roots are carried separately and a recorded
-/// target under one still counts as managed.
+/// checkout leaf. Read-only passes (status, the orphan reap) must not fetch.
+/// When the pinned checkout is not materialized, the entry's leaves are
+/// therefore unknowable rather than absent. Treating them as absent would
+/// report every previously-applied leaf ORPHANED, and let the reap delete it.
+/// Those entries' declared target roots are carried separately instead, and a
+/// recorded target under one still counts as managed.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ManagedTargets {
     /// The managed keys ([`manage_key`] form) of every enumerable target.
@@ -127,10 +127,10 @@ impl StatusReport {
 
 /// Compute the status report for the resolved dotfiles repository.
 ///
-/// Resolves the repository and state directory, takes the shared lock
-/// (warning and proceeding on timeout), reads the last
-/// committed apply, recomputes the current plan to know which targets are
-/// still managed, and classifies each recorded target.
+/// Resolves the repository and state directory, and takes the shared lock,
+/// warning and proceeding on timeout. Reads the last committed apply, and
+/// recomputes the current plan to know which targets are still managed. Then
+/// classifies each recorded target.
 ///
 /// # Errors
 ///
@@ -191,7 +191,7 @@ pub fn report(managed: &ManagedTargets) -> Result<StatusReport, EngineError> {
         let still_managed = managed.governs(&manage_key(&path));
         let state = classify(expected, still_managed);
         // A target the current plan dropped *and* that is already gone from
-        // disk is fully done — nothing to surface (it would classify
+        // disk is fully done, so there is nothing to surface (it would classify
         // Missing, but there is no managed target to be missing).
         if !still_managed && state == TargetState::Missing {
             continue;
@@ -210,14 +210,14 @@ pub fn report(managed: &ManagedTargets) -> Result<StatusReport, EngineError> {
 /// `when`-aware, `symlink-tree`-aware managed-set computation shared with the
 /// apply-time orphan reap so status and apply agree on which targets are
 /// still managed. That computation keys each target by its declared
-/// **location** via [`manage_key`] rather than a full canonicalization: a
-/// full canonicalization would follow an already-materialized symlink target
-/// through to the repo source, so the target would never appear to be its
-/// own managed location and every applied symlink would falsely report as
-/// ORPHANED at status time. It drops `when`-false entries (so a flipped-off
-/// entry's prior target classifies ORPHANED) and expands a
-/// `symlink-tree` entry into one key per live source leaf (so a deleted
-/// source leaf's prior target classifies ORPHANED).
+/// **location** via [`manage_key`] rather than a full canonicalization. A full
+/// canonicalization would follow an already-materialized symlink target
+/// through to the repo source. The target would then never appear to be its
+/// own managed location, and every applied symlink would falsely report as
+/// ORPHANED at status time. It drops `when`-false entries, so a flipped-off
+/// entry's prior target classifies ORPHANED. It expands a `symlink-tree` entry
+/// into one key per live source leaf, so a deleted source leaf's prior target
+/// classifies ORPHANED.
 ///
 /// # Errors
 ///
@@ -236,31 +236,31 @@ pub fn current_plan_targets() -> Result<ManagedTargets, EngineError> {
 ///
 /// - On Windows the filesystem form carries a `\\?\` verbatim prefix the
 ///   apply-time lexical form may lack.
-/// - A symlink target that did not exist at apply time exists at status time,
-///   so a full canonicalization would *follow the link* and resolve to the repo
-///   source instead of the link's own location.
+/// - A symlink target that did not exist at apply time exists at status time. A
+///   full canonicalization would then *follow the link*, and resolve to the
+///   repo source instead of the link's own location.
 ///
-/// The key sidesteps both by canonicalizing only the **parent** directory
-/// (which exists at both times and is never the symlink itself) and
-/// re-joining the final component verbatim, then stripping any verbatim
-/// prefix. Applied symmetrically to recorded and current-plan paths, the
+/// The key sidesteps both by canonicalizing only the **parent** directory,
+/// which exists at both times and is never the symlink itself. It then
+/// re-joins the final component verbatim, and strips any verbatim prefix.
+/// Applied symmetrically to recorded and current-plan paths, the
 /// same declared target yields the same key regardless of when it was
 /// computed.
 ///
 /// The result is then folded through [`crate::caseless::fold`], the same
 /// identity the target-collision check uses, so that a target respelled only in
 /// case or Unicode normal form stays the same key. Without the fold, renaming
-/// `~/.Config` to `~/.config` would leave the recorded key unmatched, and on a
+/// `~/.Config` to `~/.config` would leave the recorded key unmatched. On a
 /// case-insensitive filesystem the reap would then delete the very object the
 /// respelled entry had just materialized. Folding on a case-sensitive
 /// filesystem is the safe direction of the same trade: a genuinely distinct
 /// old path is left behind rather than deleted.
 ///
-/// Public so the `remove` / `promote` commands can match a
-/// user-supplied target path against a journaled
+/// Public so the `remove` / `promote` commands can match a user-supplied
+/// target path against a journaled
 /// [`ExpectedTarget::target`](crate::ExpectedTarget::target) under the same
-/// cross-time key, rather than re-deriving the parent-canonical+verbatim-leaf
-/// technique at the call site.
+/// cross-time key. They then need not re-derive the
+/// parent-canonical+verbatim-leaf technique at the call site.
 #[must_use = "the manage key is the cross-time comparison key for a target path"]
 pub fn manage_key(path: &camino::Utf8Path) -> Utf8PathBuf {
     let parent_key = match path.parent() {

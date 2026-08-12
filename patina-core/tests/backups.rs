@@ -126,7 +126,7 @@ fn a_freshly_created_target_produces_no_backup_entry() {
 #[test]
 fn backups_never_write_into_the_dotfiles_repository() {
     // After backups run, the dotfiles repository is
-    // byte-for-byte unchanged — the engine writes only under the state tree.
+    // byte-for-byte unchanged: the engine writes only under the state tree.
     let scene = Scene::new();
     // A repository whose source files the engine reads but must not mutate.
     fs_err::write(scene.repo.join("zshrc"), b"managed source").expect("seed repo source");
@@ -148,7 +148,7 @@ fn backups_never_write_into_the_dotfiles_repository() {
         before, after,
         "the dotfiles repository must be byte-for-byte unchanged after backups run"
     );
-    // And the backups did land — under the state tree, not the repo.
+    // And the backups did land, under the state tree, not the repo.
     assert!(mirror_backup_path(&scene.backups, TS, &zshrc).is_file());
     assert!(mirror_backup_path(&scene.backups, TS, &bashrc).is_file());
 }

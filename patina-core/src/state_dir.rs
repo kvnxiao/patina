@@ -9,7 +9,7 @@
 //! - **macOS:** `$HOME/Library/Application Support/patina/`.
 //! - **Windows:** `%LOCALAPPDATA%\patina\`.
 //!
-//! [`resolve`] is the public entry point — it inspects the running
+//! [`resolve`] is the public entry point. It inspects the running
 //! host, reads the process environment, materializes the directory
 //! tree (`<state>/patina/`, `<state>/patina/journal/`,
 //! `<state>/patina/backups/`, `<state>/patina/remotes/`) on first call, and

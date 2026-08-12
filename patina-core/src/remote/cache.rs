@@ -43,9 +43,10 @@ pub fn remotes_root(state_dir: &Utf8Path) -> Utf8PathBuf {
 
 /// `<state>/remotes/<module>/`, one directory per remote-backed module.
 ///
-/// Named by the remote's folded key rather than the spelling its author wrote,
-/// so a case-only respelling of a declaration keeps addressing the checkouts
-/// already on disk instead of cold-starting a second tree beside them.
+/// Named by the remote's folded key rather than the spelling its author wrote.
+/// A case-only respelling of a declaration therefore keeps addressing the
+/// checkouts already on disk, instead of cold-starting a second tree beside
+/// them.
 #[must_use = "the module cache directory holds the bare repo and its checkouts"]
 pub fn module_dir(state_dir: &Utf8Path, module: &RemoteName) -> Utf8PathBuf {
     remotes_root(state_dir).join(module.key())
@@ -95,8 +96,8 @@ pub fn checkout_present(state_dir: &Utf8Path, module: &RemoteName, rev: &str) ->
 ///
 /// A present checkout directory short-circuits with no `git` call at all, which
 /// is what makes a plain `apply` against a warm cache fully offline. A fresh
-/// checkout is written into a `<rev>.partial.<pid>` sibling and renamed into
-/// place, so the directory's existence is proof it is complete rather than a
+/// checkout is written into a `<rev>.partial.<pid>` sibling, then renamed into
+/// place. The directory's existence is therefore proof it is complete, not a
 /// half-written tree from an interrupted run. The staging name carries the
 /// writer's pid because materialization runs without the process lock (plan
 /// time precedes the consent prompt), so two processes may stage the same rev
@@ -159,17 +160,18 @@ fn staging_dir(final_dir: &Utf8Path) -> Utf8PathBuf {
 /// names. Returns what was removed, sorted.
 ///
 /// Reachability is read from every `<ts>.COMMIT` sentinel in the journal
-/// directory, not just the newest: `patina rollback` walks back through them,
+/// directory, not just the newest. `patina rollback` walks back through them,
 /// so a checkout an older commit still names must survive. A recorded source
-/// path that falls inside a checkout (or an undeclared remote's tree) keeps
-/// it; everything else under a module's cache directory that looks like a
-/// checkout goes, and an undeclared remote loses its directory whole, bare
-/// fetch repository included.
+/// path that falls inside a checkout, or inside an undeclared remote's tree,
+/// keeps it. Everything else under a module's cache directory that looks like
+/// a checkout goes. An undeclared remote loses its directory whole, bare fetch
+/// repository included.
 ///
 /// `keep` carries the `(name, rev)` of every current pin, which must survive
-/// even when no journal record names it: a pin bumped but not yet applied is
-/// the warm cache an offline apply depends on, and a plan another process has
-/// materialized but not yet confirmed points at a pinned rev by construction.
+/// even when no journal record names it. A pin bumped but not yet applied is
+/// the warm cache an offline apply depends on. A plan another process has
+/// materialized, but not yet confirmed, points at a pinned rev by
+/// construction.
 /// `None` means the current pins could not be read at all, and no declared
 /// remote's checkouts are touched. An undeclared remote has no pin to protect
 /// by definition, so its tree still goes.

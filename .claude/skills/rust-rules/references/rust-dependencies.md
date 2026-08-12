@@ -7,7 +7,7 @@ description: "Cargo dependency management; caret ranges with a committed Cargo.l
 
 ## Default to Caret/Semver Ranges
 
-For both libraries and applications, declare dependencies with caret/semver ranges (Cargo's default for unprefixed versions). A committed `Cargo.lock` is what guarantees reproducibility — not exact-pin specs in `Cargo.toml`.
+For both libraries and applications, declare dependencies with caret/semver ranges (Cargo's default for unprefixed versions). A committed `Cargo.lock` is what guarantees reproducibility, not exact-pin specs in `Cargo.toml`.
 
 ```toml
 [dependencies]
@@ -37,7 +37,7 @@ Exact pins (`"=1.2.3"`) restrict Cargo's resolver, prevent normal updates, and c
 - **Behavioral dependency on a specific version.** You rely on a quirk that isn't part of the crate's contract and could shift across patches. Prefer fixing your code over pinning, but pin if the fix is non-trivial.
 - **`cargo install` distribution.** Binaries published via `cargo install` ignore `Cargo.lock` by default unless `--locked` is passed; if you can't guarantee `--locked`, pinning is the only way to lock end-user versions.
 - **Resolver conflict resolution.** A transitive-version conflict requires a specific version to keep the dep graph valid.
-- **Tightly-coupled internal crate pair.** A facade crate that re-exports a private helper relying on the facade's unstable internals (`serde` ↔ `serde_core`, `thiserror` ↔ `thiserror-impl`, `jiff` ↔ `jiff-static`) pins the helper with `=` to the exact same version. They ship in lockstep and call each other's private APIs, so a mismatched pair would break. This is the one place a `=` pin is the norm rather than a smell — you own both crates and bump them together.
+- **Tightly-coupled internal crate pair.** A facade crate that re-exports a private helper relying on the facade's unstable internals (`serde` ↔ `serde_core`, `thiserror` ↔ `thiserror-impl`, `jiff` ↔ `jiff-static`) pins the helper with `=` to the exact same version. They ship in lockstep and call each other's private APIs, so a mismatched pair would break. This is the one place a `=` pin is the norm rather than a smell: you own both crates and bump them together.
 
 ```toml
 [dependencies]
@@ -49,7 +49,7 @@ serde = "=1.0.195"
 thiserror-impl = { version = "=2.0.18", path = "impl" }
 ```
 
-If none of the above apply, use a caret range. **Do not pin pre-emptively for "stability"** — the lockfile already provides that, and exact pins make security/patch updates a manual chore.
+If none of the above apply, use a caret range. **Do not pin pre-emptively for "stability"**; the lockfile already provides that, and exact pins make security/patch updates a manual chore.
 
 ## Enable Only Needed Features
 
@@ -75,4 +75,4 @@ cargo machete
 
 ## Single-Source the MSRV
 
-Declare `rust-version` once in `[package]` (or `[workspace.package]`) and have CI read the MSRV from there — e.g. install the toolchain from the declared `rust-version` and run `cargo check`. Don't also hard-code the version number in CI YAML; a second copy drifts out of sync.
+Declare `rust-version` once in `[package]` (or `[workspace.package]`) and have CI read the MSRV from there, for example by installing the toolchain from the declared `rust-version` and running `cargo check`. Don't also hard-code the version number in CI YAML; a second copy drifts out of sync.

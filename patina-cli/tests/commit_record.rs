@@ -1,6 +1,6 @@
 //! Integration coverage for the widened committed apply record: the
 //! `<state>/patina/journal/<ts>.COMMIT` sentinel records, per
-//! target, the canonical source path and — for content targets — a 32-byte
+//! target, the canonical source path and, for content targets, a 32-byte
 //! `blake3` hash of the materialized bytes, behind a version envelope whose
 //! major is the journal's `FILE_MAJOR_VERSION` (held at `1` pre-release).
 //!
@@ -295,7 +295,7 @@ fn commit_envelope_major_matches_supported() {
     );
 }
 
-// The read side compares the recorded blake3 — an
+// The read side compares the recorded blake3: an
 // external edit drifts, no edit stays clean.
 #[test]
 fn status_uses_recorded_blake3_for_drift() {
@@ -330,9 +330,9 @@ fn status_uses_recorded_blake3_for_drift() {
 
 // A committed apply over both the
 // `[[file]]` and `[[directory]]` table-arrays records a single monotonic
-// entry-index space — every declared entry gets a distinct index, no
+// entry-index space: every declared entry gets a distinct index, no
 // `[[file]]` and `[[directory]]` entry collide, and targets sharing a
-// declared entry share its index — while the COMMIT version envelope major
+// declared entry share its index, while the COMMIT version envelope major
 // stays the journal's supported major (no version bump).
 #[test]
 fn directory_and_file_entries_get_distinct_indices_and_envelope_major_is_unchanged() {
@@ -396,7 +396,7 @@ fn directory_and_file_entries_get_distinct_indices_and_envelope_major_is_unchang
     let major = u16::from_le_bytes([envelope[0], envelope[1]]);
     assert_eq!(
         major, FILE_MAJOR_VERSION,
-        "the COMMIT envelope major must stay the supported major — this change introduces no version bump"
+        "the COMMIT envelope major must stay the supported major; the record layout carries no version bump"
     );
 }
 

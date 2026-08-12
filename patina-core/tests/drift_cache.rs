@@ -1,7 +1,7 @@
 //! Integration coverage for the drift-cache format: round-trip through the
 //! atomic write, newer-major refusal,
 //! independence from the journal's major version, and the rename-based
-//! write guarantee — all against the crate's public API surface.
+//! write guarantee, all against the crate's public API surface.
 
 use camino::Utf8Path;
 use patina_core::DRIFT_CACHE_MAJOR_VERSION;

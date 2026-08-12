@@ -5,9 +5,10 @@
 
 //! Re-apply idempotency across every [`FileMode`](patina_core::FileMode): a
 //! second `patina apply` over an unchanged source must converge (exit 0) and
-//! must never mutate a repository source. The default `Symlink` mode regressed
-//! here once (it deleted the source — see `symlink_reapply.rs`) and the atomic
-//! `SymlinkDir` mode failed with `EEXIST` on re-apply because its executor did
+//! must never mutate a repository source. Two failure modes make that worth
+//! asserting directly: the default `Symlink` mode can delete the source (see
+//! `symlink_reapply.rs`), and the atomic
+//! `SymlinkDir` mode fails with `EEXIST` on re-apply if its executor does
 //! not clear the pre-existing link; this suite locks the guarantee for all
 //! modes so neither recurs.
 
@@ -32,8 +33,8 @@ fn canonical(path: &Utf8Path) -> Utf8PathBuf {
     path.canonicalize_utf8().expect("canonicalize path")
 }
 
-/// Assert a repository source is still a regular file holding `bytes` — i.e.
-/// the apply did not delete, relink, or rewrite it.
+/// Assert a repository source is still a regular file holding `bytes`, so the
+/// apply did not delete, relink, or rewrite it.
 fn assert_source_file(source: &Utf8Path, bytes: &[u8]) {
     let meta = fs_err::symlink_metadata(source.as_std_path()).expect("stat source");
     assert!(

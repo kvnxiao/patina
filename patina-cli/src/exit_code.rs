@@ -18,10 +18,10 @@
 //! Two overlaps are deliberate and worth calling out:
 //!
 //! - **Code 2 is also clap's usage-error code.** A malformed command line
-//!   (unknown subcommand, bad flag) exits 2 at parse time — inside [`clap`],
-//!   before any subcommand runs — so it never collides in practice with a
-//!   run-time `pre_apply` abort (also 2): the two are distinguishable by phase,
-//!   and 2 for usage errors is the conventional Unix code.
+//!   (unknown subcommand, bad flag) exits 2 at parse time, inside [`clap`] and
+//!   before any subcommand runs. It therefore never collides in practice with a
+//!   run-time `pre_apply` abort, which is also 2. The two are distinguishable
+//!   by phase, and 2 for usage errors is the conventional Unix code.
 //! - **`EngineError::DevModeRequired` maps to 1, not 5.** When the Windows
 //!   engine backstop fires because symlink creation needs elevation, that is an
 //!   environment error → generic 1. A user who is *prompted* for elevation and
@@ -29,8 +29,8 @@
 //!   (elevation), deliberately different codes: "cannot proceed" vs "you said
 //!   no".
 //!
-//! The numeric values are the contract — downstream tooling and the
-//! integration suite assert on them — so the discriminants are pinned
+//! The numeric values are the contract, and downstream tooling and the
+//! integration suite assert on them, so the discriminants are pinned
 //! explicitly rather than left to declaration order.
 
 use patina_core::EngineError;
@@ -44,21 +44,21 @@ use patina_core::LockError;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(i32)]
 pub enum ExitCode {
-    /// `0` — the command completed successfully.
+    /// `0`: the command completed successfully.
     Success = 0,
-    /// `1` — a generic failure (config parse, IO, undefined variable,
+    /// `1`: a generic failure (config parse, IO, undefined variable,
     /// journal version mismatch, missing prior apply, unresolved shell).
     Generic = 1,
-    /// `2` — a `must_succeed` `pre_apply` hook failed; the apply aborted
+    /// `2`: a `must_succeed` `pre_apply` hook failed; the apply aborted
     /// before performing any file operation.
     PreApplyAbort = 2,
-    /// `3` — a `must_succeed` `post_apply` hook failed; the file
+    /// `3`: a `must_succeed` `post_apply` hook failed; the file
     /// operations were rolled back.
     PostApplyRollback = 3,
-    /// `4` — the exclusive advisory lock could not be acquired within the
+    /// `4`: the exclusive advisory lock could not be acquired within the
     /// configured timeout (`apply` / `rollback`).
     LockTimeout = 4,
-    /// `5` — the user declined the interactive confirmation prompt (or
+    /// `5`: the user declined the interactive confirmation prompt (or
     /// refused an elevation request).
     UserDeclined = 5,
 }
@@ -75,9 +75,9 @@ impl ExitCode {
     /// Only the exclusive-lock timeout earns a dedicated code (`4`); every
     /// other engine failure is a generic error (`1`). The hook-driven codes
     /// (`2`, `3`) and the declined-prompt code (`5`) never travel as an
-    /// `EngineError` — the engine reports a failed `must_succeed` hook as an
-    /// `ApplyResult` outcome, and a declined prompt is a control-flow
-    /// decision in the command layer — so they are not produced here.
+    /// `EngineError`, so they are not produced here. The engine reports a
+    /// failed `must_succeed` hook as an `ApplyResult` outcome, and a declined
+    /// prompt is a control-flow decision in the command layer.
     #[must_use = "the returned exit code is the process's terminal status"]
     pub fn from_engine_error(error: &EngineError) -> Self {
         match error {

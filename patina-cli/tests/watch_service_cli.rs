@@ -3,10 +3,10 @@
 //! These tests exercise the deterministic, supervisor-free surface of the
 //! lifecycle commands: the not-installed no-op paths and the `status` object
 //! shape. They deliberately do **not** drive a real `launchctl bootstrap` /
-//! `systemctl --user enable` — registering a live per-user service from a test
+//! `systemctl --user enable`: registering a live per-user service from a test
 //! would escape the fixture's tempdir isolation (the supervisor domain is the
 //! developer's real session) and is unsafe in CI. The plist rendering and the
-//! `launchctl print` parsing — the host-specific install/status internals — are
+//! `launchctl print` parsing, the host-specific install/status internals, are
 //! gated by the `patina-core` unit tests (`render_plist`,
 //! `parse_launchctl_print`) instead.
 //!
@@ -20,7 +20,8 @@ use common::Fixture;
 use common::code;
 
 /// `patina watch` with neither a lifecycle subcommand nor `--foreground`
-/// reports the usage hint and exits non-zero — there is no default action.
+/// reports the usage hint and exits non-zero, because there is no default
+/// action.
 #[test]
 fn watch_with_no_mode_reports_the_usage_hint() {
     let f = Fixture::new();

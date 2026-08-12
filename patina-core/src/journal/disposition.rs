@@ -4,11 +4,11 @@
 //! resolves to: it is being **created** for the first time, **updated**
 //! over existing content that differs from what Patina would write, or it
 //! is already **unchanged** and needs no write at all. The skip-if-satisfied
-//! engine carries this marker on both the durable [`Plan`](super::Plan) (via
-//! [`PlannedOperation`](super::PlannedOperation)) and the committed
-//! [`ApplyRecord`](super::ApplyRecord) (via
-//! [`ExpectedTarget`](super::ExpectedTarget)) so a re-apply, a crash
-//! recovery, and a rollback all agree on which targets to leave alone.
+//! engine carries this marker in two places: the durable [`Plan`](super::Plan)
+//! via [`PlannedOperation`](super::PlannedOperation), and the committed
+//! [`ApplyRecord`](super::ApplyRecord) via
+//! [`ExpectedTarget`](super::ExpectedTarget). A re-apply, a crash recovery,
+//! and a rollback therefore all agree on which targets to leave alone.
 
 use serde::Deserialize;
 use serde::Serialize;

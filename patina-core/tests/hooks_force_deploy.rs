@@ -7,7 +7,7 @@
 //!
 //! `--force-deploy` ([`ForceDeploy::Yes`]) overrides every hook in the
 //! invocation to behave as `must_succeed = false`, so a non-zero exit can
-//! only ever degrade to a warning — a `post_apply` failure under
+//! only ever degrade to a warning: a `post_apply` failure under
 //! force-deploy classifies [`HookOutcome::Warned`], never
 //! [`HookOutcome::Failed`], so the orchestrator fires no rollback
 //! and the CLI exits 0. These tests also prove the hook command

@@ -1,6 +1,6 @@
 //! Process-level integration tests for the `patina-elevate` binary.
 //!
-//! These assert the real exit codes the spawned process produces — the
+//! These assert the real exit codes the spawned process produces: the
 //! arg-parsing contract that the library unit tests cover in-process, here
 //! proven end-to-end through `clap`'s own `Error::exit`.
 //!
@@ -77,7 +77,7 @@ fn help_lists_the_supported_subcommand() {
 fn enable_developer_mode_off_windows_exits_1() {
     // On a non-Windows build the registry write does not exist, so the action
     // takes the typed NotWindows failure path: exit 1 with a message on
-    // stderr. (On Windows this path instead performs the real write — covered
+    // stderr. (On Windows this path instead performs the real write, covered
     // by the `#[ignore]` host test below.)
     let Some(bin) = elevate_bin() else {
         return;
@@ -101,7 +101,7 @@ fn enable_developer_mode_off_windows_exits_1() {
 /// An elevated `patina-elevate.exe enable-developer-mode` sets the
 /// registry flag to `1` and exits `0`. Gated `#[cfg(windows)]` `#[ignore]`
 /// because CI is not Windows and the path needs a real UAC accept against a
-/// machine whose Developer Mode is OFF — neither is available in automation.
+/// machine whose Developer Mode is OFF. Neither is available in automation.
 /// Run by hand on an elevated Windows shell with `--ignored`.
 #[cfg(windows)]
 #[test]

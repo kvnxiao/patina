@@ -53,14 +53,14 @@ A derived `PartialEq` compares field-by-field. That is often wrong: two values c
 ```rust
 // Bad: derived PartialEq makes 2.hours() != 120.minutes() despite equal duration.
 
-// Good, option 1 — hand-write over the meaningful field:
+// Good, option 1: hand-write over the meaningful field:
 impl PartialEq for Zoned {
     fn eq(&self, other: &Self) -> bool {
         self.timestamp() == other.timestamp() // compare the instant, ignore the zone
     }
 }
 
-// Good, option 2 — withhold equality when "equal" is ambiguous, and expose an
+// Good, option 2: withhold equality when "equal" is ambiguous, and expose an
 // explicit opt-in newtype for the field-wise comparison:
 #[repr(transparent)]
 pub struct SpanFieldwise(pub Span); // via `span.fieldwise()`, only when asked for
@@ -181,7 +181,7 @@ derive = ["dep:my_derive"] # optional proc-macro, off by default
 # Removed feature kept as a documented no-op so `features = ["backtrace"]` still builds.
 backtrace = []
 
-# Footgun documented inline: does not preserve identity — enable only if intended.
+# Footgun documented inline: does not preserve identity, so enable only if intended.
 rc = []
 ```
 

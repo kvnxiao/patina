@@ -55,7 +55,7 @@ fn missing_default_repo_reports_info_finding_and_exits_zero() {
     );
 
     // The fixture's repository resolves (PATINA_REPO points at it), so the
-    // advice must be `doctor --fix` — `patina init` refuses on an existing
+    // advice must be `doctor --fix`: `patina init` refuses on an existing
     // manifest and can never clear this finding.
     let message = note
         .get("message")
@@ -83,7 +83,7 @@ fn doctor_json_is_byte_identical_across_runs() {
 }
 
 /// Doctor routes its findings to stderr, never to stdout, in human
-/// (non-`--json`) mode — stdout stays clean for piping.
+/// (non-`--json`) mode, so stdout stays clean for piping.
 #[test]
 fn human_mode_keeps_findings_off_stdout() {
     let fx = Fixture::new();
@@ -132,12 +132,12 @@ fn fix_yes_writes_default_repo_from_cwd_and_exits_zero() {
 /// `patina doctor --fix --yes` run from a directory that is not a Patina
 /// repository must refuse: it exits 1 and leaves no `default_repo` pointer,
 /// rather than recording an arbitrary directory as the default repo. Guards the
-/// `validate_repo_root` check in `fix_default_repo` — without it the pointer
+/// `validate_repo_root` check in `fix_default_repo`; without it the pointer
 /// would be written unconditionally.
 #[test]
 fn fix_yes_from_non_repo_cwd_exits_one_and_writes_no_pointer() {
     let fx = Fixture::new();
-    // A plain directory with no `patina.toml` — not a repository root.
+    // A plain directory with no `patina.toml`, so not a repository root.
     let not_a_repo = fx.home.join("not_a_repo");
     fs_err::create_dir_all(not_a_repo.as_std_path()).expect("mkdir non-repo cwd");
 

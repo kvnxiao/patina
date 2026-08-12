@@ -293,15 +293,15 @@ impl RemoteSpec {
 /// the segment a user would name the remote after:
 /// `https://github.com/blader/humanizer.git`, the scp-like
 /// `git@github.com:blader/humanizer`, a trailing slash on either, and a local
-/// path. A URL whose last segment is not a legal name, such as a bare host or
-/// a query string, has nothing obvious to take, so it is refused and the author
-/// writes `name` instead of getting a surprising one.
+/// path. A URL whose last segment is not a legal name has nothing obvious to
+/// take; a bare host or a query string is such a URL. It is refused, so the
+/// author writes `name` instead of getting a surprising one.
 ///
 /// # Errors
 ///
 /// Returns [`RemoteConfigError::UnderivableName`] when no legal name remains.
-/// A segment that is shaped like a name but is refused for what it would
-/// collide with keeps its own error, so the author is told the real reason
+/// A segment that is shaped like a name, but is refused for what it would
+/// collide with, keeps its own error. The author is then told the real reason,
 /// rather than being sent to write an explicit `name` that would fail too.
 pub fn derive_name(url: &str) -> Result<RemoteName, RemoteConfigError> {
     let trimmed = url.trim().trim_end_matches(['/', '\\']);

@@ -1,7 +1,7 @@
 //! Core library for the patina cross-platform dotfile manager.
 //!
-//! The three public async entry points — [`apply`](fn@crate::apply),
-//! [`status`](fn@crate::status), and [`rollback`](fn@crate::rollback) —
+//! The three public async entry points, [`apply`](fn@crate::apply),
+//! [`status`](fn@crate::status), and [`rollback`](fn@crate::rollback),
 //! define the engine's outer contract. They return
 //! [`Result<_, EngineError>`](EngineError); the CLI wraps that into
 //! `anyhow::Result` at the call site (per the project rule that

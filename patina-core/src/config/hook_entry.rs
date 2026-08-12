@@ -1,9 +1,9 @@
 //! `[[hook]]` table-array schema.
 //!
-//! Each `[[hook]]` entry resolves to a [`HookEntry`] carrying an
-//! [`HookEvent`], a shell command, an optional explicit shell, an
-//! optional raw `when` expression, and a `must_succeed` boolean that
-//! defaults to `true` when omitted. Parse-time validation rejects the
+//! Each `[[hook]]` entry resolves to a [`HookEntry`]. It carries an
+//! [`HookEvent`], a shell command, an optional explicit shell, and an
+//! optional raw `when` expression. It also carries a `must_succeed` boolean
+//! that defaults to `true` when omitted. Parse-time validation rejects the
 //! `on_change` / `on_drift` legacy event names with a typed error that
 //! names the offending value and the two accepted event names so the
 //! substring contract holds.
