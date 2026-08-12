@@ -11,10 +11,10 @@
 //! [`SHARED_TIMEOUT`] expiry warns and proceeds
 //! rather than blocking the user.
 //!
-//! The `--fix` path is mutating: it acquires the EXCLUSIVE lock,
-//! then walks the fixable findings (Developer Mode missing on Windows and a
-//! missing `default_repo` pointer), prompting per finding (or auto-accepting
-//! under `--yes`) and remediating on accept. Non-fixable findings (UNC paths,
+//! The `--fix` path is mutating. It acquires the EXCLUSIVE lock, then walks
+//! the fixable findings: Developer Mode missing on Windows, and a missing
+//! `default_repo` pointer. It prompts per finding, or auto-accepts under
+//! `--yes`, and remediates on accept. Non-fixable findings (UNC paths,
 //! OS-too-old) are still surfaced with their warning. A non-TTY `--fix`
 //! without `--yes` cannot prompt, so it refuses with exit 1 naming the missing
 //! flag. Each remediation that runs emits a structured `tracing` event
@@ -27,9 +27,9 @@
 //! Output: human findings to stderr, `--json` emits a single
 //! deterministic document on stdout (no timestamps / PIDs / random ids), so
 //! two runs against unchanged state are byte-identical. The findings
-//! computation ([`compute_findings`]) is pure over its inputs so the whole
-//! finding set is unit-testable on the macOS/Linux CI, with the
-//! Windows-specific reads gated behind the [`Inputs`] struct the caller fills.
+//! computation ([`compute_findings`]) is pure over its inputs, so the whole
+//! finding set is unit-testable on the macOS/Linux CI. The Windows-specific
+//! reads sit behind the [`Inputs`] struct the caller fills.
 
 use crate::cli::DoctorArgs;
 use crate::cmd::apply::PromptReader;
@@ -191,9 +191,10 @@ pub struct Inputs {
 /// and treats an unresolvable repository as "no repository-scoped findings"
 /// rather than aborting; a shared-lock timeout is downgraded to a stderr
 /// warning (the read-only escape hatch). On the `--fix` path an
-/// exclusive-lock timeout maps to exit 4 via the engine-error chain, and a
-/// remediation failure (the persisted-default write, or the Windows helper
-/// running but leaving the flag off) is a hard error (exit 1).
+/// exclusive-lock timeout maps to exit 4 via the engine-error chain. A
+/// remediation failure is a hard error (exit 1). That covers the
+/// persisted-default write, and the Windows helper running but leaving the
+/// flag off.
 pub fn run(
     args: &DoctorArgs,
     tty: Tty,

@@ -11,9 +11,9 @@
 //! walks a directory source and links each leaf file at the mirrored
 //! target path, leaving the intermediate target directories real.
 //!
-//! Cross-platform link creation routes through [`create_symlink`], which
-//! picks the right OS primitive (file vs directory link on Windows, the
-//! single `symlink` call on Unix) and maps a Windows privilege failure to
+//! Cross-platform link creation routes through [`create_symlink`]. That helper
+//! picks the right OS primitive: a file or directory link on Windows, and the
+//! single `symlink` call on Unix. It also maps a Windows privilege failure to
 //! the typed [`ExecutorError::WindowsSymlinkPermission`].
 
 use super::CompletionRecord;
@@ -73,11 +73,11 @@ pub(super) fn per_file_symlink(
 /// The source must be a directory; a non-directory source is rejected with
 /// [`ExecutorError::NotADirectory`], the same way [`dir_symlink`] rejects a
 /// file source. Leaf enumeration uses the shared [`walk_files`] walk, which
-/// collects only regular files in deterministic sorted order, so an empty
-/// source subdirectory yields no entry, and therefore neither a target
-/// directory nor a link. Each leaf is linked through [`link_file`], which
-/// creates intermediate target directories on demand as real directories
-/// and clears any pre-existing entry first (the engine has already backed
+/// collects only regular files in deterministic sorted order. An empty source
+/// subdirectory therefore yields no entry, and so neither a target directory
+/// nor a link. Each leaf is linked through [`link_file`]. That helper creates
+/// intermediate target directories on demand as real directories, and clears
+/// any pre-existing entry first (the engine has already backed
 /// up a foreign regular file via `backup_before_overwrite`). One
 /// [`CompletionRecord`] is returned per materialized leaf, in walk order
 /// within each target.
@@ -132,8 +132,8 @@ pub(super) fn tree_symlink(
 
 /// Atomic [`SymlinkDir`](crate::config::FileMode::SymlinkDir) executor:
 /// one directory symlink per target, no walk. A pre-existing entry at the
-/// target is cleared first (the engine has already backed it up), so a
-/// re-apply, or an apply over an existing target, converges rather than
+/// target is cleared first; the engine has already backed it up. A re-apply,
+/// or an apply over an existing target, therefore converges rather than
 /// failing with `EEXIST`.
 pub(super) fn dir_symlink(
     source: &Utf8Path,

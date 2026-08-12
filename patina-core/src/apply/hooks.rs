@@ -58,8 +58,8 @@ use tokio::process::Command;
 /// Invocation-wide `--force-deploy` toggle.
 ///
 /// When [`ForceDeploy::Yes`], every hook in the current `patina apply`
-/// invocation is treated as `must_succeed = false` regardless of its
-/// declared value, so a non-zero exit degrades to a warning rather than
+/// invocation is treated as `must_succeed = false`, whatever its declared
+/// value. A non-zero exit therefore degrades to a warning, rather than
 /// aborting or rolling back.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ForceDeploy {

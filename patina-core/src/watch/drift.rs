@@ -27,9 +27,9 @@
 //! against. When a fresh `patina apply` commits, its journal becomes the new
 //! truth, and any cache bound to the prior journal `<ts>` is stale. The handler
 //! detects this on the next batch, because the persisted cache's `journal_ts`
-//! no longer matches the journal timestamp the watcher is now reading against,
-//! and clears the prior era's entries before binding the new timestamp and
-//! upserting this batch's divergences. A cache already bound to the current
+//! no longer matches the journal timestamp the watcher is now reading against.
+//! It then clears the prior era's entries, before binding the new timestamp
+//! and upserting this batch's divergences. A cache already bound to the current
 //! journal is left intact, so the per-target rate-limit ledger survives across
 //! batches within one journal era. This is what keeps a `patina debug
 //! drift-cache` view from showing entries mis-bound to a journal they were
@@ -280,8 +280,9 @@ fn recently_notified(cache: &DriftCache, target: &Utf8Path, now_unix: i64) -> bo
 }
 
 /// Insert or replace the cache entry for `content.target` with the freshly
-/// observed hash and detection time, keyed on the target path so a repeated
-/// edit refreshes the single entry rather than appending a duplicate.
+/// observed hash and detection time. The entry is keyed on the target path, so
+/// a repeated edit refreshes the single entry rather than appending a
+/// duplicate.
 fn upsert_entry(
     cache: &mut DriftCache,
     content: &ContentTarget,
@@ -543,10 +544,10 @@ mod tests {
         assert!(!dir.join(DRIFT_CACHE_FILENAME).exists());
     }
 
-    /// Clear-on-new-journal: once a new `patina apply`
-    /// commits, its journal becomes the new truth, so the next drift batch the
-    /// watcher processes against the new `journal_ts` drops the prior journal
-    /// era's entries rather than re-labeling them with the new timestamp. The
+    /// Clear-on-new-journal. Once a new `patina apply` commits, its journal
+    /// becomes the new truth. The next drift batch the watcher processes
+    /// against the new `journal_ts` therefore drops the prior journal era's
+    /// entries, rather than re-labeling them with the new timestamp. The
     /// surviving cache holds only this batch's divergences, bound to the new
     /// timestamp.
     #[test]

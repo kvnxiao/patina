@@ -1,9 +1,9 @@
 //! Implicit template-render executor.
 //!
-//! Templating keys off the **source** `.tmpl` suffix: a source
-//! file ending in `.tmpl` is rendered through the shared `MiniJinja`
-//! [`Engine`] **exactly once** against the resolved variable context, and
-//! the same rendered bytes are written to each declared target. The target
+//! Templating keys off the **source** `.tmpl` suffix. A source file ending in
+//! `.tmpl` is rendered through the shared `MiniJinja` [`Engine`] **exactly
+//! once**, against the resolved variable context. The same rendered bytes are
+//! then written to each declared target. The target
 //! is declared as its final, suffix-less path (`source = "gitconfig.tmpl"`,
 //! `target = "~/.gitconfig"`), so the executor writes to the target
 //! verbatim; it does not strip anything from the target. The materialized

@@ -115,12 +115,13 @@ pub fn watcher_config_warning(manifest_text: &str) -> Option<String> {
 
 /// Run the foreground watcher loop inline until `shutdown` resolves.
 ///
-/// The watcher: resolves the per-machine state directory, initializes the
-/// structured-log stack (a rotating file layer plus a stderr layer), reads the
-/// most recent committed apply and computes its FS subscription set
-/// ([`subscriptions::compute_watch_set`]), arms the 500ms debouncer over
-/// that set ([`debounce::spawn`]), and runs a single `tokio::select!` loop that
-/// awaits either the next debounced event batch or `shutdown`. On `shutdown` it
+/// The watcher resolves the per-machine state directory and initializes the
+/// structured-log stack (a rotating file layer plus a stderr layer). It reads
+/// the most recent committed apply and computes its FS subscription set
+/// ([`subscriptions::compute_watch_set`]). It then arms the 500ms debouncer
+/// over that set ([`debounce::spawn`]), and runs a single `tokio::select!`
+/// loop that awaits either the next debounced event batch or `shutdown`. On
+/// `shutdown` it
 /// logs a `shutdown` event, drops the debouncer (releasing every FS
 /// subscription), and returns `Ok(())`.
 ///
@@ -146,9 +147,10 @@ pub fn watcher_config_warning(manifest_text: &str) -> Option<String> {
 /// # Errors
 ///
 /// Returns [`WatchError::StateDir`] when the state directory cannot be
-/// resolved, [`WatchError::Logging`] when the log appender cannot be built,
-/// [`WatchError::Journal`] when the latest commit cannot be read, and
-/// [`WatchError::Debounce`] when the debouncer cannot be built or armed.
+/// resolved, and [`WatchError::Logging`] when the log appender cannot be
+/// built. Returns [`WatchError::Journal`] when the latest commit cannot be
+/// read, and [`WatchError::Debounce`] when the debouncer cannot be built or
+/// armed.
 pub async fn run_foreground<F>(shutdown: F) -> Result<(), WatchError>
 where
     F: Future<Output = ()>,
@@ -160,9 +162,9 @@ where
 /// The testable core of [`run_foreground`]: run the loop against an explicit
 /// state directory rather than the process-resolved one.
 ///
-/// Split out so tests can drive the loop against an isolated tempdir state tree
-/// without touching the developer's real state directory or relying on a global
-/// `tracing` subscriber being installable more than once per process.
+/// Split out so tests can drive the loop against an isolated tempdir state
+/// tree. They then touch neither the developer's real state directory, nor a
+/// global `tracing` subscriber that installs only once per process.
 async fn run_foreground_in<F>(state: &Utf8Path, shutdown: F) -> Result<(), WatchError>
 where
     F: Future<Output = ()>,
@@ -327,12 +329,13 @@ fn env_filter() -> tracing_subscriber::EnvFilter {
 /// watcher's own journal writes cannot drive an unbounded re-apply loop.
 ///
 /// A batch counts as a journal event when any touched path is a journal
-/// sentinel (a file with a `.plan` / `.COMMIT` / `.progress` /
-/// `.ROLLED_BACK` suffix) whose parent directory is named `journal`. The
+/// sentinel whose parent directory is named `journal`. A sentinel is a file
+/// with a `.plan` / `.COMMIT` / `.progress` / `.ROLLED_BACK` suffix. The
 /// classifier matches on the path *leaf* rather than a `starts_with` against
-/// the resolved journal directory because `notify` reports canonicalized event
-/// paths (on macOS `/tmp` resolves to `/private/tmp`), which would never share
-/// a prefix with the un-canonicalized state directory the watcher resolved.
+/// the resolved journal directory. `notify` reports canonicalized event paths,
+/// so on macOS `/tmp` resolves to `/private/tmp`. Such a path would never
+/// share a prefix with the un-canonicalized state directory the watcher
+/// resolved.
 fn journal_event(batch: &debounce::EventBatch) -> bool {
     batch.paths.iter().any(|p| is_journal_sentinel(p))
 }

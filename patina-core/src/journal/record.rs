@@ -25,12 +25,12 @@
 //!   - a [`ExpectedTarget::Symlink`] records the canonical link target the
 //!     symlink should point at; that link target is also the symlink's source.
 //!   - a [`ExpectedTarget::Content`] records the canonical source path the
-//!     bytes were copied or rendered from plus a 32-byte `blake3` hash of the
-//!     bytes written (copy / render), so an external edit changes the hash and
-//!     surfaces as drift.
+//!     bytes were copied or rendered from, plus a 32-byte `blake3` hash of the
+//!     bytes written. An external edit therefore changes the hash, and surfaces
+//!     as drift.
 //!
-//! The content hash is `blake3` rather than a `std::hash` fingerprint so the
-//! same hash serves the journal here and the drift cache, which
+//! The content hash is `blake3` rather than a `std::hash` fingerprint, so the
+//! same hash serves both the journal here and the drift cache. The drift cache
 //! compares a freshly computed `blake3` of a target against this recorded
 //! value. The record shares the journal's
 //! [`FILE_MAJOR_VERSION`](super::FILE_MAJOR_VERSION); per the pre-release

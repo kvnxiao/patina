@@ -103,11 +103,11 @@ pub fn scaffold_root_manifest(created_at: &str) -> String {
 
 /// Append one `[[file]]` array-of-tables element to a module manifest.
 ///
-/// Parses `doc_text` as a [`DocumentMut`] (an empty string yields an
-/// empty document), pushes a single `[[file]]` element carrying
-/// `source`, `target`, and (for the four user-declarable modes) `mode`,
-/// and returns the serialized text with every pre-existing table,
-/// comment, key ordering, and whitespace intact.
+/// Parses `doc_text` as a [`DocumentMut`]; an empty string yields an empty
+/// document. Pushes a single `[[file]]` element carrying `source`, `target`,
+/// and, for the four user-declarable modes, `mode`. Returns the serialized
+/// text with every pre-existing table, comment, key ordering, and whitespace
+/// intact.
 ///
 /// [`FileMode::TemplateRender`] never emits a `mode` key: templating is
 /// implied by a `.tmpl` source suffix and the parser rejects an explicit
@@ -191,11 +191,11 @@ pub fn append_file_entry(
 ///
 /// # Errors
 ///
-/// Returns [`ConfigWriteError::Parse`] when `doc_text` is not a
-/// well-formed TOML document, [`ConfigWriteError::MalformedDirectoryArray`]
-/// when `doc_text` already declares a `directory` key that is not an array
-/// of tables, and [`ConfigWriteError::ModeNotDirectoryValid`] when `mode`
-/// is not a directory-table mode.
+/// Returns [`ConfigWriteError::Parse`] when `doc_text` is not a well-formed
+/// TOML document. Returns [`ConfigWriteError::MalformedDirectoryArray`] when
+/// `doc_text` already declares a `directory` key that is not an array of
+/// tables. Returns [`ConfigWriteError::ModeNotDirectoryValid`] when `mode` is
+/// not a directory-table mode.
 ///
 /// # Examples
 ///

@@ -18,9 +18,10 @@
 //! placeholder, not an error; the misleading "empty target" render would
 //! otherwise distort the apply consent decision.
 //!
-//! Removals are shown too: a target a prior apply materialized but the
-//! current plan no longer manages (an entry dropped from a `patina.toml`, a
-//! `when` flipped false) is reaped by the engine on the next apply. Those
+//! Removals are shown too. The engine reaps a target a prior apply
+//! materialized but the current plan no longer manages, on the next apply.
+//! That covers an entry dropped from a `patina.toml`, and a `when` flipped
+//! false. Those
 //! orphan targets are not [`ResolvedPlan`] operations, so the CLI passes them
 //! in alongside; each renders as a `remove <target>` block whose deleted body
 //! is the link it pointed at or its current content, so the reap is never

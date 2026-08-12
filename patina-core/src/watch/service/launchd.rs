@@ -1,11 +1,12 @@
 //! The macOS `launchd` `LaunchAgent` service backend.
 //!
 //! `install` writes a per-user `LaunchAgent` plist to
-//! `~/Library/LaunchAgents/com.patina.watcher.plist` (mode `0644`) with
-//! `RunAtLoad = true`, `KeepAlive` for on-failure restart, and
+//! `~/Library/LaunchAgents/com.patina.watcher.plist`, mode `0644`. The plist
+//! carries `RunAtLoad = true`, `KeepAlive` for on-failure restart, and
 //! `ProgramArguments` pointing at the canonical `patina` binary invoked with
-//! `watch --foreground`, then bootstraps it into the per-user GUI domain with
-//! `launchctl bootstrap gui/$(id -u) <plist>`. `start` / `stop` drive
+//! `watch --foreground`. `install` then bootstraps it into the per-user GUI
+//! domain with `launchctl bootstrap gui/$(id -u) <plist>`. `start` / `stop`
+//! drive
 //! `launchctl start` / `stop com.patina.watcher`; `uninstall` stops, boots the
 //! service out, and removes the plist; `status` reads
 //! `launchctl print gui/$(id -u)/com.patina.watcher` for liveness, last-fired,

@@ -1,10 +1,10 @@
 //! One spelling for a name that two filesystems (or two authors) may spell
 //! differently.
 //!
-//! Two consumers need the same answer: the target-collision check, which must
-//! reach the same verdict on Linux as on the case-insensitive filesystems macOS
-//! and Windows ship by default, and the root manifest's remote registry, whose
-//! names become directory names under the per-machine cache. Folding both
+//! Two consumers need the same answer. The target-collision check must reach
+//! the same verdict on Linux as on the case-insensitive filesystems macOS and
+//! Windows ship by default. The root manifest's remote registry turns names
+//! into directory names under the per-machine cache. Folding both
 //! through one function is what keeps a manifest's meaning a property of the
 //! manifest rather than of the machine reading it.
 

@@ -75,10 +75,10 @@ struct PatinaEnv {
 /// Records the names of variables that resolved to undefined during a
 /// single render or `when` evaluation.
 ///
-/// Always accessed behind a [`Mutex`], which both satisfies the
-/// `Send + Sync` bound `MiniJinja` requires of an [`Object`] and grants
-/// the exclusive `&mut` access the [`Object::get_value`] implementors (which
-/// receive `&self`) need to push names.
+/// Always accessed behind a [`Mutex`]. That satisfies the `Send + Sync` bound
+/// `MiniJinja` requires of an [`Object`]. It also grants the exclusive `&mut`
+/// access that [`Object::get_value`] implementors need to push names, since
+/// they receive `&self`.
 #[derive(Debug, Default)]
 pub(crate) struct UndefinedTracker {
     names: BTreeSet<String>,

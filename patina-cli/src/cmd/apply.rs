@@ -438,13 +438,13 @@ async fn run_json(
 /// `result`.
 ///
 /// Each plan row carries a `state` field whose value is the target's
-/// [`Disposition`](patina_core::Disposition) label (`create` / `update` /
-/// `unchanged`), derived purely from the plan-time classification and reusing
-/// the canonical [`Disposition::label`](patina_core::Disposition::label)
-/// mapping. For tree modes the array lists
-/// per-leaf rows with per-leaf `state`, mirroring the
-/// per-leaf routing the human diff uses, so a drifted tree reports each leaf's
-/// own state rather than the per-op aggregate. The `state` field is a pure
+/// [`Disposition`](patina_core::Disposition) label: `create`, `update`, or
+/// `unchanged`. It is derived purely from the plan-time classification, and
+/// reuses the canonical
+/// [`Disposition::label`](patina_core::Disposition::label) mapping. For tree
+/// modes the array lists per-leaf rows with per-leaf `state`, mirroring the
+/// per-leaf routing the human diff uses. A drifted tree therefore reports each
+/// leaf's own state, not the per-op aggregate. The `state` field is a pure
 /// function of the disposition, so it inherits the deterministic-stdout
 /// contract.
 ///
@@ -479,9 +479,9 @@ fn json_envelope(resolved: &ResolvedPlan, reaped: &[camino::Utf8PathBuf], result
 /// plan array.
 ///
 /// A single-target mode (empty `leaves`) yields one row carrying the target's
-/// own disposition label. A tree mode yields one row per materialized leaf,
-/// each carrying that leaf's path (under the declared target) and its per-leaf
-/// disposition label, the same per-leaf routing the human
+/// own disposition label. A tree mode yields one row per materialized leaf.
+/// Each row carries that leaf's path, under the declared target, and its
+/// per-leaf disposition label. That is the same per-leaf routing the human
 /// diff renderer uses, so the two surfaces agree on what an entry expands to.
 fn plan_rows(
     op: &patina_core::ResolvedOperation,

@@ -3,10 +3,10 @@
 //! `patina watch install` registers the watcher as a per-user background
 //! service that launches the foreground watcher (`patina watch --foreground`)
 //! at login, and `uninstall` / `start` / `stop` / `restart` / `status` manage
-//! that registration. Each OS speaks to its own native supervisor (`launchd`
-//! on macOS, `systemd --user` on Linux, a per-user Scheduled Task on Windows)
-//! through a common [`ServiceBackend`] trait so the CLI command surface is
-//! written once.
+//! that registration. Each OS speaks to its own native supervisor through a
+//! common [`ServiceBackend`] trait, so the CLI command surface is written
+//! once. The supervisors are `launchd` on macOS, `systemd --user` on Linux,
+//! and a per-user Scheduled Task on Windows.
 //!
 //! [`current`] is the factory: it dispatches on [`crate::state_dir::HostOs`]
 //! and
@@ -298,9 +298,9 @@ use crate::watch::logging::LOGS_DIR;
 /// Recover the watcher's `subscriptions_count` and `re_applies_since_start`
 /// counters from the most recent rotated log under `<state>/logs/`.
 ///
-/// Reads the newest `watch.log*` file in the log directory and scans it for the
-/// last `subscriptions=<n>` field (logged on each `watch_started` /
-/// `journal_rescan`) and counts the `re_apply` success events since the most
+/// Reads the newest `watch.log*` file in the log directory. Scans it for the
+/// last `subscriptions=<n>` field, which is logged on each `watch_started` /
+/// `journal_rescan`. Then counts the `re_apply` success events since the most
 /// recent `watch_started`. Returns `(None, None)` when the log directory is
 /// absent, empty, or unreadable. A missing log is not an error (the watcher
 /// may never have started since the last rotation).
@@ -317,9 +317,9 @@ pub fn recover_log_counters(state_dir: &Utf8Path) -> (Option<u64>, Option<u64>) 
     parse_counters(&contents)
 }
 
-/// The most recent (lexically greatest, which for the daily `watch.log.DATE`
-/// suffix is also the newest) `watch.log*` file under `<state>/logs/`, or
-/// `None` when the directory is absent or holds no log file.
+/// The most recent `watch.log*` file under `<state>/logs/`, or `None` when the
+/// directory is absent or holds no log file. Most recent means lexically
+/// greatest, which for the daily `watch.log.DATE` suffix is also the newest.
 fn most_recent_log(state_dir: &Utf8Path) -> Option<Utf8PathBuf> {
     let logs_dir = state_dir.join(LOGS_DIR);
     let entries = fs_err::read_dir(logs_dir.as_std_path()).ok()?;

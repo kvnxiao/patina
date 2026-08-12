@@ -1,11 +1,11 @@
 //! Windows Developer Mode detection and the symlink-elevation gate
 //! decision (read side).
 //!
-//! On Windows, an apply whose plan contains any
-//! `symlink` / `symlink-dir` operation only proceeds when the host can
-//! create symbolic links without elevation, which on Windows means
-//! Developer Mode is enabled (the `AllowDevelopmentWithoutDevLicense`
-//! registry flag is `1`), or the invoking process is already elevated.
+//! On Windows, an apply whose plan contains any `symlink` / `symlink-dir`
+//! operation only proceeds when the host can create symbolic links without
+//! elevation. That means Developer Mode is enabled, with the
+//! `AllowDevelopmentWithoutDevLicense` registry flag set to `1`. An already
+//! elevated invoking process also satisfies it.
 //!
 //! The engine crate owns the *capability*: the IO-free
 //! reads of the registry flag, the process-token elevation check, and
@@ -16,10 +16,10 @@
 //!
 //! Everything here compiles on every platform. The Windows-specific
 //! registry and token reads live in the `registry` submodule behind
-//! `#[cfg(windows)]`; on every other platform the entry points reduce to
-//! the stubs documented on each function, so the macOS/Linux CI builds
-//! clean and the gate-decision logic is unit-testable on Linux against a
-//! fake [`DevModeProbe`].
+//! `#[cfg(windows)]`. On every other platform the entry points reduce to the
+//! stubs documented on each function. The macOS/Linux CI therefore builds
+//! clean, and the gate-decision logic is unit-testable on Linux against a fake
+//! [`DevModeProbe`].
 //!
 //! # Examples
 //!
@@ -312,8 +312,8 @@ pub fn decide_symlink_gate(plan: &ResolvedPlan, probe: &impl DevModeProbe) -> Ga
 /// # Why the helper launches need this
 ///
 /// `ShellExecuteEx` is the only way to raise the UAC consent dialog without
-/// `unsafe`, and it returns as soon as the shell has *created* the elevated
-/// helper process, not when that process exits. Waiting on the process would
+/// `unsafe`. It returns as soon as the shell has *created* the elevated helper
+/// process, not when that process exits. Waiting on the process would
 /// need its handle, which the safe wrapper discards. So a launcher can only
 /// learn what the helper did by observing its effect, and a single observation
 /// taken immediately after the launch races the helper's own startup: image

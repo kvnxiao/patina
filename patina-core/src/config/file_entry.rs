@@ -15,10 +15,10 @@
 //! [`EntryKind`], its resolved executor [`FileMode`], a `source`, a
 //! non-empty `targets` list, and an optional raw `when` expression. The
 //! per-table `from_raw_*` constructors are the only way to build a
-//! [`ManagedEntry`], and each validates that table's accepted-mode
-//! allowlist before resolving to a [`FileMode`], so a source-kind enum
-//! can never pair with an illegal mode (the "illegal states
-//! unrepresentable" bar). The parse-time rules surface as typed
+//! [`ManagedEntry`]. Each validates that table's accepted-mode allowlist
+//! before resolving to a [`FileMode`]. A source-kind enum can therefore never
+//! pair with an illegal mode, which is the "illegal states unrepresentable"
+//! bar. The parse-time rules surface as typed
 //! [`FileEntryError`] variants whose `Display` impls satisfy the
 //! substring contracts the tests assert.
 

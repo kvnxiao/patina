@@ -212,9 +212,10 @@ impl From<crate::version_envelope::EnvelopeError> for DriftCacheError {
     }
 }
 
-/// Write `cache` to `path` through a same-directory temporary and a rename, so
-/// a concurrent reader (`patina debug drift-cache`, the watcher's own next
-/// start) sees either the previous complete cache or the new one.
+/// Write `cache` to `path` through a same-directory temporary and a rename. A
+/// concurrent reader therefore sees either the previous complete cache or the
+/// new one. Such readers are `patina debug drift-cache`, and the watcher's own
+/// next start.
 ///
 /// # Errors
 ///
@@ -310,10 +311,9 @@ fn render_detected_at(detected_at_unix: i64) -> String {
     crate::clock::epoch_to_rfc3339(detected_at_unix)
 }
 
-/// Reformat a compact journal timestamp the way the journal renderer does,
-/// re-exported so a future caller rendering the bound `journal_ts` in RFC
-/// 3339 form has the same helper the journal uses rather than a parallel
-/// copy.
+/// Reformat a compact journal timestamp the way the journal renderer does.
+/// Re-exported so a caller rendering the bound `journal_ts` in RFC 3339 form
+/// has the same helper the journal uses, rather than a parallel copy.
 #[must_use = "the RFC 3339 timestamp is the human-readable journal binding"]
 pub fn journal_ts_rfc3339(journal_ts: &str) -> String {
     timestamp_to_rfc3339(journal_ts)

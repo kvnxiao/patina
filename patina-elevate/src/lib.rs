@@ -9,9 +9,9 @@
 //! It exposes two elevated actions. `enable-developer-mode` sets the Developer
 //! Mode registry switch (`AllowDevelopmentWithoutDevLicense` under
 //! `AppModelUnlock` in `HKLM`) to `1`. `apply-defender-exclusions` reads a
-//! request file naming Windows Defender path exclusions to add and remove,
-//! independently re-validates every path, and applies them through the
-//! `Defender` PowerShell module with a mandatory re-read verification. Keeping
+//! request file naming Windows Defender path exclusions to add and remove. It
+//! independently re-validates every path, then applies them through the
+//! `Defender` PowerShell module, with a mandatory re-read verification. Keeping
 //! this a separate, dependency-light binary (no `patina-core` / `patina-cli`)
 //! keeps the surface UAC must trust as small as possible.
 //!
@@ -19,10 +19,10 @@
 //!
 //! The command surface ([`Cli`], [`run`]) lives here in the library so it
 //! can be unit-tested on any host without depending on the binary
-//! artifact. The binary itself is gated behind the `windows` feature
-//! and is therefore absent from non-Windows release
-//! builds, but the parsing contract it relies on is exercised by the
-//! library's own cross-platform tests regardless.
+//! artifact. The binary itself is gated behind the `windows` feature, and is
+//! therefore absent from non-Windows release builds. The parsing contract it
+//! relies on is exercised by the library's own cross-platform tests
+//! regardless.
 //!
 //! ## Exit codes
 //!
@@ -58,12 +58,11 @@ pub struct Cli {
 /// intercepts the unknown-subcommand path: clap's default
 /// [`ErrorKind::InvalidSubcommand`] message reports only the offending
 /// token and the bare `Usage:` line, and does *not* enumerate the
-/// available subcommands. The exit-2 usage
-/// message must *list the supported subcommands*, so on that one error
-/// kind we print clap's own rendered error to stderr, follow it with a
-/// line listing the supported subcommands (derived from the command
-/// definition, not hard-coded), and exit with clap's usage exit code
-/// (`2`).
+/// available subcommands. The exit-2 usage message must *list the supported
+/// subcommands*. On that one error kind we therefore print clap's own
+/// rendered error to stderr, and follow it with a line listing the supported
+/// subcommands. That line is derived from the command definition, not
+/// hard-coded. We then exit with clap's usage exit code (`2`).
 ///
 /// All other error kinds, including the no-subcommand path, which clap
 /// already renders with the subcommand listing, are left to clap's own
@@ -157,10 +156,10 @@ pub fn run(command: &Command) -> ExitCode {
 /// Map an action's result to an [`ExitCode`], writing the typed failure to
 /// stderr on the exit-1 path.
 ///
-/// User-facing output normally routes through `output::Reporter`, but this
-/// helper deliberately has no `patina-core` dependency and therefore no
-/// Reporter, and pulling in `tracing` for one error line would widen the
-/// surface UAC must trust. A raw stderr write is the right primitive here, so
+/// User-facing output normally routes through `output::Reporter`. This helper
+/// deliberately has no `patina-core` dependency, and therefore no Reporter.
+/// Pulling in `tracing` for one error line would widen the surface UAC must
+/// trust. A raw stderr write is the right primitive here, so
 /// the workspace `disallowed-macros` gate is suppressed at this one documented
 /// site (clippy.toml sanctions exactly this carve-out).
 fn report_result<E: std::error::Error>(action: &str, result: Result<(), E>) -> ExitCode {

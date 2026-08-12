@@ -194,14 +194,15 @@ pub(crate) fn symlink_to(link: &Utf8Path, target: &Utf8Path) -> std::io::Result<
 /// Replace the file at `path` with `bytes` through a same-directory temporary
 /// and a rename, creating `path`'s parent chain if it is missing.
 ///
-/// The rename is the atomic point: POSIX `rename(2)` and Windows `MoveFileEx`
-/// both swap the destination in one operation, so a concurrent reader, or a
-/// process killed mid-write, observes either the previous file whole or the
-/// new one whole, never a truncated one. Writing to the destination directly
+/// The rename is the atomic point. POSIX `rename(2)` and Windows `MoveFileEx`
+/// both swap the destination in one operation. A concurrent reader, or a
+/// process killed mid-write, therefore observes either the previous file whole
+/// or the new one whole, never a truncated one. Writing to the destination
+/// directly
 /// would leave neither on a kill between the truncate and the last byte.
 ///
 /// The temporary is a sibling, so it shares a filesystem with the destination
-/// and the rename cannot degrade into a cross-device copy, and it carries the
+/// and the rename cannot degrade into a cross-device copy. It also carries the
 /// writer's pid, so two processes writing the same file never collide on one
 /// scratch name.
 ///

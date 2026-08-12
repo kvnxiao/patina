@@ -12,11 +12,11 @@
 //!    [`ResolvedPlan`]. Planning performs **no** filesystem mutation, so the
 //!    CLI can render a diff and (in a non-TTY, or with `--json` and no `--yes`)
 //!    exit without touching the user's `$HOME`.
-//! 2. [`execute`] takes the [`ResolvedPlan`] and mutates: it recovers any
-//!    orphan plan, takes the exclusive lock, flushes the journal, runs
-//!    `pre_apply` hooks, materializes every operation (backing up each
-//!    pre-existing target first), runs `post_apply` hooks, and either commits
-//!    or rolls the file operations back.
+//! 2. [`execute`] takes the [`ResolvedPlan`] and mutates. It recovers any
+//!    orphan plan, takes the exclusive lock, and flushes the journal. It then
+//!    runs `pre_apply` hooks, materializes every operation (backing up each
+//!    pre-existing target first), and runs `post_apply` hooks. Finally it
+//!    either commits or rolls the file operations back.
 //!
 //! The CLI (`patina-cli`) owns the diff rendering, the TTY prompt, the
 //! `--pager` plumbing, and the JSON envelope; this module owns the
@@ -149,11 +149,10 @@ pub enum LockPolicy {
 /// For a single-target mode (`symlink`, `copy`, `template`, `symlink-dir`)
 /// the `aggregate` is simply that target's own disposition and `leaves` is
 /// empty. For a tree mode (`copy-tree`, `symlink-tree`) the `aggregate` is
-/// the per-op aggregate (`Unchanged` iff every materialized
-/// leaf is `Unchanged`, `Create` iff the target directory is absent,
-/// otherwise `Update`), and `leaves` carries the per-leaf disposition the
-/// execute write-skip and the per-leaf diff / `--json` reporting
-/// consume.
+/// the per-op aggregate. It is `Unchanged` iff every materialized leaf is
+/// `Unchanged`, `Create` iff the target directory is absent, and `Update`
+/// otherwise. `leaves` then carries the per-leaf disposition that the
+/// execute write-skip and the per-leaf diff / `--json` reporting consume.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct TargetDisposition {
@@ -196,13 +195,13 @@ pub struct ResolvedOperation {
     /// reporting read these so the live filesystem read
     /// happens once, at plan time.
     pub dispositions: Vec<TargetDisposition>,
-    /// Index of the managed entry that produced this operation, assigned
-    /// at plan time over the full declared sequence (every `[[file]]`
-    /// entry across all modules first, then every `[[directory]]` entry)
-    /// as a single monotonic `u32` space. This index, not a re-derivation
-    /// from operation position, is what [`execute`] records on each
-    /// [`ExpectedTarget`], so a `[[file]]` and a `[[directory]]` entry can
-    /// never collide on an index and per-entry atomic rollback
+    /// Index of the managed entry that produced this operation. Plan time
+    /// assigns it over the full declared sequence, as a single monotonic
+    /// `u32` space. That sequence is every `[[file]]` entry across all
+    /// modules first, then every `[[directory]]` entry. [`execute`] records
+    /// this index on each [`ExpectedTarget`] rather than re-deriving one from
+    /// operation position. A `[[file]]` and a `[[directory]]` entry can
+    /// therefore never collide on an index, and per-entry atomic rollback
     /// groups targets by their declared entry.
     pub entry_index: u32,
 }
@@ -410,9 +409,10 @@ pub fn plan(
 /// Everything up to the per-module entry loop, but not including it, is
 /// identical between the two passes (the repo-shared / per-profile
 /// layer pushes, the active-profile resolution, the shared `MiniJinja`
-/// engine). Factoring it here keeps the `when` gate seeing the same variable
-/// context in planning and in status, so an entry that plans on this host is
-/// the same entry status counts as managed (and the reap leaves alone).
+/// engine). Sharing it here gives the `when` gate the same variable context
+/// in planning and in status. An entry that plans on this host is therefore
+/// the same entry status counts as managed, and the same entry the reap
+/// leaves alone.
 struct PlanningContext {
     repo_root: Utf8PathBuf,
     state_dir: Utf8PathBuf,
@@ -507,10 +507,11 @@ impl<'a> RemoteRegistry<'a> {
     /// # Errors
     ///
     /// Returns an [`EngineError`] when the entry names a remote the root
-    /// manifest does not declare, or, under [`CachePolicy::Fetch`], when that
-    /// remote has no pin (the message points at `patina remote update <name>`)
-    /// or its pinned rev is neither cached nor fetchable. All three are raised
-    /// at plan time so nothing is partially applied.
+    /// manifest does not declare. Under [`CachePolicy::Fetch`] it also errors
+    /// when that remote has no pin, or when its pinned rev is neither cached
+    /// nor fetchable. The no-pin message points at
+    /// `patina remote update <name>`. All three are raised at plan time, so
+    /// nothing is partially applied.
     fn origin(
         &mut self,
         entry: &ManagedEntry,
@@ -548,10 +549,10 @@ impl<'a> RemoteRegistry<'a> {
     /// containment check downstream needs no further filesystem resolution.
     ///
     /// Under [`CachePolicy::ReadOnly`] every failure shape degrades to "no
-    /// source root" instead of erroring: status reports on what a prior apply
-    /// left behind, and losing the whole drift report over an undeclared
-    /// remote, a malformed lockfile, or a missing pin would hide the entries
-    /// that are perfectly reportable. The apply plan raises all three.
+    /// source root" instead of erroring. Status reports on what a prior apply
+    /// left behind. Losing the whole drift report over an undeclared remote,
+    /// a malformed lockfile, or a missing pin would hide the entries that are
+    /// perfectly reportable. The apply plan raises all three.
     fn materialize(&mut self, name: &str) -> Result<Option<Utf8PathBuf>, EngineError> {
         // Reborrowed from `self` so the lockfile can be loaded into `self`
         // below while `spec` stays alive.
@@ -609,10 +610,10 @@ impl<'a> RemoteRegistry<'a> {
     /// The `(name, rev)` of every declared remote's pin, or `None` when this
     /// run never read the lockfile.
     ///
-    /// The distinction is what keeps the cache sweep honest: "no remote is
-    /// pinned" and "which remotes are pinned was never established" look the
-    /// same as an empty list, and deleting a checkout on the second would take
-    /// out the one the next run materializes.
+    /// The distinction is what keeps the cache sweep honest. "No remote is
+    /// pinned" and "which remotes are pinned was never established" both look
+    /// like an empty list. Deleting a checkout on the second would take out
+    /// the one the next run materializes.
     fn pins(&self) -> Option<Vec<(RemoteName, String)>> {
         Some(declared_pins(
             self.declared.iter().map(|spec| &spec.name),
@@ -760,14 +761,14 @@ fn build_planning_context(
 /// refuse:
 ///
 /// - **`when` gating.** An entry whose `when` is false on this host contributes
-///   no managed target, so a `[[file]]` whose `when` has been edited to false
-///   has its prior target fall out of the set and classify ORPHANED. The gate
-///   uses the same [`Engine::eval_when`] and layered resolver as planning, so
-///   the two passes agree on which entries are active.
+///   no managed target. A `[[file]]` whose `when` has been edited to false
+///   therefore has its prior target fall out of the set, and classify ORPHANED.
+///   The gate uses the same [`Engine::eval_when`] and layered resolver as
+///   planning, so the two passes agree on which entries are active.
 /// - **Tree-mode leaf expansion.** A `symlink-tree` or `copy-tree`
-///   `[[directory]]` entry is expanded into one managed key per *live* source
-///   leaf, walked in the same `walk_files` order the executor used, so a
-///   deleted source leaf is absent from the set and its recorded target leaf
+///   `[[directory]]` entry expands into one managed key per *live* source leaf,
+///   walked in the same `walk_files` order the executor used. A deleted source
+///   leaf is therefore absent from the set, and its recorded target leaf
 ///   classifies ORPHANED. Both modes materialize one object per leaf and
 ///   journal each leaf as its own target, so both must expand here; every other
 ///   mode contributes its declared target(s) directly.
@@ -830,10 +831,10 @@ pub fn current_managed_targets() -> Result<crate::status::ManagedTargets, Engine
 /// directly.
 ///
 /// A tree-mode entry whose remote checkout is not on this machine is different
-/// from one whose source is missing: its leaves are unknowable rather than
-/// gone, so its declared targets are recorded as indeterminate roots and its
-/// remote is reported, instead of letting every recorded leaf classify
-/// ORPHANED (and be reaped) over a checkout that merely is not here.
+/// from one whose source is missing. Its leaves are unknowable rather than
+/// gone. Patina therefore records its declared targets as indeterminate roots,
+/// and reports its remote. The alternative would let every recorded leaf
+/// classify ORPHANED, and be reaped, over a checkout that merely is not here.
 fn insert_managed_targets(
     entry: &ManagedEntry,
     origin: &EntryOrigin,
@@ -962,9 +963,9 @@ impl ClaimTargets<'_> {
 /// unexpected file is supposed to do.
 ///
 /// The leaves are walked here rather than taken from the classified
-/// dispositions, because classification deliberately records none for a tree
-/// target that does not exist yet (the whole-op Create shortcut), and a fresh
-/// target is exactly when a collision must still be caught.
+/// dispositions. Classification deliberately records none for a tree target
+/// that does not exist yet (the whole-op Create shortcut), and a fresh target
+/// is exactly when a collision must still be caught.
 ///
 /// Claims come out in declaration order, every `[[file]]` entry and then every
 /// `[[directory]]` entry, so the reported pair is a function of the manifest.
@@ -1071,9 +1072,9 @@ fn assemble_plan_operations(
 /// entry the gate is above the target loop, so `when` gates all targets
 /// together.
 ///
-/// Step (3) of the order, the plan-time source existence-and-kind
-/// validation, runs inside [`resolve_entry`], right after the source is
-/// canonicalized, so a `when`-false entry (which returns `Ok(None)` here
+/// Step (3) of the order is the plan-time source existence-and-kind
+/// validation. It runs inside [`resolve_entry`], right after the source is
+/// canonicalized. A `when`-false entry (which returns `Ok(None)` here
 /// before `resolve_entry` is ever called) is never canonicalized or
 /// validated.
 fn gate_and_resolve_entry(
@@ -1207,9 +1208,9 @@ fn classify_target(
 }
 
 /// Canonicalize one managed entry's source and resolve its targets under
-/// `module_path` and `home`, then validate the canonical source's existence
-/// and kind against the entry's declared table (step 3 of the
-/// order). The source is canonicalized through the filesystem; each
+/// `module_path` and `home`. Then validate the canonical source's existence
+/// and kind against the entry's declared table. That is step 3 of the
+/// order. The source is canonicalized through the filesystem; each
 /// target is resolved by *declared location* via [`resolve_location`] so a
 /// symlink already occupying the target is never followed back to the source.
 /// The file/directory order and the entry-index space are imposed by the
@@ -1308,8 +1309,9 @@ fn resolve_entry(
 /// it.
 ///
 /// The leaves come from the same [`crate::apply::walk_files`] enumeration the
-/// executors deploy, which yields a symlink as a leaf rather than descending
-/// it, whether it points at a file, a directory, or nothing at all. The two
+/// executors deploy. That enumeration yields a symlink as a leaf rather than
+/// descending it, whether it points at a file, a directory, or nothing at
+/// all. The two
 /// passes can therefore never disagree about what the tree contains. The plan
 /// fails before any mutation.
 ///
@@ -1495,12 +1497,11 @@ fn materialize_target(
 
 /// Execute a [`ResolvedPlan`] against the filesystem.
 ///
-/// Takes the exclusive lock, recovers any orphan plan under that held
-/// lock, flushes the
-/// journal, runs `pre_apply` hooks, materializes every operation (backing
-/// up each pre-existing target first), runs `post_apply` hooks, and
-/// commits, or rolls the file operations back when a `must_succeed`
-/// `post_apply` hook fails.
+/// Takes the exclusive lock, recovers any orphan plan under that held lock,
+/// and flushes the journal. Then runs `pre_apply` hooks, materializes every
+/// operation (backing up each pre-existing target first), and runs
+/// `post_apply` hooks. Finally commits, or rolls the file operations back
+/// when a `must_succeed` `post_apply` hook fails.
 ///
 /// # Errors
 ///
@@ -1777,8 +1778,8 @@ pub async fn execute(
 ///
 /// Every managed target becomes one [`ExpectedTarget`], **including
 /// `Unchanged` targets** that the execute write-skip left untouched and that
-/// therefore produced no [`CompletionRecord`]. Sourcing the record
-/// from the resolved plan rather than from the written objects keeps an
+/// therefore produced no [`CompletionRecord`]. The record is sourced
+/// from the resolved plan rather than from the written objects. That keeps an
 /// `Unchanged` target in the commit, so `status` reports it managed (`Clean`)
 /// and [`reap_orphans`] never removes it. A symlink records its canonical link
 /// target (which is also its source); a copy or render records its canonical
@@ -1828,13 +1829,14 @@ fn build_apply_record(resolved: &ResolvedPlan) -> Result<ApplyRecord, EngineErro
 /// the commit records per-leaf so `status` and `rollback` resolve
 /// each leaf independently.
 ///
-/// A `Create` aggregate carries no per-leaf dispositions (the target dir was
-/// absent at plan time), so the source leaves are enumerated here with the
-/// same [`walk_files`](crate::apply::walk_files) walk the executor used, each
-/// recorded as `Create`. Otherwise the per-leaf dispositions computed at plan
-/// time are recorded verbatim, so an `Update` tree records its drifted leaves
-/// as `Update` / `Create` and its clean leaves as `Unchanged`, and a
-/// fully-`Unchanged` tree records every leaf as `Unchanged`.
+/// A `Create` aggregate carries no per-leaf dispositions, because the target
+/// directory was absent at plan time. The source leaves are enumerated here
+/// instead, with the same [`walk_files`](crate::apply::walk_files) walk the
+/// executor used, each recorded as `Create`. Otherwise the per-leaf
+/// dispositions computed at plan time are recorded verbatim. An `Update` tree
+/// therefore records its drifted leaves as `Update` / `Create` and its clean
+/// leaves as `Unchanged`. A fully-`Unchanged` tree records every leaf as
+/// `Unchanged`.
 fn record_tree_targets(
     targets: &mut Vec<ExpectedTarget>,
     mode: FileMode,
@@ -2043,13 +2045,13 @@ pub fn plan_orphans(resolved: &ResolvedPlan) -> Result<Vec<Utf8PathBuf>, EngineE
 /// longer manages and that are still present on disk as non-directories.
 ///
 /// Reads the last committed [`ApplyRecord`] and the current managed-target
-/// set ([`current_managed_targets`]), returning each recorded target whose
+/// set ([`current_managed_targets`]). Returns each recorded target whose
 /// [`manage_key`](crate::status::manage_key) is absent from the current set,
 /// is still on disk, is not a directory, and lies under no currently-managed
-/// target. Shared by [`reap_orphans`], which backs up and removes each
-/// returned target, and by the full-no-op short-circuit in [`execute`], which
-/// only needs to know whether this set is empty (a non-empty reap set means
-/// there is work to do, so the run is not a no-op). Splitting the detection out
+/// target. Two callers share it. [`reap_orphans`] backs up and removes each
+/// returned target. The full-no-op short-circuit in [`execute`] only needs to
+/// know whether this set is empty: a non-empty reap set means there is work to
+/// do, so the run is not a no-op. Splitting the detection out
 /// keeps the "what counts as an orphan" rule in one place rather than copying
 /// the walk into the short-circuit.
 ///
@@ -2228,9 +2230,9 @@ mod tests {
     //! observed returning before any mutation. Neither is expressible
     //! through the CLI binary, which cannot share a guard across processes.
     //! Each test builds a minimal empty-operation [`ResolvedPlan`] over a
-    //! tempdir state directory, so no repository discovery or process-env
-    //! mutation is needed (the workspace forbids `unsafe`, and env mutation
-    //! is `unsafe` under edition 2024). An empty plan still flushes a
+    //! tempdir state directory. No repository discovery or process-env
+    //! mutation is needed: the workspace forbids `unsafe`, and env mutation
+    //! is `unsafe` under edition 2024. An empty plan still flushes a
     //! `<ts>.plan`, commits a `<ts>.COMMIT`, and then deletes the plan, which
     //! is enough surface to assert the journal side effects the scenarios name.
     //!
@@ -2714,8 +2716,8 @@ mod tests {
 
     /// A `symlink-tree` entry expands to one managed key per *live* source
     /// leaf, mirrored under the declared target the same way the executor
-    /// materializes them, so a source leaf that no longer exists contributes
-    /// no key and its recorded target leaf will classify ORPHANED.
+    /// materializes them. A source leaf that no longer exists therefore
+    /// contributes no key, and its recorded target leaf classifies ORPHANED.
     #[test]
     fn insert_managed_targets_expands_symlink_tree_per_live_leaf() {
         use crate::status::manage_key;
@@ -2851,11 +2853,11 @@ mod tests {
         assert_eq!(got.targets, expected);
     }
 
-    /// The guard behind the remote trust boundary: a checkout Patina wrote
-    /// never contains a symbolic link (`core.symlinks=false`), so one found
-    /// under a remote tree source means the cache was made or altered by
-    /// something else, and deploying through it could read or plant paths
-    /// outside the checkout.
+    /// The guard behind the remote trust boundary. A checkout Patina wrote
+    /// never contains a symbolic link (`core.symlinks=false`). One found
+    /// under a remote tree source therefore means the cache was made or
+    /// altered by something else, and deploying through it could read or
+    /// plant paths outside the checkout.
     #[test]
     fn a_symlink_anywhere_under_a_remote_tree_source_fails_the_plan() {
         use crate::test_util::symlink_file;

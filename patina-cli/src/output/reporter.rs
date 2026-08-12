@@ -12,11 +12,11 @@
 //!
 //! - [`StreamReporter`] writes the diff / JSON to stdout and prompts / warnings
 //!   / errors to stderr. That is the production wiring. It writes through an
-//!   `anstream` auto-stream, so ANSI styling emitted by the diff renderer and
-//!   the warn / error / prompt / confirm paths is stripped whenever the stream
-//!   is not a terminal (or `--color never` / `NO_COLOR` is in effect). The
-//!   color decision is carried by the [`anstream::ColorChoice`] passed at
-//!   construction.
+//!   `anstream` auto-stream. That strips ANSI styling whenever the stream is
+//!   not a terminal, or `--color never` / `NO_COLOR` is in effect. The styling
+//!   comes from the diff renderer and the warn / error / prompt / confirm
+//!   paths. The color decision is carried by the [`anstream::ColorChoice`]
+//!   passed at construction.
 //! - `BufferReporter` captures both streams into in-memory buffers so a test
 //!   can assert on exactly what would have been printed. It never styles, so
 //!   its buffers are always plain text.

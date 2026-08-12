@@ -113,11 +113,11 @@ pub enum ConfigParseError {
 ///
 /// # Errors
 ///
-/// Returns [`ConfigParseError::Io`] on IO failure, [`ConfigParseError::Toml`]
-/// on a malformed TOML document, a `FileEntry` / `HookEntry`
-/// variant when one of the table-array rules is violated, and
-/// [`ConfigParseError::Variable`] when a `[variables]` key falls inside
-/// the reserved `patina.*` namespace.
+/// Returns [`ConfigParseError::Io`] on IO failure, and
+/// [`ConfigParseError::Toml`] on a malformed TOML document. Returns a
+/// `FileEntry` / `HookEntry` variant when one of the table-array rules is
+/// violated. Returns [`ConfigParseError::Variable`] when a `[variables]` key
+/// falls inside the reserved `patina.*` namespace.
 pub fn parse_module_config(path: &Utf8Path) -> Result<ModuleConfig, ConfigParseError> {
     let text =
         fs_err::read_to_string(path.as_std_path()).map_err(|source| ConfigParseError::Io {
@@ -132,10 +132,10 @@ pub fn parse_module_config(path: &Utf8Path) -> Result<ModuleConfig, ConfigParseE
 ///
 /// # Errors
 ///
-/// Returns [`ConfigParseError::Toml`] on a malformed TOML document, a
-/// `FileEntry` / `HookEntry` variant when one of the table-array rules
-/// is violated, and [`ConfigParseError::Variable`] when a `[variables]`
-/// key falls inside the reserved `patina.*` namespace.
+/// Returns [`ConfigParseError::Toml`] on a malformed TOML document. Returns a
+/// `FileEntry` / `HookEntry` variant when one of the table-array rules is
+/// violated. Returns [`ConfigParseError::Variable`] when a `[variables]` key
+/// falls inside the reserved `patina.*` namespace.
 pub fn parse_module_config_str(text: &str) -> Result<ModuleConfig, ConfigParseError> {
     let raw: RawModule = toml::from_str(text).map_err(|source| ConfigParseError::Toml {
         path: Utf8PathBuf::from("<memory>"),

@@ -6,9 +6,9 @@
 //! records it to `<state>/patina/journal/<ts>.plan`. The plan file is
 //! `postcard`-encoded and prefixed with a fixed-size version envelope so
 //! a future format change can be detected and refused rather than
-//! mis-decoded. The single up-front `fsync` of the plan file, paired
-//! with an `fsync` of its parent directory, is the durability point that
-//! lets a `kill -9` mid-apply converge deterministically on the next run.
+//! mis-decoded. The single up-front `fsync` of the plan file is the
+//! durability point, paired with an `fsync` of its parent directory. It is
+//! what lets a `kill -9` mid-apply converge deterministically on the next run.
 //!
 //! As each operation completes the engine appends a record to
 //! `<state>/patina/journal/<ts>.progress`. The progress cursor is
@@ -32,10 +32,10 @@
 //! 8. delete <ts>.plan and <ts>.progress
 //! ```
 //!
-//! The [`Syncer`] trait abstracts the three durability syscalls
-//! (`fsync` on a file, `fsync` on a directory) so the executor and the
-//! recovery suite can substitute a recording fake that counts
-//! calls and asserts the fsync shape without touching real hardware.
+//! The [`Syncer`] trait abstracts the three durability syscalls, `fsync` on a
+//! file and `fsync` on a directory. The executor and the recovery suite can
+//! therefore substitute a recording fake. That fake counts calls and asserts
+//! the fsync shape without touching real hardware.
 //!
 //! # Examples
 //!
@@ -313,10 +313,10 @@ fn unrolled_commit_timestamps(dir: &Utf8Path) -> Result<Vec<String>, JournalErro
 /// commit remains.
 ///
 /// The newest un-rolled-back `<ts>.COMMIT` is tried first. A sentinel that is
-/// present but **unreadable**, whether a torn or empty body
-/// ([`JournalError::Truncated`]) or a corrupt same-version body
-/// ([`JournalError::Decode`]), is skipped with a `warn!` and the scan falls
-/// back to the next-older commit. This keeps `patina status` and `patina
+/// present but **unreadable** is skipped with a `warn!`, and the scan falls
+/// back to the next-older commit. Unreadable means a torn or empty body
+/// ([`JournalError::Truncated`]), or a corrupt same-version body
+/// ([`JournalError::Decode`]). This keeps `patina status` and `patina
 /// rollback` working after a `kill -9` between creating a `<ts>.COMMIT` file
 /// and flushing its bytes leaves a torn sentinel, rather than failing the
 /// whole command on one bad record.
@@ -324,8 +324,8 @@ fn unrolled_commit_timestamps(dir: &Utf8Path) -> Result<Vec<String>, JournalErro
 /// A sentinel from a **newer** format major ([`JournalError::VersionMismatch`])
 /// is deliberately **not** skipped: it propagates. The version envelope exists
 /// precisely so an older binary refuses a newer apply instead of acting on
-/// stale state, so skipping it (and silently reporting or reverting an older
-/// commit) would defeat that guard.
+/// stale state. Skipping it would silently report or revert an older commit,
+/// and defeat that guard.
 ///
 /// This single scan backs both readers of "the last apply": `patina status`
 /// via [`read_latest_commit`] and `patina rollback`, so the two cannot
@@ -366,8 +366,9 @@ pub(crate) fn read_latest_commit_with_ts(
 
 /// Read the [`ApplyRecord`] from the most recent decodable committed apply in
 /// `dir`, or `None` when the directory holds no readable, un-rolled-back
-/// `<ts>.COMMIT` sentinel (no apply has ever committed, every commit has since
-/// been rolled back, or every remaining sentinel is torn or corrupt).
+/// `<ts>.COMMIT` sentinel. That covers three cases: no apply has ever
+/// committed, every commit has since been rolled back, or every remaining
+/// sentinel is torn or corrupt.
 ///
 /// `patina status` is the reader: it decodes the latest apply's
 /// recorded targets and classifies each against the live filesystem. This is
@@ -388,18 +389,18 @@ pub fn read_latest_commit(dir: impl AsRef<Utf8Path>) -> Result<Option<ApplyRecor
 /// have been garbage-collected.
 ///
 /// After [`backups::gc_retain`](crate::backups::gc_retain) prunes an apply's
-/// backup directory, that apply can no longer be faithfully reversed, because
-/// the original bytes its overwrites would restore are gone, so rolling back to
-/// it would *delete* targets it can no longer restore. Removing the
-/// `<ts>.COMMIT` (and any `<ts>.ROLLED_BACK`) sentinel drops the apply from
+/// backup directory, that apply can no longer be faithfully reversed. The
+/// original bytes its overwrites would restore are gone. Rolling back to it
+/// would therefore *delete* targets it can no longer restore. Removing the
+/// `<ts>.COMMIT` sentinel, and any `<ts>.ROLLED_BACK`, drops the apply from
 /// both `patina status`'s "last apply" search ([`read_latest_commit`]) and
-/// `patina rollback`'s walk-back, so a commit and its backups are retained
-/// or vanish as one unit.
+/// `patina rollback`'s walk-back. A commit and its backups are therefore
+/// retained, or vanish, as one unit.
 ///
 /// Only timestamps whose backup *directory* was pruned are passed here. An
-/// all-fresh apply (no overwrites) writes no backup directory, so it is
-/// never pruned and remains rollbackable, and rolling back to it correctly
-/// deletes its fresh-created targets, with nothing to restore. Absent
+/// all-fresh apply (no overwrites) writes no backup directory, so it is never
+/// pruned and remains rollbackable. Rolling back to it correctly deletes its
+/// fresh-created targets, with nothing to restore. Absent
 /// sentinels are tolerated, so the call is idempotent.
 ///
 /// # Errors
@@ -422,10 +423,10 @@ pub fn prune_cycles(
     Ok(())
 }
 
-/// Remove a file, treating an already-absent file as success. Used on the
-/// commit path where a prior partial run may have removed one of the
-/// pair already, and by the `recovery` sibling when cleaning up orphan
-/// plan + progress files.
+/// Remove a file, treating an already-absent file as success. The commit path
+/// uses it, because a prior partial run may have removed one of the pair
+/// already. The `recovery` sibling uses it when cleaning up orphan plan and
+/// progress files.
 pub(super) fn remove_if_present(path: &Utf8Path) -> Result<(), JournalError> {
     match fs_err::remove_file(path) {
         Ok(()) => Ok(()),

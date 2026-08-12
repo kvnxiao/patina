@@ -2,12 +2,13 @@
 //! (write side).
 //!
 //! This module is compiled only under `#[cfg(windows)]`. It is the launch
-//! side: when [`super::decide_symlink_gate`] reports that
-//! elevation is required, the CLI drives the one-time UAC flow by calling
-//! [`launch_elevate_helper`], which locates the bundled `patina-elevate.exe`
-//! beside the running `patina.exe`, launches it with the `runas` verb via
-//! `ShellExecuteEx` (the OS renders the UAC consent UI), then re-reads the
-//! Developer Mode registry flag to learn the outcome.
+//! side. When [`super::decide_symlink_gate`] reports that elevation is
+//! required, the CLI drives the one-time UAC flow by calling
+//! [`launch_elevate_helper`]. That function locates the bundled
+//! `patina-elevate.exe` beside the running `patina.exe`, and launches it with
+//! the `runas` verb via `ShellExecuteEx`, which is where the OS renders the
+//! UAC consent UI. It then re-reads the Developer Mode registry flag to learn
+//! the outcome.
 //!
 //! The re-read polls rather than sampling once; the parent module's
 //! `poll_until` carries why.
@@ -72,9 +73,8 @@ pub enum ElevationOutcome {
 /// # Errors
 ///
 /// Returns [`WindowsError`] when the running executable's path cannot be
-/// resolved, or when the `ShellExecuteEx` launch fails for a reason other
-/// than the user declining consent (which is reported as
-/// [`ElevationOutcome::Declined`], not an error).
+/// resolved, or when the `ShellExecuteEx` launch fails. A user who declines
+/// consent is reported as [`ElevationOutcome::Declined`], not as an error.
 pub fn launch_elevate_helper() -> Result<ElevationOutcome, WindowsError> {
     let helper = helper_path()?;
 

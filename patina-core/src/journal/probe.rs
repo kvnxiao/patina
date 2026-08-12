@@ -66,10 +66,10 @@ pub fn operation_target(op: &PlannedOperation) -> &str {
 /// Compute the backup path for `target` under the per-apply backup root
 /// `<backups_dir>/<ts>/`.
 ///
-/// The target's absolute path is mirrored beneath the timestamped root:
-/// the platform's path prefix (the leading `/` on Unix, the `C:\` drive
-/// prefix on Windows) is folded into ordinary path components so the
-/// backup tree can hold targets from any volume without collision. This
+/// The target's absolute path is mirrored beneath the timestamped root. The
+/// platform's path prefix is folded into ordinary path components, so the
+/// backup tree can hold targets from any volume without collision. That prefix
+/// is the leading `/` on Unix, and the `C:\` drive prefix on Windows. This
 /// is the inverse map the backup writer applies before an overwrite,
 /// and the map recovery applies to find the original bytes.
 ///
@@ -98,9 +98,9 @@ pub fn mirror_backup_path(
 }
 
 /// Decompose an absolute target path into the ordinary directory/file
-/// components that mirror beneath the backup root, dropping the platform
-/// root/prefix and any `.` / `..` so the mirror is a pure containment of
-/// the target beneath `<backups>/<ts>/`.
+/// components that mirror beneath the backup root. The platform root/prefix
+/// and any `.` / `..` are dropped, so the mirror is a pure containment of the
+/// target beneath `<backups>/<ts>/`.
 fn mirror_components(target: &Utf8Path) -> Vec<String> {
     use camino::Utf8Component;
 

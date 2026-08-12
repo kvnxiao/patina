@@ -1,10 +1,10 @@
 //! Plan-time classification of one resolved leaf into a [`Disposition`].
 //!
 //! Given a resolved leaf `(mode, source, target, rendered-bytes?)`, the
-//! classifier reads the live target state and decides whether applying
-//! would **create** the target (it is absent), **update** it (present but
-//! differs from what Patina would write), or leave it **unchanged** (present
-//! and already matches).
+//! classifier reads the live target state and picks one of three outcomes.
+//! Applying would **create** an absent target. It would **update** a target
+//! that is present but differs from what Patina would write. It leaves a
+//! target **unchanged** when it is present and already matches.
 //!
 //! The "matches" test is the same one `status` uses to classify `Clean`:
 //! the symlink and content comparisons route through the shared

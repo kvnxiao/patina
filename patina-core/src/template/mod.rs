@@ -32,10 +32,10 @@
 //! undefined value is *tested*, including the condition of an
 //! `{% if defined %}` block, which would break the `{% else %}`
 //! carve-out. [`UndefinedBehavior::SemiStrict`] is the exact behaviour
-//! we want by design: an undefined value still errors when
-//! it is *emitted* (`{{ user_email }}`) or coerced into a concrete type,
-//! but a bare `{% if missing %}` test treats the undefined as falsy and
-//! falls through to `{% else %}`. For `when` predicates,
+//! we want by design. An undefined value still errors when it is *emitted*
+//! (`{{ user_email }}`), or when it is coerced into a concrete type. A bare
+//! `{% if missing %}` test instead treats the undefined as falsy, and falls
+//! through to `{% else %}`. For `when` predicates,
 //! `compile_expression().eval()` returns an undefined *value* rather than
 //! an error when the expression resolves to undefined (e.g. the
 //! short-circuit result of `true and missing_var`); [`Engine::eval_when`]

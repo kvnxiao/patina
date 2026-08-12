@@ -10,9 +10,9 @@
 //!   unit tests assert against. [`Styles::colored`] carries the production
 //!   palette.
 //! - **Whether those bytes reach the user** is decided at the write boundary in
-//!   `reporter`, where output goes through an `anstream` auto-stream that
-//!   strips ANSI when the destination is not a terminal (or `--color never` /
-//!   `NO_COLOR` is in effect).
+//!   `reporter`. Output there goes through an `anstream` auto-stream, which
+//!   strips ANSI when the destination is not a terminal, or when `--color
+//!   never` / `NO_COLOR` is in effect.
 //!
 //! The renderer always emits the colored palette; the auto-stream removes it
 //! when color is not wanted. This preserves the deterministic-stdout contract
@@ -148,9 +148,9 @@ impl Styles {
     }
 
     /// The production palette: green inserts, red deletes and errors, yellow
-    /// warnings, bold headers, and cyan interactive prompts whose `[y/N]`
-    /// keys read green (affirm) / red (default) so the two answers stand
-    /// apart from the prose and each other.
+    /// warnings, bold headers, and cyan interactive prompts. A prompt's
+    /// `[y/N]` keys read green (affirm) and red (default), so the two answers
+    /// stand apart from the prose and from each other.
     ///
     /// The Defender-exclusion roles paint the path blue (file) or magenta
     /// (folder), leaving green, yellow, and red for the state tag: green in
@@ -334,9 +334,9 @@ mod tests {
         }
     }
 
-    /// Kind and state appear on the same line, so a hue
-    /// shared between the two groups would make one read as the other, and the
-    /// three state colors are the only thing separating the three states.
+    /// Kind and state appear on the same line, so a hue shared between the two
+    /// groups would make one read as the other. The three state colors are
+    /// also the only thing separating the three states.
     #[cfg(windows)]
     #[test]
     fn colored_exclusion_roles_are_distinct_and_escaped() {
@@ -366,8 +366,8 @@ mod tests {
     }
 
     /// `paint` must be a no-op under the plain palette, which the diff and
-    /// Defender renderers' plain-output tests rest on, and must wrap the text
-    /// in both an opening escape and a reset under the colored one.
+    /// Defender renderers' plain-output tests rest on. Under the colored
+    /// palette it must wrap the text in both an opening escape and a reset.
     #[test]
     fn paint_is_transparent_when_plain_and_wraps_when_colored() {
         assert_eq!(paint(Styles::plain().insert, "text"), "text");

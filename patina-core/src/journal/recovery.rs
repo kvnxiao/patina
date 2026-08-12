@@ -196,12 +196,12 @@ fn reverse_orphan(
 /// restored; no backup means the target was created fresh, so it is deleted
 /// if present.
 ///
-/// Both restore and delete go through the kind-preserving
-/// [`crate::fsx`] helpers, so the original is recreated as the same kind it
-/// was (a symlink as a symlink, a directory as a directory), and backup
-/// presence is probed with [`crate::fsx::entry_present`] so a backed-up
-/// symlink whose destination is gone is still seen (`exists` would follow
-/// the dead link and wrongly delete the target).
+/// Both restore and delete go through the kind-preserving [`crate::fsx`]
+/// helpers. The original is therefore recreated as the same kind it was: a
+/// symlink as a symlink, a directory as a directory. Backup presence is
+/// probed with [`crate::fsx::entry_present`], so a backed-up symlink whose
+/// destination is gone is still seen. `exists` would follow the dead link and
+/// wrongly delete the target.
 fn reverse_operation(
     backups_dir: &Utf8Path,
     timestamp: &str,

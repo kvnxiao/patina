@@ -30,10 +30,10 @@
 //! ## Release is the OS's job
 //!
 //! The returned [`LockGuard`] owns the open lock-file handle. Dropping it
-//! drops the handle, and the operating system releases the advisory lock
-//! as a side effect of closing the descriptor, including when the
-//! process dies abnormally (`SIGKILL` on POSIX, `TerminateProcess` on
-//! Windows). There is no "unlock" syscall the engine must remember to
+//! drops the handle, and the operating system releases the advisory lock as a
+//! side effect of closing the descriptor. That holds even when the process
+//! dies abnormally, under `SIGKILL` on POSIX or `TerminateProcess` on Windows.
+//! There is no "unlock" syscall the engine must remember to
 //! call, so a crashed holder never wedges the lock for the next process.
 //!
 //! # Examples
@@ -221,10 +221,10 @@ impl LockGuard {
 ///
 /// # Errors
 ///
-/// Returns [`LockError::Timeout`] when a conflicting holder retained the
-/// lock for the whole `timeout` window, and [`LockError::Io`] when the
-/// lock file cannot be opened or the lock syscall fails for a
-/// non-contention reason.
+/// Returns [`LockError::Timeout`] when a conflicting holder retained the lock
+/// for the whole `timeout` window. Returns [`LockError::Io`] when the lock
+/// file cannot be opened, or the lock syscall fails for a non-contention
+/// reason.
 pub fn acquire(path: &Utf8Path, kind: LockKind, timeout: Duration) -> Result<LockGuard, LockError> {
     let file = open_lock_file(path)?;
 

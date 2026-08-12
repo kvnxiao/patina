@@ -20,11 +20,10 @@
 //! Every executor returns a `Vec<`[`CompletionRecord`]`>`: one record per
 //! materialized filesystem object. A single-file source produces one
 //! record per target; a directory-source symlink walk produces one record
-//! per walked file per target. Keeping this per-target (and per-walked-file)
-//! granularity throughout lets the progress cursor record one entry per
-//! materialized object so backups, status, and rollback
-//! inherit the same unit without special-casing the multi-target
-//! shape.
+//! per walked file per target. Keeping that granularity throughout lets the
+//! progress cursor record one entry per materialized object. Backups, status,
+//! and rollback therefore inherit the same unit, with no special case for the
+//! multi-target shape.
 //!
 //! # Scope
 //!
@@ -178,8 +177,8 @@ pub enum ExecutorError {
     },
 
     /// A symlink-family mode was asked to point at a source that does not
-    /// exist (the engine canonicalizes before reaching here, so this is a
-    /// genuine missing source rather than a relative-path slip).
+    /// exist. The engine canonicalizes before reaching here, so this is a
+    /// genuine missing source rather than a relative-path slip.
     #[error("symlink source {path} does not exist")]
     SourceMissing {
         /// The missing source path.
@@ -312,9 +311,9 @@ fn ensure_parent(target: &Utf8Path) -> Result<(), ExecutorError> {
     Ok(())
 }
 
-/// Walk `root` and collect every regular file as a path relative to
-/// `root`, in deterministic (sorted) order so the same source tree
-/// produces the same record sequence across runs and platforms.
+/// Walk `root` and collect every regular file as a path relative to `root`, in
+/// deterministic sorted order. The same source tree therefore produces the
+/// same record sequence across runs and platforms.
 ///
 /// Shared by the directory-source symlink walk ([`symlink`]), the recursive
 /// copy ([`copy`]), and the status managed-set's `symlink-tree` leaf

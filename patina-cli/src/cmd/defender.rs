@@ -60,10 +60,10 @@ use std::collections::BTreeSet;
 /// Told to the user whenever a rendered state was inferred from the ledger
 /// rather than read from Defender, so no reader mistakes the one for the other.
 ///
-/// It names the remedy, not just the constraint. Nothing on this path ever
-/// raises a UAC prompt (`status` is read-only by contract), so a reader told
-/// only that administrator is required is left waiting for a prompt that will
-/// never come. Elevating is the user's move, and the note has to say so.
+/// It names the remedy, not only the constraint. Nothing on this path ever
+/// raises a UAC prompt, because `status` is read-only by contract. A reader
+/// told only that administrator is required would wait for a prompt that never
+/// comes. Elevating is the user's move, and the note has to say so.
 const LEDGER_SOURCE_NOTE: &str =
     "  (showing what Patina recorded; re-run elevated to compare against Defender's list)";
 

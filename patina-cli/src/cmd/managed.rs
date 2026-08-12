@@ -1,13 +1,13 @@
 //! Shared scaffolding for the commands that edit a single managed target
 //! under one held exclusive lock and re-journal by re-applying.
 //!
-//! `remove` and `promote` both: take ONE exclusive
-//! advisory lock for the whole command, locate the journaled
+//! `remove` and `promote` follow the same shape. Each takes ONE exclusive
+//! advisory lock for the whole command, then locates the journaled
 //! [`ExpectedTarget`](patina_core::ExpectedTarget) for an input path in the
-//! latest commit, do
-//! command-specific filesystem work, and then re-journal by driving the
-//! engine re-apply under [`LockPolicy::Held`] so the fresh `<ts>.COMMIT`
-//! reflects the new managed state. This module factors those two shared
+//! latest commit. Each then does command-specific filesystem work, and
+//! re-journals by driving the engine re-apply under [`LockPolicy::Held`]. The
+//! fresh `<ts>.COMMIT` therefore reflects the new managed state. This module
+//! factors those two shared
 //! pieces, the lock acquisition and the re-apply, so neither command
 //! duplicates the lock path, the engine-error mapping, or the re-plan /
 //! re-execute sequence.
@@ -43,9 +43,9 @@ pub(crate) const TEMPLATE_SUFFIX: &str = ".tmpl";
 ///
 /// # Errors
 ///
-/// Returns an error (exit 1, or exit 4 on a lock-acquisition timeout via the
-/// engine-error chain) when the state directory cannot be resolved or the
-/// lock cannot be acquired within [`exclusive_timeout`].
+/// Returns an error when the state directory cannot be resolved, or the lock
+/// cannot be acquired within [`exclusive_timeout`]. That is exit 1, or exit 4
+/// on a lock-acquisition timeout via the engine-error chain.
 pub(crate) fn acquire_state_and_lock() -> Result<(Utf8PathBuf, LockGuard)> {
     let state = resolve_state_dir().map_err(EngineError::from)?;
     let lock_path = state.join("lock");

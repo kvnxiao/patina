@@ -1,10 +1,9 @@
 //! Absolute-path canonicalization with lexical fallback.
 //!
-//! Every repository path, source path, target path, and
-//! state-directory path the engine reads is canonicalized to absolute
-//! form before it surfaces in an error message, a journal record, or
-//! user-facing output. Relative paths must never appear in journal
-//! records.
+//! The engine canonicalizes every path it reads to absolute form, before that
+//! path surfaces in an error message, a journal record, or user-facing output.
+//! That covers repository, source, target, and state-directory paths. Relative
+//! paths must never appear in journal records.
 //!
 //! [`canonicalize`] has two branches:
 //!
@@ -123,8 +122,8 @@ pub fn canonicalize(p: &Utf8Path) -> Result<Utf8PathBuf, PathError> {
 }
 
 /// Resolve a *target* path to absolute form by canonicalizing its parent
-/// directory and re-joining the final component verbatim, so a symbolic
-/// link that already occupies the final component is **not** dereferenced.
+/// directory and re-joining the final component verbatim. A symbolic link that
+/// already occupies the final component is therefore **not** dereferenced.
 ///
 /// Target paths must be resolved through this, not [`canonicalize`]: once an
 /// apply has materialized a target as a symbolic link into the repository,
@@ -135,8 +134,8 @@ pub fn canonicalize(p: &Utf8Path) -> Result<Utf8PathBuf, PathError> {
 /// the target before re-linking, so the repository file is deleted and
 /// replaced by a self-referential link (data loss). Resolving by declared
 /// location keeps the target pointing where the user asked, independent of
-/// what currently occupies it, the same principle [`mod@crate::status`]
-/// applies when it keys managed targets by location rather than full
+/// what currently occupies it. [`mod@crate::status`] applies the same
+/// principle when it keys managed targets by location rather than full
 /// canonicalization.
 ///
 /// Symbolic links in the *parent* chain are still resolved (the parent is a

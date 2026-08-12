@@ -51,10 +51,10 @@ fn win_err(call: &'static str, err: co::ERROR) -> WindowsError {
 
 /// Read the Developer Mode DWORD flag from `HKLM`.
 ///
-/// Returns `Ok(Some(value))` when the value exists and is a DWORD,
-/// `Ok(None)` when the key or value is absent (Developer Mode was never
-/// toggled on this machine), or `Err` when the registry call itself fails
-/// for a reason other than "not found".
+/// Returns `Ok(Some(value))` when the value exists and is a DWORD. Returns
+/// `Ok(None)` when the key or value is absent, which means Developer Mode was
+/// never toggled on this machine. Returns `Err` when the registry call itself
+/// fails for a reason other than "not found".
 ///
 /// # Errors
 ///
@@ -138,12 +138,12 @@ mod tests {
     /// The elevation read must *succeed*, whatever it reports.
     ///
     /// [`super::super::is_elevated`] maps any error to "not elevated", so a
-    /// broken read is indistinguishable from an unelevated process, which is
-    /// how a `winsafe` release that rejected the `ERROR_BAD_LENGTH` answer from
-    /// the fixed-size `TokenElevation` class went unnoticed while every
-    /// elevated process was reported as unelevated. Asserting the call
-    /// itself succeeds catches that; the boolean depends on how the suite
-    /// was launched and is deliberately not asserted.
+    /// broken read is indistinguishable from an unelevated process. A
+    /// `winsafe` release that rejected the `ERROR_BAD_LENGTH` answer from the
+    /// fixed-size `TokenElevation` class can therefore report every elevated
+    /// process as unelevated, unnoticed. Asserting that the call itself
+    /// succeeds catches that. The boolean depends on how the suite was
+    /// launched, and is deliberately not asserted.
     #[test]
     fn the_elevation_read_succeeds_whatever_it_reports() {
         process_is_elevated().expect("querying the process token's elevation must succeed");

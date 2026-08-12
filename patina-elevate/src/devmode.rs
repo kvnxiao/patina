@@ -3,10 +3,10 @@
 //!
 //! The real registry write is `#[cfg(windows)]`-gated. On any other host
 //! the action returns [`DevModeError::NotWindows`] without touching the
-//! registry, which keeps the binary's argument-parsing surface exercisable
-//! by the cross-platform integration tests (the `enable-developer-mode`
+//! registry. That keeps the binary's argument-parsing surface exercisable
+//! by the cross-platform integration tests: the `enable-developer-mode`
 //! arm resolves to a clean error path on Linux/macOS rather than failing
-//! to compile).
+//! to compile.
 //!
 //! ## Duplicated constants
 //!

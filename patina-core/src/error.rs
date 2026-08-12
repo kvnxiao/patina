@@ -124,12 +124,12 @@ pub enum EngineError {
     /// A managed entry's declared kind does not match the kind of its
     /// source on disk: a `[[file]]` entry whose source is a directory, or a
     /// `[[directory]]` entry whose source is a file. Raised at plan time,
-    /// after the entry survives `when`-gating and its source is
-    /// canonicalized, but before the advisory lock, the
-    /// journal flush, or any mutation, so a mismatched entry mutates
-    /// nothing. The message names the offending source path and directs the
-    /// author to the table the source kind actually belongs under. The
-    /// executor retains its own check as a materialize-time TOCTOU backstop.
+    /// after the entry survives `when`-gating and its source is canonicalized.
+    /// It is raised before the advisory lock, the journal flush, and any
+    /// mutation, so a mismatched entry mutates nothing. The message names the
+    /// offending source path and directs the author to the table the source
+    /// kind actually belongs under. The executor retains its own check as a
+    /// materialize-time TOCTOU backstop.
     #[error(
         "the source {path} is a {found}, but it is declared under a \
          {declared_table} table; move it to a {expected_table} entry"

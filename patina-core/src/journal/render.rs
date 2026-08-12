@@ -100,9 +100,9 @@ fn timestamp_from_plan_path(path: &Utf8Path) -> String {
 }
 
 /// Render a decoded [`Plan`] and its recorded `<ts>` to a human-readable
-/// string: a header line carrying the plan timestamp (both the compact
-/// journal form and its RFC 3339 rendering) and the operation count,
-/// followed by one block per operation identifying its mode, source, and
+/// string. A header line carries the plan timestamp and the operation count;
+/// the timestamp appears in both the compact journal form and its RFC 3339
+/// rendering. One block per operation follows, naming its mode, source, and
 /// target.
 #[must_use = "the rendered plan is the debug command's stdout payload"]
 pub fn render_plan(plan: &Plan, timestamp: &str) -> String {

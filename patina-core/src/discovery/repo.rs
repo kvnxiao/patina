@@ -6,8 +6,8 @@
 //! path stored under the per-machine state directory.
 //!
 //! When all three sources fail, [`RepoDiscoveryError::AllSourcesFailed`]
-//! is returned, naming each source attempt so the CLI can map it to
-//! exit code 1 with a stderr message containing the substrings
+//! is returned, naming each source attempt. The CLI can then map it to
+//! exit code 1, with a stderr message containing the substrings
 //! `PATINA_REPO`, `walk-up`, and `persisted default`.
 
 use super::MANIFEST_FILENAME;

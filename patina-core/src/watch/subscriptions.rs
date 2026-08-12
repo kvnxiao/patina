@@ -73,11 +73,11 @@ pub struct WatchSet {
 
 /// Compute the watcher's partitioned [`WatchSet`] from a committed record.
 ///
-/// `watched` is exactly [`compute_subscriptions`]'s output (so the debouncer
-/// behaviour is unchanged); `sources` additionally captures which of those
-/// paths are repository source paths, so the foreground loop can tell a source
-/// edit (re-apply) from a content-target edit (drift) and a
-/// journal-directory event (rescan).
+/// `watched` is exactly [`compute_subscriptions`]'s output, so the debouncer
+/// sees the same set. `sources` additionally captures which of those paths are
+/// repository source paths. The foreground loop can then tell a source edit
+/// (re-apply) from a content-target edit (drift) and a journal-directory event
+/// (rescan).
 ///
 /// # Arguments
 ///
@@ -123,9 +123,9 @@ pub fn compute_watch_set(record: &ApplyRecord, state_dir: &Utf8Path) -> WatchSet
 /// occurrence. Symlink target paths never appear.
 ///
 /// The computed set is emitted as a `tracing` info event
-/// (`watch_subscriptions`, target `patina_core`) carrying the entry count and
-/// the tab-joined paths so the foreground watcher can
-/// inspect it from the log.
+/// (`watch_subscriptions`, target `patina_core`). It carries the entry count
+/// and the tab-joined paths, so the foreground watcher can inspect it from the
+/// log.
 ///
 /// # Arguments
 ///
@@ -223,9 +223,9 @@ mod tests {
         }
     }
 
-    /// Two symlink targets and one content target yield exactly the
-    /// three source paths, the one content target path, and the journal
-    /// directory, five entries in all, and contain neither symlink target path.
+    /// Two symlink targets and one content target yield exactly five entries:
+    /// the three source paths, the one content target path, and the journal
+    /// directory. Neither symlink target path appears.
     #[test]
     fn two_symlinks_one_content_yields_five_subscriptions() {
         let record = ApplyRecord::new(

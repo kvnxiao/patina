@@ -19,9 +19,9 @@
 //!
 //! - **Code 2 is also clap's usage-error code.** A malformed command line
 //!   (unknown subcommand, bad flag) exits 2 at parse time, inside [`clap`] and
-//!   before any subcommand runs, so it never collides in practice with a
-//!   run-time `pre_apply` abort (also 2): the two are distinguishable by phase,
-//!   and 2 for usage errors is the conventional Unix code.
+//!   before any subcommand runs. It therefore never collides in practice with a
+//!   run-time `pre_apply` abort, which is also 2. The two are distinguishable
+//!   by phase, and 2 for usage errors is the conventional Unix code.
 //! - **`EngineError::DevModeRequired` maps to 1, not 5.** When the Windows
 //!   engine backstop fires because symlink creation needs elevation, that is an
 //!   environment error → generic 1. A user who is *prompted* for elevation and

@@ -1,10 +1,11 @@
 //! `patina init` command logic.
 //!
 //! `patina init [path]` scaffolds a root `patina.toml` at the target
-//! directory (the positional argument, or the current working directory
-//! when omitted), persists the absolute canonical path of that directory
-//! to the per-machine state directory's `default_repo` file, and prints a
-//! next-step hint pointing at `patina add`. If a `patina.toml` already
+//! directory. The target is the positional argument, or the current working
+//! directory when omitted. It then persists the absolute canonical path of
+//! that directory to the per-machine state directory's `default_repo` file,
+//! and prints a next-step hint pointing at `patina add`. If a `patina.toml`
+//! already
 //! exists at the target, the command refuses with a typed error and exits
 //! 1 without touching the existing file or the state directory.
 //!
@@ -46,11 +47,11 @@ use patina_core::write_persisted_default;
 ///
 /// # Errors
 ///
-/// Returns an error when the target `patina.toml` already exists (exit 1),
-/// when the exclusive lock cannot be acquired within the timeout (exit 4
-/// via the engine-error chain), or when state-directory resolution, the
-/// manifest write, canonicalization, or the persisted-pointer write fails
-/// at the engine level (exit 1).
+/// Returns an error when the target `patina.toml` already exists (exit 1).
+/// Returns an error when the exclusive lock cannot be acquired within the
+/// timeout (exit 4, via the engine-error chain). Returns an error when
+/// state-directory resolution, the manifest write, canonicalization, or the
+/// persisted-pointer write fails at the engine level (exit 1).
 #[expect(
     clippy::unused_async,
     reason = "the subcommand dispatch in main.rs awaits every command uniformly; init's work is synchronous filesystem and lock I/O but keeps the async signature for parity."

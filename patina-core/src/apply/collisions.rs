@@ -9,9 +9,9 @@
 //! Only a whole-directory `symlink` owns a subtree, because that is the one
 //! mode that plants a single object over the entire target path. A
 //! `symlink-tree` or `copy` `[[directory]]` materializes one object per source
-//! leaf and the journal records each leaf as its own target, so its footprint
-//! is those leaves, which is what the planner hands this module, already
-//! expanded. Two entries filling different parts of one directory are therefore
+//! leaf, and the journal records each leaf as its own target. Its footprint is
+//! therefore those leaves, which is what the planner hands this module,
+//! already expanded. Two entries filling different parts of one directory are
 //! legal, and two entries writing one leaf of it are not.
 //!
 //! Validation runs over the **active** set, after `when` filtering, so two
@@ -58,9 +58,9 @@ impl TargetClaim<'_> {
 
 /// Two active entries fight over one target.
 ///
-/// The payload is boxed behind an opaque wrapper so [`EngineError`], which
-/// every fallible engine entry point returns by value, stays one pointer wider
-/// rather than growing to the size of the widest collision variant.
+/// The payload is boxed behind an opaque wrapper. [`EngineError`], which every
+/// fallible engine entry point returns by value, therefore stays one pointer
+/// wider rather than growing to the size of the widest collision variant.
 ///
 /// [`EngineError`]: crate::error::EngineError
 #[derive(Debug, thiserror::Error)]
@@ -186,10 +186,10 @@ struct StakedTarget<'a> {
 /// canonical depends on how deep the missing directories start. Given
 /// `~/.claude/skills` and `~/.claude/skills/note.md` where neither `.claude`
 /// nor `skills` exists yet, the first comes back with `$HOME` canonicalized and
-/// the second stays lexical from `$HOME` down. On a host where `$HOME` is
-/// reached through a symbolic link (macOS `/var` to `/private/var`) or has a
-/// short name (Windows 8.3), those two spellings differ and the containment
-/// between them would go unnoticed.
+/// the second stays lexical from `$HOME` down. Some hosts reach `$HOME`
+/// through a symbolic link (macOS `/var` to `/private/var`), or give it a
+/// short name (Windows 8.3). Those two spellings then differ, and the
+/// containment between them would go unnoticed.
 ///
 /// Anchoring both on the deepest ancestor that does exist puts every target in
 /// one spelling. The leaf itself is never canonicalized: a target already

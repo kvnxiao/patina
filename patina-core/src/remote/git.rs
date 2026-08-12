@@ -140,10 +140,10 @@ pub(crate) fn is_full_sha(candidate: &str) -> bool {
 ///
 /// # Errors
 ///
-/// Returns [`GitError::Spawn`] when `git` cannot start, [`GitError::Failed`]
-/// when the remote is unreachable or rejects the request, and
-/// [`GitError::Unparseable`] when the ref does not exist on the remote or the
-/// output carries no SHA.
+/// Returns [`GitError::Spawn`] when `git` cannot start, and
+/// [`GitError::Failed`] when the remote is unreachable or rejects the request.
+/// Returns [`GitError::Unparseable`] when the ref does not exist on the
+/// remote, or the output carries no SHA.
 pub fn ls_remote(url: &str, git_ref: Option<&str>) -> Result<String, GitError> {
     let wanted = git_ref.unwrap_or("HEAD");
     let args = ["ls-remote", url, wanted];
@@ -159,10 +159,10 @@ pub fn ls_remote(url: &str, git_ref: Option<&str>) -> Result<String, GitError> {
 ///
 /// `ls-remote <url> <name>` can answer with several lines: a branch and a tag
 /// may share a name, and an annotated tag also reports its peeled commit as
-/// `refs/tags/<name>^{}`. The preference order is peeled tag, then branch, then
-/// plain tag, then the exact name as written (which covers `HEAD` and a
-/// fully-qualified ref), so the returned SHA is always a commit and never
-/// depends on git's output ordering.
+/// `refs/tags/<name>^{}`. The preference order is peeled tag, then branch,
+/// then plain tag, then the exact name as written, which covers `HEAD` and a
+/// fully-qualified ref. The returned SHA is therefore always a commit, and
+/// never depends on git's output ordering.
 ///
 /// Nothing else is accepted: `ls-remote` pattern-matches trailing path
 /// components, so when the named ref is gone its output can still carry a
@@ -240,9 +240,9 @@ pub fn has_commit(git_dir: &Utf8Path, rev: &str) -> Result<bool, GitError> {
 /// `git_dir`, shallow.
 ///
 /// A depth-1 fetch of one exact SHA is the cheapest thing that can materialize
-/// a pinned rev. Some servers refuse a SHA they were not asked to advertise
-/// (`uploadpack.allowReachableSHA1InWant` off), so when `git_ref` is known and
-/// the SHA fetch fails, the ref is fetched instead and `rev` is re-checked; the
+/// a pinned rev. Some servers refuse a SHA they were not asked to advertise,
+/// with `uploadpack.allowReachableSHA1InWant` off. When `git_ref` is known and
+/// the SHA fetch fails, the ref is fetched instead and `rev` is re-checked. The
 /// pinned SHA still decides what gets checked out, so the fallback changes only
 /// how the object arrives.
 ///
@@ -302,12 +302,12 @@ pub fn fetch_commit(
 /// with full history.
 ///
 /// The update gate's ancestry check asks whether the pinned rev is an ancestor
-/// of the candidate tip, and `merge-base` can only answer that if the commits
+/// of the candidate tip. `merge-base` can only answer that if the commits
 /// between the two are present. A depth-1 fetch leaves the two as disconnected
-/// shallow roots, where the question is unanswerable rather than merely false,
-/// so the producer path (`patina remote update`) pays for real history while
-/// the consumer path (`apply` filling a cold cache for an already-decided pin)
-/// stays on [`fetch_commit`]'s shallow fetch.
+/// shallow roots, where the question is unanswerable rather than merely false.
+/// The producer path (`patina remote update`) therefore pays for real history.
+/// The consumer path stays on [`fetch_commit`]'s shallow fetch, because it is
+/// only filling a cold cache for an already-decided pin.
 ///
 /// # Errors
 ///
@@ -331,10 +331,10 @@ pub fn fetch_history(git_dir: &Utf8Path, url: &str, git_ref: Option<&str>) -> Re
 
 /// Materialize the tree of `rev` into `dest`.
 ///
-/// Uses `read-tree` + `checkout-index` rather than `checkout`: the plumbing
-/// pair writes a work tree out of a bare repository without moving `HEAD` or
-/// disturbing the repository's own index, which matters because one bare
-/// repository backs every checkout of that remote. The scratch index lives
+/// Uses `read-tree` + `checkout-index` rather than `checkout`. The plumbing
+/// pair writes a work tree out of a bare repository without moving `HEAD`, and
+/// without disturbing the repository's own index. That matters because one
+/// bare repository backs every checkout of that remote. The scratch index lives
 /// beside the checkout and is removed afterwards.
 ///
 /// A checkout is a cache of the commit, so it must hold the commit's bytes on
@@ -516,12 +516,12 @@ pub fn resolve_commit(git_dir: &Utf8Path, rev: &str) -> Result<String, GitError>
 ///
 /// Answered with `ls-remote` only, so it downloads no objects: the remote tip
 /// is compared to the local `HEAD`. That makes it a "differs from origin" test
-/// rather than a strict "is behind" one, which is the right signal for the
-/// notice, since either way the user's next move is `git pull`.
+/// rather than a strict "is behind" one. It is still the right signal for the
+/// notice, because either way the user's next move is `git pull`.
 ///
-/// Every failure reads as "not behind": the repository may not be a git
+/// Every failure reads as "not behind". The repository may not be a git
 /// repository at all, may have no configured remote, or the network may be
-/// down, and none of those should make a notify-only check noisy or fatal.
+/// down. None of those should make a notify-only check noisy or fatal.
 #[must_use = "the answer selects which notice message is written"]
 pub fn repo_differs_from_origin(repo_root: &Utf8Path) -> bool {
     try_repo_differs_from_origin(repo_root).unwrap_or(false)

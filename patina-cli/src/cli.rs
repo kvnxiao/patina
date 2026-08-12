@@ -119,8 +119,8 @@ pub enum Command {
     /// findings.
     Doctor(DoctorArgs),
 
-    /// Manage remote git sources. `list` reports each remote's pin, `check`
-    /// compares upstream tips against the lock without downloading objects,
+    /// Manage remote git sources. `list` reports each remote's pin, and `check`
+    /// compares upstream tips against the lock without downloading objects.
     /// `update` bumps pins through the update gate, and `prune` removes cached
     /// checkouts no journal record references.
     Remote(RemoteArgs),

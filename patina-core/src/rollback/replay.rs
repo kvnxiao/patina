@@ -2,12 +2,12 @@
 //!
 //! [`replay_entry`] reverts every target of one `[[file]]` entry to its
 //! pre-apply state as an atomic unit. The inverse-operation rule mirrors
-//! crash recovery and has three outcomes, in evaluation order: a target the
-//! apply recorded as `Unchanged` is left in place, filtered out of
-//! the snapshot/roll-forward set before either branch below is reached, since
-//! the apply touched neither its bytes nor its backup; a target with a backup
-//! is restored from it (the apply overwrote a pre-existing file); a target
-//! with no backup is deleted (the apply created it fresh).
+//! crash recovery and has three outcomes, in evaluation order. A target the
+//! apply recorded as `Unchanged` is left in place, and is filtered out of the
+//! snapshot/roll-forward set before either branch below is reached; the apply
+//! touched neither its bytes nor its backup. A target with a backup is
+//! restored from it, because the apply overwrote a pre-existing file. A target
+//! with no backup is deleted, because the apply created it fresh.
 //!
 //! ## Atomicity mechanism
 //!
@@ -15,8 +15,8 @@
 //! current post-apply state into a temporary staging directory beside the
 //! backup root. It then reverts the targets in order. If any revert fails,
 //! every target reverted so far is rolled forward from its snapshot to the
-//! post-apply state it had on entry, so the whole `[[file]]` entry is left
-//! exactly as the last apply left it, with no partial restore. The
+//! post-apply state it had on entry. The whole `[[file]]` entry is therefore
+//! left exactly as the last apply left it, with no partial restore. The
 //! staging directory is removed on both the success and failure paths.
 
 use super::RollbackError;
@@ -210,10 +210,10 @@ fn revert_target(
 }
 
 /// Intentionally discard an IO result on a best-effort recovery path. The
-/// entry is already being abandoned and there is no better state to
-/// converge on than a best-effort restore, so a secondary failure here is
-/// deliberately swallowed (and keeps the `must_use` lint satisfied without
-/// a bare `let _`).
+/// entry is already being abandoned, and there is no better state to converge
+/// on than a best-effort restore. A secondary failure here is therefore
+/// deliberately swallowed. This also keeps the `must_use` lint satisfied
+/// without a bare `let _`.
 fn ignore_io<T>(_result: std::io::Result<T>) {}
 
 /// Roll already-reverted targets forward to the post-apply state captured in

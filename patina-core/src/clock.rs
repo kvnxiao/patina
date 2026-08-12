@@ -2,9 +2,9 @@
 //!
 //! Patina keys its journal `<ts>.plan` / `<ts>.COMMIT` files and backup
 //! directories by a monotonic UTC timestamp formatted `YYYYMMDDTHHMMSSZ`.
-//! Both the CLI `apply` path and the watcher's re-apply need the
-//! exact same format string, so the helper lives here as one definition the
-//! whole workspace shares, rather than being duplicated per call site.
+//! Both the CLI `apply` path and the watcher's re-apply need the exact same
+//! format string. The helper therefore lives here, as one definition the whole
+//! workspace shares rather than a copy per call site.
 //!
 //! The timestamp keys filenames only; it never appears in user-facing
 //! output, so the deterministic-stdout guarantee is preserved.
@@ -33,8 +33,8 @@ pub fn current_timestamp() -> String {
 /// The remote update gate compares a candidate commit's committer time against
 /// "now" and against a lockfile timestamp, all in Unix seconds. Reading the
 /// clock here, rather than at each comparison site, keeps every time read in
-/// this one module, so the gate's own logic stays a pure function of its inputs
-/// and is unit-testable without touching the clock.
+/// this one module. The gate's own logic therefore stays a pure function of
+/// its inputs, and is unit-testable without touching the clock.
 ///
 /// # Examples
 ///
