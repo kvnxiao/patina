@@ -38,6 +38,7 @@ use crate::cmd::managed::acquire_state_and_lock;
 use crate::cmd::managed::rejournal;
 use crate::exit_code::ExitCode;
 use crate::output::reporter::Reporter;
+use crate::output::style::paint;
 use anyhow::Context;
 use anyhow::Result;
 use camino::Utf8Path;
@@ -221,9 +222,9 @@ fn report_success(
     if args.json {
         reporter.json(&success_envelope(&args.target, target, source));
     } else {
+        let path = paint(reporter.styles().path, args.target.as_str());
         reporter.line(&format!(
-            "Promoted {}: copied its current bytes into {source} and re-applied.",
-            args.target
+            "Promoted {path}: copied its current bytes into {source} and re-applied."
         ));
     }
 }

@@ -36,6 +36,10 @@ use crate::cmd::apply::PromptReader;
 use crate::cmd::apply::Tty;
 use crate::exit_code::ExitCode;
 use crate::output::reporter::Reporter;
+use crate::output::style::Styles;
+use crate::output::style::paint;
+use crate::output::table::align;
+use crate::output::table::row;
 use anyhow::Context;
 use anyhow::Result;
 use camino::Utf8Path;
@@ -623,21 +627,43 @@ fn json_envelope(findings: &[Finding]) -> String {
     serde_json::to_string_pretty(&envelope).unwrap_or_else(|_| "{}".to_owned())
 }
 
-/// Render the findings to stderr as one warning line each (all
-/// findings go to stderr regardless of format). A clean environment prints a
-/// single "no findings" line so the user gets explicit confirmation.
+/// Render the findings to stderr as one aligned row each (all findings go to
+/// stderr regardless of format). A clean environment prints a single "no
+/// findings" line so the user gets explicit confirmation.
+///
+/// The block goes out through [`Reporter::err_block`]. One
+/// [`Reporter::warn`] per line would paint every level the same yellow,
+/// because `warn` forces a single style over a whole line. The bracketed level
+/// stays in the first cell, so a stripped report still tells an advisory note
+/// from an error.
 fn render_human(findings: &[Finding], reporter: &mut impl Reporter) {
     if findings.is_empty() {
         reporter.line("doctor: no findings; the environment looks healthy.");
         return;
     }
-    for finding in findings {
-        reporter.warn(&format!(
-            "[{}] {}: {}",
-            finding.level.label(),
-            finding.code.label(),
-            finding.message
-        ));
+    let styles = reporter.styles();
+    // Level and code share the level's color, so severity reads off the whole
+    // left edge.
+    let table: String = findings
+        .iter()
+        .map(|finding| {
+            let style = level_style(finding.level, &styles);
+            row(&[
+                paint(style, &format!("[{}]", finding.level.label())).as_str(),
+                paint(style, finding.code.label()).as_str(),
+                finding.message.as_str(),
+            ])
+        })
+        .collect();
+    reporter.err_block(&align(&table));
+}
+
+/// The palette role for a finding's level.
+fn level_style(level: Level, styles: &Styles) -> anstyle::Style {
+    match level {
+        Level::Info => styles.finding.info,
+        Level::Warning => styles.finding.warning,
+        Level::Error => styles.finding.error,
     }
 }
 
@@ -645,6 +671,7 @@ fn render_human(findings: &[Finding], reporter: &mut impl Reporter) {
 mod tests {
     use super::*;
     use crate::output::reporter::BufferReporter;
+    use crate::output::reporter::assert_color_is_additive;
 
     /// A scripted prompt reader yielding a fixed sequence of lines.
     struct ScriptedReader {
@@ -1081,6 +1108,45 @@ mod tests {
             "no finding prose belongs on stdout in human mode, got out: {}",
             reporter.out
         );
+    }
+
+    /// A reader has to tell an advisory note from an error at a glance, and
+    /// color alone cannot carry that. The bracketed word must survive a strip.
+    #[test]
+    fn each_level_keeps_its_bracketed_word_and_paints_apart() {
+        let findings = [Level::Info, Level::Warning, Level::Error].map(|level| Finding {
+            code: FindingCode::NoGit,
+            level,
+            message: "a message".to_owned(),
+            path: None,
+        });
+
+        assert_color_is_additive(|reporter| render_human(&findings, reporter));
+
+        let mut plain = BufferReporter::new();
+        render_human(&findings, &mut plain);
+        let mut colored = BufferReporter::colored();
+        render_human(&findings, &mut colored);
+
+        for level in ["[info]", "[warning]", "[error]"] {
+            assert!(
+                plain.err.contains(level),
+                "the level must stay in the text: {}",
+                plain.err
+            );
+        }
+        for level in [Level::Info, Level::Warning, Level::Error] {
+            let painted = paint(
+                level_style(level, &Styles::colored()),
+                &format!("[{}]", level.label()),
+            );
+            assert!(
+                colored.err.contains(&painted),
+                "the {} level must wear its own role: {}",
+                level.label(),
+                colored.err.escape_debug()
+            );
+        }
     }
 
     #[test]

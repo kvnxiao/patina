@@ -15,6 +15,10 @@
 use crate::cli::StatusArgs;
 use crate::exit_code::ExitCode;
 use crate::output::reporter::Reporter;
+use crate::output::style::Styles;
+use crate::output::style::paint;
+use crate::output::table::emit_aligned;
+use crate::output::table::row;
 use anyhow::Context;
 use anyhow::Result;
 use patina_core::StatusOptions;
@@ -92,14 +96,53 @@ fn render_human(report: &StatusReport, reporter: &mut impl Reporter) {
         render_remotes_pending(report, reporter);
         return;
     }
-    for entry in &report.files {
-        reporter.line(&format!("{:<8} {}", state_label(entry.state), entry.path));
-    }
-    reporter.line(&format!(
-        "clean: {}  drifted: {}  missing: {}  orphaned: {}",
-        report.clean, report.drifted, report.missing, report.orphaned
-    ));
+    let styles = reporter.styles();
+    let table: String = report
+        .files
+        .iter()
+        .map(|entry| {
+            row(&[
+                paint(state_style(entry.state, &styles), state_label(entry.state)).as_str(),
+                entry.path.as_str(),
+            ])
+        })
+        .collect();
+    emit_aligned(&table, reporter);
+    reporter.line(&render_summary(report, &styles));
     render_remotes_pending(report, reporter);
+}
+
+/// The four aggregate counters on one line, each non-zero counter painted in
+/// its state's color.
+///
+/// A zero counter stays plain. Painting it would spend the state's color on
+/// the absence of that state, and a clean repository has to read at a glance.
+fn render_summary(report: &StatusReport, styles: &Styles) -> String {
+    [
+        (TargetState::Clean, report.clean),
+        (TargetState::Drifted, report.drifted),
+        (TargetState::Missing, report.missing),
+        (TargetState::Orphaned, report.orphaned),
+    ]
+    .map(|(state, count)| {
+        let counter = format!("{}: {count}", state_label(state));
+        if count == 0 {
+            counter
+        } else {
+            paint(state_style(state, styles), &counter)
+        }
+    })
+    .join("  ")
+}
+
+/// The palette role for a target state.
+fn state_style(state: TargetState, styles: &Styles) -> anstyle::Style {
+    match state {
+        TargetState::Clean => styles.status.clean,
+        TargetState::Drifted => styles.status.drifted,
+        TargetState::Missing => styles.status.missing,
+        TargetState::Orphaned => styles.status.orphaned,
+    }
 }
 
 /// Report the remotes whose upstream has moved past their pin, as of the last
@@ -122,6 +165,7 @@ fn state_label(state: TargetState) -> &'static str {
 mod tests {
     use super::*;
     use crate::output::reporter::BufferReporter;
+    use crate::output::reporter::assert_color_is_additive;
     use camino::Utf8PathBuf;
     use patina_core::LastApply;
     use patina_core::StatusEntry;
@@ -201,6 +245,67 @@ mod tests {
         let mut r = BufferReporter::new();
         render_human(&report, &mut r);
         assert!(r.out.contains("No apply has been recorded"));
+    }
+
+    /// A report holding one target in each of the four states.
+    fn report_of_every_state() -> StatusReport {
+        let mut report = report_with_entries();
+        for (path, state) in [
+            ("/home/u/.zshrc", TargetState::Clean),
+            ("/home/u/.config/nvim/init.lua", TargetState::Missing),
+            ("/home/u/.oldrc", TargetState::Orphaned),
+        ] {
+            report.files.push(StatusEntry {
+                path: Utf8PathBuf::from(path),
+                state,
+            });
+        }
+        report.clean = 1;
+        report.missing = 1;
+        report.orphaned = 1;
+        report
+    }
+
+    /// A stripped render carries the state word and nothing else, so each row
+    /// must lead with its own label.
+    #[test]
+    fn every_state_leads_its_row_with_its_own_label() {
+        let mut r = BufferReporter::new();
+        render_human(&report_of_every_state(), &mut r);
+
+        let rows: Vec<&str> = r.out.lines().take(4).collect();
+        for (row, label) in rows.iter().zip(["drifted", "clean", "missing", "orphaned"]) {
+            assert!(row.starts_with(label), "{row:?} must lead with {label}");
+        }
+    }
+
+    /// A non-zero counter is painted so a clean repository reads at a glance; a
+    /// zero counter stays plain so the color marks a state that is present, not
+    /// one that is merely named.
+    #[test]
+    fn only_a_non_zero_counter_is_painted() {
+        let report = StatusReport {
+            clean: 2,
+            ..StatusReport::default()
+        };
+        let summary = render_summary(&report, &Styles::colored());
+
+        let clean = paint(Styles::colored().status.clean, "clean: 2");
+        assert!(
+            summary.contains(&clean),
+            "a non-zero counter must be painted whole: {summary:?}"
+        );
+        assert!(
+            summary.contains("drifted: 0")
+                && !summary.contains(&paint(Styles::colored().status.drifted, "drifted: 0")),
+            "a zero counter must stay plain: {summary:?}"
+        );
+    }
+
+    #[test]
+    fn human_render_color_strips_back_to_the_plain_table() {
+        let report = report_of_every_state();
+        assert_color_is_additive(|reporter| render_human(&report, reporter));
     }
 
     #[test]

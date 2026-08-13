@@ -21,6 +21,10 @@ use crate::cli::WatchArgs;
 use crate::cli::WatchCommand;
 use crate::exit_code::ExitCode;
 use crate::output::reporter::Reporter;
+use crate::output::style::Styles;
+use crate::output::style::paint;
+use crate::output::table::emit_aligned;
+use crate::output::table::row;
 use anyhow::Context;
 use anyhow::Result;
 use patina_core::LifecycleResult;
@@ -212,32 +216,51 @@ fn status_envelope(status: &ServiceStatus) -> String {
     serde_json::to_string_pretty(&envelope).unwrap_or_else(|_| "{}".to_owned())
 }
 
-/// Render the human-readable `status` summary: one line per field, with
-/// `unknown` standing in for an absent recovered value.
+/// Render the human-readable `status` summary as one aligned row per field,
+/// with `unknown` standing in for an absent recovered value.
+///
+/// The key keeps its trailing colon inside its own cell, so `installed:` and
+/// `running:` stay single literal tokens for a script that greps them.
 fn render_status_human(status: &ServiceStatus, reporter: &mut impl Reporter) {
-    reporter.line(&format!("installed:              {}", status.installed));
-    reporter.line(&format!("running:                {}", status.running));
-    reporter.line(&format!(
-        "last fired at:          {}",
-        status.last_fired_at.as_deref().unwrap_or("unknown")
-    ));
-    reporter.line(&format!(
-        "last exit code:         {}",
-        opt_to_string(status.last_exit_code)
-    ));
-    reporter.line(&format!(
-        "subscriptions:          {}",
-        opt_to_string(status.subscriptions_count)
-    ));
-    reporter.line(&format!(
-        "re-applies since start: {}",
-        opt_to_string(status.re_applies_since_start)
-    ));
+    let styles = &reporter.styles();
+    // Only `true` is painted. A machine that never installed the service reads
+    // `false` on both fields, and the warn color would call that intended state
+    // a fault.
+    let liveness = |state: bool| {
+        if state {
+            paint(styles.success, "true")
+        } else {
+            "false".to_owned()
+        }
+    };
+    let table: String = [
+        ("installed:", liveness(status.installed)),
+        ("running:", liveness(status.running)),
+        (
+            "last fired at:",
+            recovered(status.last_fired_at.as_deref(), styles),
+        ),
+        ("last exit code:", recovered(status.last_exit_code, styles)),
+        (
+            "subscriptions:",
+            recovered(status.subscriptions_count, styles),
+        ),
+        (
+            "re-applies since start:",
+            recovered(status.re_applies_since_start, styles),
+        ),
+    ]
+    .iter()
+    .map(|(key, value)| row(&[key, value.as_str()]))
+    .collect();
+    emit_aligned(&table, reporter);
 }
 
-/// Render an optional numeric field as its value or the literal `unknown`.
-fn opt_to_string<T: std::fmt::Display>(value: Option<T>) -> String {
-    value.map_or_else(|| "unknown".to_owned(), |v| format!("{v}"))
+/// A recovered field's value, or the literal `unknown` when it could not be
+/// read. `unknown` takes the hint color. It marks a missing reading, which
+/// must not compete with the values around it.
+fn recovered<T: std::fmt::Display>(value: Option<T>, styles: &Styles) -> String {
+    value.map_or_else(|| paint(styles.hint, "unknown"), |value| value.to_string())
 }
 
 /// Read the root manifest and, if it declares the ignored `[watcher]
@@ -292,6 +315,7 @@ async fn shutdown_signal() {
 mod tests {
     use super::*;
     use crate::output::reporter::BufferReporter;
+    use crate::output::reporter::assert_color_is_additive;
     use std::cell::RefCell;
 
     /// An in-memory [`ServiceBackend`] fake that records which method the
@@ -435,6 +459,27 @@ mod tests {
             serde_json::from_str(json.out.trim()).expect("status --json is one JSON doc");
         assert_eq!(doc.get("installed"), Some(&serde_json::Value::Bool(true)));
         assert_eq!(doc.get("subscriptions_count"), Some(&serde_json::json!(3)));
+    }
+
+    /// A mix of read and unread fields, so both the liveness color and the
+    /// `unknown` stand-in are exercised.
+    fn mixed_status() -> ServiceStatus {
+        ServiceStatus {
+            installed: true,
+            running: false,
+            last_fired_at: None,
+            last_exit_code: Some(0),
+            subscriptions_count: Some(3),
+            re_applies_since_start: None,
+        }
+    }
+
+    #[test]
+    fn human_status_color_strips_back_to_the_plain_summary() {
+        let status = mixed_status();
+        assert_color_is_additive(|reporter| {
+            render_status_human(&status, reporter);
+        });
     }
 
     #[test]

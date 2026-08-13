@@ -78,6 +78,18 @@ source out to many. (The earlier single `[[file]]` table with the
 `symlink-dir` / `copy-tree` mode names is no longer accepted; declare a
 `[[directory]]` entry instead.)
 
+Neither a `source` nor a `target` may contain an ASCII control
+character (`U+0000`–`U+001F` or `U+007F`), which covers tab, newline,
+and carriage return. Patina refuses the whole manifest at parse time and
+names the offending character by code point, since a control character
+is invisible in an editor. Spaces and non-ASCII characters are fine:
+`~/Application Support/café` is a legal target. The rule exists because
+every listing Patina prints (`status`, the apply diff, the Defender
+listing, the `debug journal` dump) puts one path per line in
+tab-separated columns. A tab would open a column the row never closes,
+and a newline would split one row into two, which would let a filename
+forge a row that reads as Patina's own output.
+
 ### Conditional entries with `when`
 
 Any entry may carry a `when` expression, a MiniJinja predicate gating
@@ -165,6 +177,30 @@ unchanged. The `--color` flag (global, accepted before or after any
 subcommand) forces the choice: `auto` (the default) colors a terminal
 and strips otherwise, `always` colors even when piped, `never` disables
 color. `NO_COLOR` in the environment is honoured under `auto`.
+
+Every multi-row listing lines its columns up the same way, sized to the
+widest cell: `patina status`, `patina remote list`, `patina remote
+update`, `patina watch status`, `patina doctor`, and the Defender
+listing. Painted cells pad by printable width, so a piped run and a
+terminal run stay aligned identically.
+
+`patina status` prints one row per managed target and a summary of the
+four counters:
+
+```text
+clean     /home/u/.zshrc
+drifted   /home/u/.gitconfig
+missing   /home/u/.config/nvim/init.lua
+orphaned  /home/u/.oldrc
+clean: 1  drifted: 1  missing: 1  orphaned: 1
+```
+
+On a terminal the state word is green (clean), yellow (drifted), red
+(missing), or magenta (orphaned); an orphan gets its own hue because it
+is a leftover awaiting a reap, with no place on a severity scale. In the
+summary only a non-zero counter is painted, so a clean repository reads
+at a glance. Every state is in the text as well, so a stripped run loses
+the color and nothing else.
 
 ## Commands
 
@@ -276,7 +312,14 @@ system directory (`%SystemRoot%`, `%ProgramFiles%`, and friends).
 ### Reading the listing
 
 The listing carries the exclusion kind as **color on the path**, and the
-state as a colored tag after it:
+state as a colored tag after it. The tags share one column, sized to the
+widest path, so a reader scans the state straight down a long list:
+
+```text
+  C:\Users\kevin\dotfiles      [present]
+  C:\Users\kevin\.gitconfig    [missing]
+  C:\Users\kevin\.config\nvim  [present, not recorded by patina]
+```
 
 | Element      | Meaning            |
 | ------------ | ------------------ |

@@ -283,6 +283,29 @@ as well, so a piped run, `--color never`, and `NO_COLOR` lose the color
 and nothing else. `--json` carries the same rows plus each pin's
 `updated_at`.
 
+`patina remote update` prints the same shape once the run is over, one
+row per remote it touched, whether or not the pin moved.
+
+```text
+NAME       FROM                                      TO                                        STATUS
+humanizer  1f0c6c9b9f2e8a1d4b7c0e3a5d8f2b6c9e1a4d70  3b8e1a7d5c2f9048e6b1d3a7f0c5e2b9d4a8f107  updated
+starship   (unpinned)                                7c4a9f2e0d6b8135a7e2c9f4b0d6a8e3f1c57b92  holding until 2026-08-14T09:00:00Z (min_age not yet met)
+diagrams   840f944f08be45eed52a6832d4930c11164a546f  -                                         already at the upstream tip
+prompts    2d5f8c1a4e7b0936d8f2a5c1e4b7d0a3f6c9e250  (unknown)                                 could not be updated
+```
+
+`FROM` is the pin as the lockfile recorded it, `TO` the candidate the
+run considered, and `STATUS` what became of the pin. A `TO` equal to its
+`FROM` prints `-`. Two identical forty-character hashes read as a
+change until you compare them. The two blanks are
+worded apart on purpose: `(unpinned)` means no pin was recorded, while
+`(unknown)` means the run never learned a candidate. A remote that
+failed or was refused still gets a row, so the table accounts for the
+whole run; the reason stays on stderr with the warning. `remote update`
+emits the rows once the run is over, because it interleaves warnings and
+confirmation prompts as it goes. Color follows
+`remote list`, with cyan names, green revs, and yellow for either blank.
+
 Failure shapes worth knowing:
 
 - Plain `apply`, offline, warm cache: works fully.

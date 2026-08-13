@@ -44,6 +44,7 @@ use crate::cmd::apply::PromptReader;
 use crate::cmd::apply::Tty;
 use crate::exit_code::ExitCode;
 use crate::output::reporter::Reporter;
+use crate::output::style::paint;
 use anyhow::Context;
 use anyhow::Result;
 use anyhow::anyhow;
@@ -314,9 +315,9 @@ pub async fn run(
     if args.json {
         reporter.json(&success_envelope(&args.path, &dest, &module, mode));
     } else {
+        let path = paint(reporter.styles().path, args.path.as_str());
         reporter.line(&format!(
-            "Added {} to module `{module}` as {} (run `patina apply` to materialize).",
-            args.path,
+            "Added {path} to module `{module}` as {} (run `patina apply` to materialize).",
             mode.label()
         ));
     }
