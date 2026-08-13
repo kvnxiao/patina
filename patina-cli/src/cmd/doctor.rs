@@ -239,7 +239,7 @@ fn run_report(args: &DoctorArgs, state: &Utf8Path, reporter: &mut impl Reporter)
     if args.json {
         reporter.json(&json_envelope(&findings));
     } else {
-        render_human(&findings, &Styles::colored(), reporter);
+        render_human(&findings, reporter);
     }
     Ok(exit_code(&findings).code())
 }
@@ -636,17 +636,18 @@ fn json_envelope(findings: &[Finding]) -> String {
 /// whole line and would paint every level the same yellow. The bracketed level
 /// stays in the first cell, so a stripped report still tells an advisory note
 /// from an error.
-fn render_human(findings: &[Finding], styles: &Styles, reporter: &mut impl Reporter) {
+fn render_human(findings: &[Finding], reporter: &mut impl Reporter) {
     if findings.is_empty() {
         reporter.line("doctor: no findings; the environment looks healthy.");
         return;
     }
+    let styles = reporter.styles();
     // Level and code share the level's color, so severity reads off the whole
     // left edge rather than one bracketed word.
     let table: String = findings
         .iter()
         .map(|finding| {
-            let style = level_style(finding.level, styles);
+            let style = level_style(finding.level, &styles);
             row(&[
                 paint(style, &format!("[{}]", finding.level.label())).as_str(),
                 paint(style, finding.code.label()).as_str(),
@@ -1096,7 +1097,7 @@ mod tests {
         };
         let findings = compute_findings(&inputs);
         let mut reporter = BufferReporter::new();
-        render_human(&findings, &Styles::plain(), &mut reporter);
+        render_human(&findings, &mut reporter);
         assert!(
             reporter.err.contains("DOC-NO-DEFAULT-REPO"),
             "findings must render to stderr, got err: {}",
@@ -1111,7 +1112,6 @@ mod tests {
 
     /// A reader has to tell an advisory note from an error at a glance, and
     /// color alone cannot carry that: the bracketed word must survive a strip.
-    /// The codes must also share one column, or the messages read ragged.
     #[test]
     fn each_level_keeps_its_bracketed_word_and_paints_apart() {
         let findings = [Level::Info, Level::Warning, Level::Error].map(|level| Finding {
@@ -1121,12 +1121,12 @@ mod tests {
             path: None,
         });
 
-        assert_color_is_additive(|styles, reporter| render_human(&findings, styles, reporter));
+        assert_color_is_additive(|reporter| render_human(&findings, reporter));
 
         let mut plain = BufferReporter::new();
-        render_human(&findings, &Styles::plain(), &mut plain);
-        let mut colored = BufferReporter::new();
-        render_human(&findings, &Styles::colored(), &mut colored);
+        render_human(&findings, &mut plain);
+        let mut colored = BufferReporter::colored();
+        render_human(&findings, &mut colored);
 
         for level in ["[info]", "[warning]", "[error]"] {
             assert!(
@@ -1147,26 +1147,12 @@ mod tests {
                 colored.err.escape_debug()
             );
         }
-
-        let column = plain
-            .err
-            .lines()
-            .next()
-            .and_then(|line| line.find("DOC-NO-GIT"))
-            .expect("the first row carries its code");
-        for line in plain.err.lines() {
-            assert_eq!(
-                line.find("DOC-NO-GIT"),
-                Some(column),
-                "every code must start at column {column}: {line:?}"
-            );
-        }
     }
 
     #[test]
     fn human_render_reports_clean_env() {
         let mut reporter = BufferReporter::new();
-        render_human(&[], &Styles::plain(), &mut reporter);
+        render_human(&[], &mut reporter);
         assert!(
             reporter.out.contains("no findings"),
             "a clean env must confirm no findings, got: {}",

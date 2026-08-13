@@ -29,7 +29,6 @@ use crate::cli::InitArgs;
 use crate::cmd::MANIFEST_FILENAME;
 use crate::exit_code::ExitCode;
 use crate::output::reporter::Reporter;
-use crate::output::style::Styles;
 use crate::output::style::paint;
 use anyhow::Context;
 use anyhow::Result;
@@ -102,7 +101,7 @@ pub async fn run(args: &InitArgs, reporter: &mut impl Reporter) -> Result<i32> {
     if args.json {
         reporter.json(&json_envelope(&canonical, &state));
     } else {
-        let styles = Styles::colored();
+        let styles = reporter.styles();
         reporter.line(&format!(
             "Initialized root patina.toml at {}",
             paint(styles.path, manifest_path.as_str())

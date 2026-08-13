@@ -24,6 +24,16 @@ use anstyle::Color;
 use anstyle::Style;
 
 /// The palette the diff renderer and reporter paint with.
+///
+/// Roles are grouped by the surface that prints them, and a group is what
+/// shares a row. Distinctness is therefore a within-group contract: two roles
+/// in one group must never render alike, or one reads as the other. Across
+/// groups, identical styling is deliberate and marks one shared visual meaning.
+/// [`header`](Styles::header) and [`path`](Styles::path) are both bold, because
+/// each names the subject of its line. [`hint`](Styles::hint),
+/// [`FindingStyles::info`], and [`RemoteStyles::implicit_ref`] are all dimmed,
+/// because each is subordinate to the fact beside it. Separating those roles
+/// would spend scarce terminal hues on a distinction the reader does not need.
 #[derive(Debug, Clone, Copy)]
 pub struct Styles {
     /// Inserted / added lines: the diff `+` body and a new symlink target.

@@ -42,7 +42,6 @@ use crate::cmd::managed::acquire_state_and_lock;
 use crate::cmd::managed::rejournal;
 use crate::exit_code::ExitCode;
 use crate::output::reporter::Reporter;
-use crate::output::style::Styles;
 use crate::output::style::paint;
 use anyhow::Context;
 use anyhow::Result;
@@ -278,7 +277,7 @@ fn report_success(args: &RemoveArgs, target: &Utf8Path, reporter: &mut impl Repo
         reporter.json(&success_envelope(&args.path, target, args.purge));
         return;
     }
-    let path = paint(Styles::colored().path, args.path.as_str());
+    let path = paint(reporter.styles().path, args.path.as_str());
     if args.purge {
         reporter.line(&format!("Removed {path} and deleted it from disk."));
     } else {

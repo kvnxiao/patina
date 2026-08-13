@@ -10,19 +10,20 @@
 //!
 //! Two implementations ship:
 //!
-//! - [`StreamReporter`] writes the diff / JSON to stdout and prompts / warnings
-//!   / errors to stderr. That is the production wiring. It writes through an
-//!   `anstream` auto-stream. That strips ANSI styling whenever the stream is
-//!   not a terminal, or `--color never` / `NO_COLOR` is in effect. The styling
-//!   comes from the diff renderer and the warn / error / prompt / confirm
-//!   paths. The color decision is carried by the [`anstream::ColorChoice`]
-//!   passed at construction.
+//! - [`StreamReporter`] writes rendered blocks / JSON to stdout and prompts /
+//!   warnings / errors to stderr. That is the production wiring. It writes
+//!   through an `anstream` auto-stream. That strips ANSI styling whenever the
+//!   stream is not a terminal, or `--color never` / `NO_COLOR` is in effect.
+//!   The styling comes from the palette the reporter supplies and from the warn
+//!   / error / prompt / confirm paths. The color decision is carried by the
+//!   [`anstream::ColorChoice`] passed at construction.
 //! - `BufferReporter` captures both streams into in-memory buffers so a test
-//!   can assert on exactly what would have been printed. It adds no styling of
-//!   its own, so its buffers hold whatever palette the renderer under test was
-//!   handed: plain under `Styles::plain`, escapes and all under
-//!   `Styles::colored`. `assert_color_is_additive` drives a renderer with both
-//!   and compares the two.
+//!   can assert on exactly what would have been printed. It paints wherever the
+//!   stream reporter paints, from a palette fixed at construction.
+//!   `BufferReporter::new` is plain, so a test asserting on bytes sees no
+//!   escapes; `BufferReporter::colored` carries the production palette.
+//!   `assert_color_is_additive` drives a renderer through both and compares the
+//!   two.
 
 use crate::output::style::Styles;
 use crate::output::style::paint;
@@ -31,12 +32,26 @@ use anstream::ColorChoice;
 use anstyle::Style;
 use std::io::Write;
 
-/// User-facing output sink. Diff and JSON go to the "out" stream; prompt
-/// text, warnings, and errors go to the "err" stream, matching the documented
-/// split (diff on stdout, prompt on stderr).
+/// User-facing output sink. Rendered blocks and JSON go to the "out" stream;
+/// prompt text, warnings, and errors go to the "err" stream, matching the
+/// documented split (diff on stdout, prompt on stderr).
+///
+/// The sink also owns the palette every renderer paints with;
+/// [`Reporter::styles`] returns it.
 pub trait Reporter {
-    /// Emit the rendered diff (human mode) to the out stream.
-    fn diff(&mut self, rendered: &str);
+    /// The palette a renderer paints with.
+    ///
+    /// The sink owns the palette because it owns the decision to strip. The
+    /// production reporter always returns the colored palette, and its
+    /// auto-stream drops the escapes when the destination is not a terminal.
+    /// The return is by value (`Styles` is `Copy`), so reading the palette
+    /// leaves no borrow outstanding against the `&mut self` writes that follow.
+    fn styles(&self) -> Styles;
+    /// Emit an already-painted block to the out stream verbatim, newlines and
+    /// all. Every multi-line surface on stdout goes through here, including the
+    /// rendered diff. Add the trailing newline yourself; nothing is appended
+    /// here.
+    fn out_block(&mut self, rendered: &str);
     /// Emit the JSON envelope to the out stream, followed by a newline.
     fn json(&mut self, document: &str);
     /// Emit a one-line status / summary message to the out stream.
@@ -73,8 +88,8 @@ pub struct StreamReporter {
     /// The resolved color policy (from `--color`, then env / TTY under
     /// `Auto`). Handed to each per-write auto-stream.
     choice: ColorChoice,
-    /// The palette painted onto warnings, errors, and prompts. The diff
-    /// arrives already styled from the renderer.
+    /// The palette painted onto warnings, errors, and prompts, and returned by
+    /// [`Reporter::styles`].
     styles: Styles,
 }
 
@@ -134,7 +149,11 @@ impl StreamReporter {
 }
 
 impl Reporter for StreamReporter {
-    fn diff(&mut self, rendered: &str) {
+    fn styles(&self) -> Styles {
+        self.styles
+    }
+
+    fn out_block(&mut self, rendered: &str) {
         let mut out = AutoStream::new(std::io::stdout().lock(), self.choice);
         ignore_io(out.write_all(rendered.as_bytes()));
         ignore_io(out.flush());
@@ -180,20 +199,39 @@ impl Reporter for StreamReporter {
 
 /// Test reporter capturing both streams into in-memory strings.
 #[cfg(test)]
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct BufferReporter {
     /// Everything that would have gone to stdout.
     pub out: String,
     /// Everything that would have gone to stderr.
     pub err: String,
+    /// The palette this reporter returns to a renderer, and paints onto the
+    /// prompt / warn / error paths exactly as the stream reporter does.
+    styles: Styles,
 }
 
 #[cfg(test)]
 impl BufferReporter {
-    /// Construct an empty capturing reporter.
+    /// Construct an empty capturing reporter over the plain palette, so a test
+    /// asserting on captured bytes sees no escape sequences.
     #[must_use = "construct the reporter to capture user-facing output"]
     pub fn new() -> Self {
-        Self::default()
+        Self::with_styles(&Styles::plain())
+    }
+
+    /// Construct an empty capturing reporter over the production palette, for a
+    /// test that asserts on what a terminal would receive.
+    #[must_use = "construct the reporter to capture user-facing output"]
+    pub fn colored() -> Self {
+        Self::with_styles(&Styles::colored())
+    }
+
+    fn with_styles(styles: &Styles) -> Self {
+        Self {
+            out: String::new(),
+            err: String::new(),
+            styles: *styles,
+        }
     }
 }
 
@@ -206,11 +244,11 @@ impl BufferReporter {
 /// wherever ANSI is stripped. Both streams are checked, so a renderer cannot
 /// pass by writing its painted bytes to the one nobody looked at.
 #[cfg(test)]
-pub fn assert_color_is_additive(render: impl Fn(&Styles, &mut BufferReporter)) {
+pub fn assert_color_is_additive(render: impl Fn(&mut BufferReporter)) {
     let mut plain = BufferReporter::new();
-    render(&Styles::plain(), &mut plain);
-    let mut colored = BufferReporter::new();
-    render(&Styles::colored(), &mut colored);
+    render(&mut plain);
+    let mut colored = BufferReporter::colored();
+    render(&mut colored);
 
     assert!(
         colored.out.contains('\u{1b}') || colored.err.contains('\u{1b}'),
@@ -232,7 +270,11 @@ pub fn assert_color_is_additive(render: impl Fn(&Styles, &mut BufferReporter)) {
 
 #[cfg(test)]
 impl Reporter for BufferReporter {
-    fn diff(&mut self, rendered: &str) {
+    fn styles(&self) -> Styles {
+        self.styles
+    }
+
+    fn out_block(&mut self, rendered: &str) {
         self.out.push_str(rendered);
     }
 
@@ -247,23 +289,20 @@ impl Reporter for BufferReporter {
     }
 
     fn prompt(&mut self, text: &str) {
-        self.err.push_str(text);
+        self.err.push_str(&paint(self.styles.prompt, text));
     }
 
     fn confirm(&mut self, question: &str) {
-        // Plain palette → the composed prompt is exactly `<question> [y/N] `,
-        // matching what `--color never` prints through the stream reporter.
-        self.err
-            .push_str(&compose_confirm(&Styles::plain(), question));
+        self.err.push_str(&compose_confirm(&self.styles, question));
     }
 
     fn warn(&mut self, message: &str) {
-        self.err.push_str(message);
+        self.err.push_str(&paint(self.styles.warn, message));
         self.err.push('\n');
     }
 
     fn error(&mut self, message: &str) {
-        self.err.push_str(message);
+        self.err.push_str(&paint(self.styles.error, message));
         self.err.push('\n');
     }
 
@@ -277,20 +316,48 @@ mod tests {
     use super::*;
 
     #[test]
-    fn diff_and_json_go_to_out_prompt_warn_error_go_to_err() {
+    fn blocks_and_json_go_to_out_prompt_warn_error_go_to_err() {
         let mut r = BufferReporter::new();
-        r.diff("D");
+        r.out_block("D");
         r.line("L");
         r.json("{\"k\":1}");
         r.prompt("P");
         r.warn("W");
         r.error("E");
         r.err_block("B1\nB2\n");
-        // The out stream carries diff, line, and json (json + trailing
+        // The out stream carries the block, line, and json (json + trailing
         // newline); the err stream carries prompt (no newline), warn, and
         // error (each newline-terminated), then the block verbatim.
         assert_eq!(r.out, "DL\n{\"k\":1}\n");
         assert_eq!(r.err, "PW\nE\nB1\nB2\n");
+    }
+
+    /// The capturing reporter must paint wherever the stream reporter paints.
+    /// Otherwise a renderer that reports only through `warn` shows no escapes,
+    /// and `assert_color_is_additive` stops covering it.
+    #[test]
+    fn a_colored_buffer_paints_the_same_paths_the_stream_does() {
+        let mut r = BufferReporter::colored();
+        r.prompt("P");
+        r.warn("W");
+        r.error("E");
+        assert_eq!(
+            anstream::adapter::strip_str(&r.err).to_string(),
+            "PW\nE\n",
+            "painting must stay additive over the plain bytes: {:?}",
+            r.err
+        );
+        for (role, text) in [
+            (Styles::colored().prompt, "P"),
+            (Styles::colored().warn, "W"),
+            (Styles::colored().error, "E"),
+        ] {
+            assert!(
+                r.err.contains(&paint(role, text)),
+                "{text:?} must be wrapped in its role: {:?}",
+                r.err
+            );
+        }
     }
 
     #[test]

@@ -189,10 +189,7 @@ fn run_reconcile(
         return run_reconcile_json(&reconcile, yes, reporter);
     }
 
-    // The renderer always emits the colored palette; the reporter's auto-stream
-    // strips it when the destination is not a terminal, so piped output stays
-    // plain and the deterministic-stdout contract holds.
-    render_preview(&reconcile, &Styles::colored(), reporter);
+    render_preview(&reconcile, reporter);
 
     if diff.is_empty() {
         // Nothing to enact against Defender, but converging the ledger may still
@@ -363,14 +360,7 @@ fn run_status(json: bool, reporter: &mut impl Reporter) -> Result<i32> {
             if json {
                 reporter.json(&status_json(&resolved, &desired, &diff, &classifier));
             } else {
-                render_status(
-                    &resolved,
-                    &desired,
-                    &diff,
-                    &classifier,
-                    &Styles::colored(),
-                    reporter,
-                );
+                render_status(&resolved, &desired, &diff, &classifier, reporter);
             }
             Ok(ExitCode::Success.code())
         }
@@ -384,7 +374,7 @@ fn run_status(json: bool, reporter: &mut impl Reporter) -> Result<i32> {
             if json {
                 reporter.json(&status_desired_only_json(&resolved, &desired));
             } else {
-                render_status_desired_only(&resolved, &desired, &Styles::colored(), reporter);
+                render_status_desired_only(&resolved, &desired, reporter);
             }
             Ok(ExitCode::Success.code())
         }
@@ -451,7 +441,8 @@ fn stale_tag(styles: &Styles) -> String {
 /// Render the add / remove / unchanged preview for a reconcile. `repo_root` is
 /// `None` for `clear`, which reconciles to the empty set without planning a
 /// repository.
-fn render_preview(reconcile: &Reconcile<'_>, styles: &Styles, reporter: &mut impl Reporter) {
+fn render_preview(reconcile: &Reconcile<'_>, reporter: &mut impl Reporter) {
+    let styles = &reporter.styles();
     let Reconcile {
         repo_root,
         desired,
@@ -509,9 +500,9 @@ fn render_status(
     desired: &BTreeSet<Exclusion>,
     diff: &DefenderDiff,
     classifier: &ExclusionClassifier,
-    styles: &Styles,
     reporter: &mut impl Reporter,
 ) {
+    let styles = &reporter.styles();
     reporter.line(&format!("Defender exclusions for {}:", resolved.repo_root));
     if !classifier.live_list_was_read() {
         reporter.line(LEDGER_SOURCE_NOTE);
@@ -532,9 +523,9 @@ fn render_status(
 fn render_status_desired_only(
     resolved: &ResolvedPlan,
     desired: &BTreeSet<Exclusion>,
-    styles: &Styles,
     reporter: &mut impl Reporter,
 ) {
+    let styles = &reporter.styles();
     reporter.line(&format!(
         "Desired Defender exclusions for {} (current state unavailable):",
         resolved.repo_root
@@ -751,7 +742,7 @@ mod tests {
         /// Render the preview with the plain palette and return stdout.
         fn preview(&self) -> String {
             let mut reporter = BufferReporter::new();
-            render_preview(&self.reconcile(), &Styles::plain(), &mut reporter);
+            render_preview(&self.reconcile(), &mut reporter);
             reporter.out
         }
     }
@@ -1028,21 +1019,21 @@ mod tests {
             &CurrentExclusions::Unreadable,
             &[(REPO, ExclusionKind::Folder)],
         );
-        let mut reporter = BufferReporter::new();
-        render_preview(&fixture.reconcile(), &Styles::colored(), &mut reporter);
+        let mut reporter = BufferReporter::colored();
+        render_preview(&fixture.reconcile(), &mut reporter);
 
         assert!(reporter.out.contains(REPO));
         assert!(reporter.out.contains("[recorded]"));
-        assert_color_is_additive(|styles, reporter| {
-            render_preview(&fixture.reconcile(), styles, reporter);
+        assert_color_is_additive(|reporter| {
+            render_preview(&fixture.reconcile(), reporter);
         });
     }
 
-    /// Two desired exclusions of different path lengths must put their tags in
-    /// one column. The listing runs to dozens of paths, so a reader scans the
-    /// state down that column rather than reading each line to its end.
+    /// Every desired exclusion must reach the listing with its state tag. A
+    /// dropped row hides a Defender exclusion from the only listing that
+    /// reports it.
     #[test]
-    fn a_listing_starts_every_state_tag_at_one_column() {
+    fn a_listing_carries_every_desired_exclusion_and_its_tag() {
         let short = r"C:\a";
         let fixture = Fixture::new(
             &[
@@ -1056,17 +1047,17 @@ mod tests {
             ],
         );
         let out = fixture.preview();
-        let columns: Vec<Option<usize>> = out
+        let tagged: Vec<&str> = out
             .lines()
             .filter(|line| line.contains("[present]"))
-            .map(|line| line.find("[present]"))
             .collect();
 
-        assert_eq!(columns.len(), 2, "both exclusions must be listed: {out}");
-        assert_eq!(
-            columns.first(),
-            columns.last(),
-            "both tags must start at the same column: {out}"
-        );
+        assert_eq!(tagged.len(), 2, "both exclusions must be listed: {out}");
+        for path in [short, GITCONFIG] {
+            assert!(
+                tagged.iter().any(|line| line.contains(path)),
+                "{path} must be listed with its tag: {out}"
+            );
+        }
     }
 }

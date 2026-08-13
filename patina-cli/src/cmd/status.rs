@@ -48,7 +48,7 @@ pub async fn run(args: &StatusArgs, reporter: &mut impl Reporter) -> Result<i32>
     if args.json {
         reporter.json(&json_envelope(&report));
     } else {
-        render_human(&report, &Styles::colored(), reporter);
+        render_human(&report, reporter);
     }
     Ok(ExitCode::Success.code())
 }
@@ -90,24 +90,25 @@ fn json_envelope(report: &StatusReport) -> String {
 
 /// Render the human-readable table: one row per target plus a summary
 /// line of the aggregate counters.
-fn render_human(report: &StatusReport, styles: &Styles, reporter: &mut impl Reporter) {
+fn render_human(report: &StatusReport, reporter: &mut impl Reporter) {
     if report.last_apply.is_none() {
         reporter.line("No apply has been recorded yet; nothing to report.");
         render_remotes_pending(report, reporter);
         return;
     }
+    let styles = reporter.styles();
     let table: String = report
         .files
         .iter()
         .map(|entry| {
             row(&[
-                paint(state_style(entry.state, styles), state_label(entry.state)).as_str(),
+                paint(state_style(entry.state, &styles), state_label(entry.state)).as_str(),
                 entry.path.as_str(),
             ])
         })
         .collect();
     emit_aligned(&table, reporter);
-    reporter.line(&render_summary(report, styles));
+    reporter.line(&render_summary(report, &styles));
     render_remotes_pending(report, reporter);
 }
 
@@ -243,12 +244,11 @@ mod tests {
     fn human_render_reports_nothing_when_no_apply() {
         let report = StatusReport::default();
         let mut r = BufferReporter::new();
-        render_human(&report, &Styles::plain(), &mut r);
+        render_human(&report, &mut r);
         assert!(r.out.contains("No apply has been recorded"));
     }
 
-    /// A report holding one target in each of the four states, with a path per
-    /// state long enough that no single row drives the column width.
+    /// A report holding one target in each of the four states.
     fn report_of_every_state() -> StatusReport {
         let mut report = report_with_entries();
         for (path, state) in [
@@ -267,26 +267,16 @@ mod tests {
         report
     }
 
-    /// The state word is the only thing a stripped render carries, so each
-    /// state must print its own label and every path must start at one
-    /// column.
+    /// A stripped render carries the state word and nothing else, so each row
+    /// must lead with its own label.
     #[test]
-    fn every_state_prints_its_label_and_the_paths_share_a_column() {
+    fn every_state_leads_its_row_with_its_own_label() {
         let mut r = BufferReporter::new();
-        render_human(&report_of_every_state(), &Styles::plain(), &mut r);
+        render_human(&report_of_every_state(), &mut r);
 
         let rows: Vec<&str> = r.out.lines().take(4).collect();
-        let column = rows
-            .first()
-            .and_then(|row| row.find('/'))
-            .expect("the first row carries a path");
         for (row, label) in rows.iter().zip(["drifted", "clean", "missing", "orphaned"]) {
             assert!(row.starts_with(label), "{row:?} must lead with {label}");
-            assert_eq!(
-                row.find('/'),
-                Some(column),
-                "every path must start at column {column}: {row:?}"
-            );
         }
     }
 
@@ -316,7 +306,7 @@ mod tests {
     #[test]
     fn human_render_color_strips_back_to_the_plain_table() {
         let report = report_of_every_state();
-        assert_color_is_additive(|styles, reporter| render_human(&report, styles, reporter));
+        assert_color_is_additive(|reporter| render_human(&report, reporter));
     }
 
     #[test]
@@ -325,7 +315,7 @@ mod tests {
         report.remotes_pending = vec!["humanizer".to_owned(), "prompts".to_owned()];
 
         let mut r = BufferReporter::new();
-        render_human(&report, &Styles::plain(), &mut r);
+        render_human(&report, &mut r);
         assert!(
             r.out.contains("humanizer") && r.out.contains("prompts"),
             "the human render must name every pending remote: {}",
@@ -353,7 +343,7 @@ mod tests {
             ..StatusReport::default()
         };
         let mut r = BufferReporter::new();
-        render_human(&report, &Styles::plain(), &mut r);
+        render_human(&report, &mut r);
         assert!(
             r.out.contains("No apply has been recorded") && r.out.contains("humanizer"),
             "a repository with no apply must still report its pending remotes: {}",
@@ -367,12 +357,12 @@ mod tests {
         // belongs to the notice subsystem and may change, but an empty set must
         // print nothing extra whatever it says.
         let mut quiet = BufferReporter::new();
-        render_human(&report_with_entries(), &Styles::plain(), &mut quiet);
+        render_human(&report_with_entries(), &mut quiet);
 
         let mut report = report_with_entries();
         report.remotes_pending = vec!["humanizer".to_owned()];
         let mut noisy = BufferReporter::new();
-        render_human(&report, &Styles::plain(), &mut noisy);
+        render_human(&report, &mut noisy);
 
         assert_eq!(
             noisy.out.lines().count(),

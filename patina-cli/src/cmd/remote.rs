@@ -70,12 +70,7 @@ pub fn run(
     match &args.command {
         RemoteCommand::List => {
             let inventory = read_inventory(&lock_path, false, reporter)?;
-            Ok(run_list(
-                &inventory,
-                args.json,
-                &Styles::colored(),
-                reporter,
-            ))
+            Ok(run_list(&inventory, args.json, reporter))
         }
         RemoteCommand::Check { hook } => {
             let inventory = read_inventory(&lock_path, *hook, reporter)?;
@@ -174,12 +169,7 @@ fn read_inventory(
 
 /// Report the pins as recorded, with the pending state the last
 /// `check` observed.
-fn run_list(
-    inventory: &RemoteInventory,
-    json: bool,
-    styles: &Styles,
-    reporter: &mut impl Reporter,
-) -> i32 {
+fn run_list(inventory: &RemoteInventory, json: bool, reporter: &mut impl Reporter) -> i32 {
     let pending = notice::read_pending(&inventory.state_dir);
     if json {
         let rows: Vec<serde_json::Value> = inventory
@@ -205,6 +195,7 @@ fn run_list(
         return ExitCode::Success.code();
     }
 
+    let styles = &reporter.styles();
     let mut table = header_row(&["NAME", "REF", "REV", "URL"], styles);
     for view in &inventory.remotes {
         table.push_str(&list_row(
@@ -429,7 +420,7 @@ fn run_update(
     // warnings and confirmation prompts, so nothing emitted inside it could be
     // aligned against the rows that follow.
     if !flags.json {
-        render_outcomes(&outcomes, &Styles::colored(), reporter);
+        render_outcomes(&outcomes, reporter);
     }
     reconcile_notice(&inventory.state_dir, &outcomes, reporter);
 
@@ -447,7 +438,8 @@ fn run_update(
 /// table accounts for the whole run rather than only its successes. The reason
 /// a remote failed or was refused stays on stderr, where the warning already
 /// is.
-fn render_outcomes(outcomes: &[Outcome], styles: &Styles, reporter: &mut impl Reporter) {
+fn render_outcomes(outcomes: &[Outcome], reporter: &mut impl Reporter) {
+    let styles = &reporter.styles();
     let mut table = header_row(&["NAME", "FROM", "TO", "STATUS"], styles);
     for outcome in outcomes {
         table.push_str(&update_row(outcome, styles));
@@ -750,7 +742,7 @@ fn run_prune(inventory: &RemoteInventory, json: bool, reporter: &mut impl Report
     } else if removed.is_empty() {
         reporter.line("No unreferenced remote checkouts to remove.");
     } else {
-        let styles = Styles::colored();
+        let styles = reporter.styles();
         for path in &removed {
             reporter.line(&format!("removed {}", paint(styles.delete, path.as_str())));
         }
@@ -828,15 +820,7 @@ mod tests {
     fn list_json_reports_the_declared_remote_and_its_pin() {
         let mut reporter = BufferReporter::new();
         let rev = "a".repeat(40);
-        assert_eq!(
-            run_list(
-                &inventory(Some(&rev)),
-                true,
-                &Styles::plain(),
-                &mut reporter
-            ),
-            0
-        );
+        assert_eq!(run_list(&inventory(Some(&rev)), true, &mut reporter), 0);
         let doc: serde_json::Value =
             serde_json::from_str(reporter.out.trim()).expect("one JSON document");
         assert_eq!(
@@ -860,10 +844,7 @@ mod tests {
     #[test]
     fn list_human_marks_an_unpinned_remote() {
         let mut reporter = BufferReporter::new();
-        assert_eq!(
-            run_list(&inventory(None), false, &Styles::plain(), &mut reporter),
-            0
-        );
+        assert_eq!(run_list(&inventory(None), false, &mut reporter), 0);
         assert!(
             reporter.out.contains("humanizer") && reporter.out.contains("(unpinned)"),
             "an unpinned remote must be shown as such: {}",
@@ -876,7 +857,7 @@ mod tests {
         let mut empty = inventory(None);
         empty.remotes.clear();
         let mut reporter = BufferReporter::new();
-        assert_eq!(run_list(&empty, false, &Styles::plain(), &mut reporter), 0);
+        assert_eq!(run_list(&empty, false, &mut reporter), 0);
         assert!(reporter.out.contains("No remotes are declared"));
         assert!(
             !reporter.out.contains("NAME"),
@@ -902,7 +883,7 @@ mod tests {
         });
 
         let mut reporter = BufferReporter::new();
-        assert_eq!(run_list(&inv, false, &Styles::plain(), &mut reporter), 0);
+        assert_eq!(run_list(&inv, false, &mut reporter), 0);
         let mut lines = reporter.out.lines();
         let header = lines.next().expect("a header row");
         let pinned = lines.next().expect("the pinned remote's row");
@@ -941,8 +922,8 @@ mod tests {
     #[test]
     fn list_human_color_strips_back_to_the_plain_table() {
         let inv = inventory(Some(&"a".repeat(40)));
-        assert_color_is_additive(|styles, reporter| {
-            assert_eq!(run_list(&inv, false, styles, reporter), 0);
+        assert_color_is_additive(|reporter| {
+            assert_eq!(run_list(&inv, false, reporter), 0);
         });
     }
 
@@ -1089,7 +1070,7 @@ mod tests {
             },
         ];
         let mut reporter = BufferReporter::new();
-        render_outcomes(&outcomes, &Styles::plain(), &mut reporter);
+        render_outcomes(&outcomes, &mut reporter);
 
         let lines: Vec<&str> = reporter.out.lines().collect();
         assert_eq!(lines.len(), 3, "a header and two rows: {:?}", reporter.out);
@@ -1114,8 +1095,8 @@ mod tests {
             from: Some("a".repeat(40)),
             rev: Some("b".repeat(40)),
         }];
-        assert_color_is_additive(|styles, reporter| {
-            render_outcomes(&outcomes, styles, reporter);
+        assert_color_is_additive(|reporter| {
+            render_outcomes(&outcomes, reporter);
         });
     }
 

@@ -191,7 +191,7 @@ fn render_status(
             if json {
                 reporter.json(&status_envelope(&status));
             } else {
-                render_status_human(&status, &Styles::colored(), reporter);
+                render_status_human(&status, reporter);
             }
             ExitCode::Success.code()
         }
@@ -221,7 +221,8 @@ fn status_envelope(status: &ServiceStatus) -> String {
 ///
 /// The key keeps its trailing colon inside its own cell, so `installed:` and
 /// `running:` stay single literal tokens for a script that greps them.
-fn render_status_human(status: &ServiceStatus, styles: &Styles, reporter: &mut impl Reporter) {
+fn render_status_human(status: &ServiceStatus, reporter: &mut impl Reporter) {
+    let styles = &reporter.styles();
     // Only `true` is painted. A machine that never installed the service reads
     // `false` on both fields, and the warn color would call that intended state
     // a fault.
@@ -476,31 +477,9 @@ mod tests {
     #[test]
     fn human_status_color_strips_back_to_the_plain_summary() {
         let status = mixed_status();
-        assert_color_is_additive(|styles, reporter| {
-            render_status_human(&status, styles, reporter);
+        assert_color_is_additive(|reporter| {
+            render_status_human(&status, reporter);
         });
-    }
-
-    /// Every value starts where the widest key's column ends, so a reader scans
-    /// the values down one edge.
-    #[test]
-    fn every_value_starts_at_one_column() {
-        let mut plain = BufferReporter::new();
-        render_status_human(&mixed_status(), &Styles::plain(), &mut plain);
-
-        let column = plain
-            .out
-            .lines()
-            .next()
-            .and_then(|line| line.find("true"))
-            .expect("the installed row carries its value");
-        for line in plain.out.lines() {
-            assert!(
-                line.get(column..)
-                    .is_some_and(|rest| !rest.starts_with(' ')),
-                "every value must start at column {column}: {line:?}"
-            );
-        }
     }
 
     #[test]

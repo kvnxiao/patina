@@ -21,7 +21,6 @@ use crate::cli::Pager;
 use crate::exit_code::ExitCode;
 use crate::output::diff;
 use crate::output::reporter::Reporter;
-use crate::output::style::Styles;
 use crate::output::style::paint;
 use anyhow::Context;
 use anyhow::Result;
@@ -130,7 +129,7 @@ pub async fn run(
         // re-derives the same set under the held lock when it executes.
         let orphans = plan_orphans(&resolved).context("failed to determine the reap set")?;
         let rendered = render_diff(&resolved, &orphans, args.pager, reporter)?;
-        reporter.diff(&rendered);
+        reporter.out_block(&rendered);
     }
 
     match confirm_apply(is_full_noop, args.yes, tty, reader, reporter) {
@@ -566,7 +565,7 @@ fn report_result(result: &ApplyResult, reporter: &mut impl Reporter) {
             } else {
                 "Applied."
             };
-            reporter.line(&paint(Styles::colored().success, outcome));
+            reporter.line(&paint(reporter.styles().success, outcome));
         }
         ApplyResult::RolledBack { failed_hook } => {
             reporter.warn(&format!(
