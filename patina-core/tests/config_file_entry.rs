@@ -301,6 +301,102 @@ targets = []
     ));
 }
 
+/// Every ASCII control character is refused in a target, not only the three
+/// that corrupt a line-oriented render. TOML's own escapes are the only way to
+/// author one, so each case here is what a manifest would actually contain.
+#[test]
+fn rejects_a_control_character_in_a_target() {
+    for (escape, codepoint) in [
+        ("\\t", 0x09_u32),
+        ("\\n", 0x0A),
+        ("\\r", 0x0D),
+        ("\\u001B", 0x1B),
+        ("\\u007F", 0x7F),
+    ] {
+        let toml = format!(
+            "
+[[file]]
+source = \"agent.toml\"
+target = \"~/.config/ag{escape}ent.toml\"
+"
+        );
+        let err = parse_module_config_str(&toml).expect_err("a control character must be refused");
+        let rendered = err.to_string();
+        assert!(
+            rendered.contains("control character"),
+            "rendered: {rendered}"
+        );
+        assert!(
+            rendered.contains(&format!("U+{codepoint:04X}")),
+            "the message must name which character is at fault: {rendered}"
+        );
+        assert!(
+            !rendered.chars().any(|c| c.is_ascii_control()),
+            "the message must not embed the raw character it rejects: {rendered:?}"
+        );
+        assert!(matches!(
+            err,
+            ConfigParseError::FileEntry(FileEntryError::TargetControlCharacter {
+                codepoint: found,
+                ..
+            }) if found == codepoint
+        ));
+    }
+}
+#[test]
+fn rejects_a_control_character_in_a_source() {
+    let toml = "
+[[directory]]
+source = \"sk\\tills\"
+target = \"~/.claude/skills\"
+";
+    let err = parse_module_config_str(toml).expect_err("parse fails");
+    let rendered = err.to_string();
+    assert!(
+        rendered.contains("control character"),
+        "rendered: {rendered}"
+    );
+    assert!(rendered.contains("source"), "rendered: {rendered}");
+    assert!(matches!(
+        err,
+        ConfigParseError::FileEntry(FileEntryError::SourceControlCharacter { .. })
+    ));
+}
+
+/// The rule covers every element of a `targets` fan-out, not only the first,
+/// and applies to `[[directory]]` exactly as to `[[file]]`.
+#[test]
+fn rejects_a_control_character_in_a_later_fan_out_target() {
+    let toml = "
+[[directory]]
+source = \"d\"
+targets = [\"~/.config/a\", \"~/.config/b\\tc\"]
+";
+    let err = parse_module_config_str(toml).expect_err("parse fails");
+    assert!(matches!(
+        err,
+        ConfigParseError::FileEntry(FileEntryError::TargetControlCharacter { codepoint, .. })
+            if codepoint == 0x09
+    ));
+}
+
+/// The rule refuses the ASCII control range and nothing else. A space and a
+/// non-ASCII character are both legal in a path on every supported OS, so a
+/// predicate that reached past the control range would break real manifests.
+#[test]
+fn accepts_spaces_and_non_ascii_in_paths() {
+    let toml = "
+[[file]]
+source = \"agent.toml\"
+target = \"~/Application Support/ünïcode 😀/agent.toml\"
+";
+    let module = parse_module_config_str(toml).expect("spaces and non-ASCII are legal");
+    assert_eq!(
+        module.files[0].targets[0].as_str(),
+        "~/Application Support/ünïcode 😀/agent.toml"
+    );
+}
+
 #[test]
 fn rejects_unknown_file_mode_naming_accepted_values() {
     // A wholly unknown mode on [[file]] is rejected naming the accepted

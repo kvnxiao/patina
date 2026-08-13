@@ -78,6 +78,18 @@ source out to many. (The earlier single `[[file]]` table with the
 `symlink-dir` / `copy-tree` mode names is no longer accepted; declare a
 `[[directory]]` entry instead.)
 
+Neither a `source` nor a `target` may contain an ASCII control
+character (`U+0000`–`U+001F` or `U+007F`), which covers tab, newline,
+and carriage return. Patina refuses the whole manifest at parse time and
+names the offending character by code point, since a control character
+is invisible in an editor. Spaces and non-ASCII characters are fine:
+`~/Application Support/café` is a legal target. The rule exists because
+every listing Patina prints (`status`, the apply diff, the Defender
+listing, the `debug journal` dump) puts one path per line in
+tab-separated columns. A tab would open a column the row never closes,
+and a newline would split one row into two, which would let a filename
+forge a row that reads as Patina's own output.
+
 ### Conditional entries with `when`
 
 Any entry may carry a `when` expression, a MiniJinja predicate gating

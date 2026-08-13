@@ -123,6 +123,48 @@ pub enum FileEntryError {
     #[error("entry declares `targets = []`; the array must be non-empty")]
     TargetsEmpty,
 
+    /// A target path contains an ASCII control character.
+    ///
+    /// Patina prints one path per line, in tab-separated columns, across
+    /// `status`, the apply diff, the Defender listing, and the `debug journal`
+    /// dump. A tab would open a column that row never closes, and a newline
+    /// would split one row into two, letting a crafted filename forge a row
+    /// that reads as Patina's own. The whole control range goes together rather
+    /// than drawing a line mid-range that each renderer would have to
+    /// re-justify. The same rule covers sources, as
+    /// [`SourceControlCharacter`](FileEntryError::SourceControlCharacter).
+    #[error(
+        "target `{}` contains the control character U+{:04X}; a target path must not contain an ASCII control character",
+        .target.escape_debug(),
+        .codepoint
+    )]
+    TargetControlCharacter {
+        /// The target exactly as authored. Rendered through `escape_debug` in
+        /// the message, so reporting the path cannot itself corrupt the report.
+        target: String,
+        /// The scalar value of the first offending character. A control
+        /// character is invisible in a manifest, so the message has to name
+        /// which one is at fault.
+        codepoint: u32,
+    },
+
+    /// A source path contains an ASCII control character. The rationale is
+    /// [`TargetControlCharacter`](FileEntryError::TargetControlCharacter)'s: a
+    /// source is authored in the same manifest and rendered in the same
+    /// line-oriented output, so the two are refused alike.
+    #[error(
+        "entry source `{}` contains the control character U+{:04X}; a source path must not contain an ASCII control character",
+        .source_path.escape_debug(),
+        .codepoint
+    )]
+    SourceControlCharacter {
+        /// The source exactly as authored, `escape_debug`-rendered in the
+        /// message for the same reason the target is.
+        source_path: String,
+        /// The scalar value of the first offending character.
+        codepoint: u32,
+    },
+
     /// A `[[file]]` `mode` was set to a value outside the accepted
     /// allowlist. The accepted `[[file]]` modes are listed so the
     /// substring contract holds.
@@ -225,6 +267,7 @@ impl ManagedEntry {
             remote,
         } = raw;
 
+        reject_source_control_characters(&source)?;
         let remote = resolve_remote(remote, &source)?;
         let policy = TemplatePolicy::for_source(remote.as_deref());
         let resolved_targets = resolve_targets(target, targets)?;
@@ -278,6 +321,7 @@ impl ManagedEntry {
             remote,
         } = raw;
 
+        reject_source_control_characters(&source)?;
         let remote = resolve_remote(remote, &source)?;
         let policy = TemplatePolicy::for_source(remote.as_deref());
         let resolved_targets = resolve_targets(target, targets)?;
@@ -330,24 +374,55 @@ fn resolve_remote(
     Ok(Some(name.to_owned()))
 }
 
-/// Apply the exactly-one-of `target` / `targets` rule and the
-/// non-empty-`targets` rule, shared by both tables.
+/// Apply the exactly-one-of `target` / `targets` rule, the
+/// non-empty-`targets` rule, and the no-control-character rule, shared by both
+/// tables.
 fn resolve_targets(
     target: Option<Utf8PathBuf>,
     targets: Option<Vec<Utf8PathBuf>>,
 ) -> Result<Vec<Utf8PathBuf>, FileEntryError> {
-    match (target, targets) {
-        (Some(_), Some(_)) => Err(FileEntryError::TargetAndTargets),
-        (None, None) => Err(FileEntryError::TargetMissing),
-        (Some(single), None) => Ok(vec![single]),
-        (None, Some(many)) => {
-            if many.is_empty() {
-                Err(FileEntryError::TargetsEmpty)
-            } else {
-                Ok(many)
-            }
+    let resolved = match (target, targets) {
+        (Some(_), Some(_)) => return Err(FileEntryError::TargetAndTargets),
+        (None, None) => return Err(FileEntryError::TargetMissing),
+        (Some(single), None) => vec![single],
+        (None, Some(many)) if many.is_empty() => return Err(FileEntryError::TargetsEmpty),
+        (None, Some(many)) => many,
+    };
+    for target in &resolved {
+        if let Some(codepoint) = first_control_character(target) {
+            return Err(FileEntryError::TargetControlCharacter {
+                target: target.to_string(),
+                codepoint,
+            });
         }
     }
+    Ok(resolved)
+}
+
+/// Refuse a source path carrying an ASCII control character.
+///
+/// Runs before every other source rule, so an unprintable source is reported as
+/// such rather than through a message that embeds it.
+fn reject_source_control_characters(source: &Utf8Path) -> Result<(), FileEntryError> {
+    match first_control_character(source) {
+        Some(codepoint) => Err(FileEntryError::SourceControlCharacter {
+            source_path: source.to_string(),
+            codepoint,
+        }),
+        None => Ok(()),
+    }
+}
+
+/// The scalar value of the first ASCII control character in `path`, if it has
+/// one.
+///
+/// Reads the path as authored, before tilde expansion, so a rejection quotes it
+/// exactly as the manifest spells it.
+fn first_control_character(path: &Utf8Path) -> Option<u32> {
+    path.as_str()
+        .chars()
+        .find(char::is_ascii_control)
+        .map(|c| c as u32)
 }
 
 /// Whether `source`'s filename ends in a `.tmpl` suffix (case-insensitive).
