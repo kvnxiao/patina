@@ -75,10 +75,10 @@ pub trait Reporter {
     /// failures differently from advisory warnings.
     fn error(&mut self, message: &str);
     /// Emit an already-painted block to the err stream verbatim, newlines and
-    /// all. The caller owns every style inside it, which is what lets an
-    /// aligned table carry one color per cell instead of the single style
-    /// [`Reporter::warn`] forces on a whole line. Add the trailing newline
-    /// yourself; nothing is appended here.
+    /// all. The caller owns every style inside it, so an aligned table can
+    /// carry one color per cell. [`Reporter::warn`] forces a single style over
+    /// a whole line. Add the trailing newline yourself; nothing is appended
+    /// here.
     fn err_block(&mut self, painted: &str);
 }
 
@@ -238,8 +238,8 @@ impl BufferReporter {
 
 /// Assert that color is purely additive over whatever `render` prints.
 ///
-/// This is the output layer's own contract, so it lives here rather than being
-/// restated by each surface that paints. Two failures are in scope. Painting a
+/// This is the output layer's own contract, so it lives here and no surface
+/// that paints restates it. Two failures are in scope. Painting a
 /// cell's padding along with the cell would misalign piped and `--color never`
 /// output, and making color the sole carrier of a fact would lose that fact
 /// wherever ANSI is stripped. Both streams are checked, so a renderer cannot

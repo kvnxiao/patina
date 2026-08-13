@@ -378,11 +378,17 @@ fn run_update(
     let now_rfc3339 = patina_core::current_rfc3339();
     let mut outcomes: Vec<Outcome> = Vec::new();
 
-    for index in selected {
-        let Some(view) = inventory.remotes.get(index) else {
-            continue;
-        };
-        let proposal = match update::propose(inventory, view, now_epoch, flags.bypass_age) {
+    let views: Vec<&RemoteView> = selected
+        .iter()
+        .filter_map(|&index| inventory.remotes.get(index))
+        .collect();
+    let proposals = propose_all(&views, |view| {
+        update::propose(inventory, view, now_epoch, flags.bypass_age)
+            .map_err(|error| error.to_string())
+    });
+
+    for (view, proposal) in views.iter().zip(proposals) {
+        let proposal = match proposal {
             Ok(proposal) => proposal,
             Err(error) => {
                 // One unreachable remote must not stop the others.
@@ -431,13 +437,53 @@ fn run_update(
     Ok(exit_for(&outcomes).code())
 }
 
+/// How many remotes are fetched at once.
+///
+/// A cap keeps a repository declaring dozens of remotes from opening dozens of
+/// connections at once. It sits above the core count because each fetch is a
+/// `git` subprocess waiting on a server.
+const FETCH_BATCH: usize = 8;
+
+/// Fetch and gate every selected remote, [`FETCH_BATCH`] at a time.
+///
+/// Each call blocks on `git` talking to a different server, so a batch costs
+/// about one fetch of wall time. Results come back in `views` order whatever
+/// order the servers answer in, and that order drives the prompts, the table,
+/// and the `--json` rows.
+///
+/// A worker that produces nothing at all yields an error string, and the run
+/// continues. Its panic message has already reached stderr through the default
+/// hook, and one dead worker must not abort a run that an unreachable server
+/// would not.
+fn propose_all(
+    views: &[&RemoteView],
+    propose: impl Fn(&RemoteView) -> Result<Proposal, String> + Sync,
+) -> Vec<Result<Proposal, String>> {
+    let mut proposals = Vec::with_capacity(views.len());
+    for batch in views.chunks(FETCH_BATCH) {
+        std::thread::scope(|scope| {
+            let handles: Vec<_> = batch
+                .iter()
+                .map(|view| scope.spawn(|| propose(view)))
+                .collect();
+            for handle in handles {
+                proposals.push(
+                    handle
+                        .join()
+                        .unwrap_or_else(|_| Err("the fetch ended unexpectedly".to_owned())),
+                );
+            }
+        });
+    }
+    proposals
+}
+
 /// Render one aligned row per remote the run touched. A row names where the
 /// pin was, the candidate the run considered, and what became of the pin.
 ///
 /// Every remote gets a row, including one that could not be reached, so the
-/// table accounts for the whole run rather than only its successes. The reason
-/// a remote failed or was refused stays on stderr, where the warning already
-/// is.
+/// table accounts for the whole run. The reason a remote failed or was refused
+/// stays on stderr, where the warning already is.
 fn render_outcomes(outcomes: &[Outcome], reporter: &mut impl Reporter) {
     let styles = &reporter.styles();
     let mut table = header_row(&["NAME", "FROM", "TO", "STATUS"], styles);
@@ -449,8 +495,8 @@ fn render_outcomes(outcomes: &[Outcome], reporter: &mut impl Reporter) {
 
 /// One row of the `remote update` table.
 ///
-/// A `TO` equal to its `FROM` prints `-` instead of the rev. Two identical
-/// forty-character hashes read as a change until the reader compares them.
+/// A `TO` equal to its `FROM` prints `-`. Two identical forty-character
+/// hashes read as a change until the reader compares them.
 fn update_row(outcome: &Outcome, styles: &Styles) -> String {
     let to = if outcome.rev.is_some() && outcome.rev == outcome.from {
         paint(styles.hint, "-")
@@ -815,6 +861,74 @@ mod tests {
         }
     }
 
+    /// A fetch pass must overlap its remotes and still return them in
+    /// declaration order, because that order drives the prompts and the table.
+    /// Each worker parks until every one of them has started. A pass that ran
+    /// them one at a time therefore reaches the timeout and fails on a
+    /// high-water mark of one.
+    #[test]
+    fn a_fetch_pass_overlaps_its_remotes_and_keeps_declaration_order() {
+        use std::sync::Condvar;
+        use std::sync::Mutex;
+
+        let mut inv = inventory(None);
+        for name in ["prompts", "diagrams"] {
+            let mut view = inv.remotes.first().expect("the seeded remote").clone();
+            view.spec.name = remote_name(name);
+            inv.remotes.push(view);
+        }
+        let views: Vec<&RemoteView> = inv.remotes.iter().collect();
+        let expected = views.len();
+
+        let started = Mutex::new(0usize);
+        let all_started = Condvar::new();
+        let peak = std::sync::atomic::AtomicUsize::new(0);
+
+        let proposals = propose_all(&views, |view| {
+            let mut count = started.lock().expect("the start counter");
+            *count += 1;
+            peak.fetch_max(*count, std::sync::atomic::Ordering::Relaxed);
+            all_started.notify_all();
+            while *count < expected {
+                let (guard, timeout) = all_started
+                    .wait_timeout(count, std::time::Duration::from_secs(10))
+                    .expect("the start counter");
+                count = guard;
+                if timeout.timed_out() {
+                    break;
+                }
+            }
+            drop(count);
+            Ok(Proposal {
+                name: view.name().to_string(),
+                candidate_rev: "b".repeat(40),
+                current_rev: None,
+                outcome: GateOutcome::AlreadyPinned,
+            })
+        });
+
+        assert_eq!(
+            peak.load(std::sync::atomic::Ordering::Relaxed),
+            expected,
+            "every remote in one batch must be in flight at once"
+        );
+        let names: Vec<&str> = proposals
+            .iter()
+            .map(|proposal| {
+                proposal
+                    .as_ref()
+                    .expect("every worker returned a proposal")
+                    .name
+                    .as_str()
+            })
+            .collect();
+        assert_eq!(
+            names,
+            vec!["humanizer", "prompts", "diagrams"],
+            "results must come back in declaration order"
+        );
+    }
+
     fn proposal(outcome: GateOutcome, current: Option<&str>) -> Proposal {
         Proposal {
             name: "humanizer".to_owned(),
@@ -1017,8 +1131,7 @@ mod tests {
     /// The status cell is the only place a human learns why a pin did not move,
     /// so each action has to produce its own wording. Three of these are pinned
     /// by the integration suite (`already at`, `holding`, `min_age`), and a
-    /// cooldown must name the instant it becomes eligible rather than only that
-    /// it is waiting.
+    /// cooldown must name the instant it becomes eligible.
     #[test]
     fn each_action_reports_its_own_status() {
         for (action, expected) in [

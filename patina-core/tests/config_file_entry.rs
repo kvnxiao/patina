@@ -301,9 +301,9 @@ targets = []
     ));
 }
 
-/// Every ASCII control character is refused in a target, not only the three
-/// that corrupt a line-oriented render. TOML's own escapes are the only way to
-/// author one, so each case here is what a manifest would actually contain.
+/// Every ASCII control character is refused in a target, down to the ones that
+/// leave a line-oriented render intact. TOML's own escapes are the only way to
+/// author one, so each case here spells what a manifest would contain.
 #[test]
 fn rejects_a_control_character_in_a_target() {
     for (escape, codepoint) in [
@@ -363,8 +363,8 @@ target = \"~/.claude/skills\"
     ));
 }
 
-/// The rule covers every element of a `targets` fan-out, not only the first,
-/// and applies to `[[directory]]` exactly as to `[[file]]`.
+/// The rule covers every element of a `targets` fan-out, down to the last, and
+/// applies to `[[directory]]` exactly as to `[[file]]`.
 #[test]
 fn rejects_a_control_character_in_a_later_fan_out_target() {
     let toml = "

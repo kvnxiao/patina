@@ -25,9 +25,9 @@ use anstyle::Style;
 
 /// The palette the diff renderer and reporter paint with.
 ///
-/// Roles are grouped by the surface that prints them, and a group is what
-/// shares a row. Two roles in one group must never render alike, or one reads
-/// as the other on a single line. Across groups, identical styling is
+/// Roles are grouped by the surface that prints them, and one group shares one
+/// row. Two roles in one group must never render alike, or one reads as the
+/// other on a single line. Across groups, identical styling is
 /// deliberate and marks one shared visual meaning.
 /// [`header`](Styles::header) and [`path`](Styles::path) are both bold, because
 /// each names the subject of its line. [`hint`](Styles::hint),
@@ -227,7 +227,7 @@ impl Styles {
     /// Severity runs green → yellow → red wherever it appears, so the status
     /// states and the doctor levels read the same way as a diff does. An
     /// orphaned target breaks out of that run into magenta, because it is a
-    /// leftover rather than a degree of failure.
+    /// leftover awaiting a reap. It has no place on a severity scale.
     ///
     /// The Defender-exclusion roles paint the path blue (file) or magenta
     /// (folder), leaving green, yellow, and red for the state tag: green in

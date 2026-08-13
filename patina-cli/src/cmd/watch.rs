@@ -257,9 +257,8 @@ fn render_status_human(status: &ServiceStatus, reporter: &mut impl Reporter) {
 }
 
 /// A recovered field's value, or the literal `unknown` when it could not be
-/// read. `unknown` takes the hint color. It marks the absence of a reading
-/// rather than a reading of zero, and must not compete with the values around
-/// it.
+/// read. `unknown` takes the hint color. It marks a missing reading, which
+/// must not compete with the values around it.
 fn recovered<T: std::fmt::Display>(value: Option<T>, styles: &Styles) -> String {
     value.map_or_else(|| paint(styles.hint, "unknown"), |value| value.to_string())
 }

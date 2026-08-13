@@ -197,7 +197,7 @@ clean: 1  drifted: 1  missing: 1  orphaned: 1
 
 On a terminal the state word is green (clean), yellow (drifted), red
 (missing), or magenta (orphaned); an orphan gets its own hue because it
-is a leftover awaiting a reap rather than a degree of failure. In the
+is a leftover awaiting a reap, with no place on a severity scale. In the
 summary only a non-zero counter is painted, so a clean repository reads
 at a glance. Every state is in the text as well, so a stripped run loses
 the color and nothing else.
@@ -313,8 +313,7 @@ system directory (`%SystemRoot%`, `%ProgramFiles%`, and friends).
 
 The listing carries the exclusion kind as **color on the path**, and the
 state as a colored tag after it. The tags share one column, sized to the
-widest path, so a long list stays scannable down the state rather than
-ragged:
+widest path, so a reader scans the state straight down a long list:
 
 ```text
   C:\Users\kevin\dotfiles      [present]

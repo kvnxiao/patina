@@ -116,8 +116,7 @@ fn render_human(report: &StatusReport, reporter: &mut impl Reporter) {
 /// its state's color.
 ///
 /// A zero counter stays plain. Painting it would spend the state's color on
-/// the absence of that state, and a clean repository has to read at a glance
-/// rather than as four numbers to compare.
+/// the absence of that state, and a clean repository has to read at a glance.
 fn render_summary(report: &StatusReport, styles: &Styles) -> String {
     [
         (TargetState::Clean, report.clean),

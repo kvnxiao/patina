@@ -401,8 +401,8 @@ fn resolve_targets(
 
 /// Refuse a source path carrying an ASCII control character.
 ///
-/// Runs before every other source rule, so an unprintable source is reported as
-/// such rather than through a message that embeds it.
+/// Runs before every other source rule, so no later message quotes an
+/// unprintable source back at the user.
 fn reject_source_control_characters(source: &Utf8Path) -> Result<(), FileEntryError> {
     match first_control_character(source) {
         Some(codepoint) => Err(FileEntryError::SourceControlCharacter {

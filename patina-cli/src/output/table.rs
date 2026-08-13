@@ -5,8 +5,7 @@
 //! decides the padding for all of them, and no command module counts spaces.
 //!
 //! The `patina debug` dumps in `patina_core` are not clients. They render a
-//! developer post-mortem, not a table, and `patina_core` cannot reach the CLI's
-//! palette.
+//! developer post-mortem, and `patina_core` cannot reach the CLI's palette.
 
 use crate::output::reporter::Reporter;
 use std::io::Write;
@@ -15,8 +14,8 @@ use tabwriter::TabWriter;
 /// Align tab-separated cells into columns.
 ///
 /// ANSI mode measures a cell by printable width, so a painted cell pads exactly
-/// as its stripped form does; that is what keeps piped, `--color never`, and
-/// `NO_COLOR` output aligned identically to a terminal's. Writing to a `Vec`
+/// as its stripped form does. Piped, `--color never`, and `NO_COLOR` output
+/// therefore align identically to a terminal's. Writing to a `Vec`
 /// cannot fail, so the unaligned fallback is unreachable and exists only
 /// because a print path must not carry a panic.
 #[must_use = "the aligned block is what gets printed"]
@@ -36,7 +35,7 @@ pub fn align(table: &str) -> String {
 /// Join `cells` into one tab-separated, newline-terminated row.
 ///
 /// [`align`] pads a cell only when a tab follows it, so a row ends after its
-/// last cell rather than trailing the padding of an empty one.
+/// last cell and trails no padding.
 #[must_use = "the row is what gets buffered into the table"]
 pub fn row(cells: &[&str]) -> String {
     let mut row = cells.join("\t");
@@ -106,8 +105,8 @@ mod tests {
         assert_eq!(reporter.out, "");
     }
 
-    /// The `.ansi(true)` setting is what makes color additive over an aligned
-    /// block. A cell wrapped in escapes must pad by its printable width, so
+    /// The `.ansi(true)` setting makes color additive over an aligned block.
+    /// A cell wrapped in escapes must pad by its printable width, so
     /// stripping the escapes gives back the plain alignment byte for byte. Byte
     /// measurement would pad the colored form short and misalign piped output.
     #[test]

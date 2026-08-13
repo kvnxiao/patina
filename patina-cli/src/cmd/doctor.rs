@@ -631,9 +631,9 @@ fn json_envelope(findings: &[Finding]) -> String {
 /// stderr regardless of format). A clean environment prints a single "no
 /// findings" line so the user gets explicit confirmation.
 ///
-/// The block goes out through [`Reporter::err_block`] rather than one
-/// [`Reporter::warn`] per line, because `warn` forces a single style over a
-/// whole line and would paint every level the same yellow. The bracketed level
+/// The block goes out through [`Reporter::err_block`]. One
+/// [`Reporter::warn`] per line would paint every level the same yellow,
+/// because `warn` forces a single style over a whole line. The bracketed level
 /// stays in the first cell, so a stripped report still tells an advisory note
 /// from an error.
 fn render_human(findings: &[Finding], reporter: &mut impl Reporter) {
@@ -643,7 +643,7 @@ fn render_human(findings: &[Finding], reporter: &mut impl Reporter) {
     }
     let styles = reporter.styles();
     // Level and code share the level's color, so severity reads off the whole
-    // left edge rather than one bracketed word.
+    // left edge.
     let table: String = findings
         .iter()
         .map(|finding| {

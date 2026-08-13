@@ -296,14 +296,14 @@ prompts    2d5f8c1a4e7b0936d8f2a5c1e4b7d0a3f6c9e250  (unknown)                  
 
 `FROM` is the pin as the lockfile recorded it, `TO` the candidate the
 run considered, and `STATUS` what became of the pin. A `TO` equal to its
-`FROM` prints `-` instead of the rev. Two identical forty-character
-hashes read as a change until you compare them. The two blanks are
+`FROM` prints `-`. Two identical forty-character hashes read as a
+change until you compare them. The two blanks are
 worded apart on purpose: `(unpinned)` means no pin was recorded, while
 `(unknown)` means the run never learned a candidate. A remote that
 failed or was refused still gets a row, so the table accounts for the
 whole run; the reason stays on stderr with the warning. `remote update`
-emits the rows once the run is over rather than during it, because it
-interleaves warnings and confirmation prompts as it goes. Color follows
+emits the rows once the run is over, because it interleaves warnings and
+confirmation prompts as it goes. Color follows
 `remote list`, with cyan names, green revs, and yellow for either blank.
 
 Failure shapes worth knowing:
