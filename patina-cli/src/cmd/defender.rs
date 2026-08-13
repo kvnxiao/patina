@@ -30,6 +30,8 @@ use crate::exit_code::ExitCode;
 use crate::output::reporter::Reporter;
 use crate::output::style::Styles;
 use crate::output::style::paint;
+use crate::output::table::emit_aligned;
+use crate::output::table::row;
 use anyhow::Context;
 use anyhow::Result;
 use anyhow::anyhow;
@@ -187,10 +189,7 @@ fn run_reconcile(
         return run_reconcile_json(&reconcile, yes, reporter);
     }
 
-    // The renderer always emits the colored palette; the reporter's auto-stream
-    // strips it when the destination is not a terminal, so piped output stays
-    // plain and the deterministic-stdout contract holds.
-    render_preview(&reconcile, &Styles::colored(), reporter);
+    render_preview(&reconcile, reporter);
 
     if diff.is_empty() {
         // Nothing to enact against Defender, but converging the ledger may still
@@ -361,14 +360,7 @@ fn run_status(json: bool, reporter: &mut impl Reporter) -> Result<i32> {
             if json {
                 reporter.json(&status_json(&resolved, &desired, &diff, &classifier));
             } else {
-                render_status(
-                    &resolved,
-                    &desired,
-                    &diff,
-                    &classifier,
-                    &Styles::colored(),
-                    reporter,
-                );
+                render_status(&resolved, &desired, &diff, &classifier, reporter);
             }
             Ok(ExitCode::Success.code())
         }
@@ -382,7 +374,7 @@ fn run_status(json: bool, reporter: &mut impl Reporter) -> Result<i32> {
             if json {
                 reporter.json(&status_desired_only_json(&resolved, &desired));
             } else {
-                render_status_desired_only(&resolved, &desired, &Styles::colored(), reporter);
+                render_status_desired_only(&resolved, &desired, reporter);
             }
             Ok(ExitCode::Success.code())
         }
@@ -449,7 +441,8 @@ fn stale_tag(styles: &Styles) -> String {
 /// Render the add / remove / unchanged preview for a reconcile. `repo_root` is
 /// `None` for `clear`, which reconciles to the empty set without planning a
 /// repository.
-fn render_preview(reconcile: &Reconcile<'_>, styles: &Styles, reporter: &mut impl Reporter) {
+fn render_preview(reconcile: &Reconcile<'_>, reporter: &mut impl Reporter) {
+    let styles = &reporter.styles();
     let Reconcile {
         repo_root,
         desired,
@@ -465,11 +458,12 @@ fn render_preview(reconcile: &Reconcile<'_>, styles: &Styles, reporter: &mut imp
     if !classifier.live_list_was_read() {
         reporter.line(LEDGER_SOURCE_NOTE);
     }
+    let mut table = String::new();
     for exclusion in &diff.to_add {
-        reporter.line(&format!("  + {}", path_by_kind(exclusion, styles)));
+        table.push_str(&listing_row("  + ", exclusion, None, styles));
     }
     for exclusion in &diff.to_remove {
-        reporter.line(&format!("  - {}", path_by_kind(exclusion, styles)));
+        table.push_str(&listing_row("  - ", exclusion, None, styles));
     }
     // Everything the reconcile will not add, tagged with why it need not be.
     // This is where an exclusion Defender already has but Patina does not own
@@ -477,15 +471,25 @@ fn render_preview(reconcile: &Reconcile<'_>, styles: &Styles, reporter: &mut imp
     for exclusion in desired {
         let state = classifier.classify(exclusion);
         if !state.needs_add() {
-            reporter.line(&format!(
-                "    {} {}",
-                path_by_kind(exclusion, styles),
-                state_tag(state, styles)
-            ));
+            let tag = state_tag(state, styles);
+            table.push_str(&listing_row("    ", exclusion, Some(&tag), styles));
         }
     }
+    emit_aligned(&table, reporter);
     if diff.is_empty() && desired.is_empty() {
         reporter.line("  (no patina-owned exclusions)");
+    }
+}
+
+/// One listing row holds the add / remove / unchanged marker and the path in
+/// its first cell, then the state tag in the next.
+///
+/// The marker shares the path's cell so it cannot widen the column.
+fn listing_row(marker: &str, exclusion: &Exclusion, tag: Option<&str>, styles: &Styles) -> String {
+    let path = format!("{marker}{}", path_by_kind(exclusion, styles));
+    match tag {
+        Some(tag) => row(&[path.as_str(), tag]),
+        None => row(&[path.as_str()]),
     }
 }
 
@@ -496,40 +500,41 @@ fn render_status(
     desired: &BTreeSet<Exclusion>,
     diff: &DefenderDiff,
     classifier: &ExclusionClassifier,
-    styles: &Styles,
     reporter: &mut impl Reporter,
 ) {
+    let styles = &reporter.styles();
     reporter.line(&format!("Defender exclusions for {}:", resolved.repo_root));
     if !classifier.live_list_was_read() {
         reporter.line(LEDGER_SOURCE_NOTE);
     }
+    let mut table = String::new();
     for exclusion in desired {
-        reporter.line(&format!(
-            "  {} {}",
-            path_by_kind(exclusion, styles),
-            state_tag(classifier.classify(exclusion), styles)
-        ));
+        let tag = state_tag(classifier.classify(exclusion), styles);
+        table.push_str(&listing_row("  ", exclusion, Some(&tag), styles));
     }
     let stale = stale_tag(styles);
     for exclusion in &diff.to_remove {
-        reporter.line(&format!("  {} {stale}", path_by_kind(exclusion, styles)));
+        table.push_str(&listing_row("  ", exclusion, Some(&stale), styles));
     }
+    emit_aligned(&table, reporter);
 }
 
 /// Render the status view when the live read failed: the desired set only.
 fn render_status_desired_only(
     resolved: &ResolvedPlan,
     desired: &BTreeSet<Exclusion>,
-    styles: &Styles,
     reporter: &mut impl Reporter,
 ) {
+    let styles = &reporter.styles();
     reporter.line(&format!(
         "Desired Defender exclusions for {} (current state unavailable):",
         resolved.repo_root
     ));
+    let mut table = String::new();
     for exclusion in desired {
-        reporter.line(&format!("  {}", path_by_kind(exclusion, styles)));
+        table.push_str(&listing_row("  ", exclusion, None, styles));
     }
+    emit_aligned(&table, reporter);
 }
 
 /// The reconcile JSON envelope: `repo_root`, `current_readable`, `to_add`,
@@ -686,6 +691,7 @@ fn save_ledger(path: &Utf8Path, ledger: &DefenderLedger) -> Result<()> {
 mod tests {
     use super::*;
     use crate::output::reporter::BufferReporter;
+    use crate::output::reporter::assert_color_is_additive;
     use patina_core::CurrentExclusions;
     use patina_core::ExclusionKind;
 
@@ -736,7 +742,7 @@ mod tests {
         /// Render the preview with the plain palette and return stdout.
         fn preview(&self) -> String {
             let mut reporter = BufferReporter::new();
-            render_preview(&self.reconcile(), &Styles::plain(), &mut reporter);
+            render_preview(&self.reconcile(), &mut reporter);
             reporter.out
         }
     }
@@ -1013,15 +1019,45 @@ mod tests {
             &CurrentExclusions::Unreadable,
             &[(REPO, ExclusionKind::Folder)],
         );
-        let mut reporter = BufferReporter::new();
-        render_preview(&fixture.reconcile(), &Styles::colored(), &mut reporter);
+        let mut reporter = BufferReporter::colored();
+        render_preview(&fixture.reconcile(), &mut reporter);
 
         assert!(reporter.out.contains(REPO));
         assert!(reporter.out.contains("[recorded]"));
-        assert!(
-            reporter.out.contains('\u{1b}'),
-            "the colored palette must actually emit escapes: {}",
-            reporter.out.escape_debug()
+        assert_color_is_additive(|reporter| {
+            render_preview(&fixture.reconcile(), reporter);
+        });
+    }
+
+    /// Every desired exclusion must reach the listing with its state tag. A
+    /// dropped row hides a Defender exclusion from the only listing that
+    /// reports it.
+    #[test]
+    fn a_listing_carries_every_desired_exclusion_and_its_tag() {
+        let short = r"C:\a";
+        let fixture = Fixture::new(
+            &[
+                (short, ExclusionKind::File),
+                (GITCONFIG, ExclusionKind::File),
+            ],
+            &known(&[short, GITCONFIG]),
+            &[
+                (short, ExclusionKind::File),
+                (GITCONFIG, ExclusionKind::File),
+            ],
         );
+        let out = fixture.preview();
+        let tagged: Vec<&str> = out
+            .lines()
+            .filter(|line| line.contains("[present]"))
+            .collect();
+
+        assert_eq!(tagged.len(), 2, "both exclusions must be listed: {out}");
+        for path in [short, GITCONFIG] {
+            assert!(
+                tagged.iter().any(|line| line.contains(path)),
+                "{path} must be listed with its tag: {out}"
+            );
+        }
     }
 }

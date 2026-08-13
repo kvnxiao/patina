@@ -48,7 +48,7 @@ fn run_journal(args: &DebugJournalArgs, reporter: &mut impl Reporter) -> i32 {
     match load_plan_file(&args.path) {
         Ok((plan, timestamp)) => {
             let rendered = render_plan(&plan, &timestamp);
-            reporter.diff(&rendered);
+            reporter.out_block(&rendered);
             ExitCode::Success.code()
         }
         Err(err) => {
@@ -67,7 +67,7 @@ fn run_drift_cache(args: &DebugDriftCacheArgs, reporter: &mut impl Reporter) -> 
     match load_drift_cache_file(&args.path) {
         Ok(cache) => {
             let rendered = render_drift_cache(&cache);
-            reporter.diff(&rendered);
+            reporter.out_block(&rendered);
             ExitCode::Success.code()
         }
         Err(err) => {
