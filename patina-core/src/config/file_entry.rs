@@ -148,9 +148,9 @@ pub enum FileEntryError {
         codepoint: u32,
     },
 
-    /// A source path contains an ASCII control character. The rationale is
-    /// [`TargetControlCharacter`](FileEntryError::TargetControlCharacter)'s: a
-    /// source is authored in the same manifest and rendered in the same
+    /// A source path contains an ASCII control character. The rationale is the
+    /// one on [`TargetControlCharacter`](FileEntryError::TargetControlCharacter).
+    /// A source is authored in the same manifest and rendered in the same
     /// line-oriented output, so the two are refused alike.
     #[error(
         "entry source `{}` contains the control character U+{:04X}; a source path must not contain an ASCII control character",

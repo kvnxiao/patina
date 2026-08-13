@@ -416,7 +416,7 @@ fn run_update(
         });
     }
 
-    // Every per-remote line waits until the loop is done: the loop interleaves
+    // Every per-remote line waits until the loop is done. The loop interleaves
     // warnings and confirmation prompts, so nothing emitted inside it could be
     // aligned against the rows that follow.
     if !flags.json {
@@ -431,8 +431,8 @@ fn run_update(
     Ok(exit_for(&outcomes).code())
 }
 
-/// Render one aligned row per remote the run touched: where its pin was, the
-/// candidate considered, and what became of it.
+/// Render one aligned row per remote the run touched. A row names where the
+/// pin was, the candidate the run considered, and what became of the pin.
 ///
 /// Every remote gets a row, including one that could not be reached, so the
 /// table accounts for the whole run rather than only its successes. The reason
@@ -465,10 +465,10 @@ fn update_row(outcome: &Outcome, styles: &Styles) -> String {
     ])
 }
 
-/// A rev cell: the rev itself, or `absent` in the attention color when there is
-/// none. The two absences differ and must not be worded alike: no pin was
-/// recorded (`(unpinned)`), against no candidate having been learned at all
-/// (`(unknown)`).
+/// A rev cell holds the rev itself, or `absent` in the attention color when
+/// there is none. The two absences differ and must not be worded alike.
+/// `(unpinned)` means no pin was recorded. `(unknown)` means the run never
+/// learned a candidate.
 fn rev_cell(rev: Option<&str>, absent: &str, styles: &Styles) -> String {
     match rev {
         Some(rev) => paint(styles.remote.rev, rev),
@@ -476,7 +476,7 @@ fn rev_cell(rev: Option<&str>, absent: &str, styles: &Styles) -> String {
     }
 }
 
-/// The `STATUS` cell: what became of one remote's pin.
+/// The `STATUS` cell reports what became of one remote's pin.
 fn status_for(action: Action) -> String {
     match action {
         Action::Updated => "updated".to_owned(),
@@ -1040,8 +1040,8 @@ mod tests {
     }
 
     /// A remote whose proposal never happened has no candidate rev, and an
-    /// unpinned one has no prior rev. The two absences must read differently: a
-    /// row reporting `(unpinned)` where nothing was learned would claim the
+    /// unpinned one has no prior rev. The two absences must read differently.
+    /// A row reporting `(unpinned)` where nothing was learned would claim the
     /// upstream is at no commit.
     #[test]
     fn the_two_absent_revs_are_worded_apart() {

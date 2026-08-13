@@ -26,9 +26,9 @@ use anstyle::Style;
 /// The palette the diff renderer and reporter paint with.
 ///
 /// Roles are grouped by the surface that prints them, and a group is what
-/// shares a row. Distinctness is therefore a within-group contract: two roles
-/// in one group must never render alike, or one reads as the other. Across
-/// groups, identical styling is deliberate and marks one shared visual meaning.
+/// shares a row. Two roles in one group must never render alike, or one reads
+/// as the other on a single line. Across groups, identical styling is
+/// deliberate and marks one shared visual meaning.
 /// [`header`](Styles::header) and [`path`](Styles::path) are both bold, because
 /// each names the subject of its line. [`hint`](Styles::hint),
 /// [`FindingStyles::info`], and [`RemoteStyles::implicit_ref`] are all dimmed,
@@ -55,16 +55,15 @@ pub struct Styles {
     pub prompt_affirm: Style,
     /// The default key in a `[y/N]` confirmation (the capitalized `N`).
     pub prompt_default: Style,
-    /// A completed action that changed nothing for the worse: an apply that
-    /// landed, a watch service that is installed and running.
+    /// A completed action that changed nothing for the worse, such as an apply
+    /// that landed or a watch service already running.
     pub success: Style,
     /// A path embedded in a one-line result sentence, so the path the command
     /// acted on stands out from the prose around it.
     pub path: Style,
-    /// A follow-up suggestion, and any stand-in carrying no value of its own.
-    /// The role covers a reading that could not be taken, and a cell repeating
-    /// the one beside it. Subordinate to the line it sits beside, never the
-    /// fact itself.
+    /// A follow-up suggestion, or a stand-in carrying no value of its own such
+    /// as a cell repeating the one beside it. Nothing a line reports may rest
+    /// on this role alone.
     pub hint: Style,
     /// The roles the `patina status` table paints with.
     pub status: StatusStyles,
@@ -90,9 +89,9 @@ pub struct StatusStyles {
     pub drifted: Style,
     /// A target the last apply wrote that is no longer on disk.
     pub missing: Style,
-    /// A target the current plan no longer manages. Its own hue rather than a
-    /// failure color: an orphan is a leftover awaiting a reap, and the next
-    /// apply offers to remove it.
+    /// A target the current plan no longer manages. It takes its own hue rather
+    /// than a failure color, because an orphan is a leftover awaiting a reap
+    /// and the next apply offers to remove it.
     pub orphaned: Style,
 }
 

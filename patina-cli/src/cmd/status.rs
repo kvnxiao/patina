@@ -115,9 +115,9 @@ fn render_human(report: &StatusReport, reporter: &mut impl Reporter) {
 /// The four aggregate counters on one line, each non-zero counter painted in
 /// its state's color.
 ///
-/// A zero counter stays plain: painting it would spend the state's color on the
-/// absence of that state, which is what makes a clean repository readable at a
-/// glance instead of four numbers to compare.
+/// A zero counter stays plain. Painting it would spend the state's color on
+/// the absence of that state, and a clean repository has to read at a glance
+/// rather than as four numbers to compare.
 fn render_summary(report: &StatusReport, styles: &Styles) -> String {
     [
         (TargetState::Clean, report.clean),

@@ -481,8 +481,8 @@ fn render_preview(reconcile: &Reconcile<'_>, reporter: &mut impl Reporter) {
     }
 }
 
-/// One listing row: the add / remove / unchanged marker and the path in one
-/// cell, then the state tag in the next.
+/// One listing row holds the add / remove / unchanged marker and the path in
+/// its first cell, then the state tag in the next.
 ///
 /// The marker shares the path's cell so it cannot widen the column.
 fn listing_row(marker: &str, exclusion: &Exclusion, tag: Option<&str>, styles: &Styles) -> String {

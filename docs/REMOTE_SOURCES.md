@@ -283,7 +283,7 @@ as well, so a piped run, `--color never`, and `NO_COLOR` lose the color
 and nothing else. `--json` carries the same rows plus each pin's
 `updated_at`.
 
-`patina remote update` prints the same shape once the run is over: one
+`patina remote update` prints the same shape once the run is over, one
 row per remote it touched, whether or not the pin moved.
 
 ```text
@@ -304,7 +304,7 @@ failed or was refused still gets a row, so the table accounts for the
 whole run; the reason stays on stderr with the warning. `remote update`
 emits the rows once the run is over rather than during it, because it
 interleaves warnings and confirmation prompts as it goes. Color follows
-`remote list`: cyan names, green revs, yellow for either blank.
+`remote list`, with cyan names, green revs, and yellow for either blank.
 
 Failure shapes worth knowing:
 

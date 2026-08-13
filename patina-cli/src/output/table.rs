@@ -107,7 +107,7 @@ mod tests {
     }
 
     /// The `.ansi(true)` setting is what makes color additive over an aligned
-    /// block: a cell wrapped in escapes must pad by its printable width, so
+    /// block. A cell wrapped in escapes must pad by its printable width, so
     /// stripping the escapes gives back the plain alignment byte for byte. Byte
     /// measurement would pad the colored form short and misalign piped output.
     #[test]

@@ -1111,7 +1111,7 @@ mod tests {
     }
 
     /// A reader has to tell an advisory note from an error at a glance, and
-    /// color alone cannot carry that: the bracketed word must survive a strip.
+    /// color alone cannot carry that. The bracketed word must survive a strip.
     #[test]
     fn each_level_keeps_its_bracketed_word_and_paints_apart() {
         let findings = [Level::Info, Level::Warning, Level::Error].map(|level| Finding {

@@ -41,9 +41,10 @@ use std::io::Write;
 pub trait Reporter {
     /// The palette a renderer paints with.
     ///
-    /// The sink owns the palette because it owns the decision to strip. The
-    /// production reporter always returns the colored palette, and its
-    /// auto-stream drops the escapes when the destination is not a terminal.
+    /// The palette belongs to the sink because the sink decides whether escapes
+    /// survive. The production reporter always returns the colored palette, and
+    /// its auto-stream drops the escapes when the destination is not a
+    /// terminal.
     /// The return is by value (`Styles` is `Copy`), so reading the palette
     /// leaves no borrow outstanding against the `&mut self` writes that follow.
     fn styles(&self) -> Styles;
