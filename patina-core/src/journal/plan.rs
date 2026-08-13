@@ -30,11 +30,13 @@ use serde::Serialize;
 pub const FILE_MAJOR_VERSION: u16 = 1;
 
 /// One planned filesystem operation. This is the minimal record the
-/// journal needs in v1; the executor and recovery extend
-/// the variant set with the inverse-operation data they require. The
-/// representation is intentionally self-describing so a decoded plan can
-/// be probed against the filesystem during recovery without re-reading
-/// the source repository.
+/// journal needs. Recovery derives the inverse operation, the backup path
+/// to restore from, externally via
+/// [`mirror_backup_path`](super::probe::mirror_backup_path), rather than
+/// storing it on the enum. The representation is intentionally self-describing
+/// so a decoded plan can be probed against the filesystem during recovery
+/// without re-reading the source repository. `#[non_exhaustive]` leaves room to
+/// add variants later without a version bump.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum PlannedOperation {

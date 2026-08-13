@@ -197,10 +197,10 @@ fn two_exclusive_applies_do_not_interleave() {
     let helper = helper_path();
     let state = State::new();
 
-    // Each process holds the lock for 300ms; both wait up to 5s to
-    // acquire, so the loser blocks on the winner rather than timing out.
-    // The two spawns start as close together as possible, well within a
-    // 100ms window.
+    // Both spawns happen back-to-back in program order. The loser blocks
+    // on the winner's held lock rather than racing a timing window; the
+    // 300ms hold against a 5s timeout leaves a wide margin regardless of
+    // OS scheduling delay.
     let a = spawn(&helper, &state.dir, "exclusive", 300, 5_000, false);
     let b = spawn(&helper, &state.dir, "exclusive", 300, 5_000, false);
 

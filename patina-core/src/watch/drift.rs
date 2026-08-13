@@ -165,7 +165,7 @@ pub enum DriftOutcome {
 ///   used for the rate-limit window.
 /// * `sink` - the notification sink to emit through.
 ///
-/// # Errors
+/// # Behavior
 ///
 /// Returns the per-target outcomes. A cache-write failure is logged at `warn`
 /// and folds the affected outcomes into their non-cached form instead of
