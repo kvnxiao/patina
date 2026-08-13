@@ -40,7 +40,7 @@ impl ServiceBackend for UnsupportedBackend {
     }
 
     fn status(&self) -> Result<ServiceStatus, ServiceError> {
-        // No supervisor integration: report a clean not-installed object so
+        // No supervisor integration. Report a clean not-installed object so
         // `patina watch status` still emits a well-formed result.
         Ok(ServiceStatus {
             installed: false,
@@ -82,7 +82,7 @@ mod tests {
 
     #[test]
     fn unsupported_error_message_points_at_foreground() {
-        // the message must direct the user to the foreground escape
+        // The message must direct the user to the foreground escape
         // hatch so the not-yet-supported path is actionable.
         let message = ServiceError::Unsupported.to_string();
         assert!(

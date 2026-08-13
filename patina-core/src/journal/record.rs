@@ -1,18 +1,18 @@
 //! The committed apply record persisted in the `<ts>.COMMIT` sentinel.
 //!
-//! Earlier the commit sentinel was an empty marker file: its mere
-//! presence beside a `<ts>.plan` told crash recovery the apply
-//! had committed. `patina status` needs more than presence: it must know
-//! *what* the last committed apply materialized, and the expected state
-//! of each target, so it can classify the live filesystem against it. The
-//! plan file is deleted at commit, so the record cannot live there.
+//! The commit sentinel's presence beside a `<ts>.plan` alone tells crash
+//! recovery that the apply committed. `patina status` needs more: it
+//! must know what the last committed apply materialized, and the
+//! expected state of each target, to classify the live filesystem
+//! against it. The plan file is deleted at commit, so the record cannot
+//! live there.
 //!
-//! This module makes the commit sentinel carry that payload. The sentinel
-//! now holds a `postcard`-encoded [`ApplyRecord`] behind the same
-//! fixed-size version envelope the plan file uses, so a future format
-//! change is refused rather than mis-decoded. Recovery is unaffected: it
-//! keys solely on the sentinel's *existence* beside an orphan plan and
-//! never decodes its body.
+//! This module makes the commit sentinel carry that payload: a
+//! `postcard`-encoded [`ApplyRecord`] behind the same fixed-size version
+//! envelope the plan file uses, so a future format change is refused
+//! rather than mis-decoded. Recovery is unaffected: it keys only on the
+//! sentinel's *existence* beside an orphan plan and never decodes its
+//! body.
 //!
 //! ## What is recorded
 //!
@@ -33,9 +33,9 @@
 //! same hash serves both the journal here and the drift cache. The drift cache
 //! compares a freshly computed `blake3` of a target against this recorded
 //! value. The record shares the journal's
-//! [`FILE_MAJOR_VERSION`](super::FILE_MAJOR_VERSION); per the pre-release
-//! no-bump policy the on-disk major is held at `1` and is
-//! not bumped per breaking change until v1.0.
+//! [`FILE_MAJOR_VERSION`](super::FILE_MAJOR_VERSION). Per the pre-release
+//! no-bump policy, the on-disk major is held at `1` and is not bumped
+//! for a breaking change until v1.0.
 
 use super::Disposition;
 use super::JournalError;
@@ -61,9 +61,9 @@ pub enum ExpectedTarget {
         /// the canonical source for a symlink target.
         link_target: String,
         /// Index of the `[[file]]` entry that materialized this target.
-        /// Targets sharing an entry index form one atomic rollback unit:
-        /// a multi-target entry reverts every target as a unit
-        /// or fails the whole entry.
+        /// Targets sharing an entry index form one atomic rollback unit: a
+        /// multi-target entry reverts every target, or fails the whole
+        /// entry.
         entry: u32,
         /// How this target was classified at plan time. Per-leaf
         /// for a tree target; recovery and rollback leave an
@@ -206,10 +206,10 @@ impl ApplyRecord {
 #[must_use = "the RFC 3339 timestamp is the `at` field status reports"]
 pub fn timestamp_to_rfc3339(ts: &str) -> String {
     // The compact form is produced by `clock::current_timestamp` via jiff's
-    // `strftime`, so jiff round-trips it: parse it back as a civil datetime
-    // (the trailing `Z` is matched as a literal, with no timezone math) and
-    // re-emit it hyphenated. An input that does not match the compact shape
-    // fails to parse and is returned unchanged.
+    // `strftime`, so jiff round-trips it. It is parsed back as a civil
+    // datetime (the trailing `Z` is matched as a literal, with no
+    // timezone math) and re-emitted hyphenated. An input that does not
+    // match the compact shape fails to parse and is returned unchanged.
     jiff::civil::DateTime::strptime("%Y%m%dT%H%M%SZ", ts).map_or_else(
         |_| ts.to_owned(),
         |dt| dt.strftime("%Y-%m-%dT%H:%M:%SZ").to_string(),
@@ -279,10 +279,11 @@ mod tests {
     #[test]
     fn per_leaf_dispositions_round_trip_at_major_one() {
         // A record with one Create, one Update, and one Unchanged target
-        // must decode with each target's disposition unchanged, and the
-        // envelope major byte must be 1. Whole-record `PartialEq` above
-        // gates equality; this pins the per-target dispositions and the
-        // major byte directly so a dropped field or a bumped major is caught.
+        // must decode with each target's disposition unchanged. The
+        // envelope major byte must also read as 1. Whole-record
+        // `PartialEq` above already gates equality. This test pins the
+        // per-target dispositions and the major byte directly, so a
+        // dropped field or a bumped major is caught.
         let r = record();
         let bytes = r.encode().expect("encode");
         assert_eq!(
@@ -361,9 +362,9 @@ mod tests {
 
     #[test]
     fn content_hash_is_blake3_of_the_bytes() {
-        // Pin the helper to the canonical blake3 digest so a silent swap to
-        // a different hash function is caught; the journal hash must match
-        // the drift cache.
+        // Pin the helper to the canonical blake3 digest, so a silent swap
+        // to a different hash function is caught. The journal hash must
+        // match the drift cache's hash.
         assert_eq!(
             content_hash(b"payload"),
             *blake3::hash(b"payload").as_bytes()

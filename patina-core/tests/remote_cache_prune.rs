@@ -117,7 +117,7 @@ fn an_unreferenced_checkout_is_pruned_and_a_referenced_one_survives() {
 
 #[test]
 fn a_checkout_referenced_only_by_an_older_commit_survives() {
-    // Rollback walks back through older commits, so "referenced by the latest
+    // Rollback walks back through older commits. "Referenced by the latest
     // apply" is the wrong retention rule; reachability is per-record.
     let f = Fixture::new();
     let previous_leaf = f.checkout(&humanizer(), REV_A);
@@ -180,9 +180,9 @@ fn scratch_artifacts_are_always_removed() {
 
 #[test]
 fn a_pinned_checkout_survives_without_a_journal_reference() {
-    // A pin bumped but not yet applied has no journal record, yet it is the
-    // warm cache an offline apply depends on and the checkout a concurrent
-    // plan may already point into.
+    // A pin bumped but not yet applied has no journal record. It is still the
+    // warm cache an offline apply needs, and a concurrent plan may already
+    // point into this checkout.
     let f = Fixture::new();
     f.checkout(&humanizer(), REV_A);
     let keep = vec![(humanizer(), REV_A.to_owned())];
@@ -238,8 +238,8 @@ fn a_cache_directory_spelled_in_another_case_is_still_the_declared_remote() {
 #[test]
 fn unknown_pins_leave_a_declared_remotes_checkouts_alone() {
     // A run where no active entry selected a remote never read the lockfile, so
-    // every checkout here may be the one that remote is pinned to. An
-    // undeclared remote has no pin to protect, so its tree still goes.
+    // every checkout here may be the one that remote is currently pinned to.
+    // An undeclared remote has no pin to protect, so its tree still goes.
     let f = Fixture::new();
     f.checkout(&humanizer(), REV_A);
     let gone = RemoteName::parse("gone").expect("a legal remote name");
@@ -285,8 +285,8 @@ fn a_partial_or_index_with_a_non_sha_stem_is_left_alone() {
 
 #[test]
 fn an_unrecognized_directory_name_is_left_alone() {
-    // The pruner must not become a general-purpose deleter: anything that is
-    // not a checkout, a staging dir, or a scratch index stays put.
+    // The pruner never deletes anything except a checkout, a staging dir, or
+    // a scratch index.
     let f = Fixture::new();
     let stray = cache::module_dir(&f.state, &humanizer()).join("notes");
     fs_err::create_dir_all(stray.as_std_path()).expect("mkdir stray dir");

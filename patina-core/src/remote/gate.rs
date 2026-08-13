@@ -18,7 +18,7 @@ use std::time::Duration;
 /// without accepting a timestamp from next week.
 pub const FUTURE_TOLERANCE: Duration = Duration::from_hours(1);
 
-/// What the gate is asked about: one candidate tip against one existing pin.
+/// The gate compares one candidate tip against one existing pin.
 #[derive(Debug, Clone, Copy)]
 pub struct GateInputs {
     /// The candidate tip's committer time, Unix seconds.
@@ -34,9 +34,9 @@ pub struct GateInputs {
     /// The effective age floor for this remote (see [`effective_min_age`]).
     pub min_age: Duration,
     /// Whether this would be the remote's first pin. Adopting a remote is a
-    /// deliberate act whose content the user is about to review in the consent
-    /// diff, so it is exempt from the age gate; the gate exists to slow down
-    /// *unattended* bumps.
+    /// deliberate act. The user reviews its content in the consent diff, so
+    /// it is exempt from the age gate. The gate exists to slow down
+    /// unattended bumps.
     pub first_pin: bool,
     /// `--now`: skip the age gate for this run only. Every other check still
     /// applies.
@@ -109,8 +109,8 @@ pub fn effective_min_age(spec: &RemoteSpec, global: Option<Duration>) -> Duratio
 
 /// Run the four checks in order.
 ///
-/// A candidate that fails the age gate reports [`GateOutcome::Cooldown`] even
-/// when an earlier check also raised a concern: the pin is not moving either
+/// A candidate that fails the age gate reports [`GateOutcome::Cooldown`], even
+/// when an earlier check also raised a concern. The pin is not moving either
 /// way, and re-reporting a rewrite the user cannot yet act on would be noise.
 /// The concerns surface on the run where the candidate is actually eligible.
 #[must_use = "the outcome decides whether the pin moves"]
@@ -239,9 +239,10 @@ mod tests {
 
     #[test]
     fn a_candidate_dated_exactly_at_the_pin_timestamp_is_not_backdated() {
-        // The backdating comparison is strict: a commit made in the same second
-        // the pin was recorded is not evidence of a rollback, and prompting on
-        // it would put a confirmation in front of an ordinary re-pin.
+        // The backdating comparison is strict. A commit made in the same
+        // second the pin was recorded is not evidence of a rollback.
+        // Prompting on it would put a confirmation in front of an ordinary
+        // re-pin.
         assert_eq!(
             evaluate(GateInputs {
                 candidate_epoch: NOW - 2 * WEEK,

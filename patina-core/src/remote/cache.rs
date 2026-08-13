@@ -10,12 +10,12 @@
 //!     └── <sha>/                   immutable checkout, one per pinned rev
 //! ```
 //!
-//! Checkouts never live in the dotfiles repository, and a checkout directory is
-//! immutable once it exists: an update writes a *new* directory and apply
+//! Checkouts never live in the dotfiles repository. A checkout directory is
+//! immutable once it exists: an update writes a *new* directory, and apply
 //! re-points links at it through the ordinary journaled flow, so no content
-//! ever changes under a live symlink. That is also what lets `patina rollback`
-//! re-point links back, and why pruning is reachability-based rather than
-//! "keep the newest".
+//! ever changes under a live symlink. This immutability lets `patina rollback`
+//! re-point links back, and explains why pruning is reachability-based rather
+//! than "keep the newest".
 //!
 //! See `docs/REMOTE_SOURCES.md` "The remote cache".
 
@@ -45,7 +45,7 @@ pub fn remotes_root(state_dir: &Utf8Path) -> Utf8PathBuf {
 ///
 /// Named by the remote's folded key rather than the spelling its author wrote.
 /// A case-only respelling of a declaration therefore keeps addressing the
-/// checkouts already on disk, instead of cold-starting a second tree beside
+/// checkouts already on disk, without cold-starting a second tree beside
 /// them.
 #[must_use = "the module cache directory holds the bare repo and its checkouts"]
 pub fn module_dir(state_dir: &Utf8Path, module: &RemoteName) -> Utf8PathBuf {
@@ -94,16 +94,16 @@ pub fn checkout_present(state_dir: &Utf8Path, module: &RemoteName, rev: &str) ->
 /// Materialize the checkout of `rev` for `module`, fetching the commit first
 /// when the bare repository does not already hold it.
 ///
-/// A present checkout directory short-circuits with no `git` call at all, which
-/// is what makes a plain `apply` against a warm cache fully offline. A fresh
-/// checkout is written into a `<rev>.partial.<pid>` sibling, then renamed into
-/// place. The directory's existence is therefore proof it is complete, not a
-/// half-written tree from an interrupted run. The staging name carries the
-/// writer's pid because materialization runs without the process lock (plan
-/// time precedes the consent prompt), so two processes may stage the same rev
-/// concurrently; each writes its own directory, and whichever renames second
-/// finds the destination already present and discards its copy: both staged
-/// the same immutable commit.
+/// A present checkout directory short-circuits with no `git` call at all, so a
+/// plain `apply` against a warm cache runs fully offline. A fresh checkout is
+/// written into a `<rev>.partial.<pid>` sibling, then renamed into place. The
+/// directory's existence is therefore proof it is complete, not a half-written
+/// tree from an interrupted run. The staging name carries the writer's pid.
+/// Materialization runs without the process lock, because plan time precedes
+/// the consent prompt, so two processes may stage the same rev concurrently.
+/// Each writes its own directory. Whichever renames second finds the
+/// destination already present and discards its copy, because both staged the
+/// same immutable commit.
 ///
 /// Returns the checkout directory.
 ///
@@ -155,9 +155,9 @@ fn staging_dir(final_dir: &Utf8Path) -> Utf8PathBuf {
     ))
 }
 
-/// Sweep the cache: remove the whole tree of every remote `declared` does not
-/// name, then every checkout no journal record references and no `keep` pin
-/// names. Returns what was removed, sorted.
+/// Sweep the cache. Remove the whole tree of every remote `declared` does not
+/// name. Then remove every checkout no journal record references and no
+/// `keep` pin names. Returns what was removed, sorted.
 ///
 /// Reachability is read from every `<ts>.COMMIT` sentinel in the journal
 /// directory, not just the newest. `patina rollback` walks back through them,
@@ -213,9 +213,9 @@ pub fn prune(
         };
         let module_key = name_key(module_name);
         let is_declared = declared.contains(module_key.as_str());
-        // An undeclared tree goes whole once nothing points into it; while a
-        // journal record still does, it degrades to the per-checkout sweep
-        // below so rollback keeps what it needs and nothing more.
+        // An undeclared tree goes whole once nothing points into it. While a
+        // journal record still points into it, the sweep degrades to the
+        // per-checkout logic below, so rollback keeps only what it needs.
         if !is_declared && !is_referenced(&module, &referenced) {
             remove_any(&module)?;
             removed.push(module);
@@ -285,11 +285,12 @@ fn is_checkout_name(name: &str) -> bool {
 ///
 /// Recorded paths went through [`crate::paths::canonicalize`] at apply time,
 /// while `checkout` is built from the state directory as the environment spells
-/// it. The two spellings routinely differ: macOS resolves `/var` to
-/// `/private/var`, Windows hands back 8.3 short names like `RUNNER~1`, and a
-/// symlinked `HOME` or a `.` segment does the same on any host. Comparing only
-/// the raw form would find no reference and delete a checkout that is live
-/// under a symbolic link, so both spellings are tested.
+/// it. The two spellings routinely differ. macOS resolves `/var` to
+/// `/private/var`. Windows hands back 8.3 short names like `RUNNER~1`. A
+/// symlinked `HOME` or a `.` segment produces the same mismatch on any host.
+/// Comparing only the raw form would find no reference and delete a checkout
+/// that is live under a symbolic link. Both spellings are tested for that
+/// reason.
 fn is_referenced(checkout: &Utf8Path, referenced: &BTreeSet<Utf8PathBuf>) -> bool {
     let canonical = crate::paths::canonicalize(checkout);
     referenced.iter().any(|path| {
@@ -385,12 +386,12 @@ mod tests {
 
     #[test]
     fn the_layout_nests_every_path_under_the_cache_root() {
-        // The relations are what the rest of the subsystem depends on: the
-        // pruner walks module directories under the root and compares recorded
-        // source paths against checkout directories, so a path that escaped the
-        // root (or a checkout that was not under its module) would break the
-        // sweep. Asserting the relations rather than the literal strings keeps
-        // this from being a second copy of the same path constants.
+        // The pruner walks module directories under the root and compares
+        // recorded source paths against checkout directories. A path that
+        // escaped the root, or a checkout that was not under its module,
+        // would break the sweep. Asserting the relations rather than the
+        // literal strings keeps this from being a second copy of the same
+        // path constants.
         let state = Utf8Path::new("/state/patina");
         let root = remotes_root(state);
         let humanizer = RemoteName::parse("humanizer").expect("a legal remote name");

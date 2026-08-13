@@ -25,12 +25,12 @@
 //! `[[auto_match]]` `when` predicates are evaluated by the shared
 //! `MiniJinja` [`Engine`], the same evaluator
 //! `[[file]]` / `[[directory]]` / `[[hook]]` `when` predicates and
-//! `*.tmpl` bodies use. One grammar, one
-//! strict-undefined behavior, one place to reason about predicates. The
-//! full `MiniJinja` expression grammar is available: equality, inequality
-//! (`!=`), `and` / `or`, and expressions over the `patina.*` built-in
-//! surface (`patina.os` / `patina.arch` / `patina.hostname` /
-//! `patina.user` / `patina.home` / `patina.env.*`).
+//! `*.tmpl` bodies use. Every predicate site therefore shares one grammar
+//! and one strict-undefined behavior. The full `MiniJinja` expression
+//! grammar is available: equality, inequality (`!=`), `and` / `or`, and
+//! expressions over the `patina.*` built-in surface (`patina.os` /
+//! `patina.arch` / `patina.hostname` / `patina.user` / `patina.home` /
+//! `patina.env.*`).
 //!
 //! Profile resolution runs *before* the user variable layers (CLI,
 //! per-machine, per-profile, per-module, repo-shared) are assembled, so
@@ -38,8 +38,8 @@
 //! [`Resolver`]. A predicate that
 //! accesses a variable absent from that context is a typed
 //! [`ProfileError::Predicate`] naming the offending variable. That covers a
-//! user-defined variable, and `patina.profile`, which is precisely what this
-//! resolution computes and so cannot be read here. The error is
+//! user-defined variable, and `patina.profile`, since this resolution
+//! computes that value and cannot read it while doing so. The error is
 //! not a silent non-match. The undefined-access error and the short-circuit
 //! carve-out both fall out of routing through the shared engine. Under the
 //! carve-out, a variable on a not-taken `and` / `or` branch is never accessed
@@ -154,7 +154,7 @@ pub enum ProfileError {
 
 /// Resolve the active profile by walking the four sources.
 ///
-/// Each source is consulted in priority order; the first that produces
+/// Each source is consulted in priority order. The first that produces
 /// a non-empty profile name wins. Sources are wired through arguments
 /// rather than re-resolved internally so the function is trivially
 /// testable: the integration in `apply` / `status` / `rollback` passes
@@ -462,8 +462,7 @@ mod tests {
 
     /// The shared engine accepts the wider grammar the removed narrow
     /// evaluator rejected: an `!=` predicate over a defined built-in
-    /// selects its profile rather than erroring (parity-plus-wider-grammar;
-    /// replaces `predicate_rejects_unsupported_shape`).
+    /// selects its profile rather than erroring.
     #[test]
     fn auto_match_inequality_predicate_now_selects() {
         let dir = TempDir::new().expect("tempdir");
@@ -507,7 +506,7 @@ mod tests {
     /// A `when` that accesses `patina.profile` is a typed
     /// [`ProfileError::Predicate`] naming the variable, not a silent
     /// non-match. `patina.profile` is unresolved during profile resolution,
-    /// because it is precisely what this pass computes.
+    /// because this pass computes that value directly.
     #[test]
     fn auto_match_referencing_patina_profile_errors() {
         let dir = TempDir::new().expect("tempdir");

@@ -100,11 +100,12 @@ fn init_refuses_when_manifest_exists() {
     );
 }
 
-/// A successful `init T --json` and a refused one differ ("diff
-/// produces non-empty output"), while each invocation is itself deterministic.
-/// The first run succeeds (out1); the second fails because `T/patina.toml` now
-/// exists (out2); the two documents differ; and a third run (out3) byte-matches
-/// the second, proving the failure path is byte-stable across reruns.
+/// A successful `init T --json` run and a refused one produce different
+/// stdout, while each invocation is itself deterministic. The first run
+/// succeeds (`first`); the second fails because `T/patina.toml` now exists
+/// (`second`); the two documents differ; and a third run (`third`)
+/// byte-matches the second, proving the failure path is byte-stable across
+/// reruns.
 #[test]
 fn init_json_success_and_failure_diverge_then_failure_is_byte_stable() {
     let fx = Fixture::new();
@@ -151,10 +152,10 @@ fn init_json_success_and_failure_diverge_then_failure_is_byte_stable() {
     );
 }
 
-/// Success schema: a successful `init --json` emits a single
-/// deterministic JSON document on stdout whose `initialized` and
-/// `default_repo` fields carry the canonical target and pointer paths and
-/// nothing non-deterministic (no `created_at` timestamp).
+/// A successful `init --json` run emits one deterministic JSON document
+/// on stdout. Its `initialized` and `default_repo` fields carry the
+/// canonical target and pointer paths, with nothing non-deterministic like
+/// a `created_at` timestamp.
 #[test]
 fn init_json_success_emits_deterministic_schema() {
     let fx = Fixture::new();

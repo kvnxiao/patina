@@ -15,7 +15,7 @@
 //! | 4    | Exclusive-lock acquisition timed out (`apply` / `rollback`).  |
 //! | 5    | Interactive prompt declined (the user entered anything other than `y`/`Y`), or an elevation request refused. |
 //!
-//! Two overlaps are deliberate and worth calling out:
+//! These overlaps are deliberate:
 //!
 //! - **Code 2 is also clap's usage-error code.** A malformed command line
 //!   (unknown subcommand, bad flag) exits 2 at parse time, inside [`clap`] and
@@ -72,7 +72,7 @@ impl ExitCode {
 
     /// Map an [`EngineError`] to the exit code it is assigned.
     ///
-    /// Only the exclusive-lock timeout earns a dedicated code (`4`); every
+    /// Only the exclusive-lock timeout maps to a dedicated code (`4`); every
     /// other engine failure is a generic error (`1`). The hook-driven codes
     /// (`2`, `3`) and the declined-prompt code (`5`) never travel as an
     /// `EngineError`, so they are not produced here. The engine reports a

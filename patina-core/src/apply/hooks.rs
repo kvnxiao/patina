@@ -43,8 +43,7 @@
 //!
 //! `--force-deploy` ([`ForceDeploy::Yes`]) overrides every hook in the
 //! invocation to behave as `must_succeed = false`, so a non-zero exit can
-//! only ever degrade to [`HookOutcome::Warned`], never
-//! [`HookOutcome::Failed`].
+//! only ever degrade to [`HookOutcome::Warned`].
 
 use crate::config::HookEntry;
 use crate::state_dir::HostOs;

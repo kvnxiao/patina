@@ -3,10 +3,10 @@
 //! `patina debug journal <path>` decodes a `<ts>.plan` file (the binary,
 //! `postcard`-encoded [`Plan`](super::Plan) behind its version envelope)
 //! and prints it for a human reading a post-mortem. The output is a
-//! one-line summary per operation followed by indented detail; it is
-//! deliberately **not** a stable, machine-parsed format and is
-//! the one user-facing path allowed to carry a wall-clock timestamp
-//! (the plan's recorded `<ts>`).
+//! one-line summary per operation followed by indented detail. It is
+//! deliberately **not** a stable, machine-parsed format, and is the one
+//! user-facing path allowed to carry a wall-clock timestamp (the plan's
+//! recorded `<ts>`).
 //!
 //! The plan body records only the resolved file operations (symlink,
 //! render, and copy), each with a repo-relative `source` and an absolute
@@ -100,18 +100,18 @@ fn timestamp_from_plan_path(path: &Utf8Path) -> String {
 }
 
 /// Render a decoded [`Plan`] and its recorded `<ts>` to a human-readable
-/// string. A header line carries the plan timestamp and the operation count;
-/// the timestamp appears in both the compact journal form and its RFC 3339
-/// rendering. One block per operation follows, naming its mode, source, and
-/// target.
+/// string. A header line carries the plan timestamp and the operation
+/// count. The timestamp appears in both the compact journal form and its
+/// RFC 3339 rendering. One block per operation follows, naming its mode,
+/// source, and target.
 #[must_use = "the rendered plan is the debug command's stdout payload"]
 pub fn render_plan(plan: &Plan, timestamp: &str) -> String {
     use std::fmt::Write as _;
 
     let mut out = String::new();
     // `write!`/`writeln!` into a `String` is infallible (the `fmt::Error`
-    // path is for IO sinks), so dropping the `Result` here is correct and
-    // introduces no panic path, so no `expect` in production.
+    // path is for IO sinks). Dropping the `Result` here is correct and
+    // introduces no panic path, so no `expect` is needed in production.
     ignore_fmt(writeln!(
         out,
         "plan {timestamp} ({}), {} operation(s)",

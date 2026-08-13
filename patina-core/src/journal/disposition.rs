@@ -1,9 +1,9 @@
 //! How a planned target relates to the live filesystem at plan time.
 //!
-//! A [`Disposition`] is the three-way classification every managed target
-//! resolves to: it is being **created** for the first time, **updated**
-//! over existing content that differs from what Patina would write, or it
-//! is already **unchanged** and needs no write at all. The skip-if-satisfied
+//! A [`Disposition`] classifies a managed target one of three ways. The
+//! target is **created** for the first time, **updated** because existing
+//! content differs from what Patina would write, or **unchanged** and needs
+//! no write. The skip-if-satisfied
 //! engine carries this marker in two places: the durable [`Plan`](super::Plan)
 //! via [`PlannedOperation`](super::PlannedOperation), and the committed
 //! [`ApplyRecord`](super::ApplyRecord) via
@@ -44,8 +44,8 @@ pub enum Disposition {
 impl Disposition {
     /// The stable lowercase word for this disposition.
     ///
-    /// This is the single mapping site for the three words: the same
-    /// values become the `--json` plan entry `state` field, so the human
+    /// This is the single mapping site for the three words. The same
+    /// values become the `--json` plan entry's `state` field. The human
     /// diff, the machine output, and any future surface read from here
     /// rather than re-spelling the `match`.
     ///
@@ -72,9 +72,9 @@ mod tests {
 
     #[test]
     fn label_maps_each_variant_to_its_stable_word() {
-        // The single mapping site every label reader (--json state, the
-        // human diff) depends on. Each variant maps to its own distinct
-        // word, so a swapped or shared arm fails here.
+        // This mapping is the single source every label reader uses: the
+        // --json state field and the human diff. Each variant maps to a
+        // distinct word, so a swapped or shared arm fails this test.
         assert_eq!(Disposition::Create.label(), "create");
         assert_eq!(Disposition::Update.label(), "update");
         assert_eq!(Disposition::Unchanged.label(), "unchanged");

@@ -8,9 +8,9 @@
 #     lint  = fmt (nightly) + clippy + docs (cargo doc -D warnings) + cargo deny
 #     test  = cargo test --workspace --locked
 #
-# The `docs` gate is the one a hand-typed checklist forgets: broken or
-# redundant intra-doc links fail ONLY under `cargo doc -D warnings`, never
-# under clippy. `just check` always includes it.
+# Broken or redundant intra-doc links fail only under
+# `cargo doc -D warnings`, so a hand-typed checklist that runs clippy alone
+# misses them. `just check` always includes the `docs` gate.
 #
 # CI still runs gates this hook cannot reproduce locally (the
 # Windows/macOS/Linux test matrix, the MSRV build, coverage), so watch the

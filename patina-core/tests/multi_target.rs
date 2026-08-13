@@ -69,7 +69,7 @@ fn symlink_fans_out_to_every_target() {
     assert_eq!(records.len(), 2);
     assert_eq!(read_link_canonical(&t1), canonical(&source));
     assert_eq!(read_link_canonical(&t2), canonical(&source));
-    // Records carry per-target granularity in target order.
+    // Each record corresponds to one target, in target declaration order.
     assert_eq!(records[0].target, t1);
     assert_eq!(records[1].target, t2);
 }
@@ -106,12 +106,12 @@ fn copy_fans_out_to_every_target() {
     }
 }
 
-/// A multi-target `.tmpl` *source* entry renders the template once
-/// against the resolved context and writes the same rendered bytes to each
-/// declared target. The targets are declared
-/// suffix-less (`source = "agent.toml.tmpl"`,
-/// `targets = ["~/.claude/agent.toml", "~/.codex/agent.toml"]`); the executor
-/// writes to each declared target verbatim.
+/// A multi-target `.tmpl` source entry renders the template once against
+/// the resolved context, and writes the same rendered bytes to each
+/// declared target. The targets are declared suffix-less, for example
+/// `source = "agent.toml.tmpl"` and
+/// `targets = ["~/.claude/agent.toml", "~/.codex/agent.toml"]`. The
+/// executor writes to each declared target verbatim.
 #[test]
 fn template_renders_once_and_writes_each_target() {
     let (_td, dir) = utf8_tempdir();
@@ -139,6 +139,7 @@ fn template_renders_once_and_writes_each_target() {
     let rendered1 = fs_err::read_to_string(&t1).expect("read t1");
     let rendered2 = fs_err::read_to_string(&t2).expect("read t2");
     assert_eq!(rendered1, "name = patina");
-    // Render-once guarantee: the two targets receive byte-identical output.
+    // The render-once guarantee means both targets receive byte-identical
+    // output.
     assert_eq!(rendered1, rendered2);
 }

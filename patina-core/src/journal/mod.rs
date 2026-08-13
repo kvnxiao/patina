@@ -7,12 +7,13 @@
 //! `postcard`-encoded and prefixed with a fixed-size version envelope so
 //! a future format change can be detected and refused rather than
 //! mis-decoded. The single up-front `fsync` of the plan file is the
-//! durability point, paired with an `fsync` of its parent directory. It is
-//! what lets a `kill -9` mid-apply converge deterministically on the next run.
+//! durability point, paired with an `fsync` of its parent directory. This
+//! fsync ordering lets a `kill -9` mid-apply converge deterministically on
+//! the next run.
 //!
 //! As each operation completes the engine appends a record to
 //! `<state>/patina/journal/<ts>.progress`. The progress cursor is
-//! advisory: it is written through to the kernel page cache but is
+//! advisory. It is written through to the kernel page cache but is
 //! deliberately **not** `fsync`-ed per operation, because crash recovery
 //! probes the real filesystem rather than trusting the cursor.
 //! After every operation settles the engine writes and
@@ -32,7 +33,7 @@
 //! 8. delete <ts>.plan and <ts>.progress
 //! ```
 //!
-//! The [`Syncer`] trait abstracts the three durability syscalls, `fsync` on a
+//! The [`Syncer`] trait abstracts the two durability syscalls, `fsync` on a
 //! file and `fsync` on a directory. The executor and the recovery suite can
 //! therefore substitute a recording fake. That fake counts calls and asserts
 //! the fsync shape without touching real hardware.
@@ -223,10 +224,10 @@ impl Journal {
     /// progress files. After this returns the apply is durably committed
     /// and recovery will skip its timestamp.
     ///
-    /// The sentinel body is the encoded `record`: crash recovery
-    /// keys on the sentinel's *existence* and never decodes the body, so
-    /// the payload is invisible to it; `patina status` reads the
-    /// body to classify the live filesystem against the last apply.
+    /// The sentinel body is the encoded `record`. Crash recovery keys on the
+    /// sentinel's *existence* and never decodes the body, so the payload is
+    /// invisible to it. `patina status` reads the body to classify the live
+    /// filesystem against the last apply.
     ///
     /// # Errors
     ///
@@ -240,8 +241,8 @@ impl Journal {
         syncer.sync_dir(&self.dir)?;
 
         // The plan and progress files are removed only after COMMIT is
-        // durable, so a crash between the two leaves a recoverable
-        // (plan, no-commit) pair rather than an orphan commit.
+        // durable. A crash between the two leaves a recoverable (plan,
+        // no-commit) pair, rather than an orphan commit.
         let plan_path = self.dir.join(format!("{}{PLAN_SUFFIX}", self.timestamp));
         let progress_path = self
             .dir
@@ -272,7 +273,7 @@ impl Journal {
 /// `ROLLED_BACK` sentinel beside its `COMMIT` is excluded: it has been
 /// reversed and no longer describes the live filesystem.
 ///
-/// Returning the full descending list (not just the maximum) is what lets
+/// Returning the full descending list, not just the maximum, lets
 /// [`read_latest_commit_with_ts`] fall back to the previous commit when the
 /// newest sentinel's body is unreadable.
 ///
@@ -317,7 +318,7 @@ fn unrolled_commit_timestamps(dir: &Utf8Path) -> Result<Vec<String>, JournalErro
 /// back to the next-older commit. Unreadable means a torn or empty body
 /// ([`JournalError::Truncated`]), or a corrupt same-version body
 /// ([`JournalError::Decode`]). This keeps `patina status` and `patina
-/// rollback` working after a `kill -9` between creating a `<ts>.COMMIT` file
+/// rollback` working when a `kill -9` between creating a `<ts>.COMMIT` file
 /// and flushing its bytes leaves a torn sentinel, rather than failing the
 /// whole command on one bad record.
 ///
@@ -556,8 +557,8 @@ mod tests {
     fn read_latest_commit_skips_a_torn_newest_sentinel_and_falls_back() {
         // Regression: a `kill -9` between creating the `<ts>.COMMIT` file and
         // flushing its bytes leaves a 0-byte sentinel. Reading the latest
-        // commit must skip it and report the previous, decodable apply rather
-        // than failing the whole `status` / `rollback` with a Truncated error.
+        // commit must skip it and report the previous, decodable apply,
+        // instead of failing `status` / `rollback` with a Truncated error.
         let temp = TempDir::new().expect("tempdir");
         let dir = Utf8Path::from_path(temp.path()).expect("utf8 temp path");
         write_commit(dir, "20260101T000000Z");
@@ -572,7 +573,7 @@ mod tests {
 
     #[test]
     fn read_latest_commit_is_none_when_the_only_sentinel_is_torn() {
-        // The exact shape that bricked `patina status`: a lone 0-byte
+        // The exact shape that broke `patina status`: a lone 0-byte
         // `.COMMIT`. It must read as "no committed apply", not a hard error.
         let temp = TempDir::new().expect("tempdir");
         let dir = Utf8Path::from_path(temp.path()).expect("utf8 temp path");
@@ -587,10 +588,9 @@ mod tests {
 
     #[test]
     fn read_latest_commit_propagates_a_newer_major_sentinel() {
-        // A sentinel from a newer format major must NOT be skipped: the
-        // version envelope's purpose is to make this binary refuse a newer
-        // apply rather than silently fall back to an older commit and act on
-        // stale state.
+        // A sentinel from a newer format major must NOT be skipped. The
+        // version envelope exists so this binary refuses a newer apply,
+        // instead of silently falling back to an older, stale commit.
         let temp = TempDir::new().expect("tempdir");
         let dir = Utf8Path::from_path(temp.path()).expect("utf8 temp path");
         write_commit(dir, "20260101T000000Z");

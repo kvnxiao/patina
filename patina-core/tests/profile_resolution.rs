@@ -92,7 +92,7 @@ fn auto_match_on_hostname_resolves_to_desktop() {
     assert_eq!(resolution.source, ProfileSource::AutoMatch);
 }
 
-/// Done-when (b): with `PATINA_PROFILE` unset, no auto-match rules,
+/// With `PATINA_PROFILE` unset, no auto-match rules,
 /// and a persisted choice of `home`, the resolved profile is `home`.
 #[test]
 fn persisted_choice_resolves_to_home_when_env_unset() {
@@ -107,7 +107,7 @@ fn persisted_choice_resolves_to_home_when_env_unset() {
     assert_eq!(resolution.source, ProfileSource::Persisted);
 }
 
-/// Done-when (d): with all three higher sources absent or non-matching,
+/// With all three higher sources absent or non-matching,
 /// the resolved profile is the empty string and the source is the
 /// no-profile fallback.
 #[test]

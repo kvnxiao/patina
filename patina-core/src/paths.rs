@@ -16,9 +16,9 @@
 //!
 //! [`expand_tilde`] handles the separate user-input concern of
 //! expanding a leading `~` to the resolved home directory (the
-//! `patina.home` built-in). It is purely lexical and does
-//! not touch the filesystem; callers pipe its output into
-//! [`canonicalize`] when they want an absolute, symlink-resolved form.
+//! `patina.home` built-in). It is purely lexical and does not touch the
+//! filesystem. Callers pipe its output into [`canonicalize`] when they
+//! want an absolute, symlink-resolved form.
 
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
@@ -129,19 +129,19 @@ pub fn canonicalize(p: &Utf8Path) -> Result<Utf8PathBuf, PathError> {
 /// apply has materialized a target as a symbolic link into the repository,
 /// canonicalizing that target through the filesystem would follow the link
 /// back to its repository source. A re-apply (or a migration over a foreign
-/// tool's pre-existing symlink) would then resolve the target *to the source*
-/// and operate on the source itself: the per-file symlink executor removes
-/// the target before re-linking, so the repository file is deleted and
-/// replaced by a self-referential link (data loss). Resolving by declared
-/// location keeps the target pointing where the user asked, independent of
-/// what currently occupies it. [`mod@crate::status`] applies the same
-/// principle when it keys managed targets by location rather than full
-/// canonicalization.
+/// tool's pre-existing symlink) would then resolve the target *to the
+/// source* and operate on the source itself. The per-file symlink executor
+/// removes the target before re-linking, so the repository file is deleted
+/// and replaced by a self-referential link. Data is lost. Resolving by
+/// declared location keeps the target pointing where the user asked,
+/// independent of what currently occupies it. [`mod@crate::status`] applies
+/// the same principle, keying managed targets by their declared location.
 ///
-/// Symbolic links in the *parent* chain are still resolved (the parent is a
-/// real location the leaf lives under); only the final component is left
-/// unfollowed. A path with no usable parent/leaf split (a filesystem root, or
-/// a bare relative leaf with an empty parent) falls back to [`canonicalize`].
+/// Symbolic links in the *parent* chain are still resolved, because the
+/// parent is a real location the leaf lives under. Only the final component
+/// is left unfollowed. A path with no usable parent/leaf split (a
+/// filesystem root, or a bare relative leaf with an empty parent) falls back
+/// to [`canonicalize`].
 ///
 /// # Examples
 ///
@@ -362,11 +362,12 @@ mod tests {
 
     #[test]
     fn resolve_location_does_not_follow_a_leaf_symlink() {
-        // The defect this guards: once a target is a symbolic link into the
-        // repository, `canonicalize` follows it through to the source, so a
-        // re-apply (or a migration over a foreign tool's symlink) would resolve
-        // the target *to the source* and the executor would delete the source.
-        // `resolve_location` keeps the declared target location instead.
+        // The defect this test guards against: once a target is a symbolic
+        // link into the repository, `canonicalize` follows it through to the
+        // source, so a re-apply (or a migration over a foreign tool's
+        // symlink) would resolve the target *to the source* and the executor
+        // would delete the source. `resolve_location` keeps the declared
+        // target location instead.
         let (_td, dir) = utf8_tempdir();
         let source = dir.join("real.conf");
         fs_err::write(source.as_std_path(), b"x").expect("write source");

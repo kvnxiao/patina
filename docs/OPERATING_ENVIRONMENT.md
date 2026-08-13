@@ -56,14 +56,13 @@ and your **dotfiles repository** off the following kinds of mounts:
 - Syncthing-managed directories
 - Any FUSE-backed cloud mount with deferred uploads
 
-### Why this matters
+### Cloud-sync failure modes
 
 Patina's crash-safety guarantee depends on the journal being written
-atomically and surviving a kill-9. Cloud-sync
-providers intermediate file writes through their own queueing
-layer: your local `fsync` returns before the provider has uploaded,
-and the provider may rename, version, or delay files for reasons
-Patina cannot observe. Specifically:
+atomically and surviving a `kill -9`. Cloud-sync providers route file
+writes through their own queueing layer. Your local `fsync` returns
+before the provider finishes uploading, and the provider may rename,
+version, or delay files in ways Patina cannot observe:
 
 - **Backups can be silently versioned**, which makes "restore the
   last-applied bytes" non-deterministic.
@@ -73,9 +72,9 @@ Patina cannot observe. Specifically:
   `LockFileEx`) is not well-defined on cloud-mounted filesystems;
   two `patina apply` invocations could interleave.
 
-For the repository itself, the failure mode is subtler: a long-running
-upload holds the source file open with exclusive sharing semantics
-on Windows, racing with `patina apply`'s reads.
+For the repository, the failure mode is subtler. A long-running upload
+holds the source file open with exclusive sharing semantics on Windows,
+racing with `patina apply`'s reads.
 
 ### What to do instead
 
@@ -92,8 +91,8 @@ git clone <your repo> C:\Users\<you>\dotfiles
 ```
 
 The state directory is already on local disk by default per the
-table above; you'd have to actively override `XDG_STATE_HOME` to
-move it onto a cloud-sync mount.
+table above; you'd have to override `XDG_STATE_HOME` to move it onto
+a cloud-sync mount.
 
 ---
 
@@ -106,10 +105,10 @@ login session ends. If you SSH into a server, run
 session.
 
 **Patina does not invoke `loginctl enable-linger` for you in v1.0.**
-The reason: every other Patina command runs as the unprivileged user;
-the main `patina` process never prompts for sudo. We do not want to
-break that invariant for the minority of users who actually need
-survive-logout behavior. A `--linger` flag is a v1.1 candidate.
+Every other Patina command runs as the unprivileged user, and the main
+`patina` process never prompts for sudo. Patina does not break that
+invariant for the minority of users who need survive-logout behavior.
+A `--linger` flag is a v1.1 candidate.
 
 ### When you need lingering
 
@@ -147,14 +146,14 @@ To disable later:
 sudo loginctl disable-linger $USER
 ```
 
-`patina watch uninstall` does **not** call `disable-linger` for the
-same reason it does not call `enable-linger`.
+`patina watch uninstall` does **not** call `disable-linger`. Both
+commands need sudo, and Patina commands run unprivileged.
 
 ### Without systemd
 
-If you're on a non-systemd Linux (Void, Devuan with sysvinit-style,
-Alpine without OpenRC-systemd parity), Patina has no preinstalled
-service template for your init system. The supported path is to run
-the watcher inline with `patina watch --foreground` inside your own
-supervisor (runit, s6, OpenRC); templates for other init systems remain
-a v1.1 candidate.
+You might be on a non-systemd Linux, such as Void, Devuan
+(sysvinit-style), or Alpine (without OpenRC-systemd parity). Patina has
+no preinstalled service template for these init systems. Run the
+watcher inline with `patina watch --foreground` inside your own
+supervisor instead (runit, s6, OpenRC). Templates for other init
+systems remain a v1.1 candidate.

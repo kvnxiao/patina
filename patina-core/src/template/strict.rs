@@ -11,12 +11,12 @@
 //! engine error's `Display` must name the offending variable
 //! (`user_email`, `missing_var`, …).
 //!
-//! To recover the name we make the template context a dynamic
+//! To recover the name, the template context is implemented as a dynamic
 //! [`Object`]. Every top-level variable access routes through
 //! `PatinaContext::get_value`; every `patina.*` access routes through
 //! `PatinaBuiltins::get_value`; every `patina.env.*` access routes through
-//! `PatinaEnv::get_value`. When a lookup resolves to nothing we record the
-//! requested key in an interior-mutable set *before* returning [`None`]
+//! `PatinaEnv::get_value`. When a lookup resolves to nothing, the requested
+//! key is recorded in an interior-mutable set *before* [`None`] is returned
 //! (which `MiniJinja` turns into undefined). After a render fails or a
 //! `when` evaluation yields undefined, the caller reads the recorded names
 //! back out to build a typed error that names them.
@@ -100,7 +100,7 @@ impl UndefinedTracker {
 ///
 /// Shared by every [`Object::get_value`] miss path so a missing variable
 /// is both surfaced to `MiniJinja` as undefined and remembered for the
-/// typed error. A poisoned tracker lock degrades to "do not record": the
+/// typed error. A poisoned tracker lock degrades to "do not record." The
 /// lookup still reports undefined, so strict semantics hold even if the
 /// name is lost.
 fn record_undefined(tracker: &Mutex<UndefinedTracker>, name: &str) -> Option<Value> {
@@ -149,8 +149,8 @@ impl Object for PatinaContext {
     fn enumerate(self: &Arc<Self>) -> Enumerator {
         // Strict-undefined drives error reporting through `get_value`,
         // not enumeration. Advertising no keys keeps `{% for %}` over the
-        // bare context a deliberate no-op rather than leaking the layer
-        // internals.
+        // bare context a deliberate no-op, without exposing the resolver's
+        // internal layers.
         Enumerator::Empty
     }
 }

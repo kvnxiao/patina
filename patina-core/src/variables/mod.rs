@@ -109,7 +109,7 @@ pub fn parse_cli_override(raw: &str) -> Result<(String, String), VariableError> 
 /// A flat string→string variable layer.
 ///
 /// `[variables]` tables are TOML, so values may technically be any TOML
-/// scalar. v1 narrows the contract to strings: the template engine
+/// scalar. v1 narrows the contract to strings. The template engine
 /// coerces what it renders, and richer value types can be added
 /// later without changing this resolver's shape.
 type Layer = BTreeMap<String, String>;

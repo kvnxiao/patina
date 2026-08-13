@@ -309,7 +309,7 @@ pub fn decide_symlink_gate(plan: &ResolvedPlan, probe: &impl DevModeProbe) -> Ga
 /// one. `observe` always runs at least once, so even a zero deadline gets a
 /// single attempt.
 ///
-/// # Why the helper launches need this
+/// # `ShellExecuteEx` returns before the helper starts
 ///
 /// `ShellExecuteEx` is the only way to raise the UAC consent dialog without
 /// `unsafe`. It returns as soon as the shell has *created* the elevated helper

@@ -48,7 +48,7 @@ fn two_active_entries_on_one_target_fail_planning() {
 #[test]
 fn when_disjoint_entries_on_one_target_plan_cleanly() {
     // The same target claimed twice, but the two `when` guards cannot both
-    // hold: only one entry is active, so this is legal and must apply.
+    // hold. Only one entry is active, so this is legal and must apply.
     let f = Fixture::new();
     let os = current_os_family();
     let module = f.module(
@@ -114,8 +114,9 @@ fn a_target_inside_a_whole_directory_symlink_target_fails_planning() {
 #[test]
 fn a_tree_leaf_colliding_with_another_entry_names_the_leaf() {
     // The tree deploys `humanizer/SKILL.md` under `~/.claude/skills`, and the
-    // other entry claims exactly that path. Only the expanded leaves make this
-    // visible: the two declared targets are a directory and a file inside it.
+    // other entry claims exactly that path. Only the expanded leaves make
+    // this visible, since the two declared targets are a directory and a
+    // file inside it.
     let f = Fixture::new();
     let tree = f.module(
         "skills",

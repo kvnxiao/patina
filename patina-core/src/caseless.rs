@@ -4,20 +4,21 @@
 //! Two consumers need the same answer. The target-collision check must reach
 //! the same verdict on Linux as on the case-insensitive filesystems macOS and
 //! Windows ship by default. The root manifest's remote registry turns names
-//! into directory names under the per-machine cache. Folding both
-//! through one function is what keeps a manifest's meaning a property of the
-//! manifest rather than of the machine reading it.
+//! into directory names under the per-machine cache. Folding both through one
+//! function keeps a manifest's meaning a property of the manifest, not of
+//! the machine reading it.
 
 use unicode_normalization::UnicodeNormalization;
 
 /// Fold `value` to one case and one Unicode normal form.
 ///
 /// Normalizing on both sides of the case mapping is Unicode's canonical
-/// caseless match: the mapping can leave its own output unnormalized, so a
-/// single trailing pass would not converge. Lowercase mapping rather than true
-/// case folding, because APFS applies simple case folding and likewise leaves
-/// `ß` alone; full folding maps it to `ss` and merges two names macOS keeps
-/// apart.
+/// caseless match. The mapping can leave its own output unnormalized, so a
+/// single trailing pass would not converge.
+///
+/// This function lowercases input instead of applying true case folding,
+/// because APFS applies simple case folding and leaves `ß` alone. Full case
+/// folding maps `ß` to `ss`, merging two names macOS keeps distinct.
 #[must_use = "the folded form is the comparison key, not a display string"]
 pub fn fold(value: &str) -> String {
     // ASCII has no decompositions, so the tables cannot change it.

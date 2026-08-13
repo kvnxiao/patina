@@ -27,8 +27,6 @@ fn root_manifest_with(f: &Fixture, trailing: &str) {
 
 #[test]
 fn root_variable_renders_into_module_template() {
-    // A variable declared only in the root `[variables]` table
-    // resolves inside a module's `.tmpl` template.
     let f = Fixture::new();
     root_manifest_with(&f, "[variables]\neditor = \"nvim\"\n");
     let module = f.module(
@@ -56,7 +54,7 @@ fn root_variable_renders_into_module_template() {
 fn active_profile_variable_shadows_repo_shared() {
     // With profile `work` active, a key present in both the root
     // `[variables]` table and `[profiles.work.variables]` resolves to the
-    // profile's value (per-profile shadows repo-shared).
+    // profile's value.
     let f = Fixture::new();
     root_manifest_with(
         &f,
@@ -86,8 +84,8 @@ fn active_profile_variable_shadows_repo_shared() {
 #[test]
 fn per_module_variable_beats_repo_shared() {
     // A key present in both the root `[variables]` table and a module's
-    // `[variables]` table resolves to the module value (per-module beats
-    // repo-shared), unchanged from the documented precedence order.
+    // `[variables]` table resolves to the module value, unchanged from the
+    // documented precedence order.
     let f = Fixture::new();
     root_manifest_with(&f, "[variables]\neditor = \"nvim\"\n");
     let module = f.module(
@@ -115,7 +113,7 @@ fn per_module_variable_beats_repo_shared() {
 #[test]
 fn no_profile_selects_no_per_profile_table() {
     // The no-profile fallback (empty profile name) selects no per-profile
-    // table: a `[profiles.work.variables]` override is inert when `work` is
+    // table. A `[profiles.work.variables]` override is inert when `work` is
     // not the active profile, so the repo-shared value renders.
     let f = Fixture::new();
     root_manifest_with(

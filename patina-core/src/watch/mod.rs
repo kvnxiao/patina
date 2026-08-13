@@ -81,10 +81,10 @@ pub enum WatchError {
 /// Inspect a root `patina.toml` for the forward-compatible-but-rejected
 /// `[watcher] debounce_ms` key and return a typed warning when it is present.
 ///
-/// The 500ms debounce is hardcoded in v1.0 ([`debounce::DEBOUNCE`]); a
-/// `debounce_ms` override is parsed, warned about, and otherwise ignored, so a
-/// repository that sets it keeps working and a future version can add the knob
-/// without breaking older repositories. A malformed manifest, a missing
+/// The 500ms debounce is hardcoded in v1.0 ([`debounce::DEBOUNCE`]). A
+/// `debounce_ms` override is parsed, warned about, and otherwise ignored. A
+/// repository that sets it keeps working, and a future version can add the
+/// knob without breaking older repositories. A malformed manifest, a missing
 /// `[watcher]` table, or a `[watcher]` table without `debounce_ms` all yield
 /// `None`. This helper diagnoses only the one forward-compatible key and
 /// leaves real parse errors to the apply path.
@@ -119,23 +119,26 @@ pub fn watcher_config_warning(manifest_text: &str) -> Option<String> {
 /// structured-log stack (a rotating file layer plus a stderr layer). It reads
 /// the most recent committed apply and computes its FS subscription set
 /// ([`subscriptions::compute_watch_set`]). It then arms the 500ms debouncer
-/// over that set ([`debounce::spawn`]), and runs a single `tokio::select!`
+/// over that set ([`debounce::spawn`]). It runs a single `tokio::select!`
 /// loop that awaits either the next debounced event batch or `shutdown`. On
-/// `shutdown` it
-/// logs a `shutdown` event, drops the debouncer (releasing every FS
-/// subscription), and returns `Ok(())`.
+/// `shutdown` it logs a `shutdown` event, drops the debouncer (releasing
+/// every FS subscription), and returns `Ok(())`.
 ///
-/// Each received batch is classified and dispatched: a
-/// journal-directory event re-reads the latest commit and re-arms the debouncer
-/// over the recomputed subscription set ([`reapply`] is *not* invoked); a
-/// source-path event drives a `NonBlocking` re-apply
-/// ([`reapply::run_reapply`]); a content-target-only event is left for the
-/// drift handler. The foreground process does **not** acquire the
-/// exclusive advisory lock; the engine takes the per-re-apply lock
-/// under `NonBlocking` inside [`reapply::run_reapply`].
+/// Each received batch is classified and dispatched:
+///
+/// - a journal-directory event re-reads the latest commit and re-arms the
+///   debouncer over the recomputed subscription set ([`reapply`] is *not*
+///   invoked);
+/// - a source-path event drives a `NonBlocking` re-apply
+///   ([`reapply::run_reapply`]);
+/// - a content-target-only event is left for the drift handler.
+///
+/// The foreground process does **not** acquire the exclusive advisory lock;
+/// the engine takes the per-re-apply lock under `NonBlocking` inside
+/// [`reapply::run_reapply`].
 ///
 /// When no apply has ever committed, the subscription set is just the
-/// journal-rescan directory, so the watcher idles until an apply writes a
+/// journal-rescan directory. The watcher idles until an apply writes a
 /// journal there.
 ///
 /// # Arguments
@@ -206,15 +209,14 @@ where
     // `block_on` root future, which is driven on the calling thread and is
     // never work-stolen (only `tokio::spawn`ed tasks migrate across workers),
     // so a thread-local default would *happen* to stay valid. But the
-    // `tokio::spawn`ed re-apply / drift handlers add spawned tasks; a
+    // `tokio::spawn`ed re-apply / drift handlers add spawned tasks. A
     // thread-local default does not propagate into spawned tasks at all, so
     // their post-await emissions would silently fall through to the global
-    // no-op subscriber and
-    // be dropped. `with_subscriber` removes that hazard structurally: spawned
-    // children can carry the same dispatcher forward with
-    // `.with_current_subscriber()`. There is no global install, so a second
-    // watcher run in the same test process never double-installs, preserving
-    // the per-run tempdir isolation tests rely on.
+    // no-op subscriber and be dropped. `with_subscriber` removes that hazard
+    // structurally. Spawned children can carry the same dispatcher forward
+    // with `.with_current_subscriber()`. There is no global install, so a
+    // second watcher run in the same test process never double-installs,
+    // preserving the per-run tempdir isolation tests rely on.
     async {
         let record =
             read_latest_commit(&journal_dir).map_err(|source| WatchError::Journal { source })?;
@@ -255,27 +257,28 @@ where
                                 paths = batch.paths.len(),
                                 "watch_event"
                             );
-                            // Classify the coalesced batch, journal
-                            // first so the watcher's own writes never re-trigger
-                            // a re-apply:
+                            // Classify the coalesced batch. Check the
+                            // journal-directory case first, so the watcher's
+                            // own writes never re-trigger a re-apply:
                             //
                             // - A batch touching `<state>/patina/journal/` is a
                             //   new `.plan`/`.COMMIT` from some apply (the
-                            //   watcher's own re-apply, or a parallel CLI run):
-                            //   re-read the latest commit and recompute the watch
-                            //   set, re-arming the debouncer (rescan). It
-                            //   does NOT re-apply, so a re-apply's own journal
+                            //   watcher's own re-apply, or a parallel CLI run).
+                            //   Re-read the latest commit and recompute the
+                            //   watch set, re-arming the debouncer (rescan). It
+                            //   does not re-apply, so a re-apply's own journal
                             //   write cannot drive an unbounded loop.
                             // - Otherwise, a batch touching a repository **source**
-                            //   path is a source edit: drive a `NonBlocking`
+                            //   path is a source edit. Drive a `NonBlocking`
                             //   re-apply.
                             // - Otherwise the batch touched only content-target
-                            //   paths: a re-apply's own target rewrite or an
-                            //   external edit. That is drift detection's concern,
-                            //   NOT a re-apply: a content-target event
+                            //   paths, either a re-apply's own target rewrite or
+                            //   an external edit. That is drift detection's
+                            //   concern, not a re-apply. A content-target event
                             //   re-hashes the live bytes and notifies on
-                            //   divergence, and must not re-apply (re-applying
-                            //   would rewrite the target and re-trigger itself).
+                            //   divergence. It must not re-apply, because
+                            //   re-applying would rewrite the target and
+                            //   re-trigger itself.
                             if journal_event(&batch) {
                                 if let Some((rebuilt, rebuilt_set, rebuilt_ts)) =
                                     rescan(&journal_dir, state, &batch)
@@ -374,7 +377,7 @@ fn source_event(batch: &debounce::EventBatch, sources: &[Utf8PathBuf]) -> bool {
 /// apply's `at`, empty when none committed) for the caller to install. On a
 /// journal read failure or a debouncer rebuild failure it logs a warning and
 /// returns `None`, leaving the existing debouncer, watch set, and timestamp in
-/// place; a transient rescan failure must not crash the watcher.
+/// place. A transient rescan failure must not crash the watcher.
 fn rescan(
     journal_dir: &Utf8Path,
     state: &Utf8Path,
@@ -502,7 +505,7 @@ mod tests {
     fn non_journal_paths_do_not_classify_as_journal_events() {
         // A source edit and a content-target rewrite are not journal events,
         // so they never route to the rescan path. A `.plan`-suffixed file that
-        // is NOT inside a `journal` directory is also not a journal event (the
+        // is not inside a `journal` directory is also not a journal event (the
         // parent-dir-name guard rejects it).
         assert!(!journal_event(&batch(&["/repo/git/gitconfig"])));
         assert!(!journal_event(&batch(&["/home/u/.gitconfig"])));
@@ -512,7 +515,7 @@ mod tests {
     #[test]
     fn only_source_paths_classify_as_source_events() {
         // The re-apply trigger fires only for a repository source path. A
-        // content-target path is watched (for drift) but is NOT a source, so a
+        // content-target path is watched (for drift) but is not a source, so a
         // batch naming only the target does not re-apply. This is the loop
         // guard that stops a re-apply's own target rewrite from re-triggering.
         let sources = vec![Utf8PathBuf::from("/repo/git/gitconfig")];

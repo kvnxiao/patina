@@ -3,10 +3,9 @@
     reason = "integration tests use .expect() on fixtures and asserted output; allow-expect-in-tests covers #[cfg(test)] modules but not the helper functions in tests/*.rs integration crates."
 )]
 
-//! A `[[directory]]` entry with `mode = "symlink-tree"`
-//! walks its source directory and creates one symbolic link per leaf file at
-//! the mirrored target path, leaving the intermediate target directories
-//! real.
+//! A `[[directory]]` entry with `mode = "symlink-tree"` walks its source
+//! directory and creates one symbolic link per leaf file at the mirrored
+//! target path. It leaves the intermediate target directories real.
 //!
 //! Each test drives `PATINA_REPO=<tempdir> patina apply --yes` over a fixture
 //! repo whose module declares a `symlink-tree` `[[directory]]` entry, and
@@ -133,9 +132,9 @@ fn symlink_tree_backs_up_pre_existing_leaf_and_replaces_it_with_a_link() {
         "the leaf link must resolve to the source"
     );
 
-    // The prior bytes were backed up: rolling back restores the original
-    // regular file. This exercises the real backup machinery rather than
-    // poking at the binary backup tree internals.
+    // The prior bytes were backed up. Rolling back restores the original
+    // regular file, exercising the real backup machinery rather than poking
+    // at the binary backup tree internals.
     let rolled = f.run(&["rollback", "--yes"], &[]);
     assert_eq!(
         code(&rolled),
@@ -189,7 +188,7 @@ fn symlink_tree_skips_empty_source_subdirectory() {
 
 #[test]
 fn symlink_tree_re_apply_over_unchanged_source_is_a_noop() {
-    // Idempotency: a second `patina apply` over unchanged source
+    // Idempotency check. A second `patina apply` over unchanged source
     // succeeds and leaves the leaf links pointing at the source.
     let f = Fixture::new();
     let module = f.module(

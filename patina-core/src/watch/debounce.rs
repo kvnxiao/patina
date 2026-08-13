@@ -2,7 +2,7 @@
 //!
 //! A typical editor save produces a burst of 3-5 filesystem events (write to a
 //! tempfile, rename into place, metadata touch, stat). Re-applying once per raw
-//! event would be wasteful and racy, so the watcher coalesces a burst arriving
+//! event would be wasteful and racy. The watcher coalesces a burst arriving
 //! within a fixed window into a single re-apply trigger. The window is the
 //! hardcoded [`DEBOUNCE`] constant (no configuration knob in v1.0; a
 //! `[watcher] debounce_ms` key in the root manifest is rejected with a typed
@@ -10,13 +10,12 @@
 //!
 //! `notify` / `notify-debouncer-full` deliver coalesced event batches on their
 //! own OS-managed thread via a synchronous callback. The re-apply path lives on
-//! the async runtime, so this module bridges the two: [`spawn`]
+//! the async runtime, so this module bridges the two. [`spawn`]
 //! builds the debouncer with a callback that forwards each batch into a
 //! [`tokio::sync::mpsc`] channel, and the foreground watcher's `tokio::select!`
 //! loop awaits the receiver. The returned [`Debouncer`] owns the live
-//! subscriptions; dropping it tears them down (the watcher holds it for its
-//! process lifetime and drops it on shutdown, satisfying the
-//! release-subscriptions-on-exit contract).
+//! subscriptions; dropping it tears them down. The watcher holds it for its
+//! process lifetime and drops it on shutdown.
 //!
 //! This module wires the debounce and the bridge only. Interpreting a batch,
 //! deciding whether it is a source edit (re-apply), a content-target
@@ -95,9 +94,9 @@ pub struct Debouncer {
 /// Build the 500ms debouncer, subscribe it to every path in `subscriptions`,
 /// and bridge its coalesced batches into a [`tokio::sync::mpsc`] channel.
 ///
-/// Each path is watched non-recursively ([`RecursiveMode::NonRecursive`]): the
-/// watcher subscribes to exactly the journal-recorded paths and the journal
-/// directory, never the repository tree recursively. The debouncer's
+/// Each path is watched non-recursively ([`RecursiveMode::NonRecursive`]),
+/// subscribing to exactly the journal-recorded paths and the journal
+/// directory rather than the repository tree. The debouncer's
 /// callback runs on `notify`'s own OS thread; it maps each coalesced batch to
 /// an [`EventBatch`] and forwards it through the returned receiver, so the
 /// async select-loop never blocks the OS thread.
@@ -117,10 +116,8 @@ pub fn spawn(subscriptions: &[Utf8PathBuf]) -> Result<Debouncer, DebounceError> 
         tokio::sync::mpsc::unbounded_channel();
 
     // The callback runs on `notify`'s OS thread. `UnboundedSender::send` is
-    // non-blocking and callable from any thread, so it is the natural bridge
-    // into the async loop. A send error means the receiver was
-    // dropped (the watcher is shutting down); there is nothing to forward to,
-    // so drop the batch.
+    // non-blocking and callable from any thread, so it bridges into the
+    // async loop without blocking the OS thread.
     let mut debouncer = new_debouncer(DEBOUNCE, None, move |result: DebounceEventResult| {
         if let Ok(events) = result {
             let mut paths: Vec<Utf8PathBuf> = Vec::new();
@@ -153,11 +150,11 @@ pub fn spawn(subscriptions: &[Utf8PathBuf]) -> Result<Debouncer, DebounceError> 
 
 /// Register one subscription path with the debouncer, non-recursively.
 ///
-/// A subscription path may not yet exist on disk at watch time (e.g. a content
-/// target a future apply will create); `notify` errors on a missing path, so a
-/// path that cannot be registered is surfaced as [`DebounceError::Watch`]
-/// rather than silently skipped; the caller (the rescan) re-derives the
-/// set after each apply, when the recorded paths do exist.
+/// A subscription path may not yet exist on disk at watch time, for example a
+/// content target a future apply will create. `notify` errors on a missing
+/// path, so a path that cannot be registered is surfaced as
+/// [`DebounceError::Watch`] rather than silently skipped. The caller, the
+/// rescan, re-derives the set after each apply, once the recorded paths exist.
 fn watch_path(
     debouncer: &mut InnerDebouncer<RecommendedWatcher, RecommendedCache>,
     path: &Utf8Path,
@@ -177,15 +174,15 @@ mod tests {
     #[test]
     fn debounce_window_brackets_the_coalescing_scenarios() {
         // The coalescing scenario fires five touches within a 100ms burst and
-        // requires them to coalesce into a single trigger; that only holds if
-        // the debounce window is comfortably wider than the burst spread, so
-        // the window must be at least the 100ms burst. The integration tests
+        // requires them to coalesce into one trigger. That only holds if the
+        // debounce window is comfortably wider than the burst spread, so the
+        // window must be at least 100ms. The integration tests
         // (`watch_foreground_cli.rs`) wait on the loop with a 5s timeout, so a
-        // window approaching that budget would make the watcher miss its
-        // deadline; cap it well under that. These are independent bounds
-        // derived from the scenario timings, not a re-spelling of the literal:
-        // editing `DEBOUNCE` to 50ms or to 5s would fail this without the test
-        // and the constant being changed in lockstep.
+        // window approaching that budget would miss the deadline. Cap the
+        // window well under 5s. These bounds come from the scenario timings,
+        // not from the constant's current value. Editing `DEBOUNCE` to 50ms
+        // or to 5s would fail this test unless the test and the constant
+        // changed together.
         let burst_spread = Duration::from_millis(100);
         let test_wait_budget = Duration::from_secs(5);
         assert!(
@@ -218,11 +215,11 @@ mod tests {
             .expect("a batch arrives within the timeout")
             .expect("the channel is open");
 
-        // `notify` may report a canonicalized path (on macOS `/tmp` resolves to
-        // `/private/tmp`), so assert on the touched file's name rather than the
-        // tempdir prefix: a coalesced batch naming `touched` proves the write
-        // under the watched directory was debounced and bridged into the async
-        // channel.
+        // `notify` may report a canonicalized path (on macOS `/tmp` resolves
+        // to `/private/tmp`), so assert on the touched file's name rather
+        // than the tempdir prefix. A coalesced batch naming `touched` proves
+        // the write under the watched directory was debounced and bridged
+        // into the async channel.
         assert!(
             batch.paths.iter().any(|p| p.file_name() == Some("touched")),
             "the coalesced batch should name the touched file, got {:?}",

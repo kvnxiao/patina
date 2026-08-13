@@ -9,11 +9,11 @@
 
 //! Shared test fixture for the `patina apply` integration suites.
 //!
-//! Each test builds a self-contained tempdir dotfiles repository, points
-//! `PATINA_REPO` at it, and isolates the per-machine state directory under
-//! the tempdir so the apply never touches the developer's real `$HOME`.
-//! The binary is invoked as a subprocess (its stdin is therefore not a
-//! TTY, exercising the non-interactive path).
+//! Each test builds a self-contained tempdir dotfiles repository and points
+//! `PATINA_REPO` at it. It isolates the per-machine state directory under
+//! the tempdir, so the apply never touches the developer's real `$HOME`.
+//! The binary runs as a subprocess, so its stdin is not a TTY and it
+//! exercises the non-interactive path.
 
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
@@ -22,7 +22,7 @@ use std::process::Command;
 use std::process::Output;
 use tempfile::TempDir;
 
-/// A prepared fixture: an isolated repo + state dir, ready to invoke
+/// A prepared fixture with an isolated repo and state dir, ready to invoke
 /// `patina apply` against.
 pub struct Fixture {
     _temp: TempDir,
@@ -85,8 +85,8 @@ impl Fixture {
         .expect("resolve fixture state dir")
     }
 
-    /// Invoke `patina` with an arbitrary `args` vector, isolating repo +
-    /// state + home the same way every subcommand requires. The caller
+    /// Invoke `patina` with an arbitrary `args` vector, isolating repo,
+    /// state, and home the same way every subcommand requires. The caller
     /// supplies the subcommand and its flags as the leading elements of
     /// `args`; extra environment pairs are layered on last.
     pub fn run(&self, args: &[&str], extra: &[(&str, &str)]) -> Output {
@@ -97,10 +97,11 @@ impl Fixture {
             .env("HOME", self.home.as_str())
             .env("USERPROFILE", self.home.as_str())
             .env("XDG_STATE_HOME", self.state.as_str())
-            // Windows resolves the state dir from LOCALAPPDATA; isolate it
-            // per-test so parallel tests never share one journal / lock /
-            // backup tree (which would let one test's crash-recovery pass
-            // reverse another test's just-applied files).
+            // Windows resolves the state dir from `LOCALAPPDATA`. Isolate it
+            // per test so parallel tests never share one journal, lock, or
+            // backup tree. A shared tree would let one test's
+            // crash-recovery pass reverse another test's just-applied
+            // files.
             .env("LOCALAPPDATA", self.state.as_str())
             .env_remove("PATINA_PROFILE");
         for (k, v) in extra {
@@ -110,8 +111,8 @@ impl Fixture {
     }
 
     /// Invoke `patina` with `args` and a working directory of `cwd`,
-    /// isolating repo + state + home exactly as [`Fixture::run`] does. Used by
-    /// commands whose behaviour depends on the process CWD (e.g.
+    /// isolating repo, state, and home the same way [`Fixture::run`] does.
+    /// Commands whose behaviour depends on the process CWD use this (e.g.
     /// `doctor --fix` records the CWD as the default repository).
     pub fn run_in(&self, cwd: &Utf8Path, args: &[&str], extra: &[(&str, &str)]) -> Output {
         let bin = env!("CARGO_BIN_EXE_patina");
@@ -130,7 +131,7 @@ impl Fixture {
         cmd.output().expect("spawn patina")
     }
 
-    /// Invoke `patina apply` with `args`, isolating repo + state + home.
+    /// Invoke `patina apply` with `args`, isolating repo, state, and home.
     /// Extra environment pairs are layered on last. Delegates to
     /// [`Fixture::run`] with `apply` prepended.
     pub fn apply_with_env(&self, args: &[&str], extra: &[(&str, &str)]) -> Output {
@@ -204,9 +205,9 @@ impl Origin {
         Self { dir }
     }
 
-    /// The origin path spelled so it can be embedded in a TOML basic string:
-    /// on Windows a native path's backslashes would read as escape sequences.
-    /// Git accepts the forward-slash form of a Windows path.
+    /// The origin path spelled for embedding in a TOML basic string. On
+    /// Windows a native path's backslashes would read as escape sequences,
+    /// but git accepts the forward-slash form of a Windows path.
     pub fn url(&self) -> String {
         self.dir.as_str().replace('\\', "/")
     }

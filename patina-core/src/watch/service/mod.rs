@@ -8,9 +8,8 @@
 //! once. The supervisors are `launchd` on macOS, `systemd --user` on Linux,
 //! and a per-user Scheduled Task on Windows.
 //!
-//! [`current`] is the factory: it dispatches on [`crate::state_dir::HostOs`]
-//! and
-//! returns the backend for the running host. macOS returns the `launchd`
+//! [`current`] is the factory. It dispatches on [`crate::state_dir::HostOs`]
+//! and returns the backend for the running host. macOS returns the `launchd`
 //! backend; Linux returns the `systemd` backend when `systemd --user` is
 //! reachable and the [`unsupported`] stub otherwise (non-systemd init systems
 //! are served by `patina watch --foreground` under the user's own
@@ -19,7 +18,7 @@
 //!
 //! The `launchd`, `systemd`, and `scheduled_task` backend modules are each
 //! gated to their own target OS, so they are referenced as plain code spans
-//! rather than intra-doc links: a link to a cfg-excluded module would break
+//! rather than intra-doc links. A link to a cfg-excluded module would break
 //! the docs build on the other OS (the docs gate runs on Linux, where
 //! `launchd` and `scheduled_task` are compiled out).
 //!
@@ -28,9 +27,10 @@
 //! [`ServiceStatus`] carries two watcher-internal counters,
 //! `subscriptions_count` and `re_applies_since_start`, that the running watcher
 //! emits only to its structured log. `status` is a
-//! separate, short-lived process and cannot read the watcher's in-memory state,
-//! so it recovers the two counters by reading the most recent rotated log file
-//! under `<state>/patina/logs/` ([`recover_log_counters`]). When the log is
+//! separate, short-lived process and cannot read the watcher's in-memory
+//! state. It recovers the two counters instead by reading the most recent
+//! rotated log file under `<state>/patina/logs/` ([`recover_log_counters`]).
+//! When the log is
 //! absent or unparseable the counters report `None` rather than failing the
 //! command. The supervisor-derived fields (`installed`, `running`,
 //! `last_fired_at`, `last_exit_code`) come from the platform query each backend
@@ -113,9 +113,9 @@ pub enum LifecycleResult {
     Stopped,
     /// `restart` asked the supervisor to stop then start the service.
     Restarted,
-    /// The lifecycle action was a no-op because the service was not installed
-    /// (lifecycle subcommands on a not-installed service are no-ops with a
-    /// clear message, not supervisor errors).
+    /// The lifecycle action was a no-op because the service was not
+    /// installed. A not-installed service produces a clear message, not a
+    /// supervisor error.
     NotInstalled,
 }
 
@@ -235,7 +235,7 @@ pub trait ServiceBackend {
 
 /// Return the background-service backend for the running host.
 ///
-/// Dispatches on [`HostOs::current`]: macOS returns the `launchd` backend;
+/// Dispatches on [`HostOs::current`]. macOS returns the `launchd` backend;
 /// Linux returns the `systemd` backend when `systemd --user` is reachable
 /// and the [`unsupported`] stub otherwise (non-systemd init); Windows
 /// returns the `scheduled_task` backend (a per-user, non-elevated Scheduled
@@ -421,8 +421,8 @@ mod tests {
     #[test]
     fn parse_counters_reads_last_subscriptions_and_counts_reapplies_since_start() {
         // A log with a start (subscriptions=2), one re-apply, a rescan that
-        // bumps subscriptions to 4, and a second re-apply: the recovered
-        // subscription count is the *last* value (4) and the re-apply count
+        // bumps subscriptions to 4, and a second re-apply. The recovered
+        // subscription count is the *last* value (4), and the re-apply count
         // since the (single) start is 2.
         let log = "\
 patina_core: watch_started subscriptions=2
@@ -436,7 +436,7 @@ patina_core: re_apply re_apply_id=20260531T000002Z re_apply_files_changed=1
     #[test]
     fn parse_counters_resets_reapply_count_on_a_later_start() {
         // A second `watch_started` (a watcher restart) resets the
-        // "since start" re-apply count: only the re-apply after the second
+        // "since start" re-apply count. Only the re-apply after the second
         // start is counted.
         let log = "\
 patina_core: watch_started subscriptions=1
@@ -461,16 +461,16 @@ patina_core: re_apply re_apply_id=b re_apply_files_changed=0
 
     #[test]
     fn parse_counters_reports_none_when_the_watcher_never_started() {
-        // A log with no `watch_started` line (e.g. only rotated noise) yields a
-        // None re-apply count: "since start" is undefined without a start.
+        // A log with no `watch_started` line (e.g. only rotated noise) yields
+        // a None re-apply count. "Since start" is undefined without a start.
         let log = "some unrelated line\nanother line\n";
         assert_eq!(parse_counters(log), (None, None));
     }
 
     #[test]
     fn recover_log_counters_reports_none_when_logs_dir_is_absent() {
-        // No `<state>/logs/` at all: both counters are None, not an error
-        // (a missing log reports null rather than failing status).
+        // No `<state>/logs/` exists at all. Both counters are None, not an
+        // error (a missing log reports null rather than failing status).
         let tmp = tempfile::tempdir().expect("tempdir");
         let state = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).expect("utf-8 temp path");
         assert_eq!(recover_log_counters(&state), (None, None));
@@ -478,7 +478,7 @@ patina_core: re_apply re_apply_id=b re_apply_files_changed=0
 
     #[test]
     fn recover_log_counters_reads_the_most_recent_rotated_log() {
-        // Two daily-rotated files: the lexically-greatest date suffix is the
+        // Two daily-rotated files. The lexically-greatest date suffix is the
         // newest, and its counters are the ones recovered.
         let tmp = tempfile::tempdir().expect("tempdir");
         let state = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).expect("utf-8 temp path");

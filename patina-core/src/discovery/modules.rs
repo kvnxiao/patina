@@ -92,14 +92,13 @@ impl From<ManifestHeadError> for ModuleDiscoveryError {
 /// Returns a vector ordered alphabetically by module name. The root
 /// manifest is validated (must declare `root = true`) and per-module
 /// manifests are validated (must omit `root` or declare it `false`).
-/// A `patina.toml` at depth ≥ 2 below the root is a hard error
-/// (here we only validate structure).
+/// A `patina.toml` at depth ≥ 2 below the root is a hard error; only the
+/// structure is validated here.
 ///
 /// # Errors
 ///
 /// See [`ModuleDiscoveryError`].
 pub fn discover_modules(root: &Utf8Path) -> Result<Vec<ModuleHandle>, ModuleDiscoveryError> {
-    // Validate root manifest.
     let root_manifest = root.join(MANIFEST_FILENAME);
     let root_head = read_manifest_head(&root_manifest)?;
     if root_head.patina.root != Some(true) {
@@ -110,7 +109,6 @@ pub fn discover_modules(root: &Utf8Path) -> Result<Vec<ModuleHandle>, ModuleDisc
 
     let mut handles: Vec<ModuleHandle> = Vec::new();
 
-    // Iterate immediate children of root.
     let entries =
         fs_err::read_dir(root.as_std_path()).map_err(|source| ModuleDiscoveryError::Io {
             path: root.to_path_buf(),
@@ -142,12 +140,13 @@ pub fn discover_modules(root: &Utf8Path) -> Result<Vec<ModuleHandle>, ModuleDisc
             })?;
         let module_manifest = child.join(MANIFEST_FILENAME);
 
-        // First check for depth-≥2 manifests under this subdirectory.
+        // Check for depth-≥2 manifests here, before deciding whether this
+        // subdirectory is a module.
         check_no_deep_manifests(&child)?;
 
         if !module_manifest.is_file() {
-            // Subdirectory without a patina.toml is silently skipped:
-            // not every directory under the root is a module (e.g.
+            // A subdirectory without a patina.toml is silently skipped.
+            // Not every directory under the root is a module (e.g.
             // `.git/`, scratch files).
             continue;
         }

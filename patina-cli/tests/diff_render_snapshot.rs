@@ -7,8 +7,8 @@
 //! The diff is exercised end-to-end through the real `patina apply` binary on
 //! the non-interactive path: with no `--yes` and a non-TTY stdin, `apply`
 //! renders the diff to stdout and then previews-only (exit 0) without writing
-//! anything. The captured stdout is therefore exactly the rendered diff body,
-//! which the snapshot pins.
+//! anything. The snapshot pins that captured stdout as the rendered diff
+//! body.
 //!
 //! The per-run tempdir home prefix is redacted to `[HOME]` so the snapshot is
 //! stable across runs and machines while still proving the path-naming shape
@@ -26,9 +26,8 @@ use common::code;
 fn partial_apply_diff_omits_unchanged_bodies_and_summarizes_the_count() {
     let f = Fixture::new();
     // Four `copy` entries. After the first apply all four targets match their
-    // source bytes. We then drift exactly one (`b_out`) so the next plan
-    // classifies `b` as Update and the other three as Unchanged: the
-    // shape of one Update + three Unchanged.
+    // source bytes. Drifting exactly one (`b_out`) makes the next plan
+    // classify `b` as Update and the other three as Unchanged.
     let m = f.module(
         "m",
         r#"
@@ -72,7 +71,7 @@ mode = "copy"
     fs_err::write(&b_out, b"b-drifted\n").expect("drift b_out");
 
     // No `--yes`, non-TTY stdin (subprocess): `apply` renders the diff and
-    // previews-only (exit 0), so stdout is exactly the rendered diff body.
+    // previews-only (exit 0), so stdout holds exactly the rendered diff body.
     // `--color never` makes the strip unconditional: the renderer emits ANSI
     // that the reporter's auto-stream removes, and forcing `never` keeps the
     // pinned bytes plain regardless of the runner's terminal / CLICOLOR_FORCE
@@ -131,7 +130,7 @@ mode = "copy"
     .expect("rewrite manifest without the dropped entry");
 
     // Non-interactive preview (no `--yes`, non-TTY stdin, `--color never`):
-    // stdout is exactly the rendered diff body, plain.
+    // stdout holds exactly the rendered diff body, plain.
     let preview = f.apply(&["--color", "never"]);
     assert_eq!(
         code(&preview),

@@ -9,8 +9,9 @@
 //! committed apply deletes its plan file at commit, so these tests write a
 //! plan file directly through the public `Plan::encode` API (the same
 //! bytes the engine fsyncs before mutating) and point the CLI at it. That
-//! exercises the full binary path the scenario cares about: read the file,
-//! check the version envelope, decode the body, render to stdout.
+//! exercises the full binary path the scenario cares about. It reads the
+//! file, checks the version envelope, decodes the body, and renders it to
+//! stdout.
 
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
@@ -40,8 +41,8 @@ fn code(output: &Output) -> i32 {
 
 #[test]
 fn decodes_a_plan_and_prints_its_modes_and_targets() {
-    // A plan declaring symlink + copy operations renders with the
-    // matching mode words and at least one absolute target on stdout, exit 0.
+    // A plan declaring symlink and copy operations renders with the
+    // matching mode words and at least one absolute target on stdout.
     let temp = TempDir::new().expect("tempdir");
     let dir = Utf8Path::from_path(temp.path()).expect("utf8 tempdir");
     let plan = Plan::new(vec![
@@ -70,7 +71,6 @@ fn decodes_a_plan_and_prints_its_modes_and_targets() {
 
 #[test]
 fn missing_path_exits_one_and_names_the_path_on_stderr() {
-    // A non-existent path -> exit 1, path on stderr.
     let out = invoke(&["debug", "journal", "/nonexistent/path.plan"]);
     assert_eq!(code(&out), 1, "missing path must exit 1");
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -82,9 +82,9 @@ fn missing_path_exits_one_and_names_the_path_on_stderr() {
 
 #[test]
 fn newer_version_envelope_exits_one_and_names_both_versions() {
-    // A plan whose envelope major is u16::MAX is
-    // refused by a binary whose supported major is 1 -> exit 1, both
-    // versions plus the word "version" on stderr.
+    // A plan whose envelope major is `u16::MAX` is refused by a binary that
+    // supports a lower major. It exits 1, and stderr names both versions
+    // plus the word "version".
     let temp = TempDir::new().expect("tempdir");
     let dir = Utf8Path::from_path(temp.path()).expect("utf8 tempdir");
     let plan = Plan::new(vec![PlannedOperation::copy(
@@ -115,7 +115,6 @@ fn newer_version_envelope_exits_one_and_names_both_versions() {
 
 #[test]
 fn debug_help_names_journal_subcommand() {
-    // `patina debug --help` names `journal` and exits 0.
     let out = invoke(&["debug", "--help"]);
     assert_eq!(
         code(&out),

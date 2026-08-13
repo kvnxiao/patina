@@ -18,7 +18,7 @@ use std::process::Command;
 use std::process::Output;
 use tempfile::TempDir;
 
-/// A prepared fixture: an isolated repo + state dir + home.
+/// A prepared fixture with an isolated repo, state dir, and home.
 struct Fixture {
     _temp: TempDir,
     root: Utf8PathBuf,
@@ -132,8 +132,6 @@ fn state_for(doc: &serde_json::Value, suffix: &str) -> String {
 
 #[test]
 fn three_clean_operations_report_clean_counter_three() {
-    // Three file operations applied, no subsequent change ->
-    // clean = 3, drifted/missing/orphaned = 0.
     let f = Fixture::new();
     let module = f.module(
         "shell",
@@ -158,7 +156,6 @@ fn three_clean_operations_report_clean_counter_three() {
     assert_eq!(counter(&doc, "drifted"), 0, "{doc}");
     assert_eq!(counter(&doc, "missing"), 0, "{doc}");
     assert_eq!(counter(&doc, "orphaned"), 0, "{doc}");
-    // last_apply.at must be an RFC 3339 timestamp.
     let at = doc
         .pointer("/last_apply/at")
         .and_then(serde_json::Value::as_str)
@@ -171,8 +168,6 @@ fn three_clean_operations_report_clean_counter_three() {
 
 #[test]
 fn edited_copy_target_reports_drifted() {
-    // A copy-mode target edited after apply -> drifted = 1 and the
-    // files entry for that path has state = drifted.
     let f = Fixture::new();
     let module = f.module(
         "git",
@@ -182,7 +177,6 @@ fn edited_copy_target_reports_drifted() {
 
     assert_eq!(code(&f.apply(&["--yes"])), 0);
 
-    // Append bytes to the materialized target to drift it.
     let target = f.home.join(".gitconfig");
     let mut content = fs_err::read_to_string(&target).expect("read target");
     content.push_str("email = x@y.z\n");
@@ -195,8 +189,6 @@ fn edited_copy_target_reports_drifted() {
 
 #[test]
 fn multi_target_entry_reports_one_entry_per_target() {
-    // A [[file]] with two copy targets; one edited externally ->
-    // two files entries, one clean and one drifted, clean >= 1, drifted >= 1.
     let f = Fixture::new();
     let module = f.module(
         "agent",
@@ -226,7 +218,6 @@ fn multi_target_entry_reports_one_entry_per_target() {
 
 #[test]
 fn deleted_target_reports_missing() {
-    // A materialized target deleted on disk -> missing = 1.
     let f = Fixture::new();
     let module = f.module(
         "shell",
@@ -244,8 +235,6 @@ fn deleted_target_reports_missing() {
 
 #[test]
 fn removed_entry_with_surviving_target_reports_orphaned() {
-    // A target applied, then the [[file]] entry removed from the repo while
-    // the materialized file survives -> orphaned = 1.
     let f = Fixture::new();
     let module = f.module(
         "old",
@@ -269,8 +258,6 @@ fn removed_entry_with_surviving_target_reports_orphaned() {
 
 #[test]
 fn symlink_target_reports_clean_then_drifts_when_replaced() {
-    // A symlink target is clean while it points at the source, and drifts
-    // when replaced by a regular file.
     let f = Fixture::new();
     let module = f.module(
         "zsh",
@@ -289,7 +276,6 @@ fn symlink_target_reports_clean_then_drifts_when_replaced() {
     let doc = status_json(&f.status(&["--json"]));
     assert_eq!(state_for(&doc, "/.zshrc"), "clean", "{doc}");
 
-    // Replace the link with a regular file -> drift.
     let target = f.home.join(".zshrc");
     fs_err::remove_file(&target).expect("remove link");
     fs_err::write(&target, "not a link\n").expect("write regular file");

@@ -13,9 +13,9 @@
 //!
 //! The file lives beside the root `patina.toml` and is committed, so a remote
 //! update flows to other machines as an ordinary repository change. `apply`
-//! reads `rev` and nothing else, which is what keeps plan output identical
-//! across machines and runs; `updated_at` exists solely for the update gate's
-//! backdating check and is written only by `patina remote update`.
+//! reads `rev` and nothing else, which keeps plan output identical across
+//! machines and runs. `updated_at` exists solely for the update gate's
+//! backdating check, and only `patina remote update` writes it.
 //!
 //! Serialization is deterministic: entries in name order, a fixed field order,
 //! and one canonical timestamp spelling. Re-writing an unchanged lockfile
@@ -46,7 +46,7 @@ pub struct LockEntry {
     pub url: String,
     /// The tracked branch or tag, when the module names one.
     pub git_ref: Option<String>,
-    /// The full commit SHA every machine materializes. The single field `apply`
+    /// The full commit SHA every machine materializes. The only field `apply`
     /// reads.
     pub rev: String,
     /// When the pin was last bumped, RFC 3339 in UTC. Read only by the update
@@ -58,7 +58,7 @@ impl LockEntry {
     /// `updated_at` as Unix seconds, or `None` when it cannot be parsed.
     ///
     /// Parsing succeeds for every entry that came through [`Lockfile::parse`],
-    /// which validates the field; the `Option` covers an entry constructed
+    /// which validates the field. The `Option` covers an entry constructed
     /// in-process.
     #[must_use = "the epoch is what the gate's backdating check compares against"]
     pub fn updated_at_epoch(&self) -> Option<i64> {
@@ -87,7 +87,7 @@ pub fn lockfile_path(repo_root: &Utf8Path) -> Utf8PathBuf {
 impl Lockfile {
     /// Read the lockfile at `path`.
     ///
-    /// An absent file is an empty lockfile, not an error: a repository with no
+    /// An absent file is an empty lockfile, not an error. A repository with no
     /// remote-backed modules never grows one, and the first `patina remote
     /// update` creates it.
     ///
@@ -173,9 +173,9 @@ impl Lockfile {
 
     /// Write the lockfile to `path`.
     ///
-    /// Atomic, because this file is the only record of which commit each
-    /// remote is pinned to: a direct write killed between the truncate and the
-    /// last byte would leave neither the old pins nor the new ones, and every
+    /// Atomic. This file is the only record of which commit each remote is
+    /// pinned to. A direct write killed between the truncate and the last
+    /// byte would leave neither the old pins nor the new ones, and every
     /// remote-backed entry would then fail to plan.
     ///
     /// # Errors
@@ -193,9 +193,10 @@ impl Lockfile {
 
     /// Render the lockfile as TOML.
     ///
-    /// Entries come out in folded-name order with a fixed field order, so two
-    /// renders of the same pins are byte-identical and a pin bump shows up as a
-    /// one-entry diff. Each key keeps the spelling its author declared.
+    /// Entries come out in folded-name order with a fixed field order. Two
+    /// renders of the same pins are therefore byte-identical, and a pin bump
+    /// shows up as a one-entry diff. Each key keeps the spelling its author
+    /// declared.
     #[must_use = "the rendered document is what gets committed"]
     pub fn render(&self) -> String {
         let mut out = format!("version = {LOCKFILE_VERSION}\n");
@@ -227,10 +228,10 @@ impl Lockfile {
     /// Drop every pin `declared` does not name, returning the dropped names in
     /// order.
     ///
-    /// The lockfile is a statement about the root manifest's declarations, so a
-    /// pin whose declaration was deleted is stale by definition: it would keep
+    /// The lockfile is a statement about the root manifest's declarations. A
+    /// pin whose declaration was deleted is therefore stale: it would keep
     /// its checkout alive in the cache and reappear in `patina remote` output
-    /// forever. Nothing else depends on it: an entry naming a remote that is
+    /// forever. Nothing else depends on it. An entry naming a remote that is
     /// not declared fails at plan time, before this runs.
     pub fn retain_declared<'a>(
         &mut self,
@@ -276,8 +277,8 @@ fn control_escape(ch: char) -> String {
 
 /// Quote `value` as a TOML basic string.
 ///
-/// Hand-written so the rendered bytes are a pure function of the input rather
-/// than of a serializer's formatting choices, because the determinism contract
+/// Hand-written so the rendered bytes are a pure function of the input,
+/// rather than of a serializer's formatting choices. The determinism contract
 /// is on the exact bytes. The escape set is TOML's: backslash, quote, and the
 /// control characters, which get their short escapes where TOML defines one and
 /// a `\uXXXX` otherwise.
@@ -366,9 +367,10 @@ mod tests {
 
     #[test]
     fn a_pin_answers_to_a_name_respelled_in_case() {
-        // The registry compares declarations ignoring case, so a pin written
-        // under one spelling must keep answering after a case-only respell of
-        // its declaration, for reads, replacement, and the stale sweep alike.
+        // The registry compares declarations ignoring case. A pin written
+        // under one spelling must keep answering after a case-only respelling
+        // of its declaration, for reads, replacement, and the stale sweep
+        // alike.
         let mut lock = Lockfile::default();
         lock.insert(name("Humanizer"), entry(REV));
 
@@ -435,8 +437,9 @@ mod tests {
 
     #[test]
     fn retaining_a_superset_drops_nothing() {
-        // A declaration with no pin yet is the ordinary state before the first
-        // `patina remote update`; it must not make the sweep report anything.
+        // A declaration with no pin yet is the ordinary state before the
+        // first `patina remote update`. It must not make the sweep report
+        // anything.
         let mut lock = Lockfile::default();
         lock.insert(name("zsh"), entry(REV));
         assert!(

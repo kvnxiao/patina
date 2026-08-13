@@ -1,12 +1,12 @@
 //! Per-target classification into CLEAN / DRIFTED / MISSING / ORPHANED.
 //!
-//! [`classify`] is the pure decision function: given the recorded
+//! [`classify`] is the pure decision function. Given the recorded
 //! expectation for one target and whether the *current* repository plan
 //! still manages that target, it reads the live filesystem and returns the
-//! [`TargetState`]. Keeping it free of IO orchestration splits the work. The
-//! status module ([`super`]) owns the journal read and the current-plan
-//! computation. This function owns the four-way comparison of CLEAN /
-//! DRIFTED / MISSING / ORPHANED.
+//! [`TargetState`]. The status module ([`super`]) owns the journal read and
+//! the current-plan computation, so IO orchestration stays out of this
+//! function. This function owns the four-way comparison of CLEAN / DRIFTED /
+//! MISSING / ORPHANED.
 
 use crate::journal::ExpectedTarget;
 use crate::journal::content_hash;
@@ -47,12 +47,14 @@ impl TargetState {
 /// manages this target's path. A target the current plan has dropped is
 /// ORPHANED while it still exists on disk; once it is gone there is
 /// nothing left to report, so it classifies MISSING. The status
-/// module filters dropped-and-absent targets out before display, since a
-/// no-longer-managed, no-longer-present target is simply done.
+/// module filters dropped-and-absent targets out before display, since
+/// there is nothing left to report for a target that is both no longer
+/// managed and no longer present.
 ///
-/// When the target is still managed, the comparison is the expectation's:
-/// a symlink must still point at the recorded link target; a content file
-/// must still `blake3`-hash to the recorded value.
+/// When the target is still managed, the comparison follows the
+/// expectation's kind. A symlink must still point at the recorded link
+/// target, and a content file must still `blake3`-hash to the recorded
+/// value.
 #[must_use = "the classification is the per-target status result"]
 pub fn classify(expected: &ExpectedTarget, still_managed: bool) -> TargetState {
     let target = Utf8Path::new(expected.target());
@@ -89,10 +91,10 @@ pub fn classify(expected: &ExpectedTarget, still_managed: bool) -> TargetState {
 /// Whether the live `target` is a symbolic link whose link target equals
 /// the `desired` link target.
 ///
-/// This is the single definition of "a symlink matches": both `status`
-/// (CLEAN vs DRIFTED) and the plan-time skip-if-satisfied classifier
-/// (`Unchanged` vs `Update`) read through it, so the two never disagree on
-/// what counts as a match.
+/// Both `status` (CLEAN vs DRIFTED) and the plan-time skip-if-satisfied
+/// classifier (`Unchanged` vs `Update`) read through this function as
+/// their one definition of a matching symlink, so the two never disagree
+/// on what counts as a match.
 ///
 /// The comparison is on the verbatim-stripped (`simplified_str`) form
 /// because the recorded/desired link target and the on-disk link may differ
@@ -107,11 +109,11 @@ pub(crate) fn symlink_matches(target: &Utf8Path, desired: &str) -> bool {
 /// Whether the live `target` is a regular file whose `blake3` content hash
 /// equals `desired`.
 ///
-/// This is the single definition of "content matches": `status` and the
-/// plan-time classifier both read through it (copy/copy-tree and template
-/// targets), so "Unchanged" coincides exactly with status's "Clean".
-/// An unreadable target (absent, a directory, a dangling link)
-/// is not a match.
+/// `status` and the plan-time classifier (for copy/copy-tree and template
+/// targets) both read through this function as their one definition of
+/// matching content, so "Unchanged" coincides exactly with status's
+/// "Clean". An unreadable target (absent, a directory, or a dangling
+/// link) is not a match.
 #[must_use = "the comparison result drives the Clean/Unchanged classification"]
 pub(crate) fn content_matches(target: &Utf8Path, desired: &[u8; 32]) -> bool {
     matches!(fs_err::read(target), Ok(bytes) if content_hash(&bytes) == *desired)

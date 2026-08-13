@@ -25,9 +25,9 @@ use crate::journal::mirror_backup_path;
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
 
-/// One commit-recorded target to revert: its canonical absolute path paired
-/// with the disposition the apply classified it as. The
-/// disposition decides whether the target is reverted at all: an
+/// One commit-recorded target to revert, pairing its canonical absolute
+/// path with the disposition the apply classified it as. The disposition
+/// decides whether the target is reverted at all. An
 /// [`Disposition::Unchanged`] target is left in place.
 #[derive(Debug, Clone, Copy)]
 pub struct RevertTarget<'a> {
@@ -38,17 +38,17 @@ pub struct RevertTarget<'a> {
     pub disposition: Disposition,
 }
 
-/// Revert every target in one `[[file]]` entry to its pre-apply state,
-/// atomically: either all targets reach pre-apply state, or the entry is
-/// rolled forward to its post-apply state and
+/// Revert every target in one `[[file]]` entry to its pre-apply state, as
+/// one atomic unit. Either all targets reach pre-apply state, or the entry
+/// is rolled forward to its post-apply state and
 /// [`RollbackError::RollbackPartial`] is returned.
 ///
 /// `entry` is the entry's index (for the error message); `targets` are the
 /// canonical absolute target paths the entry materialized, in apply order,
 /// each paired with the disposition the apply classified it as.
 ///
-/// A target the apply recorded as [`Disposition::Unchanged`] is left in place:
-/// the apply skipped both its write and its backup, so its live
+/// A target the apply recorded as [`Disposition::Unchanged`] is left in
+/// place. The apply skipped both its write and its backup, so its live
 /// state already *is* the pre-apply state and there is nothing to reverse.
 /// Such a target is excluded from the snapshot/roll-forward set entirely, so
 /// the atomic region covers only the `Create`/`Update` targets that rollback
@@ -58,7 +58,7 @@ pub struct RevertTarget<'a> {
 /// # Errors
 ///
 /// - [`RollbackError::RollbackPartial`] when a target's revert fails; the entry
-///   is restored to its post-apply state before returning.
+///   is rolled forward to its post-apply state before returning.
 /// - [`RollbackError::Filesystem`] when snapshotting itself fails before any
 ///   target has been mutated (nothing to undo).
 pub fn replay_entry(
@@ -67,9 +67,9 @@ pub fn replay_entry(
     backups_dir: &Utf8Path,
     timestamp: &str,
 ) -> Result<(), RollbackError> {
-    // Unchanged targets were neither written nor backed up, so leave them
-    // wholly out of the reversal: no snapshot, no revert. Only Create/Update
-    // targets enter the atomic snapshot/roll-forward region.
+    // Unchanged targets were neither written nor backed up, so they are
+    // left wholly out of the reversal, with no snapshot and no revert. Only
+    // Create/Update targets enter the atomic snapshot/roll-forward region.
     let to_revert: Vec<&str> = targets
         .iter()
         .filter(|t| t.disposition != Disposition::Unchanged)
@@ -100,9 +100,9 @@ pub fn replay_entry(
             Err(source) => {
                 // Roll forward to the post-apply state so the entry is left
                 // atomically untouched. `revert_target` removes the in-flight
-                // target before restoring it, so a copy failure can leave that
-                // target deleted/partial, so include it in the roll-forward set
-                // alongside the already-reverted targets.
+                // target before restoring it, so a copy failure can leave
+                // that target deleted or partial. Include it in the
+                // roll-forward set alongside the already-reverted targets.
                 reverted.push(snapshot);
                 roll_forward(&reverted);
                 remove_stage(&stage);
@@ -186,9 +186,9 @@ fn snapshot_targets(stage: &Utf8Path, targets: &[&str]) -> std::io::Result<Vec<S
     Ok(snapshots)
 }
 
-/// Revert one target to its pre-apply state: restore from its backup if one
-/// exists (overwrite case), otherwise delete it (fresh-creation case). This
-/// is the same rule crash recovery applies.
+/// Revert one target to its pre-apply state. Restore it from its backup if
+/// one exists (the overwrite case), otherwise delete it (the
+/// fresh-creation case). This is the same rule crash recovery applies.
 fn revert_target(
     backups_dir: &Utf8Path,
     timestamp: &str,
@@ -196,11 +196,12 @@ fn revert_target(
 ) -> std::io::Result<()> {
     let backup = mirror_backup_path(backups_dir, timestamp, target);
     if crate::fsx::entry_present(&backup) {
-        // Overwrite case: restore the original entry, kind-preserving. A
-        // symlink comes back a symlink, a directory a directory, a file a
+        // Overwrite case: restore the original entry, preserving its kind.
+        // A symlink comes back a symlink, a directory a directory, a file a
         // file. Presence is probed with `entry_present` rather than
         // `exists`, so a backed-up symlink whose destination is gone is
-        // still restored instead of being mistaken for "no backup → delete".
+        // still restored; `exists` would report it as absent and misroute
+        // to the "no backup, delete" path.
         crate::fsx::clone_entry(&backup, target)
     } else {
         // Fresh-creation case: nothing was backed up, so reverting deletes
@@ -251,8 +252,8 @@ fn stage_dir(backups_dir: &Utf8Path, timestamp: &str, entry: u32) -> Utf8PathBuf
     backups_dir.join(format!(".rollback-stage-{timestamp}-{entry}"))
 }
 
-/// Remove the per-entry staging directory, swallowing errors: a leftover
-/// stage is harmless and never read by any other code path.
+/// Remove the per-entry staging directory, swallowing errors. A leftover
+/// stage is harmless, and no other code path ever reads it.
 fn remove_stage(stage: &Utf8Path) {
     ignore_io(fs_err::remove_dir_all(stage));
 }
@@ -357,10 +358,10 @@ mod tests {
 
     #[test]
     fn unchanged_target_is_left_in_place() {
-        // A commit-recorded Unchanged target took no backup, so its
-        // live bytes already are the pre-apply bytes. Rollback must leave it
-        // byte-for-byte untouched rather than (with no backup) deleting it as
-        // a fresh creation.
+        // A commit-recorded Unchanged target took no backup, so its live
+        // bytes already are the pre-apply bytes. Rollback must leave it
+        // byte-for-byte untouched, not delete it as a fresh creation despite
+        // having no backup.
         let e = env();
         let ts = "TS";
         let target = e.root.join("unchanged");
@@ -381,10 +382,9 @@ mod tests {
 
     #[test]
     fn mixed_entry_reverts_create_and_update_but_leaves_unchanged() {
-        // An entry mixing all three dispositions: the Create target is
-        // deleted, the Update target is restored from its backup, and the
-        // Unchanged target is untouched, even though it, like the Create
-        // target, has no backup.
+        // The Unchanged target has no backup, like the Create target, but
+        // the recorded disposition, not backup presence, decides whether
+        // it is deleted.
         let e = env();
         let ts = "TS";
         let created = e.root.join("created");

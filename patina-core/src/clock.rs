@@ -3,11 +3,11 @@
 //! Patina keys its journal `<ts>.plan` / `<ts>.COMMIT` files and backup
 //! directories by a monotonic UTC timestamp formatted `YYYYMMDDTHHMMSSZ`.
 //! Both the CLI `apply` path and the watcher's re-apply need the exact same
-//! format string. The helper therefore lives here, as one definition the whole
-//! workspace shares rather than a copy per call site.
+//! format string. The helper lives here as a single shared definition, not a
+//! copy at each call site.
 //!
-//! The timestamp keys filenames only; it never appears in user-facing
-//! output, so the deterministic-stdout guarantee is preserved.
+//! The timestamp keys filenames only. It never appears in user-facing
+//! output, so the deterministic-stdout guarantee holds.
 
 /// A monotonic UTC timestamp keying a run's journal and backup files,
 /// formatted `YYYYMMDDTHHMMSSZ`.

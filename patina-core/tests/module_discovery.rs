@@ -27,8 +27,6 @@ fn write_file(path: &Utf8Path, contents: &str) {
 
 #[test]
 fn discovers_modules_alphabetically_with_absolute_paths() {
-    // T/patina.toml (root), T/zsh/patina.toml, T/nvim/patina.toml
-    // discovers exactly {zsh, nvim}, alphabetically ordered.
     let (_td, root) = utf8_tempdir();
     write_file(&root.join("patina.toml"), "[patina]\nroot = true\n");
     write_file(&root.join("zsh").join("patina.toml"), "");
@@ -50,7 +48,6 @@ fn discovers_modules_alphabetically_with_absolute_paths() {
 
 #[test]
 fn rejects_manifest_at_depth_two() {
-    // T/zsh/plugins/patina.toml triggers MaximumModuleDepth.
     let (_td, root) = utf8_tempdir();
     write_file(&root.join("patina.toml"), "[patina]\nroot = true\n");
     write_file(&root.join("zsh").join("plugins").join("patina.toml"), "");
@@ -75,7 +72,6 @@ fn rejects_manifest_at_depth_two() {
 
 #[test]
 fn rejects_non_root_manifest_declaring_root_true() {
-    // T/zsh/patina.toml contains `[patina]\nroot = true`.
     let (_td, root) = utf8_tempdir();
     write_file(&root.join("patina.toml"), "[patina]\nroot = true\n");
     write_file(
@@ -101,7 +97,6 @@ fn rejects_non_root_manifest_declaring_root_true() {
 
 #[test]
 fn rejects_root_manifest_missing_root_key() {
-    // T/patina.toml lacks `root = true`.
     let (_td, root) = utf8_tempdir();
     write_file(&root.join("patina.toml"), "");
 
@@ -120,8 +115,6 @@ fn rejects_root_manifest_missing_root_key() {
 
 #[test]
 fn non_module_subdirectories_are_silently_skipped() {
-    // Subdirectories without a patina.toml (e.g. `.git`, scratch dirs)
-    // are not modules.
     let (_td, root) = utf8_tempdir();
     write_file(&root.join("patina.toml"), "[patina]\nroot = true\n");
     write_file(&root.join("zsh").join("patina.toml"), "");

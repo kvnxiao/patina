@@ -388,8 +388,8 @@ fn check_hook_is_silent_and_self_throttles() {
     let stamp = patina_core::remote::notice::last_check_epoch(&f.state_root());
     assert!(stamp.is_some(), "the hook must stamp its check");
 
-    // Inside the throttle window the second run does no work at all, which is
-    // observable as the stamp being untouched.
+    // Inside the throttle window the second run does no work; the stamp
+    // stays untouched.
     assert_eq!(code(&f.run(&["remote", "check", "--hook"], &[])), 0);
     assert_eq!(
         patina_core::remote::notice::last_check_epoch(&f.state_root()),
@@ -515,7 +515,8 @@ fn a_preview_apply_reports_a_stale_pin_without_rewriting_the_lockfile() {
     fs_err::remove_dir_all(f.root.join("humanizer").as_std_path()).expect("remove the module");
     let before = lockfile(&f);
 
-    // No `--yes` in a non-interactive shell: a preview, which owes zero writes.
+    // No `--yes` in a non-interactive shell, so this is a preview that must
+    // write nothing.
     let out = f.apply(&[]);
     assert_eq!(code(&out), 0, "a preview exits 0");
     assert_eq!(

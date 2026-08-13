@@ -36,8 +36,6 @@ fn env_map(pairs: Vec<(&'static str, String)>) -> impl Fn(&str) -> Option<String
 
 #[test]
 fn resolve_creates_journal_and_backups_but_not_logs() {
-    // Scenario: a fresh state directory. resolve() creates journal/ and
-    // backups/; logs/ is owned by the watcher and must NOT be created here.
     let (_keep, t) = utf8_tempdir();
     let env = env_map(vec![("XDG_STATE_HOME", t.to_string())]);
 
@@ -52,9 +50,6 @@ fn resolve_creates_journal_and_backups_but_not_logs() {
 
 #[test]
 fn build_file_appender_creates_logs_dir_and_writes_a_rotating_file() {
-    // Scenario: the logging stack initialized against a state directory for
-    // the first time creates <state>/logs/ and a daily-rotating appender
-    // writes a log line into a file under it.
     let (_keep, root) = utf8_tempdir();
     let logs_dir = root.join("logs");
     assert!(
@@ -69,7 +64,8 @@ fn build_file_appender_creates_logs_dir_and_writes_a_rotating_file() {
     );
 
     writeln!(appender.writer, "re_apply id=1").expect("write log line");
-    // Drop flushes the non-blocking worker before we inspect the file.
+    // Dropping the appender flushes the non-blocking worker before the test
+    // reads the file.
     drop(appender);
 
     let mut log_files: Vec<Utf8PathBuf> = fs_err::read_dir(logs_dir.as_std_path())
@@ -100,8 +96,6 @@ fn build_file_appender_creates_logs_dir_and_writes_a_rotating_file() {
 
 #[test]
 fn build_file_appender_is_idempotent_over_an_existing_logs_dir() {
-    // A second start against a state directory whose logs/ already exists is
-    // not an error.
     let (_keep, root) = utf8_tempdir();
     fs_err::create_dir_all(root.join("logs").as_std_path()).expect("pre-create logs/");
 

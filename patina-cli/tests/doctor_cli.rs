@@ -67,8 +67,6 @@ fn missing_default_repo_reports_info_finding_and_exits_zero() {
     );
 }
 
-/// Two `doctor --json` runs against the
-/// same unchanged state produce byte-identical stdout.
 #[test]
 fn doctor_json_is_byte_identical_across_runs() {
     let fx = Fixture::new();
@@ -230,10 +228,9 @@ fn windows_fix_enables_dev_mode_and_exits_zero() {
 }
 
 /// The DOC-WIN-UNC finding rests on the cross-platform [`is_unc_path`]
-/// predicate. Assert the predicate the finding depends on
-/// distinguishes a UNC repository path from a POSIX one, so the finding's
-/// trigger is exercised on the macOS/Linux CI where a real UNC mount is
-/// unavailable.
+/// predicate. This test asserts that predicate distinguishes a UNC
+/// repository path from a POSIX one, exercising the finding's trigger on
+/// macOS/Linux CI where a real UNC mount is unavailable.
 #[test]
 fn unc_predicate_distinguishes_unc_from_posix_repo_paths() {
     assert!(

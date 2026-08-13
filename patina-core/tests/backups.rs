@@ -6,17 +6,16 @@
 //! Integration coverage for backup-on-overwrite.
 //!
 //! These tests drive the `patina_core::backups::backup_before_overwrite`
-//! entry point directly by staging the on-disk states they cover (a
-//! pre-existing target, an absent target, a clean repository) and asserting
-//! the backup tree converges to the expected shape. Each test maps to one
-//! backup bullet:
+//! entry point directly. Each test stages an on-disk state it covers (a
+//! pre-existing target, an absent target, or a clean repository) and
+//! asserts the backup tree converges to the expected shape. Each test maps
+//! to one backup bullet:
 //!
 //! - overwriting a pre-existing `~/.zshrc` produces a backup holding the
 //!   original bytes at the mirrored path before the overwrite.
-//! - "fresh target produces no backup entry": an absent target yields no backup
-//!   file.
-//! - "the repo is never written during apply": backups land under the state
-//!   tree, leaving a sibling repository directory byte-for-byte untouched.
+//! - an absent target yields no backup entry.
+//! - backups land under the state tree; a sibling repository directory stays
+//!   byte-for-byte untouched.
 
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
@@ -26,9 +25,9 @@ use tempfile::TempDir;
 
 const TS: &str = "20260528T120000Z";
 
-/// A staged apply scene: a state directory with a `backups/` tree, a
-/// `home/` standing in for the user's targets, and a `repo/` standing in
-/// for the dotfiles repository the engine must never write to.
+/// A staged apply scene: a state directory with `backups/`, `home/` for the
+/// user's targets, and `repo/` for the dotfiles repository. The engine must
+/// never write to `repo/`.
 struct Scene {
     _temp: TempDir,
     backups: Utf8PathBuf,
@@ -78,8 +77,6 @@ fn snapshot(dir: &Utf8Path) -> Vec<(String, Vec<u8>)> {
 
 #[test]
 fn overwriting_a_pre_existing_target_stashes_the_original_bytes() {
-    // A pre-existing `~/.zshrc` with "original" is backed up before
-    // the engine would replace it with a symlink.
     let scene = Scene::new();
     let zshrc = scene.home.join(".zshrc");
     fs_err::write(&zshrc, b"original").expect("seed ~/.zshrc");
@@ -90,8 +87,6 @@ fn overwriting_a_pre_existing_target_stashes_the_original_bytes() {
         made,
         "an existing target must report that a backup was made"
     );
-    // The backup lives where recovery would read it back, holding the
-    // pre-overwrite bytes verbatim.
     let backup = mirror_backup_path(&scene.backups, TS, &zshrc);
     assert!(backup.is_file(), "the backup must be a regular file");
     assert_eq!(
@@ -99,16 +94,12 @@ fn overwriting_a_pre_existing_target_stashes_the_original_bytes() {
         b"original",
         "the backup must contain the pre-overwrite bytes"
     );
-    // The backup nests under the per-apply <ts> root and keeps the target's
-    // own file name.
     assert!(backup.starts_with(scene.backups.join(TS)));
     assert_eq!(backup.file_name(), Some(".zshrc"));
 }
 
 #[test]
 fn a_freshly_created_target_produces_no_backup_entry() {
-    // A target that does not pre-exist (a template render
-    // to a new `~/.gitconfig`) yields no backup entry.
     let scene = Scene::new();
     let gitconfig = scene.home.join(".gitconfig");
 
@@ -125,17 +116,13 @@ fn a_freshly_created_target_produces_no_backup_entry() {
 
 #[test]
 fn backups_never_write_into_the_dotfiles_repository() {
-    // After backups run, the dotfiles repository is
-    // byte-for-byte unchanged: the engine writes only under the state tree.
     let scene = Scene::new();
-    // A repository whose source files the engine reads but must not mutate.
     fs_err::write(scene.repo.join("zshrc"), b"managed source").expect("seed repo source");
     fs_err::create_dir_all(scene.repo.join("nested")).expect("nested dir");
     fs_err::write(scene.repo.join("nested").join("gitconfig"), b"tmpl")
         .expect("seed nested source");
     let before = snapshot(&scene.repo);
 
-    // Back up two pre-existing user targets under home/.
     let zshrc = scene.home.join(".zshrc");
     let bashrc = scene.home.join(".bashrc");
     fs_err::write(&zshrc, b"a").expect("seed");
@@ -148,7 +135,6 @@ fn backups_never_write_into_the_dotfiles_repository() {
         before, after,
         "the dotfiles repository must be byte-for-byte unchanged after backups run"
     );
-    // And the backups did land, under the state tree, not the repo.
     assert!(mirror_backup_path(&scene.backups, TS, &zshrc).is_file());
     assert!(mirror_backup_path(&scene.backups, TS, &bashrc).is_file());
 }

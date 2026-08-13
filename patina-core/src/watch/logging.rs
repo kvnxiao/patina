@@ -3,7 +3,7 @@
 //! The watcher owns `<state>/patina/logs/` and the rotating-log stack the
 //! watcher writes its metrics into. [`state_dir::resolve`]
 //! creates only `journal/` and `backups/`; it deliberately does not create
-//! `logs/`. This module fills that gap: [`build_file_appender`] lazily
+//! `logs/`. This module fills that gap. [`build_file_appender`] lazily
 //! creates `<state>/patina/logs/` on first start and builds a daily-rotating
 //! [`tracing_appender::rolling::RollingFileAppender`] that keeps the seven
 //! most recent files.
@@ -11,7 +11,7 @@
 //! The watcher composes the returned non-blocking writer into its
 //! `tracing` subscriber as the file layer (in foreground mode it also keeps a
 //! stderr layer). The returned [`tracing_appender::non_blocking::WorkerGuard`]
-//! must be held for the watcher's process lifetime: dropping it flushes and
+//! must be held for the watcher's process lifetime. Dropping it flushes and
 //! tears down the background writer thread, so a watcher that drops the guard
 //! early loses buffered log lines.
 //!
@@ -77,10 +77,10 @@ pub enum LoggingError {
 /// A non-blocking file-appender handle for the watcher's structured log.
 ///
 /// `writer` is the non-blocking writer the `tracing` subscriber's file layer
-/// wraps. `guard` is the flush guard that must outlive every log call: drop it
-/// and the background writer thread shuts down, discarding any not-yet-flushed
-/// lines. The watcher holds the whole [`FileAppender`] for its process
-/// lifetime.
+/// wraps. `guard` is the flush guard that must outlive every log call.
+/// Dropping it shuts down the background writer thread, discarding any
+/// not-yet-flushed lines. The watcher holds the whole [`FileAppender`] for its
+/// process lifetime.
 #[must_use = "the WorkerGuard inside must be held for the watcher's lifetime or buffered logs are lost"]
 pub struct FileAppender {
     /// Non-blocking writer for the `tracing` subscriber's file layer.

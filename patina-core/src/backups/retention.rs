@@ -1,5 +1,5 @@
-//! Count-based backup retention: keep the newest N apply cycles, GC the
-//! rest.
+//! Count-based backup retention. Keeps the newest N apply cycles and GCs
+//! the rest.
 
 use super::BackupError;
 use camino::Utf8Path;

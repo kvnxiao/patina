@@ -1,9 +1,9 @@
 //! Filesystem probing and backup-path mirroring for crash recovery.
 //!
-//! Recovery never trusts the advisory progress cursor;
-//! it asks the real filesystem what state each planned target is in and
-//! consults the per-apply backup directory to decide how to reverse the
-//! operation. This module owns those two pure-ish helpers:
+//! Recovery never trusts the advisory progress cursor. It asks the
+//! filesystem what state each planned target is in, and checks the
+//! per-apply backup directory to decide how to reverse the operation.
+//! This module owns those two pure-ish helpers:
 //!
 //! - [`mirror_backup_path`] computes where the backup of a given target lives
 //!   under `<backups>/<ts>/`. The mapping mirrors the target's absolute path
@@ -17,12 +17,12 @@
 //!
 //! The probe is deliberately coarse. Recovery only requires
 //! that completed operations be reversed to the pre-apply state using
-//! backups and inverse ops; it does not require distinguishing a
+//! backups and inverse ops. It does not need to distinguish a
 //! half-written copy from a fully-written one, because the reversal is
 //! the same either way: restore the backup (overwrite) or delete the
-//! target (fresh creation). A finer pre-state-hash probe can layer on
-//! later when the plan records per-operation hashes; the `Probe` enum is
-//! `non_exhaustive` to keep that door open.
+//! target (fresh creation). A finer pre-state-hash probe can be added
+//! later, once the plan records per-operation hashes. The `Probe` enum
+//! is `non_exhaustive` to allow that extension without a breaking change.
 
 use super::PlannedOperation;
 use camino::Utf8Path;
@@ -42,9 +42,9 @@ pub enum Probe {
 
 /// Probe the filesystem for the current state of an operation's target.
 ///
-/// Uses `symlink_metadata` so a symbolic link, including a dangling one
-/// a partially-applied symlink op may have left, is reported as
-/// [`Probe::Present`] rather than being followed to a missing destination.
+/// Uses `symlink_metadata` so a symbolic link is reported as
+/// [`Probe::Present`], not followed to a missing destination. This
+/// includes a dangling link a partially-applied symlink op may have left.
 #[must_use = "the probe result decides whether the operation is reversed"]
 pub fn classify_target(target: &Utf8Path) -> Probe {
     match fs_err::symlink_metadata(target) {
@@ -69,9 +69,9 @@ pub fn operation_target(op: &PlannedOperation) -> &str {
 /// The target's absolute path is mirrored beneath the timestamped root. The
 /// platform's path prefix is folded into ordinary path components, so the
 /// backup tree can hold targets from any volume without collision. That prefix
-/// is the leading `/` on Unix, and the `C:\` drive prefix on Windows. This
-/// is the inverse map the backup writer applies before an overwrite,
-/// and the map recovery applies to find the original bytes.
+/// is the leading `/` on Unix, and the `C:\` drive prefix on Windows. The
+/// backup writer applies this mapping before an overwrite, and recovery
+/// applies it to find the original bytes.
 ///
 /// # Examples
 ///
@@ -98,19 +98,19 @@ pub fn mirror_backup_path(
 }
 
 /// Decompose an absolute target path into the ordinary directory/file
-/// components that mirror beneath the backup root. The platform root/prefix
-/// and any `.` / `..` are dropped, so the mirror is a pure containment of the
-/// target beneath `<backups>/<ts>/`.
+/// components that mirror beneath the backup root. The platform root or
+/// prefix, and any `.` / `..`, are dropped, so the mirror contains only
+/// the target's own path beneath `<backups>/<ts>/`.
 fn mirror_components(target: &Utf8Path) -> Vec<String> {
     use camino::Utf8Component;
 
     target
         .components()
         .filter_map(|component| match component {
-            // The leading `/` (Unix) and the `C:\` prefix / drive
-            // (Windows) are folded away: the backup root supplies the
-            // anchor, and a Windows drive letter is preserved as a plain
-            // component (`C`) so cross-volume targets do not collide.
+            // The leading `/` on Unix, and the `C:\` prefix or drive on
+            // Windows, are folded away: the backup root supplies the anchor.
+            // A Windows drive letter is preserved as a plain component
+            // (`C`), so cross-volume targets do not collide.
             Utf8Component::Prefix(prefix) => {
                 let raw = prefix.as_str();
                 let cleaned: String = raw.chars().filter(|c| c.is_alphanumeric()).collect();

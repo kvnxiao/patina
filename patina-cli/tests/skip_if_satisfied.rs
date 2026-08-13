@@ -8,36 +8,35 @@
 //! ## Per-entry skip
 //!
 //! A re-apply over a partially-drifted repo must leave the already-satisfied
-//! (`Unchanged`) entry completely untouched (same inode/mtime, no backup
-//! entry) while mutating the drifted entry and backing up its prior bytes.
-//! The skipped entry must still be recorded in the commit so
+//! (`Unchanged`) entry completely untouched, with the same inode and mtime
+//! and no backup entry. It must still mutate the drifted entry and back up
+//! its prior bytes. The skipped entry stays recorded in the commit, so
 //! `patina status` reports it `Clean` and a later reap never removes it.
 //!
 //! ## Full-no-op short-circuit
 //!
-//! When *every* entry is `Unchanged` and there is nothing to reap, the whole
-//! apply is a full no-op: it writes no new journal record and creates no new
-//! backup cycle, leaving the prior commit authoritative,
-//! and it skips the diff-and-prompt confirmation entirely, presenting no
-//! prompt and reading no stdin. The interactive prompt-skip
-//! itself is unit-tested in `patina-cli/src/cmd/apply.rs` (the subprocess
-//! fixture here pins stdin to a non-TTY); this suite covers the no-write
-//! property over the real engine.
+//! When every entry is `Unchanged` and there is nothing to reap, the apply is
+//! a full no-op. It writes no new journal record and creates no new backup
+//! cycle, leaving the prior commit authoritative. It also skips the
+//! diff-and-prompt confirmation entirely, presenting no prompt and reading no
+//! stdin. The interactive prompt-skip itself is unit-tested in
+//! `patina-cli/src/cmd/apply.rs` (the subprocess fixture here pins stdin to a
+//! non-TTY); this suite covers the no-write property over the real engine.
 //!
 //! ## Rollback fidelity for a mixed commit
 //!
-//! A committed apply records one disposition per target. `patina rollback`
-//! must honour those dispositions: an `Unchanged` target (which took no
-//! backup) is left byte-for-byte in place, a `Create` target is deleted, and
-//! an `Update` target is restored to its pre-apply bytes from the backup.
+//! A committed apply records one disposition per target, and `patina
+//! rollback` honours each one. An `Unchanged` target took no backup, so
+//! rollback leaves it byte-for-byte in place. A `Create` target is deleted.
+//! An `Update` target is restored to its pre-apply bytes from the backup.
 //!
 //! ## `--json` per-entry `state`
 //!
 //! Each `--json` plan entry carries a `state` field equal to the target's
-//! classified disposition label (`create` / `update` / `unchanged`), and a
-//! fully-satisfied repo still emits the standard envelope shape: every entry
-//! `unchanged` (zero create/update change counts), not a reduced or
-//! special-cased document.
+//! classified disposition label (`create` / `update` / `unchanged`). A
+//! fully-satisfied repo still emits the standard envelope shape. Every entry
+//! reports `unchanged`, with zero create/update change counts, in the same
+//! document shape as a changing apply.
 
 mod common;
 
@@ -157,18 +156,19 @@ fn engine_canonical(target: &Utf8Path) -> Utf8PathBuf {
 #[test]
 fn fully_satisfied_reapply_writes_no_new_journal_or_backup() {
     // After a converging first apply, a second apply over the unchanged source
-    // is a full no-op: it must add no new `*.plan` / `*.COMMIT` to the journal
+    // is a full no-op. It must add no new `*.plan` / `*.COMMIT` to the journal
     // directory, must not rewrite the existing `<ts>.COMMIT`, and must create
     // no new backup-cycle directory. The prior commit stays the single
     // authoritative record.
     //
-    // A basename-set compare alone is NOT enough: `current_timestamp()` is
+    // A basename-set compare alone is not enough. `current_timestamp()` is
     // second-resolution, so two back-to-back applies usually share a `<ts>`,
     // and a full write cycle would overwrite `<ts>.COMMIT` in place, leaving
     // the basename set identical. The collision-proof signal is the commit
-    // file's own identity (mtime + bytes): a write cycle changes at least one,
-    // so disabling the no-op short-circuit turns this test red regardless of
-    // whether the two applies land in the same wall-clock second.
+    // file's own identity, its mtime and bytes. A write cycle changes at
+    // least one of those, so disabling the no-op short-circuit turns this
+    // test red regardless of whether the two applies land in the same
+    // wall-clock second.
     let f = Fixture::new();
     let m = f.module(
         "m",
@@ -186,7 +186,6 @@ target = "~/.rc"
     fs_err::write(m.join("a_src"), b"a-bytes").expect("write a_src");
     fs_err::write(m.join("rc.tmpl"), b"export EDITOR=vim\n").expect("write rc.tmpl");
 
-    // First apply converges the repo and writes the authoritative commit.
     assert_eq!(
         code(&f.apply(&["--yes"])),
         0,
@@ -198,16 +197,15 @@ target = "~/.rc"
     let journal_before = entry_names(&journal_dir);
     let backups_before = entry_names(&backups_dir);
 
-    // Capture the authoritative commit's collision-proof identity: its bytes
-    // and its mtime. A full plan→commit write cycle would rewrite this file
-    // (changing the bytes and/or the mtime) even when the new timestamp
-    // collides with the old basename.
+    // Capture the authoritative commit's collision-proof identity, its bytes
+    // and its mtime. A full plan-to-commit write cycle would rewrite this
+    // file's bytes or mtime even when the new timestamp collides with the
+    // old basename.
     let commit_path = sole_commit_file(&journal_dir);
     let commit_bytes_before =
         fs_err::read(commit_path.as_std_path()).expect("read commit bytes before");
     let commit_mtime_before = mtime(&commit_path);
 
-    // Second apply over the unchanged source is the full no-op.
     let second = f.apply(&["--yes"]);
     assert_eq!(
         code(&second),
@@ -217,10 +215,10 @@ target = "~/.rc"
     );
 
     // The journal directory gained no `*.plan` / `*.COMMIT` entry, and the
-    // backups directory gained no new cycle. Comparing the full
-    // entry set, not just counts, also catches a stray `.progress` file.
-    // (Necessary but, on its own, collision-blind; the identity asserts below
-    // are what make removing the feature turn this test red.)
+    // backups directory gained no new cycle. Comparing the full entry set,
+    // not just counts, also catches a stray `.progress` file. This check
+    // alone cannot detect a same-second overwrite; the identity asserts below
+    // make removing the feature turn this test red.
     assert_eq!(
         entry_names(&journal_dir),
         journal_before,
@@ -232,10 +230,10 @@ target = "~/.rc"
         "a no-op re-apply must add no new backup cycle"
     );
 
-    // The collision-proof core: the sole `<ts>.COMMIT` was neither rewritten
-    // nor replaced. Its path, bytes, and mtime are all unchanged, so a full
-    // write cycle (which deletes/rewrites the commit) cannot pass even when
-    // the second apply lands in the same wall-clock second.
+    // The sole `<ts>.COMMIT` was neither rewritten nor replaced. Its path,
+    // bytes, and mtime are all unchanged, so a full write cycle, which
+    // deletes and rewrites the commit, cannot pass even when the second
+    // apply lands in the same wall-clock second.
     let commit_path_after = sole_commit_file(&journal_dir);
     assert_eq!(
         commit_path_after, commit_path,
@@ -255,12 +253,13 @@ target = "~/.rc"
 
 #[test]
 fn fully_satisfied_apply_without_yes_skips_prompt_and_reports_up_to_date() {
-    // A fully-satisfied repo applied WITHOUT `--yes` must short-circuit before
-    // the diff-and-prompt branch: it prints the deterministic up-to-date line
-    // and completes exit 0 without reading stdin and without rendering a diff.
-    // The no-op branch precedes the `(yes, tty)` prompt decision in the human
-    // path, so neither the prompt nor a stdin read is ever reached. Feeding a
-    // decline answer on stdin therefore changes nothing.
+    // A fully-satisfied repo applied without `--yes` must short-circuit
+    // before the diff-and-prompt branch. It prints the deterministic
+    // up-to-date line and exits 0 without reading stdin and without
+    // rendering a diff. The no-op branch precedes the `(yes, tty)` prompt
+    // decision in the human path, so neither the prompt nor a stdin read is
+    // ever reached. Feeding a decline answer on stdin therefore changes
+    // nothing.
     let f = Fixture::new();
     let m = f.module(
         "m",
@@ -279,11 +278,11 @@ mode = "copy"
         "first apply must succeed and converge the repo"
     );
 
-    // Re-apply without `--yes`. If the no-op short-circuit did NOT fire, the
+    // Re-apply without `--yes`. If the no-op short-circuit did not fire, the
     // human path would either preview the diff (non-interactive) or prompt,
-    // and both of those omit the up-to-date line and emit a diff body. Asserting
-    // the up-to-date line is present and no `Apply?` prompt text reached
-    // stderr proves the prompt/stdin branch was skipped entirely.
+    // and both of those omit the up-to-date line and emit a diff body. The
+    // up-to-date line and the absence of `Apply?` in stderr together show the
+    // prompt/stdin branch was skipped entirely.
     let out = f.apply(&[]);
     assert_eq!(
         code(&out),
@@ -306,8 +305,8 @@ mode = "copy"
 #[test]
 fn unchanged_entry_is_not_rewritten_or_backed_up_while_drift_is() {
     // Two `copy` entries. After the first apply both targets match their
-    // source. We then drift exactly one (`b`) and re-apply: `a` must be left
-    // byte-for-byte with its original mtime and contribute no backup entry,
+    // source. The test then drifts exactly one (`b`) and re-applies. `a`
+    // must stay byte-for-byte with its original mtime and no backup entry,
     // while `b` is rewritten and its prior (drifted) bytes are backed up.
     let f = Fixture::new();
     let m = f.module(
@@ -351,7 +350,7 @@ mode = "copy"
         String::from_utf8_lossy(&second.stderr)
     );
 
-    // The Unchanged entry's mtime is preserved: it was neither removed nor
+    // The Unchanged entry's mtime is preserved. It was neither removed nor
     // rewritten.
     assert_eq!(
         mtime(&a_out),
@@ -364,15 +363,12 @@ mode = "copy"
         "the Unchanged target keeps its bytes"
     );
 
-    // The drifted entry is updated back to the source bytes.
     assert_eq!(
         fs_err::read(b_out.as_std_path()).expect("read b_out"),
         b"b-bytes",
         "the drifted target is re-materialized to the source"
     );
 
-    // The second run's backup cycle holds the drifted target's prior bytes but
-    // no entry for the Unchanged target.
     let backups_root = f.state_root().join("backups");
     let cycle = latest_backup_cycle(&backups_root).expect("a backup cycle for the Update");
     let names = file_names_under(&cycle);
@@ -404,14 +400,14 @@ mode = "copy"
 
 #[test]
 fn copy_tree_re_apply_restores_drift_and_backs_up_the_tree_as_a_unit() {
-    // Tree path through the real engine: a `copy-tree` with three
-    // leaves, one drifted out of band, re-applies to restore the drifted leaf.
-    // The whole target directory is backed up as a unit (the
+    // Tree path through the real engine. A `copy-tree` with three leaves, one
+    // drifted out of band, re-applies to restore the drifted leaf. The whole
+    // target directory is backed up as a unit (the
     // `backup_before_overwrite(<dir>)` model), so every leaf's prior bytes,
-    // including the clean ones, land in the backup cycle. (The per-leaf
-    // write-skip itself, that a clean leaf's link/file is not re-created, is
-    // asserted exactly by the `copy_tree` / `tree_symlink` executor unit
-    // tests, which observe that an unselected leaf is never written.)
+    // including the clean ones, land in the backup cycle. The per-leaf
+    // write-skip, where a clean leaf's link or file is not re-created, is
+    // tested directly by the `copy_tree` / `tree_symlink` executor unit
+    // tests.
     let f = Fixture::new();
     let m = f.module(
         "m",
@@ -447,7 +443,7 @@ mode = "copy"
 
     // The re-apply backed up the target directory as a unit, so the backup
     // cycle holds the drifted leaf's prior bytes. The pre-drift bytes are the
-    // ground truth recovery/rollback restores from.
+    // ground truth that recovery and rollback restore.
     let backups_root = f.state_root().join("backups");
     let cycle = latest_backup_cycle(&backups_root).expect("a backup cycle for the drifted tree");
     let cycle_ts = cycle.file_name().expect("cycle has a timestamp name");
@@ -466,7 +462,7 @@ fn rollback_leaves_unchanged_deletes_create_and_restores_update() {
     // then `patina rollback` must honour each:
     //   - `unchanged`: the target already matched its source before the apply, so
     //     the apply took no backup; rollback must leave it byte-for-byte in place
-    //     (NOT delete it as a no-backup fresh creation would be).
+    //     (not delete it, as a no-backup fresh creation would).
     //   - `create`: the target was absent before the apply; rollback deletes it.
     //   - `update`: the target existed with different bytes before the apply, so
     //     the apply backed it up; rollback restores the pre-apply bytes.
@@ -513,16 +509,16 @@ mode = "copy"
         String::from_utf8_lossy(&apply.stderr)
     );
 
-    // Sanity: after the apply, all three targets hold the source bytes.
+    // After the apply, all three targets hold the source bytes.
     assert_eq!(
         fs_err::read(create_out.as_std_path()).expect("read create_out post-apply"),
         b"create-bytes",
         "the Create target must be materialized by the apply"
     );
 
-    // `--yes` is required: a non-interactive `rollback` without it only
-    // previews and performs no mutation (it would exit 0 having changed
-    // nothing, masking the behaviour under test).
+    // `--yes` is required. A non-interactive `rollback` without it only
+    // previews and performs no mutation, which would exit 0 having changed
+    // nothing and mask the behaviour under test.
     let rollback = f.run(&["rollback", "--yes"], &[]);
     assert_eq!(
         code(&rollback),
@@ -539,13 +535,11 @@ mode = "copy"
         "the Unchanged target must be left byte-for-byte in place"
     );
 
-    // The Create target is deleted.
     assert!(
         !create_out.as_std_path().exists(),
         "the Create target must be deleted by rollback"
     );
 
-    // The Update target is restored to its pre-apply bytes.
     assert_eq!(
         fs_err::read(update_out.as_std_path()).expect("read update_out post-rollback"),
         b"update-pre-apply",
@@ -557,7 +551,7 @@ mode = "copy"
 fn unchanged_entry_is_recorded_clean_and_survives_reap() {
     // After a re-apply where one entry is Update and another stays Unchanged,
     // `patina status` must report the Unchanged entry's target `Clean` and
-    // present in the output, and a subsequent apply must not reap it.
+    // present in the output. A subsequent apply must not reap it.
     let f = Fixture::new();
     let m = f.module(
         "m",
@@ -585,7 +579,6 @@ mode = "copy"
     fs_err::write(&drift_out, b"tampered").expect("drift drift_out");
     assert_eq!(code(&f.apply(&["--yes"])), 0, "re-apply succeeds");
 
-    // `patina status` reports the Unchanged target Clean and present.
     let status = f.run(&["status"], &[]);
     assert_eq!(
         code(&status),
@@ -603,7 +596,7 @@ mode = "copy"
         "the Unchanged target must be reported Clean: {stdout}"
     );
 
-    // A subsequent apply must not reap the Unchanged target: it is still on
+    // A subsequent apply must not reap the Unchanged target. It stays on
     // disk afterward with its bytes intact.
     assert_eq!(code(&f.apply(&["--yes"])), 0, "third apply succeeds");
     assert_eq!(
@@ -650,11 +643,11 @@ fn state_for(rows: &[serde_json::Value], basename: &str) -> String {
 
 #[test]
 fn json_plan_entries_carry_their_disposition_state() {
-    // A mixed plan producing one Create, one Update, and one Unchanged target.
-    // Each `--json` plan entry must carry a `state` equal to its classified
-    // disposition (`create` / `update` / `unchanged`), and a second run over
-    // the same live state must be byte-identical (the deterministic-stdout
-    // contract).
+    // A mixed plan producing one Create, one Update, and one Unchanged
+    // target. Each `--json` plan entry must carry a `state` equal to its
+    // classified disposition (`create` / `update` / `unchanged`). A second
+    // run over the same live state must be byte-identical under the
+    // deterministic-stdout contract.
     let f = Fixture::new();
     let m = f.module(
         "m",
@@ -714,9 +707,9 @@ mode = "copy"
         "the drifted target must report state `update`; rows: {rows:?}"
     );
 
-    // The plan is now fully satisfied; a second --json apply over the unchanged
-    // state must be byte-identical (determinism). We compare a
-    // re-run against the satisfied state to itself rather than against the
+    // The plan is now fully satisfied; a second --json apply over the
+    // unchanged state must be byte-identical (determinism). The test compares
+    // a re-run against the satisfied state to itself rather than against the
     // mixed first run, since the first run mutated the filesystem.
     let satisfied = f.apply(&["--json", "--yes"]);
     assert_eq!(code(&satisfied), 0, "the satisfying apply must succeed");
@@ -733,11 +726,11 @@ mode = "copy"
 
 #[test]
 fn fully_satisfied_json_emits_standard_envelope_all_unchanged() {
-    // A fully-satisfied repo applied with `--json` must emit the STANDARD
-    // envelope shape (same top-level keys as a changing apply), not a reduced
-    // or special-cased document. Its plan array lists every managed entry with
-    // `state: "unchanged"`, the realization of "zero change counts" against an
-    // envelope that reports state per entry rather than via a separate counter.
+    // A fully-satisfied repo applied with `--json` must emit the standard
+    // envelope shape, the same top-level keys as a changing apply, not a
+    // reduced or special-cased document. Its plan array lists every managed
+    // entry with `state: "unchanged"`; the envelope reports state per entry
+    // rather than through a separate change counter.
     let f = Fixture::new();
     let m = f.module(
         "m",

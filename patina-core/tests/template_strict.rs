@@ -3,11 +3,11 @@
 //! predicate evaluation.
 //!
 //! These tests exercise the public surface of `patina_core::template`.
-//! The end-to-end `patina apply --yes` exit-code-1 surface is
-//! wired by the apply pipeline; here we prove the
-//! plan-computation-level behaviour those layers depend on: an undefined
-//! reference in a template body or a `when` predicate produces a typed
-//! error whose `Display` names the offending variable.
+//! The apply pipeline wires the end-to-end `patina apply --yes`
+//! exit-code-1 surface. These tests prove the plan-computation-level
+//! behaviour that surface depends on. An undefined reference in a
+//! template body or a `when` predicate produces a typed error whose
+//! `Display` names the offending variable.
 
 use patina_core::Builtins;
 use patina_core::Resolver;
@@ -79,9 +79,9 @@ fn bare_undefined_when_predicate_is_an_error_not_false() {
     );
 }
 
-/// The Jinja2-inherited `{% else %}` carve-out: an
-/// undefined reference reached only through the untaken branch renders the
-/// fallback without firing strict-undefined.
+/// The `{% else %}` carve-out, inherited from Jinja2, lets an undefined
+/// reference reached only through the untaken branch render the fallback
+/// without firing strict-undefined.
 #[test]
 fn else_block_undefined_renders_fallback_without_error() {
     let body = "{% if defined %}{{ undefined_var }}{% else %}fallback{% endif %}";
@@ -93,14 +93,13 @@ fn else_block_undefined_renders_fallback_without_error() {
 
 /// The same `MiniJinja` environment instance backs
 /// both `.tmpl` rendering and `when` evaluation. Cloning the engine shares
-/// the single `Arc<Environment>`; both call paths use that one instance.
+/// the single `Arc<Environment>`. Both call paths use that one instance.
 #[test]
 fn render_and_when_share_one_environment_instance() {
     let engine = TemplateEngine::new();
     let for_render = engine.clone();
     let for_when = engine.clone();
 
-    // Both call paths succeed against the shared instance...
     let rendered = for_render
         .render("{{ patina.user }}", &resolver())
         .expect("render path works");
@@ -110,7 +109,6 @@ fn render_and_when_share_one_environment_instance() {
         .expect("when path works");
     assert!(taken);
 
-    // ...and the two clones point at the same `Environment` allocation.
     assert!(
         std::sync::Arc::ptr_eq(
             &for_render.shared_environment(),
@@ -120,8 +118,8 @@ fn render_and_when_share_one_environment_instance() {
     );
 }
 
-/// A defined user variable renders through under strict-undefined: the
-/// happy path the executor relies on.
+/// A defined user variable renders through under strict-undefined. The
+/// executor relies on this happy path.
 #[test]
 fn defined_variable_renders_through() {
     let resolver = resolver()

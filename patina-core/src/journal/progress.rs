@@ -4,15 +4,15 @@
 //! `<state>/patina/journal/<ts>.progress`. The cursor is advisory: it is
 //! written through to the kernel page cache but is **never** `fsync`-ed
 //! per operation. After a crash the last record may lag the real
-//! filesystem state by at most one operation, which is why crash
-//! recovery probes the filesystem rather than trusting the
-//! cursor. Skipping the per-op `fsync` is what keeps a 100-operation
-//! apply from paying 100 durability syscalls.
+//! filesystem state by at most one operation. This is why crash recovery
+//! probes the filesystem rather than trusting the cursor. Skipping the
+//! per-op `fsync` keeps a 100-operation apply from paying 100 durability
+//! syscalls.
 //!
 //! Each record is a fixed-width little-endian `u32` operation index
 //! followed by a single completion-marker byte. The fixed width makes a
 //! partially-written trailing record (a torn tail after a crash) trivial
-//! to detect during recovery: any tail shorter than [`RECORD_LEN`] is
+//! to detect during recovery. Any tail shorter than [`RECORD_LEN`] is
 //! discarded.
 
 use super::JournalError;
@@ -32,7 +32,7 @@ pub const RECORD_LEN: usize = core::mem::size_of::<u32>() + 1;
 
 /// Append-only writer for one apply run's progress cursor. Holds the
 /// open file handle so each [`record`](ProgressCursor::record) is a bare
-/// append with no re-open and, crucially, no `fsync`.
+/// append with no re-open and no `fsync`.
 #[derive(Debug)]
 pub struct ProgressCursor {
     path: Utf8PathBuf,
@@ -80,7 +80,7 @@ impl ProgressCursor {
         bytes
             .chunks_exact(RECORD_LEN)
             // `chunks_exact(RECORD_LEN=5)` only ever yields 5-byte slices, so
-            // this slice pattern is irrefutable, mirroring the
+            // this slice pattern is irrefutable. It mirrors the
             // `let [b0, b1, b2, b3] = ...` idiom in `record` above. The
             // trailing partial chunk (a torn record) is left in
             // `chunks_exact`'s remainder and never produced here.

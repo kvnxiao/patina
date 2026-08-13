@@ -3,12 +3,12 @@
     reason = "integration tests use .expect() on fixture setup and assertions; allow-expect-in-tests covers #[cfg(test)] modules but not the top level of a tests/*.rs integration crate."
 )]
 
-//! Integration coverage for `patina add`'s source-kind-aware table routing:
-//! a file source writes a `[[file]]` entry, a directory source
-//! writes a `[[directory]]` entry, and the mode flags are kind-checked.
+//! Integration coverage for `patina add`'s source-kind-aware table routing.
+//! A file source writes a `[[file]]` entry, a directory source writes a
+//! `[[directory]]` entry, and the mode flags are kind-checked.
 //!
 //! Each test spawns the real `patina` binary against an isolated tempdir
-//! repo + state + home (via the shared [`common::Fixture`]).
+//! repo, state, and home (via the shared [`common::Fixture`]).
 
 mod common;
 
@@ -105,7 +105,6 @@ fn add_directory_symlink_tree_writes_directory_table_with_mode() {
         Some("symlink-tree")
     );
 
-    // The whole directory tree was staged recursively into the repo.
     let staged = fx.root.join("m").join("nvim");
     assert!(staged.is_dir(), "<repo>/m/nvim must be a directory");
     assert_eq!(
@@ -119,9 +118,9 @@ fn add_directory_symlink_tree_writes_directory_table_with_mode() {
     );
 }
 
-/// A `[[directory]]` entry written by `add` is applyable: a
-/// follow-up `patina apply` materializes the symlink-tree leaves, proving
-/// `add` wrote a correct directory entry (not just correct manifest text).
+/// A `[[directory]]` entry written by `add` is applyable. A follow-up
+/// `patina apply` materializes the symlink-tree leaves, proving `add` wrote
+/// a correct directory entry, beyond correct manifest text alone.
 #[test]
 fn add_directory_then_apply_materializes_leaf_symlinks() {
     let fx = Fixture::new();
@@ -143,7 +142,6 @@ fn add_directory_then_apply_materializes_leaf_symlinks() {
         stderr(&applied)
     );
 
-    // The leaf target is now a symbolic link into the staged source.
     let leaf = fx.home.join("nvim").join("init.lua");
     assert!(
         is_symlink(&leaf),
@@ -176,7 +174,8 @@ fn add_symlink_tree_on_a_file_is_rejected() {
         stderr.contains("--symlink-tree") && stderr.contains("file"),
         "stderr must name --symlink-tree and the file kind, got: {stderr}"
     );
-    // No module manifest was written: the kind check runs before staging.
+    // No module manifest is written, because the kind check runs before
+    // staging.
     assert!(
         !fx.root.join("m").join("patina.toml").exists(),
         "no manifest should be written on a kind-mismatch refusal"

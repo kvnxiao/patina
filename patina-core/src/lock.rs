@@ -15,17 +15,16 @@
 //!   exclusive acquirer and vice versa. `status` caps its wait at
 //!   [`SHARED_TIMEOUT`]; on expiry it warns and proceeds without the lock (the
 //!   read-only escape hatch). The lock module surfaces the typed
-//!   [`LockError::Timeout`]; the warn-and-proceed policy lives at the `status`
+//!   [`LockError::Timeout`]. The warn-and-proceed policy lives at the `status`
 //!   call site.
 //!
-//! ## Acquisition is a bounded poll, not an unbounded block
+//! ## Acquisition is a bounded poll
 //!
-//! [`acquire`] loops on `fs2`'s non-blocking `try_lock_*` calls with a
-//! short sleep between attempts rather than calling the unbounded
-//! `lock_exclusive` / `lock_shared`. This is what makes the timeout cap
-//! enforceable, and parameterisable down to milliseconds so the
-//! integration suite can exercise the timeout path without waiting a real
-//! minute.
+//! [`acquire`] loops on `fs2`'s non-blocking `try_lock_*` calls with a short
+//! sleep between attempts, rather than calling the unbounded
+//! `lock_exclusive` / `lock_shared`. The design keeps the timeout cap
+//! enforceable and parameterisable down to milliseconds, so the integration
+//! suite can exercise the timeout path without waiting a real minute.
 //!
 //! ## Release is the OS's job
 //!
@@ -179,8 +178,8 @@ pub enum LockError {
 ///
 /// The guard is deliberately opaque: callers hold it for the duration of
 /// the critical section and let it drop at scope end. There is no manual
-/// `release`; relying on `Drop` is what guarantees release on both the
-/// happy path and on a panic-unwind.
+/// `release`. Relying on `Drop` guarantees release on both the happy path
+/// and a panic unwind.
 #[derive(Debug)]
 #[must_use = "the lock is released as soon as this guard is dropped; bind it for the critical section"]
 pub struct LockGuard {
@@ -265,10 +264,10 @@ pub fn acquire(path: &Utf8Path, kind: LockKind, timeout: Duration) -> Result<Loc
 /// single non-blocking attempt, never waiting for a conflicting holder.
 ///
 /// This is the zero-wait counterpart to [`acquire`]: it makes exactly one
-/// `try_lock_*` attempt and, if the lock is already held, returns
-/// [`LockError::Contended`] immediately rather than polling. It exists for
-/// the apply path's `NonBlocking` policy (the watcher), which
-/// must skip on contention instead of blocking a background reapply.
+/// `try_lock_*` attempt, and returns [`LockError::Contended`] immediately if
+/// the lock is already held, rather than polling. It exists for the apply
+/// path's `NonBlocking` policy (the watcher's background reapply), which
+/// must not block waiting for the lock.
 ///
 /// On success the returned [`LockGuard`] holds the lock until it is
 /// dropped, exactly as for [`acquire`].
@@ -324,8 +323,8 @@ fn try_lock(file: &std::fs::File, kind: LockKind) -> Result<(), std::io::Error> 
 
 /// Distinguish "another holder has the lock" (retry) from a genuine I/O
 /// failure (give up). `fs2` reports contention via
-/// [`fs2::lock_contended_error`], whose `kind`/`raw_os_error` we match
-/// against the returned error.
+/// [`fs2::lock_contended_error`]; this function matches its `kind` and
+/// `raw_os_error` against the returned error.
 fn is_contended(err: &std::io::Error) -> bool {
     let contended = fs2::lock_contended_error();
     err.kind() == contended.kind() && err.raw_os_error() == contended.raw_os_error()

@@ -1,9 +1,9 @@
 //! Remote git sources: the cache, the lockfile, the update gate, and the
 //! `git` subprocess layer they share.
 //!
-//! The root manifest declares each remote once; a managed entry naming one
-//! resolves its source against a pinned checkout of that repository instead of
-//! its own module directory. The pieces:
+//! The root manifest declares each remote once. A managed entry naming one
+//! resolves its source against a pinned checkout of that repository, instead
+//! of its own module directory. The pieces:
 //!
 //! - [`git`] wraps the `git` binary on `PATH` in typed calls.
 //! - [`cache`] owns the per-machine checkout layout under `<state>/remotes/`.
@@ -27,10 +27,10 @@ use thiserror::Error;
 
 /// Every way the remote subsystem can fail.
 ///
-/// Opaque over a boxed private repr for two reasons. The failure set grows as
-/// the subsystem does. And [`EngineError`](crate::error::EngineError) is
-/// returned by value from every fallible engine entry point, so a wide variant
-/// here would widen every `Result` in the crate.
+/// Opaque over a boxed private repr. The failure set grows as the subsystem
+/// does. [`EngineError`](crate::error::EngineError) is also returned by value
+/// from every fallible engine entry point, so a wide variant here would widen
+/// every `Result` in the crate.
 #[derive(Debug, Error)]
 #[error(transparent)]
 pub struct RemoteError(Box<RemoteRepr>);
@@ -45,7 +45,7 @@ impl RemoteError {
     /// Replace the placeholder lockfile path a string-level parse carries with
     /// the real one, so the message names the file the user can open.
     ///
-    /// [`lockfile::Lockfile::parse`] works on text and cannot know the path;
+    /// [`lockfile::Lockfile::parse`] works on text and cannot know the path.
     /// [`lockfile::Lockfile::load`] does, and calls this on the way out.
     pub(crate) fn with_lockfile_path(mut self, path: &Utf8Path) -> Self {
         if let RemoteRepr::LockfileToml {
@@ -112,10 +112,10 @@ impl RemoteError {
     /// the rev this machine could not materialize.
     ///
     /// The underlying `git` error alone says a fetch failed. The user needs to
-    /// know *which pin* they cannot converge to, because that is what a
-    /// `git pull` or a network fix has to satisfy. A failure that is not a
-    /// `git` failure, a cache write for instance, already names its own path
-    /// and passes through.
+    /// know which pin failed to converge, because a `git pull` or a network
+    /// fix has to satisfy that pin. A failure that is not a `git` failure, a
+    /// cache write for instance, already names its own path and passes
+    /// through.
     #[must_use = "the restated error is what the user sees"]
     pub fn into_cold_cache(self, name: &str, rev: &str) -> Self {
         match *self.0 {

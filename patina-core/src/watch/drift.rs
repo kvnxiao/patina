@@ -25,25 +25,26 @@
 //!
 //! A drift entry is only meaningful relative to the apply it was measured
 //! against. When a fresh `patina apply` commits, its journal becomes the new
-//! truth, and any cache bound to the prior journal `<ts>` is stale. The handler
-//! detects this on the next batch, because the persisted cache's `journal_ts`
+//! truth, and any cache bound to the prior journal `<ts>` is stale. The
+//! handler detects this on the next batch. The persisted cache's `journal_ts`
 //! no longer matches the journal timestamp the watcher is now reading against.
 //! It then clears the prior era's entries, before binding the new timestamp
-//! and upserting this batch's divergences. A cache already bound to the current
-//! journal is left intact, so the per-target rate-limit ledger survives across
-//! batches within one journal era. This is what keeps a `patina debug
-//! drift-cache` view from showing entries mis-bound to a journal they were
-//! never measured against.
+//! and upserting this batch's divergences. A cache already bound to the
+//! current journal is left intact, so the per-target rate-limit ledger
+//! survives across batches within one journal era. A `patina debug
+//! drift-cache` view therefore never shows an entry mis-bound to a journal it
+//! was never measured against.
 //!
 //! ## Why the rate limit reads the cache's own `detected_at_unix`
 //!
 //! The rate limit caps notifications at one per target per 60-second window.
 //! The window is keyed on the [`DriftEntry::detected_at_unix`] the previous
-//! drift detection persisted: before notifying, the handler checks the cache
-//! for a prior entry for the same target and suppresses the notification when
-//! the prior detection is within the window. The cache is therefore the single
-//! source of truth for the rate limit (no parallel in-memory ledger), so the
-//! limit survives across debounced batches the same way the cache does.
+//! drift detection persisted. Before notifying, the handler checks the cache
+//! for a prior entry for the same target. It suppresses the notification when
+//! the prior detection falls inside the window. The cache is therefore the
+//! single source of truth for the rate limit, with no parallel in-memory
+//! ledger, so the limit survives across debounced batches the same way the
+//! cache does.
 //!
 //! ## The notification sink
 //!
@@ -79,8 +80,8 @@ pub const DRIFT_CACHE_FILENAME: &str = "drift.cache";
 /// `(title, body)` pairs in memory so the drift scenarios assert
 /// deterministically on headless CI runners that have no notification daemon.
 pub trait NotificationSink {
-    /// Emit one desktop notification with the given title and body. The sink is
-    /// best-effort: a failure to reach the OS notification daemon must not
+    /// Emit one desktop notification with the given title and body. The sink
+    /// is best-effort. A failure to reach the OS notification daemon must not
     /// crash the watcher, so an implementation logs and swallows transport
     /// errors rather than returning them.
     fn notify(&self, title: &str, body: &str);
@@ -91,7 +92,7 @@ pub trait NotificationSink {
 ///
 /// A failure to reach the OS notification daemon (no `DBus` session bus on
 /// Linux, a denied notification permission on macOS) is logged at `warn` and
-/// swallowed: a missing notification daemon must never crash the watcher.
+/// swallowed. A missing notification daemon must never crash the watcher.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct NotifySink;
 
@@ -104,7 +105,7 @@ impl NotificationSink for NotifySink {
         {
             Ok(_handle) => {}
             Err(error) => {
-                // Best-effort: a headless host or a denied permission must not
+                // Best-effort. A headless host or a denied permission must not
                 // crash the watcher. Surface the failure in the log and move on.
                 tracing::warn!(
                     target: "patina_core",
@@ -147,7 +148,7 @@ pub enum DriftOutcome {
 /// the content targets were supplied. A target whose path is not in the batch
 /// is skipped entirely (it produces no outcome).
 ///
-/// Cache writes are coalesced: all detected divergences from this batch are
+/// Cache writes are coalesced. All detected divergences from this batch are
 /// upserted into a single atomic [`write_drift_cache`], so a batch touching
 /// several drifted targets rewrites the cache once rather than per target.
 ///
@@ -164,11 +165,11 @@ pub enum DriftOutcome {
 ///   used for the rate-limit window.
 /// * `sink` - the notification sink to emit through.
 ///
-/// # Errors
+/// # Behavior
 ///
-/// Returns the per-target outcomes; a cache-write failure is logged at `warn`
-/// and folds the affected outcomes to their non-cached form rather than
-/// propagating; a transient cache-write failure must not crash the watcher.
+/// Returns the per-target outcomes. A cache-write failure is logged at `warn`
+/// and folds the affected outcomes into their non-cached form instead of
+/// propagating. A transient cache-write failure must not crash the watcher.
 pub fn handle_target_events(
     content_targets: &[ContentTarget],
     batch_paths: &[Utf8PathBuf],
@@ -179,22 +180,16 @@ pub fn handle_target_events(
 ) -> Vec<DriftOutcome> {
     let cache_path = state_dir.join(DRIFT_CACHE_FILENAME);
     // The prior cache backs the rate-limit decision. A missing or
-    // unreadable cache is treated as "no prior detections": the first drift
-    // after a watcher start always notifies.
+    // unreadable cache is treated as "no prior detections". The first drift
+    // detection after a watcher start always notifies.
     let mut cache = load_drift_cache_file(&cache_path)
         .unwrap_or_else(|_| DriftCache::new(journal_ts, Vec::new()));
-    // Clear-on-new-journal: when a fresh `patina apply`
-    // commits, its journal becomes the new truth and the prior drift cache is
-    // stale: every entry was measured against the superseded apply's
-    // expectations, so it must be dropped rather than silently re-labeled with
-    // the new timestamp. A persisted cache whose bound `journal_ts` no longer
-    // matches the journal the watcher is now reading against is exactly that
-    // superseded cache, so its entries (and the rate-limit ledger they carry)
-    // are cleared here before the new timestamp is bound and this batch's
-    // divergences are upserted. A cache that is already bound to the current
-    // journal is left intact, so the rate limit survives across batches within
-    // one journal era. A fresh/empty cache (no prior file) is bound to
-    // the current timestamp by construction above and has nothing to clear.
+    // Clear-on-new-journal (see the module doc). A persisted cache whose
+    // bound `journal_ts` no longer matches the journal the watcher is now
+    // reading against was measured against a superseded apply, so its
+    // entries are cleared here before the new timestamp is bound. A
+    // fresh/empty cache is already bound to the current timestamp by
+    // construction above, so it has nothing to clear.
     if cache.journal_ts != journal_ts {
         cache.entries.clear();
         journal_ts.clone_into(&mut cache.journal_ts);
@@ -228,8 +223,8 @@ pub fn handle_target_events(
             continue;
         }
 
-        // Divergence: log the DRIFTED event regardless of the rate limit, so
-        // the structured log records every detection even when the
+        // The bytes diverge. Log the `drift` event regardless of the rate
+        // limit, so the structured log records every detection even when the
         // notification is suppressed.
         tracing::warn!(
             target: "patina_core",
@@ -312,7 +307,7 @@ mod tests {
     use std::sync::Mutex;
     use tempfile::TempDir;
 
-    /// A capture notification sink: records the `(title, body)` pairs
+    /// A capture notification sink. Records the `(title, body)` pairs
     /// it was asked to emit so a test can assert on the count and content
     /// without a real OS notification daemon.
     #[derive(Default)]
@@ -499,8 +494,8 @@ mod tests {
         );
     }
 
-    /// A content target whose path is not in the batch is skipped entirely:
-    /// it produces no outcome and no notification.
+    /// A content target whose path is not in the batch is skipped entirely.
+    /// It produces no outcome and no notification.
     #[test]
     fn target_not_in_batch_is_skipped() {
         let (_temp, dir) = temp_state();
@@ -545,11 +540,10 @@ mod tests {
     }
 
     /// Clear-on-new-journal. Once a new `patina apply` commits, its journal
-    /// becomes the new truth. The next drift batch the watcher processes
-    /// against the new `journal_ts` therefore drops the prior journal era's
-    /// entries, rather than re-labeling them with the new timestamp. The
-    /// surviving cache holds only this batch's divergences, bound to the new
-    /// timestamp.
+    /// becomes the new truth. The next drift batch against the new
+    /// `journal_ts` drops the prior journal era's entries rather than
+    /// re-labeling them with the new timestamp. The surviving cache holds
+    /// only this batch's divergences, bound to the new timestamp.
     #[test]
     fn a_journal_timestamp_advance_clears_prior_era_entries() {
         let (_temp, dir) = temp_state();
@@ -613,11 +607,10 @@ mod tests {
         );
     }
 
-    /// A repeated drift on the **same** target within one journal era keeps the
-    /// rate-limit ledger intact: the timestamp does not advance, so the
-    /// clear-on-new-journal path does not fire and the prior entry survives to
-    /// suppress the second notification (the rate-limit boundary against the
-    /// new clear-on-new-journal behaviour).
+    /// A repeated drift on the **same** target within one journal era keeps
+    /// the rate-limit ledger intact. The timestamp does not advance, so the
+    /// clear-on-new-journal path does not fire. The prior entry survives and
+    /// suppresses the second notification.
     #[test]
     fn same_journal_era_preserves_the_rate_limit_ledger() {
         let (_temp, dir) = temp_state();
@@ -652,8 +645,9 @@ mod tests {
         assert_eq!(sink.count(), 1, "the rate-limit ledger survived the batch");
     }
 
-    /// Two distinct drifted targets in one batch each notify (the rate limit is
-    /// per-target, not global) and the cache is written once with both entries.
+    /// Two distinct drifted targets in one batch each notify. The rate limit
+    /// is per-target, not global. The cache is written once with both
+    /// entries.
     #[test]
     fn two_drifted_targets_each_notify_and_coalesce_to_one_cache_write() {
         let (_temp, dir) = temp_state();

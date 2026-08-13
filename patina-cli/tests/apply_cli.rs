@@ -1,10 +1,10 @@
 //! Integration tests for the `patina apply` CLI surface.
 //!
-//! Each test builds a self-contained tempdir dotfiles repository, points
-//! `PATINA_REPO` at it, and isolates the per-machine state directory under
-//! the tempdir so the apply never touches the developer's real `$HOME`.
-//! The binary is invoked as a subprocess (its stdin is therefore not a
-//! TTY, exercising the non-interactive path).
+//! Each test builds a self-contained tempdir dotfiles repository and points
+//! `PATINA_REPO` at it. It isolates the per-machine state directory under
+//! the tempdir, so the apply never touches the developer's real `$HOME`.
+//! The binary runs as a subprocess, so its stdin is not a TTY and it
+//! exercises the non-interactive path.
 
 mod common;
 
@@ -14,8 +14,7 @@ use std::process::Command;
 
 #[test]
 fn non_tty_apply_previews_without_mutating() {
-    // A symlink [[file]] entry, `patina apply` (no --yes) in a
-    // non-TTY: exit 0, no symlink created, stdout shows the diff.
+    // A symlink `[[file]]` entry, applied with no `--yes` in a non-TTY shell.
     let f = Fixture::new();
     let module = f.module(
         "shell",
@@ -40,8 +39,7 @@ fn non_tty_apply_previews_without_mutating() {
 
 #[test]
 fn post_apply_hook_failure_rolls_back_and_exits_3() {
-    // A post_apply hook `exit 1` (must_succeed = true default),
-    // `patina apply --yes`: file ops execute then reverse, exit code 3.
+    // The post_apply hook runs `exit 1`; `must_succeed` defaults to true.
     let f = Fixture::new();
     let module = f.module(
         "shell",
@@ -67,9 +65,7 @@ fn post_apply_hook_failure_rolls_back_and_exits_3() {
 
 #[test]
 fn force_deploy_downgrades_hook_failure_and_exits_0() {
-    // Same hook, `patina apply --yes --force-deploy`: file ops
-    // execute, hook fails but is NOT rolled back, stderr warns naming the
-    // hook, exit code 0.
+    // The same hook as above, applied with `--force-deploy`.
     let f = Fixture::new();
     let module = f.module(
         "shell",
@@ -101,8 +97,6 @@ fn force_deploy_downgrades_hook_failure_and_exits_0() {
 
 #[test]
 fn json_without_yes_previews_and_does_not_mutate() {
-    // --json without --yes: a single JSON document with result=previewed
-    // and no filesystem mutation under HOME.
     let f = Fixture::new();
     let module = f.module(
         "shell",
@@ -128,7 +122,6 @@ fn json_without_yes_previews_and_does_not_mutate() {
 
 #[test]
 fn json_with_yes_applies_and_reports_applied() {
-    // --json --yes: result=applied and the symlink lands under HOME.
     let f = Fixture::new();
     let module = f.module(
         "shell",
@@ -159,7 +152,7 @@ fn json_with_yes_applies_and_reports_applied() {
 
 #[test]
 fn cli_variable_override_renders_into_template() {
-    // -v email=... flows into a {{ email }} template render under --json.
+    // `-v email=...` flows into the `{{ email }}` template render.
     let f = Fixture::new();
     let module = f.module(
         "shell",
@@ -184,8 +177,6 @@ fn cli_variable_override_renders_into_template() {
 
 #[test]
 fn missing_pager_falls_back_with_warning() {
-    // --pager=delta on a host without delta: apply succeeds and stderr
-    // carries a one-line fallback warning naming the missing tool.
     let f = Fixture::new();
     let module = f.module(
         "shell",
@@ -224,12 +215,12 @@ fn missing_pager_falls_back_with_warning() {
 #[cfg(not(windows))]
 #[test]
 fn non_windows_symlink_apply_skips_dev_mode_flow() {
-    // On macOS or Linux, a symlink
-    // `[[file]]` apply proceeds with no gate: the Developer
-    // Mode gate reports `Proceed` (the probe is `NotWindows`), so no
-    // registry read happens and `patina-elevate` is never spawned. The
-    // proof is positive: the symlink lands and the command exits 0, which
-    // is only possible if the gate did not short-circuit the apply.
+    // On macOS or Linux, a symlink `[[file]]` apply proceeds with no gate.
+    // The Developer Mode gate reports `Proceed` because the probe is
+    // `NotWindows`, so no registry read happens and `patina-elevate` is
+    // never spawned. This test proves the positive case. The symlink lands
+    // and the command exits 0, which is only possible if the gate did not
+    // short-circuit the apply.
     let f = Fixture::new();
     let module = f.module(
         "shell",
@@ -246,7 +237,7 @@ fn non_windows_symlink_apply_skips_dev_mode_flow() {
         String::from_utf8_lossy(&out.stderr)
     );
 
-    // The symlink materialized, pointing back at the repo source: the gate
+    // The symlink materialized, pointing back at the repo source. The gate
     // proceeded rather than refusing to mutate.
     let target = f.home.join(".rc");
     let meta = fs_err::symlink_metadata(&target).expect("symlink target must exist");
@@ -272,12 +263,11 @@ fn non_windows_symlink_apply_skips_dev_mode_flow() {
     );
 }
 
-// On a Windows host with Developer Mode OFF and a symlink
-// `[[file]]`, a `patina apply --yes` whose UAC consent is declined creates
-// no symbolic link, names `Developer Mode` and `patina doctor --fix` on
-// stderr, and exits 5. Gated `#[ignore]` because it needs a real Windows
-// host and a human (or harness) to decline the UAC dialog; CI is not
-// Windows.
+// On a Windows host with Developer Mode off and a symlink `[[file]]`, a
+// `patina apply --yes` whose UAC consent is declined creates no symbolic
+// link. It names `Developer Mode` and `patina doctor --fix` on stderr, and
+// exits 5. This is gated `#[ignore]` because it needs a real Windows host
+// and a human, or harness, to decline the UAC dialog; CI is not Windows.
 #[cfg(windows)]
 #[test]
 #[ignore = "requires a Windows host with Developer Mode off and a declined UAC dialog"]
@@ -304,8 +294,8 @@ fn windows_declined_uac_exits_5_and_creates_no_symlink() {
     );
 }
 
-// On a Windows host with Developer Mode ON, the apply creates the
-// symlink with no UAC prompt and no `patina-elevate.exe` spawn. Gated
+// On a Windows host with Developer Mode on, the apply creates the symlink
+// with no UAC prompt and no `patina-elevate.exe` spawn. This is gated
 // `#[ignore]` because it needs a real Windows host with Developer Mode
 // enabled; CI is not Windows.
 #[cfg(windows)]

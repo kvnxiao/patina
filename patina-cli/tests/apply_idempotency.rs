@@ -3,14 +3,13 @@
     reason = "integration tests use .expect() on fixtures and asserted output; allow-expect-in-tests covers #[cfg(test)] modules but not the helper functions in tests/*.rs integration crates."
 )]
 
-//! Re-apply idempotency across every [`FileMode`](patina_core::FileMode): a
+//! Re-apply idempotency across every [`FileMode`](patina_core::FileMode). A
 //! second `patina apply` over an unchanged source must converge (exit 0) and
 //! must never mutate a repository source. Two failure modes make that worth
-//! asserting directly: the default `Symlink` mode can delete the source (see
-//! `symlink_reapply.rs`), and the atomic
-//! `SymlinkDir` mode fails with `EEXIST` on re-apply if its executor does
-//! not clear the pre-existing link; this suite locks the guarantee for all
-//! modes so neither recurs.
+//! asserting directly. The default `Symlink` mode can delete the source (see
+//! `symlink_reapply.rs`), and the atomic `SymlinkDir` mode fails with
+//! `EEXIST` on re-apply if its executor does not clear the pre-existing
+//! link. This suite locks the guarantee for all modes so neither recurs.
 
 mod common;
 

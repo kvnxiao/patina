@@ -6,12 +6,12 @@
 //! This test proves the gate actually bites, the most error-prone item in
 //! the crate, rather than trusting it by inspection.
 //!
-//! Rather than scan the shared `target/release/` directory (which races every
-//! other build and may hold stale artifacts from an earlier `--features
-//! windows` run), it drives `cargo build --release --message-format=json` in a
-//! hermetic target dir and reads the set of executables Cargo reports
-//! emitting. That set is authoritative: an artifact Cargo did not build cannot
-//! appear in it.
+//! Scanning the shared `target/release/` directory directly is unreliable.
+//! It races every other build, and may hold stale artifacts from an earlier
+//! `--features windows` run. This test instead drives `cargo build
+//! --release --message-format=json` in a hermetic target dir, and reads
+//! the set of executables Cargo reports emitting. That set is
+//! authoritative. An artifact Cargo did not build cannot appear in it.
 //!
 //! Skipped on Windows, where the opposite is required (the bin *is* built);
 //! this is a non-Windows-only contract.
@@ -55,7 +55,7 @@ fn release_build_emits_patina_but_not_patina_elevate() {
             continue;
         }
         // Binary artifacts carry an `executable` path; library units carry
-        // `null` there. Keep just the file stem so the assertion is
+        // `null` there. This keeps just the file stem, so the assertion is
         // platform-suffix agnostic.
         if let Some(exe) = value.get("executable").and_then(Value::as_str)
             && let Some(name) = Path::new(exe).file_stem().and_then(|s| s.to_str())

@@ -28,7 +28,7 @@ pub const DEFAULT_MIN_AGE: Duration = Duration::from_hours(72);
 /// remote, and this type is where that rule lives: equality, ordering, and
 /// hashing all run over [`RemoteName::key`], so a map keyed by this type
 /// cannot hold one remote twice. [`Display`](std::fmt::Display) renders the
-/// authored spelling, which is what messages and the lockfile keep.
+/// authored spelling, and messages and the lockfile keep that same spelling.
 #[derive(Debug, Clone)]
 pub struct RemoteName {
     /// As authored, for messages and the lockfile table key.
@@ -373,11 +373,11 @@ fn reject_leading_dash(key: &'static str, value: &str) -> Result<(), RemoteConfi
 /// Parse a `<whole number><unit>` duration, where the unit is one of `s`, `m`,
 /// `h`, or `d`.
 ///
-/// Hand-rolled rather than delegated to a dependency: the accepted grammar is
-/// four suffixes over an integer, and it is the whole surface Patina exposes.
-/// Compound forms (`1h30m`), fractions (`1.5h`), signs, and a bare number with
-/// no unit are all rejected, so a typo surfaces as an error instead of a
-/// silently different window.
+/// This parser is hand-rolled: the accepted grammar is four suffixes over an
+/// integer, and it covers every duration format Patina supports. Compound
+/// forms (`1h30m`), fractions (`1.5h`), signs, and a bare number with no unit
+/// are all rejected, so a typo surfaces as an error rather than a silently
+/// different window.
 ///
 /// # Errors
 ///
@@ -631,8 +631,8 @@ mod tests {
 
     #[test]
     fn identity_is_the_folded_key_while_display_keeps_the_authored_spelling() {
-        // The whole point of the type: a map keyed by it cannot hold one remote
-        // twice, yet a message still shows the name as its author wrote it.
+        // This type collapses two spellings of one remote into a single map
+        // entry. A message still shows the name as its author wrote it.
         let written = RemoteName::parse("Humanizer").expect("a legal name");
         let respelled = RemoteName::parse("humanizer").expect("a legal name");
 

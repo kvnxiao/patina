@@ -5,7 +5,7 @@
 //! divergence here. The cache backs the per-target notification rate limit,
 //! the `patina debug drift-cache` decode surface, and the
 //! watcher's own metrics. It is deliberately **never** read by
-//! `patina status`: status derives DRIFTED from its own
+//! `patina status`. Status derives DRIFTED from its own
 //! live re-hash, so a file edited and then reverted reports CLEAN even
 //! while this cache still holds the intervening edit.
 //!
@@ -13,10 +13,11 @@
 //!
 //! The cache is laid out exactly like the journal's binary files, a
 //! fixed-size [`version_envelope`] prefix followed by the
-//! `postcard`-encoded body, but versions independently of the journal:
-//! it carries its own [`DRIFT_CACHE_MAJOR_VERSION`], so a journal format
-//! bump never forces a drift-cache bump (or vice versa). A binary refuses
-//! any cache whose major exceeds its own, naming both versions.
+//! `postcard`-encoded body, but it versions independently of the journal.
+//! It carries its own [`DRIFT_CACHE_MAJOR_VERSION`], so a journal format
+//! bump never forces a drift-cache bump, and a drift-cache bump never forces
+//! a journal bump. A binary refuses any cache whose major exceeds its own,
+//! naming both versions.
 //!
 //! ```text
 //! offset 0   offset 2
@@ -50,7 +51,7 @@ use thiserror::Error;
 
 /// Current on-disk drift-cache format major version. This is the drift
 /// cache's *own* version, intentionally separate from the journal's
-/// [`FILE_MAJOR_VERSION`](crate::journal::FILE_MAJOR_VERSION): the two
+/// [`FILE_MAJOR_VERSION`](crate::journal::FILE_MAJOR_VERSION). The two
 /// formats version independently, so a journal-layout bump must never force
 /// a drift-cache bump. Bump this only when the serialized [`DriftCache`]
 /// layout changes incompatibly; older binaries then refuse the newer file
@@ -182,7 +183,7 @@ pub enum DriftCacheError {
     },
 
     /// The cache file declares a drift-cache major version newer than this
-    /// binary understands. Refusing it is intentional: a forward-compatible
+    /// binary understands. Refusing it is intentional. A forward-compatible
     /// decode would silently misread the cache.
     #[error(
         "drift-cache major version {found} is newer than supported version {supported}; \
@@ -198,8 +199,8 @@ pub enum DriftCacheError {
 
 impl From<crate::version_envelope::EnvelopeError> for DriftCacheError {
     /// Map the shared envelope codec's failure arms onto the drift cache's
-    /// own error vocabulary, mirroring the journal's mapping so the public
-    /// error type does not leak `EnvelopeError`.
+    /// own error vocabulary. This mirrors the journal's mapping, so the
+    /// public error type never leaks `EnvelopeError`.
     fn from(err: crate::version_envelope::EnvelopeError) -> Self {
         match err {
             crate::version_envelope::EnvelopeError::Truncated { got, need } => {
@@ -287,8 +288,8 @@ pub fn render_drift_cache(cache: &DriftCache) -> String {
 }
 
 /// Discard an infallible `String` formatting result, mirroring
-/// `journal/render.rs::ignore_fmt`: it documents that the discard is
-/// deliberate without a bare `let _`.
+/// `journal/render.rs::ignore_fmt`. It documents that the discard is
+/// deliberate, rather than a bare `let _`.
 fn ignore_fmt(_result: std::fmt::Result) {}
 
 /// Lower-case hex-encode a 32-byte hash for the human-readable view. Shared
@@ -384,11 +385,11 @@ mod tests {
     #[test]
     fn decode_uses_its_own_major_not_the_journals() {
         // The drift cache validates against its own DRIFT_CACHE_MAJOR_VERSION,
-        // never the journal's FILE_MAJOR_VERSION: the encoded envelope carries
-        // the drift-cache major and decode accepts it. The two majors version
-        // independently and may coincide (both are currently 1 pre-release),
-        // so this test pins the format-coupling behaviour rather than a
-        // numeric inequality between the constants.
+        // never the journal's FILE_MAJOR_VERSION. The encoded envelope
+        // carries the drift-cache major, and decode accepts it. The two
+        // majors version independently and may coincide (both are currently 1
+        // pre-release), so this test pins the format-coupling behaviour
+        // rather than a numeric inequality between the constants.
         let cache = sample();
         let bytes = cache.encode().expect("encode");
         assert_eq!(

@@ -14,27 +14,28 @@
 //! first, then backup *presence* decides between restore and delete. The three
 //! outcomes, in evaluation order:
 //!
-//! - A target the apply recorded as `Unchanged` is *left in place*: the apply
-//!   skipped both its write and its backup, so its live state already is the
-//!   pre-apply state. The backup is never consulted.
+//! - A target the apply recorded as `Unchanged` is *left in place*. The apply
+//!   skipped both its write and its backup, so its live state is already the
+//!   pre-apply state, and the backup is never consulted.
 //! - A target with a backup under `<state>/patina/backups/<ts>/` is an
-//!   *overwrite*: the apply replaced a pre-existing file, so the original bytes
-//!   are restored from the backup.
-//! - A target with no backup is a *fresh creation*: the apply created it from
-//!   nothing, so reversing means deleting it.
+//!   *overwrite*. The apply replaced a pre-existing file, so rollback restores
+//!   the original bytes from the backup.
+//! - A target with no backup is a *fresh creation*. The apply created it from
+//!   nothing, so reversing it means deleting it.
 //!
 //! Either way the post-rollback state of each target matches the apply's
 //! pre-apply state.
 //!
 //! ## Per-`[[file]]`-entry atomicity
 //!
-//! A multi-target `[[file]]` entry reverts as an atomic unit: every target
-//! in the entry reaches its pre-apply state, or the entry fails and every
-//! target it already reverted is restored to its post-apply state, leaving
-//! the entry untouched. This mirrors the all-or-nothing semantic the engine
-//! applies per-entry during apply and crash recovery. The atomicity is
-//! implemented in `replay` by snapshotting each target's post-apply state
-//! before mutating, then rolling the snapshot back in on any failure.
+//! A multi-target `[[file]]` entry reverts as an atomic unit. Either every
+//! target in the entry reaches its pre-apply state, or the entry fails and
+//! every target it already reverted is rolled forward to its post-apply
+//! state, leaving the entry untouched. This mirrors the all-or-nothing
+//! semantic the engine applies per-entry during apply and crash recovery.
+//! The atomicity is implemented in `replay` by snapshotting each target's
+//! post-apply state before mutating, then rolling the snapshot back in on
+//! any failure.
 //!
 //! ## Locking
 //!
@@ -61,14 +62,14 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum RollbackError {
-    /// No committed apply remains to roll back: the journal holds no
+    /// No committed apply remains to roll back. The journal holds no
     /// `<ts>.COMMIT` sentinel without a matching `<ts>.ROLLED_BACK`. The
     /// CLI surfaces this as exit code 1 with "no prior apply found".
     #[error("no prior apply found")]
     NoPriorApply,
 
-    /// A multi-target `[[file]]` entry could not be reverted as a unit: a
-    /// target's restore/delete failed and the entry's already-reverted
+    /// A multi-target `[[file]]` entry could not be reverted as a unit. A
+    /// target's restore or delete failed, and the entry's already-reverted
     /// targets were rolled forward to their post-apply state, so no partial
     /// restore is left behind. The CLI surfaces this as exit
     /// code 1.

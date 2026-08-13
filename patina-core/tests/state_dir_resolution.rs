@@ -36,8 +36,6 @@ fn env_map(pairs: Vec<(&'static str, String)>) -> impl Fn(&str) -> Option<String
 
 #[test]
 fn linux_xdg_state_home_creates_tree_and_is_idempotent() {
-    // Scenario 1: Linux + XDG_STATE_HOME=T → T/patina/ with journal/,
-    // backups/, and remotes/ subdirs; a second call is a no-op.
     let (_keep, t) = utf8_tempdir();
     let env = env_map(vec![("XDG_STATE_HOME", t.to_string())]);
 
@@ -48,16 +46,12 @@ fn linux_xdg_state_home_creates_tree_and_is_idempotent() {
     assert!(first.join("backups").is_dir(), "backups/ must exist");
     assert!(first.join("remotes").is_dir(), "remotes/ must exist");
 
-    // Idempotency: second call returns same path and does not error
-    // even though the directories already exist.
     let second = resolve_with_env(HostOs::Linux, &env).expect("second resolve");
     assert_eq!(first, second);
 }
 
 #[test]
 fn linux_without_xdg_resolves_under_home_dot_local_state() {
-    // Scenario 2: Linux + XDG_STATE_HOME unset + HOME=H →
-    // H/.local/state/patina/.
     let (_keep, h) = utf8_tempdir();
     let env = env_map(vec![("HOME", h.to_string())]);
 
@@ -70,7 +64,6 @@ fn linux_without_xdg_resolves_under_home_dot_local_state() {
 
 #[test]
 fn macos_resolves_under_application_support() {
-    // Scenario 3: macOS + HOME=H → H/Library/Application Support/patina/.
     let (_keep, h) = utf8_tempdir();
     let env = env_map(vec![("HOME", h.to_string())]);
 
@@ -86,7 +79,6 @@ fn macos_resolves_under_application_support() {
 
 #[test]
 fn windows_resolves_under_localappdata() {
-    // Scenario 4: Windows + LOCALAPPDATA=L → L\patina\.
     let (_keep, l) = utf8_tempdir();
     let env = env_map(vec![("LOCALAPPDATA", l.to_string())]);
 
@@ -116,14 +108,10 @@ fn resolve_does_not_create_lazy_files() {
 
 #[test]
 fn resolve_does_not_write_to_external_repository() {
-    // Given a tempdir repository alongside a resolved state directory,
-    // when resolve runs, then no file under the repository directory
-    // was modified by the engine. (The dotfiles repository is
-    // never written to.)
+    // The engine must never write to the dotfiles repository.
     let (_keep_state, t) = utf8_tempdir();
     let (_keep_repo, repo) = utf8_tempdir();
 
-    // Seed a file in the repo and snapshot its mtime + content.
     let seed = repo.join("patina.toml");
     fs_err::write(seed.as_std_path(), b"# seed\n").expect("seed write");
     let mtime_before = fs_err::metadata(seed.as_std_path())
@@ -147,7 +135,6 @@ fn resolve_does_not_write_to_external_repository() {
         "repo file content must not change"
     );
 
-    // The repo directory must contain only the seeded file.
     let entries: Vec<_> = fs_err::read_dir(repo.as_std_path())
         .expect("read repo dir")
         .collect::<Result<Vec<_>, _>>()

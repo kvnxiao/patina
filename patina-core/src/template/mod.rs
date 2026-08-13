@@ -21,7 +21,7 @@
 //! produces an [`EngineError::Template`](crate::EngineError) whose
 //! `Display` names the missing variable, rather than `MiniJinja`'s
 //! silent empty-string substitution. The Jinja2-inherited carve-out
-//! holds: an undefined value reached only through the unevaluated branch
+//! holds. An undefined value reached only through the unevaluated branch
 //! of an `{% if %}`/`{% else %}` block does not fire, so
 //! `{% if defined %}{{ x }}{% else %}fallback{% endif %}` renders
 //! `fallback` when `defined` is unset.
@@ -31,17 +31,17 @@
 //! `MiniJinja`'s [`UndefinedBehavior::Strict`] errors the moment an
 //! undefined value is *tested*, including the condition of an
 //! `{% if defined %}` block, which would break the `{% else %}`
-//! carve-out. [`UndefinedBehavior::SemiStrict`] is the exact behaviour
-//! we want by design. An undefined value still errors when it is *emitted*
-//! (`{{ user_email }}`), or when it is coerced into a concrete type. A bare
-//! `{% if missing %}` test instead treats the undefined as falsy, and falls
-//! through to `{% else %}`. For `when` predicates,
+//! carve-out. [`UndefinedBehavior::SemiStrict`] is the behavior this
+//! contract requires. An undefined value still errors when it is
+//! *emitted* (`{{ user_email }}`), or when it is coerced into a concrete
+//! type. A bare `{% if missing %}` test instead treats the undefined as
+//! falsy, and falls through to `{% else %}`. For `when` predicates,
 //! `compile_expression().eval()` returns an undefined *value* rather than
 //! an error when the expression resolves to undefined (e.g. the
-//! short-circuit result of `true and missing_var`); [`Engine::eval_when`]
-//! converts that undefined result into the same typed error so a `when`
-//! that touches an undefined variable is reported, not silently treated
-//! as false.
+//! short-circuit result of `true and missing_var`). [`Engine::eval_when`]
+//! converts that undefined result into the same typed error, so a `when`
+//! that touches an undefined variable always surfaces as a reported
+//! error.
 //!
 //! # Examples
 //!
@@ -99,7 +99,7 @@ pub enum TemplateError {
 
 /// Wraps the single shared strict-undefined `MiniJinja` environment.
 ///
-/// Construct once per apply via [`Engine::new`] and clone freely: the
+/// Construct once per apply via [`Engine::new`] and clone freely. The
 /// inner [`Environment`] lives behind an [`Arc`], so every clone shares
 /// the same instance (the property under test).
 #[derive(Debug, Clone)]
@@ -177,8 +177,8 @@ impl Engine {
 /// (a bare `missing_var`, or the short-circuit result of
 /// `true and missing_var`) returns `Ok(undefined)` rather than erroring.
 /// Such a `when` must be reported as an undefined-variable error naming
-/// the offending variable, not silently treated as false. A defined
-/// result is returned as its truthiness.
+/// the offending variable. A defined result is returned as its
+/// truthiness.
 fn coerce_when_result(
     value: &Value,
     tracker: &std::sync::Mutex<strict::UndefinedTracker>,

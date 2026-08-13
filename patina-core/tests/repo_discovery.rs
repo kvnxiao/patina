@@ -34,7 +34,7 @@ fn utf8_tempdir() -> (TempDir, Utf8PathBuf) {
     let path = Utf8PathBuf::from_path_buf(td.path().to_path_buf()).expect("tempdir path is utf-8");
     // Canonicalize so test expectations match the function's own
     // post-resolution canonicalization. `dunce::canonicalize` mirrors the
-    // engine: it strips the Windows `\\?\` verbatim prefix that plain
+    // engine because it strips the Windows `\\?\` verbatim prefix that plain
     // `canonicalize_utf8` would leave on the fixture path.
     let canon = dunce::canonicalize(path.as_std_path()).expect("canonicalize tempdir");
     let canonical = Utf8PathBuf::from_path_buf(canon).expect("canonical tempdir is utf-8");
@@ -43,8 +43,6 @@ fn utf8_tempdir() -> (TempDir, Utf8PathBuf) {
 
 #[test]
 fn env_var_resolves_repository_root() {
-    // PATINA_REPO points at a valid root; the engine resolves
-    // it regardless of CWD.
     let (_td, repo) = utf8_tempdir();
     write_root_manifest(&repo);
 
@@ -57,7 +55,6 @@ fn env_var_resolves_repository_root() {
 
 #[test]
 fn walk_up_finds_root_from_subdirectory() {
-    // PATINA_REPO unset; walk up from T/zsh/ finds T/patina.toml.
     let (_td, repo) = utf8_tempdir();
     write_root_manifest(&repo);
     let sub = repo.join("zsh");
@@ -69,8 +66,6 @@ fn walk_up_finds_root_from_subdirectory() {
 
 #[test]
 fn all_sources_failing_names_each_source() {
-    // env unset, CWD outside any repo, no persisted default →
-    // error message names PATINA_REPO, walk-up, and persisted default.
     let (_td, empty_cwd) = utf8_tempdir();
 
     let err = resolve_repository_root_with(None, &empty_cwd, None).expect_err("resolution fails");
@@ -93,7 +88,6 @@ fn all_sources_failing_names_each_source() {
 
 #[test]
 fn empty_env_var_is_treated_as_unset() {
-    // Robustness: PATINA_REPO="" must not be treated as a valid path.
     let (_td, empty_cwd) = utf8_tempdir();
     let err =
         resolve_repository_root_with(Some(""), &empty_cwd, None).expect_err("empty env is unset");
@@ -102,7 +96,6 @@ fn empty_env_var_is_treated_as_unset() {
 
 #[test]
 fn env_var_pointing_at_non_root_directory_errors() {
-    // Robustness: PATINA_REPO set to a directory without patina.toml.
     let (_td, dir) = utf8_tempdir();
     let err = resolve_repository_root_with(Some(dir.as_str()), &dir, None)
         .expect_err("non-root directory rejected");
@@ -111,7 +104,6 @@ fn env_var_pointing_at_non_root_directory_errors() {
 
 #[test]
 fn persisted_default_is_consulted_when_other_sources_fail() {
-    // Confirms source 3 actually fires when sources 1 and 2 miss.
     let (_repo_td, repo) = utf8_tempdir();
     write_root_manifest(&repo);
 
@@ -128,11 +120,6 @@ fn persisted_default_is_consulted_when_other_sources_fail() {
 
 #[test]
 fn write_persisted_default_round_trips_through_read_path() {
-    // Writing the pointer under state dir
-    // `S` makes the file exist, its trimmed contents equal the
-    // canonical repo path `R`, `persisted_default_present(S)` is true,
-    // and the existing read path resolves the persisted default
-    // against `S` back to `R`.
     let (_repo_td, repo) = utf8_tempdir();
     write_root_manifest(&repo);
 
@@ -151,7 +138,6 @@ fn write_persisted_default_round_trips_through_read_path() {
         "presence check must report the pointer as present"
     );
 
-    // The existing read path resolves the persisted default against S.
     let (_cwd_td, empty_cwd) = utf8_tempdir();
     let resolved = resolve_repository_root_with(None, &empty_cwd, Some(pointer.as_path()))
         .expect("persisted default resolves through read path");
@@ -160,8 +146,6 @@ fn write_persisted_default_round_trips_through_read_path() {
 
 #[test]
 fn persisted_default_present_is_false_without_pointer() {
-    // A state dir with no `default_repo` file
-    // reports the pointer as absent.
     let (_state_td, state_dir) = utf8_tempdir();
     assert!(
         !persisted_default_present(&state_dir),

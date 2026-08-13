@@ -124,8 +124,8 @@ fn fetch_by_exact_sha_then_checkout_materializes_the_tree() {
 
 #[test]
 fn a_second_ensure_checkout_is_a_no_op_and_needs_no_remote() {
-    // This is the property that makes a plain `apply` work offline against a
-    // warm cache: the origin is deleted, so any fetch attempt would fail.
+    // This property lets a plain `apply` work offline against a warm cache.
+    // The test deletes the origin, so any fetch attempt would fail.
     let f = Fixture::new();
     let sha = f.commit("a.txt", "one\n", BASE_EPOCH);
     cache::ensure_checkout(&f.state, &module(), f.origin.as_str(), Some("main"), &sha)
@@ -174,9 +174,9 @@ fn ancestry_distinguishes_a_fast_forward_from_a_rewrite() {
     let rewritten = f.commit("a.txt", "rewritten\n", BASE_EPOCH + 120);
 
     let bare = f.bare();
-    // The pin arrives the way a consumer's cold cache fills it (shallow, by
-    // exact SHA) and the candidates arrive the way the update path fetches
-    // them, with the history that makes the ancestry question answerable.
+    // The pin arrives the way a consumer's cold cache fills it, shallow and
+    // by exact SHA. The candidates arrive the way the update path fetches
+    // them, with the history needed to answer the ancestry question.
     git::fetch_commit(&bare, f.origin.as_str(), &first, Some("main")).expect("fetch the pin");
     git::fetch_history(&bare, f.origin.as_str(), Some("main")).expect("fetch the descendant");
     git::fetch_history(&bare, f.origin.as_str(), Some("rewritten")).expect("fetch the orphan");
@@ -276,8 +276,8 @@ fn a_repository_reports_whether_it_matches_its_origin() {
 #[test]
 fn a_branch_tracking_a_differently_named_upstream_is_still_compared() {
     // A work branch tracking `origin/main` must be checked against `main`, not
-    // against a nonexistent `origin/<work branch>`, which `ls-remote` answers
-    // with nothing and which would read as "never behind".
+    // a nonexistent `origin/<work branch>`. That ref returns nothing from
+    // `ls-remote` and would read as never behind.
     let f = Fixture::new();
     f.commit("a.txt", "one\n", BASE_EPOCH);
 
@@ -309,7 +309,7 @@ fn a_branch_tracking_a_differently_named_upstream_is_still_compared() {
 fn a_branch_tracking_nothing_falls_back_to_its_own_name_on_origin() {
     // Without tracking configuration there is no upstream to read, and a
     // clone's branches live on `origin` under their own names. The fallback
-    // has to keep comparing, or such a branch would silently never report.
+    // must keep comparing, or such a branch would silently never report.
     let f = Fixture::new();
     f.commit("a.txt", "one\n", BASE_EPOCH);
     git_in(&f.origin, BASE_EPOCH, &["branch", "solo"]);

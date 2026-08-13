@@ -81,15 +81,12 @@ fn promote_copy_target_rewrites_source_and_rejournals() {
         stderr(&out)
     );
 
-    // The repository source now holds the new bytes.
     assert_eq!(
         fs_err::read_to_string(source.as_std_path()).expect("read repo source"),
         NEW_GITCONFIG,
         "the repository source must hold the promoted bytes"
     );
 
-    // The most recent journal record's expected hash for ~/.gitconfig equals
-    // the blake3 hash of the new content.
     let record = commit_record(&fx);
     let entry = entry_for(&record, "/.gitconfig");
     assert_eq!(
@@ -98,7 +95,6 @@ fn promote_copy_target_rewrites_source_and_rejournals() {
         "the re-journaled expected hash must be the blake3 hash of the new bytes"
     );
 
-    // A subsequent `patina status` classifies the target CLEAN.
     let status = fx.run(&["status", "--json"], &[]);
     assert_eq!(
         code(&status),
