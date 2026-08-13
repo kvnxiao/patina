@@ -448,11 +448,19 @@ fn render_outcomes(outcomes: &[Outcome], reporter: &mut impl Reporter) {
 }
 
 /// One row of the `remote update` table.
+///
+/// A `TO` equal to its `FROM` prints `-` instead of the rev. Two identical
+/// forty-character hashes read as a change until the reader compares them.
 fn update_row(outcome: &Outcome, styles: &Styles) -> String {
+    let to = if outcome.rev.is_some() && outcome.rev == outcome.from {
+        paint(styles.hint, "-")
+    } else {
+        rev_cell(outcome.rev.as_deref(), "(unknown)", styles)
+    };
     row(&[
         paint(styles.remote.name, outcome.name.as_str()).as_str(),
         rev_cell(outcome.from.as_deref(), "(unpinned)", styles).as_str(),
-        rev_cell(outcome.rev.as_deref(), "(unknown)", styles).as_str(),
+        to.as_str(),
         status_for(outcome.action).as_str(),
     ])
 }
@@ -1048,6 +1056,31 @@ mod tests {
         assert_eq!(
             row, "humanizer\t(unpinned)\t(unknown)\tcould not be updated\n",
             "an unreachable, unpinned remote must distinguish its two blanks"
+        );
+    }
+
+    #[test]
+    fn an_unchanged_pin_stands_in_for_its_rev_with_a_dash() {
+        let rev = "a".repeat(40);
+        let unchanged = Outcome {
+            name: remote_name("humanizer"),
+            action: Action::UpToDate,
+            from: Some(rev.clone()),
+            rev: Some(rev.clone()),
+        };
+        assert_eq!(
+            update_row(&unchanged, &Styles::plain()),
+            format!("humanizer\t{rev}\t-\talready at the upstream tip\n"),
+            "an unchanged pin must show its rev once"
+        );
+
+        let moved = Outcome {
+            rev: Some("b".repeat(40)),
+            ..unchanged
+        };
+        assert!(
+            update_row(&moved, &Styles::plain()).contains(&"b".repeat(40)),
+            "a moved pin must still print the rev it moved to"
         );
     }
 

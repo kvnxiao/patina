@@ -61,8 +61,10 @@ pub struct Styles {
     /// A path embedded in a one-line result sentence, so the path the command
     /// acted on stands out from the prose around it.
     pub path: Style,
-    /// A follow-up suggestion, and any stand-in for a value that could not be
-    /// read. Subordinate to the line it sits beside, never the fact itself.
+    /// A follow-up suggestion, and any stand-in carrying no value of its own.
+    /// The role covers a reading that could not be taken, and a cell repeating
+    /// the one beside it. Subordinate to the line it sits beside, never the
+    /// fact itself.
     pub hint: Style,
     /// The roles the `patina status` table paints with.
     pub status: StatusStyles,
