@@ -2,7 +2,7 @@
 //!
 //! This crate builds the only binary in the workspace meant to run
 //! *elevated*. The main `patina.exe` re-invokes it via `ShellExecuteEx`
-//! with the `runas` verb, triggering exactly one UAC prompt; the helper
+//! with the `runas` verb, triggering exactly one UAC prompt. The helper
 //! then performs the single requested elevated action and exits with a
 //! documented code.
 //!
@@ -15,7 +15,7 @@
 //! this a separate, dependency-light binary (no `patina-core` / `patina-cli`)
 //! keeps the surface UAC must trust as small as possible.
 //!
-//! ## Why a library plus a thin binary
+//! ## Library and thin binary split
 //!
 //! The command surface ([`Cli`], [`run`]) lives here in the library so it
 //! can be unit-tested on any host without depending on the binary
@@ -53,25 +53,27 @@ pub struct Cli {
 
 /// Parse the process arguments into a [`Cli`], or print a usage error and exit.
 ///
-/// This is the binary's entry into parsing. It behaves like
-/// [`Cli::parse`] for the success, `--help`, and `--version` paths, but
-/// intercepts the unknown-subcommand path: clap's default
+/// This is the binary's entry into parsing. It behaves like [`Cli::parse`]
+/// for the success, `--help`, and `--version` paths. It intercepts the
+/// unknown-subcommand path instead. clap's default
 /// [`ErrorKind::InvalidSubcommand`] message reports only the offending
-/// token and the bare `Usage:` line, and does *not* enumerate the
-/// available subcommands. The exit-2 usage message must *list the supported
-/// subcommands*. On that one error kind we therefore print clap's own
-/// rendered error to stderr, and follow it with a line listing the supported
-/// subcommands. That line is derived from the command definition, not
-/// hard-coded. We then exit with clap's usage exit code (`2`).
+/// token and the bare `Usage:` line. It does *not* enumerate the available
+/// subcommands. The exit-2 usage message must *list the supported
+/// subcommands*. On that one error kind this function therefore prints
+/// clap's own rendered error to stderr, and follows it with a line listing
+/// the supported subcommands. That line is derived from the command
+/// definition, not hard-coded. It then exits with clap's usage exit code
+/// (`2`).
 ///
-/// All other error kinds, including the no-subcommand path, which clap
-/// already renders with the subcommand listing, are left to clap's own
-/// [`clap::Error::exit`], preserving its exit codes and stream choice.
+/// All other error kinds are left to clap's own [`clap::Error::exit`],
+/// preserving its exit codes and stream choice. This includes the
+/// no-subcommand path, which clap already renders with the subcommand
+/// listing.
 ///
 /// # Examples
 ///
 /// ```no_run
-/// // The binary calls this once at startup; a bad subcommand exits 2
+/// // The binary calls this once at startup. A bad subcommand exits 2
 /// // with a usage message that lists `enable-developer-mode`.
 /// let cli = patina_elevate::parse_or_exit();
 /// patina_elevate::run(&cli.command);
@@ -82,22 +84,22 @@ pub fn parse_or_exit() -> Cli {
         Ok(cli) => cli,
         Err(error) if error.kind() == ErrorKind::InvalidSubcommand => {
             // clap's `InvalidSubcommand` rendering names the offending
-            // token and the bare `Usage:` line but omits the subcommand
-            // list. Print it as clap would, then append the supported
-            // subcommands so the exit-2 path satisfies the
+            // token and the bare `Usage:` line, but omits the subcommand
+            // list. This prints clap's own rendering, then appends the
+            // supported subcommands so the exit-2 path satisfies the
             // "listing the supported subcommands" contract. Writing to a
             // locked stderr handle is the same primitive clap's own
-            // `Error::exit` uses; the workspace `disallowed-macros` gate
-            // targets `eprintln!`/`println!`, not raw handle writes, and
-            // the write results are inspected rather than discarded.
+            // `Error::exit` uses. The workspace `disallowed-macros` gate
+            // targets `eprintln!`/`println!`, not raw handle writes. The
+            // write result is checked before the exit.
             use std::io::Write as _;
             let mut stderr = std::io::stderr().lock();
             let listing = supported_subcommands();
             let rendered = write!(stderr, "{error}")
                 .and_then(|()| writeln!(stderr, "Supported subcommands: {listing}"));
-            // Exit 2 (clap's usage code) regardless of whether the stderr
-            // write itself succeeded, because there is no better channel to
-            // report a stderr failure on, and the usage error stands.
+            // Exit 2 (clap's usage code) even if the stderr write failed.
+            // There is no better channel to report that failure, and the
+            // usage error still stands.
             drop(rendered);
             std::process::exit(2);
         }
@@ -159,9 +161,9 @@ pub fn run(command: &Command) -> ExitCode {
 /// User-facing output normally routes through `output::Reporter`. This helper
 /// deliberately has no `patina-core` dependency, and therefore no Reporter.
 /// Pulling in `tracing` for one error line would widen the surface UAC must
-/// trust. A raw stderr write is the right primitive here, so
-/// the workspace `disallowed-macros` gate is suppressed at this one documented
-/// site (clippy.toml sanctions exactly this carve-out).
+/// trust. A raw stderr write is the right primitive here. The workspace
+/// `disallowed-macros` gate is suppressed at this one documented site, and
+/// `clippy.toml` sanctions exactly this carve-out.
 fn report_result<E: std::error::Error>(action: &str, result: Result<(), E>) -> ExitCode {
     match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -213,9 +215,9 @@ mod tests {
 
     #[test]
     fn unknown_subcommand_is_a_usage_error() {
-        // An unrecognised subcommand is a clap usage error.
-        // clap maps this to a non-zero exit via `Error::exit`, exit code 2,
-        // which the real process exercises in `tests/cli.rs`.
+        // clap maps an unrecognised subcommand to a non-zero exit via
+        // `Error::exit`, exit code 2, which the real process exercises in
+        // `tests/cli.rs`.
         let err = Cli::try_parse_from(["patina-elevate", "frobnicate"])
             .expect_err("an unknown subcommand must be rejected");
         assert_eq!(err.kind(), ErrorKind::InvalidSubcommand);
@@ -226,7 +228,7 @@ mod tests {
         // The usage surface lists `enable-developer-mode` so
         // a caller who mis-invokes can discover the correct subcommand. clap
         // enumerates subcommands in the long help rather than in the bare
-        // unknown-subcommand error, so assert against the command's help.
+        // unknown-subcommand error, so this test checks the rendered help.
         let mut cmd = <Cli as clap::CommandFactory>::command();
         let help = cmd.render_long_help().to_string();
         assert!(
@@ -237,9 +239,9 @@ mod tests {
 
     #[test]
     fn missing_subcommand_does_not_run_an_action() {
-        // No subcommand at all is a usage error too (the helper never runs an
-        // action it was not asked to). clap reports this as a help-on-missing
-        // error, which `Error::exit` maps to the same non-zero exit.
+        // A missing subcommand is also a usage error. clap reports this as a
+        // help-on-missing error, which `Error::exit` maps to the same
+        // non-zero exit.
         let err = Cli::try_parse_from(["patina-elevate"])
             .expect_err("a missing subcommand must be rejected");
         assert_eq!(
@@ -251,8 +253,8 @@ mod tests {
     #[cfg(not(windows))]
     #[test]
     fn enable_on_non_windows_reports_not_windows() {
-        // On a non-Windows build the action takes the NotWindows path rather
-        // than touching any registry. That is what keeps the dispatch
+        // On a non-Windows build the action takes the NotWindows path
+        // instead of touching the registry. This keeps the dispatch
         // exercisable off Windows.
         let err = devmode::enable_developer_mode()
             .expect_err("enable-developer-mode is unsupported off Windows");
@@ -262,7 +264,7 @@ mod tests {
     #[cfg(not(windows))]
     #[test]
     fn apply_defender_on_non_windows_reports_not_windows() {
-        // The Defender apply likewise resolves to the NotWindows stub off
+        // The Defender apply also resolves to the NotWindows stub off
         // Windows, so its dispatch arm stays exercisable on Linux/macOS CI.
         let err = defender::apply_defender_exclusions(std::path::Path::new("/tmp/request.txt"))
             .expect_err("apply-defender-exclusions is unsupported off Windows");
@@ -272,9 +274,9 @@ mod tests {
     #[cfg(not(windows))]
     #[test]
     fn run_dispatches_apply_defender_exclusions_to_a_failure_exit() {
-        // The `run` dispatch arm for the Defender action: off Windows the action
-        // resolves to NotWindows, which `run` maps to a failure exit, distinct
-        // from the success code the Ok arm produces.
+        // This exercises `run`'s dispatch arm for the Defender action. Off
+        // Windows the action resolves to NotWindows, which `run` maps to a
+        // failure exit, distinct from the success code the Ok arm produces.
         let code = run(&Command::ApplyDefenderExclusions {
             request: PathBuf::from("/tmp/patina-defender-request.txt"),
         });
@@ -283,9 +285,9 @@ mod tests {
 
     #[test]
     fn report_result_maps_ok_to_a_success_exit_code() {
-        // The success arm of the exit-code mapping: an action returning Ok
-        // resolves to a success exit, distinct from the failure exit an error
-        // takes.
+        // This exercises the success arm of the exit-code mapping. An action
+        // returning Ok resolves to a success exit, distinct from the failure
+        // exit an error takes.
         let code = report_result::<std::io::Error>("test-action", Ok(()));
         assert_eq!(format!("{code:?}"), format!("{:?}", ExitCode::SUCCESS));
     }

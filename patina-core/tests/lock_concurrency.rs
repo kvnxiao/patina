@@ -15,11 +15,11 @@
 //!   so the union numbers exactly two and the timestamp windows are
 //!   non-overlapping.
 //! - **Exclusive timeout maps to exit code 4.** A process blocked on a held
-//!   exclusive lock past its (test-parameterised) cap exits with the code
-//!   reserved for lock timeout and prints a `TIMEOUT` message to stderr.
+//!   exclusive lock, past its test-parameterised cap, exits with the code
+//!   reserved for lock timeout. It prints a `TIMEOUT` message to stderr.
 //! - **OS release on abnormal death.** A process that aborts while holding the
-//!   lock leaves the lock free; the next acquirer gets in cleanly. This is the
-//!   invariant that justifies relying on `Drop` / the OS rather than an
+//!   lock leaves the lock free, and the next acquirer gets in cleanly. This is
+//!   the invariant that justifies relying on `Drop` and the OS rather than an
 //!   explicit unlock.
 //!
 //! These tests drive the `patina_core::lock` primitive directly through the
@@ -38,16 +38,17 @@ use tempfile::TempDir;
 
 static BUILD: Once = Once::new();
 
-/// Build the `lock_helper` example once for the whole test binary so each
-/// spawn is a fast exec of an already-compiled artifact rather than a
+/// Build the `lock_helper` example once for the whole test binary. Each
+/// spawn is then a fast exec of an already-compiled artifact, rather than a
 /// `cargo run` that might race the build cache.
 fn ensure_helper_built() {
     BUILD.call_once(|| {
-        // Build into the same target root this test binary lives in (derived
-        // from the running test exe), not cargo's default. Under
-        // `cargo llvm-cov` the test runs from `target/llvm-cov-target/`, so a
-        // plain `cargo build` would emit the example into `target/` where
-        // `helper_path` (which derives from the test exe) cannot find it.
+        // This builds into the same target root the test binary lives in,
+        // not cargo's default target/. `helper_path` derives its search
+        // path from the running test exe. Under `cargo llvm-cov`, the test
+        // runs from `target/llvm-cov-target/`, so a plain `cargo build`
+        // would put the example in `target/`, where `helper_path` would
+        // never find it.
         let status = Command::new(env!("CARGO"))
             .args(["build", "--quiet", "--example", "lock_helper"])
             .arg("--target-dir")
@@ -74,8 +75,8 @@ fn target_root() -> Utf8PathBuf {
 }
 
 /// Locate the compiled `lock_helper` example next to this test binary.
-/// `CARGO_BIN_EXE_*` is not populated for examples, so we derive the path
-/// from the test executable's own location: integration test binaries
+/// `CARGO_BIN_EXE_*` is not populated for examples, so this derives the
+/// path from the test executable's own location: integration test binaries
 /// live in `target/<profile>/deps/`, and examples live in the sibling
 /// `target/<profile>/examples/`.
 fn helper_path() -> Utf8PathBuf {
@@ -164,10 +165,10 @@ fn spawn(
 }
 
 /// Block until `child` prints its `ACQUIRED` stdout marker, proving it
-/// holds the lock, then keep draining the rest of its stdout on a
-/// background thread so the helper never blocks (or hits a broken pipe) on
-/// a later `println!` such as its `RELEASED` line. Gating a contender on
-/// this observed acquisition, rather than a fixed head-start sleep,
+/// holds the lock. Then keep draining the rest of its stdout on a
+/// background thread, so the helper never blocks, or hits a broken pipe,
+/// on a later `println!` such as its `RELEASED` line. Gating a contender
+/// on this observed acquisition, rather than a fixed head-start sleep,
 /// makes the contention deterministic under machine load.
 fn wait_for_acquired(child: &mut Child) {
     let stdout = child.stdout.take().expect("holder stdout piped");
@@ -180,27 +181,26 @@ fn wait_for_acquired(child: &mut Child) {
             break;
         }
     }
-    // Drain the remainder to EOF so the holder's later writes have a live
-    // reader; the bytes are unused (this test asserts only exit status and
-    // stderr).
+    // Drains the remainder to EOF so the holder's later writes have a live
+    // reader. The bytes themselves are unused; this test asserts only exit
+    // status and stderr.
     std::thread::spawn(move || {
-        // Errors here mean the holder closed stdout; nothing to do.
+        // An error here means the holder closed stdout; there is nothing
+        // to do.
         let _drained = std::io::copy(&mut reader, &mut std::io::sink());
     });
 }
 
 #[test]
 fn two_exclusive_applies_do_not_interleave() {
-    // Two processes contend for the exclusive lock; their
-    // acquire/release windows must be disjoint and exactly two `.plan`
-    // markers must result.
     ensure_helper_built();
     let helper = helper_path();
     let state = State::new();
 
-    // Each holds the lock for 300ms; both wait up to 5s to acquire, so the
-    // loser blocks on the winner rather than timing out. Started as close
-    // together as two spawns allow (well within the 100ms window).
+    // Each process holds the lock for 300ms; both wait up to 5s to
+    // acquire, so the loser blocks on the winner rather than timing out.
+    // The two spawns start as close together as possible, well within a
+    // 100ms window.
     let a = spawn(&helper, &state.dir, "exclusive", 300, 5_000, false);
     let b = spawn(&helper, &state.dir, "exclusive", 300, 5_000, false);
 
@@ -227,8 +227,8 @@ fn two_exclusive_applies_do_not_interleave() {
     let wa = parse_window(&String::from_utf8_lossy(&out_a.stdout));
     let wb = parse_window(&String::from_utf8_lossy(&out_b.stdout));
 
-    // Non-overlapping: whichever acquired first must have released before
-    // the other acquired. Equivalent to "the windows are disjoint".
+    // Whichever process acquired first must release before the other
+    // acquires, so the windows never overlap.
     let (first, second) = if wa.acquired <= wb.acquired {
         (&wa, &wb)
     } else {
@@ -246,21 +246,20 @@ fn two_exclusive_applies_do_not_interleave() {
 
 #[test]
 fn blocked_exclusive_exits_with_lock_timeout_code() {
-    // A second exclusive acquirer whose cap expires while the first still
-    // holds the lock exits with the reserved lock-timeout code and names
-    // the timeout on stderr. The 60s cap is parameterised down to
-    // 200ms so the test runs fast.
+    // The production default exclusive-lock cap is 60s; this test
+    // parameterises it down to 200ms so the run stays fast.
     ensure_helper_built();
     let helper = helper_path();
     let state = State::new();
 
-    // Holder keeps the lock for 1.5s; the blocked process caps at 200ms.
+    // The holder keeps the lock for 1.5s; the blocked process caps at
+    // 200ms.
     let mut holder = spawn(&helper, &state.dir, "exclusive", 1_500, 5_000, false);
-    // Start the contender only after the holder has *observably* acquired
-    // the lock (its `ACQUIRED` stdout marker), not after a fixed sleep. A
-    // cold-starting holder binary can take longer than any hardcoded
-    // head-start under load, which would let the contender win the
-    // still-free lock and exit 0 instead of timing out.
+    // The contender starts only after the holder's `ACQUIRED` marker
+    // confirms it holds the lock, not after a fixed sleep. A cold-starting
+    // holder can take longer than any fixed head-start under load, letting
+    // the contender win the still-free lock and exit 0 instead of timing
+    // out.
     wait_for_acquired(&mut holder);
     let blocked = spawn(&helper, &state.dir, "exclusive", 0, 200, false);
 
@@ -287,13 +286,10 @@ fn blocked_exclusive_exits_with_lock_timeout_code() {
 
 #[test]
 fn os_releases_lock_when_holder_aborts() {
-    // A process that aborts while holding the exclusive lock must leave
-    // the lock free for the next acquirer: the OS releases on death.
     ensure_helper_built();
     let helper = helper_path();
     let state = State::new();
 
-    // First process acquires then aborts immediately while holding it.
     let aborter = spawn(&helper, &state.dir, "exclusive", 10_000, 5_000, true);
     let aborter_out = aborter.wait_with_output().expect("wait aborter");
     assert!(
@@ -305,8 +301,9 @@ fn os_releases_lock_when_holder_aborts() {
         "aborter should have acquired the lock before aborting"
     );
 
-    // The next acquirer must get in cleanly with a short cap. If the OS
-    // had not released the dead holder's lock, this would time out.
+    // The next acquirer must get in cleanly within a short cap. If the OS
+    // had not released the dead holder's lock, this would time out
+    // instead.
     let next = spawn(&helper, &state.dir, "exclusive", 0, 1_000, false);
     let next_out = next.wait_with_output().expect("wait next");
     assert!(
@@ -322,9 +319,10 @@ fn os_releases_lock_when_holder_aborts() {
 
 #[test]
 fn shared_holder_does_not_block_another_shared_acquirer() {
-    // The read-only `status` path takes a shared lock; multiple shared
-    // holders coexist. A second shared acquirer with a short cap succeeds
-    // while the first still holds, proving shared/shared is non-exclusive.
+    // The read-only `status` command takes a shared lock, and multiple
+    // shared holders coexist. A second shared acquirer with a short cap
+    // succeeds while the first still holds, proving that shared locks do
+    // not block each other.
     ensure_helper_built();
     let helper = helper_path();
     let state = State::new();

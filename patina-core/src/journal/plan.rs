@@ -11,9 +11,9 @@
 //! └────────┴───────────────────────────────┘
 //! ```
 //!
-//! The major version lives in the first two bytes so a reader can decide
-//! whether it is able to decode the body **before** invoking the full
-//! `postcard` decoder. A binary refuses any plan whose major version
+//! The major version lives in the first two bytes. A reader can then decide
+//! whether it can decode the body **before** invoking the full `postcard`
+//! decoder. A binary refuses any plan whose major version
 //! exceeds its own compiled [`FILE_MAJOR_VERSION`], returning
 //! [`JournalError::VersionMismatch`](super::JournalError::VersionMismatch)
 //! rather than risk mis-decoding a future format.
@@ -212,9 +212,9 @@ mod tests {
     use super::*;
 
     fn sample() -> Plan {
-        // One Create, one Update, one Unchanged target so the
-        // round-trip below proves every disposition variant survives the
-        // envelope, not just whichever one a single-op fixture happened to use.
+        // One Create, one Update, one Unchanged target, so the round-trip
+        // below proves every disposition variant survives the envelope,
+        // not just whichever one a single-op fixture happened to use.
         Plan::new(vec![
             PlannedOperation::symlink("a", "/x/a", Disposition::Create),
             PlannedOperation::render("b.j2", "/x/b", Disposition::Update),
@@ -233,9 +233,9 @@ mod tests {
     fn per_op_dispositions_round_trip() {
         // A plan with one Create, one Update, and one Unchanged op must
         // decode with each op's disposition unchanged. `PartialEq` on the
-        // whole plan above already gates this, but asserting the per-op
-        // dispositions directly pins the field rather than the aggregate
-        // equality, so a field dropped from the wire is caught here.
+        // whole plan above already gates this equality. Pinning the per-op
+        // dispositions directly, instead of relying on the aggregate
+        // equality, catches a field dropped from the wire.
         let plan = sample();
         let decoded = Plan::decode(&plan.encode().expect("encode")).expect("decode");
         let got: Vec<Disposition> = decoded
@@ -291,10 +291,10 @@ mod tests {
 
     #[test]
     fn on_disk_major_is_held_at_one() {
-        // The pre-release on-disk format major is 1 and
-        // does not bump per breaking change until v1.0. A regression that
-        // bumped it (e.g. back to 2) would make older binaries refuse files
-        // this binary writes, so the value is pinned by this assertion.
+        // The pre-release on-disk format major is held at 1 and is not
+        // bumped for a breaking change until v1.0. A regression that
+        // bumped it (e.g., back to 2) would make older binaries refuse
+        // files this binary writes, so this assertion pins the value.
         assert_eq!(FILE_MAJOR_VERSION, 1);
     }
 
@@ -309,9 +309,9 @@ mod tests {
 
     #[test]
     fn major_two_buffer_is_refused_not_misdecoded() {
-        // A buffer prefixed with major 2 wrapping an otherwise valid plan
-        // body must fail with a version mismatch rather than decode, since
-        // `decode_envelope` refuses `found > supported` and the supported
+        // A buffer prefixed with major 2, wrapping an otherwise valid plan
+        // body, must fail with a version mismatch rather than decode.
+        // `decode_envelope` refuses `found > supported`, and the supported
         // major is now 1.
         let mut bytes = sample().encode().expect("encode");
         bytes

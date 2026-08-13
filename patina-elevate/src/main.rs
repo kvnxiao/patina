@@ -1,7 +1,7 @@
 //! Thin binary entry point for the `patina-elevate` helper.
 //!
-//! All logic lives in the library crate (see `lib.rs`) so the command
-//! surface stays unit-testable without the binary artifact, which is
+//! All logic lives in the library crate (see `lib.rs`). This keeps the
+//! command surface unit-testable without the binary artifact, which is
 //! absent from non-Windows release builds. This file
 //! only parses arguments and hands the parsed command to
 //! [`patina_elevate::run`]. [`patina_elevate::parse_or_exit`] owns the

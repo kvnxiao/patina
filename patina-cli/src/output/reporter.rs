@@ -4,9 +4,9 @@
 //! Every byte the CLI prints for the user funnels through a [`Reporter`]:
 //! the rendered diff, the JSON envelope, prompt text, and warnings.
 //! Logs (via `tracing`) are a separate channel and never go here. Routing
-//! all output through one trait is what lets a test assert the
-//! deterministic-stdout property over a single seam, and lets these
-//! command tests capture output without spawning a subprocess.
+//! all output through one trait lets a test assert the deterministic-stdout
+//! property over a single seam. It also lets these command tests capture
+//! output without spawning a subprocess.
 //!
 //! Two implementations ship:
 //!
@@ -33,8 +33,8 @@ use anstyle::Style;
 use std::io::Write;
 
 /// User-facing output sink. Rendered blocks and JSON go to the "out" stream;
-/// prompt text, warnings, and errors go to the "err" stream, matching the
-/// documented split (diff on stdout, prompt on stderr).
+/// prompt text, warnings, and errors go to the "err" stream: diff on stdout,
+/// prompt on stderr.
 ///
 /// The sink also owns the palette every renderer paints with;
 /// [`Reporter::styles`] returns it.
@@ -45,8 +45,9 @@ pub trait Reporter {
     /// survive. The production reporter always returns the colored palette, and
     /// its auto-stream drops the escapes when the destination is not a
     /// terminal.
-    /// The return is by value (`Styles` is `Copy`), so reading the palette
-    /// leaves no borrow outstanding against the `&mut self` writes that follow.
+    /// The return is by value, since `Styles` is `Copy`. Reading the palette
+    /// then leaves no borrow outstanding against the `&mut self` writes that
+    /// follow.
     fn styles(&self) -> Styles;
     /// Emit an already-painted block to the out stream verbatim, newlines and
     /// all. Every multi-line surface on stdout goes through here, including the
@@ -66,7 +67,7 @@ pub trait Reporter {
     /// the err stream. The production reporter colors the prose and
     /// highlights the affirmative `y` and default `N` keys distinctly; `y` /
     /// `Y` remain the only affirmative answers. Under a plain palette the
-    /// bytes are exactly `"<question> [y/N] "`.
+    /// bytes are `"<question> [y/N] "`.
     fn confirm(&mut self, question: &str);
     /// Emit a warning to the err stream.
     fn warn(&mut self, message: &str);
@@ -116,7 +117,7 @@ fn ignore_io<T>(_result: std::io::Result<T>) {}
 /// Compose the styled `<question> [y/N] ` confirmation prompt: the prose and
 /// brackets in the prompt style, the affirmative `y` and default `N` in their
 /// own styles so the two answers read distinctly. Under the plain palette
-/// every segment renders to zero bytes, so the result is exactly
+/// every segment renders to zero bytes, so the result is
 /// `"<question> [y/N] "`, the form the buffer reporter and `--color never`
 /// share. Shared by both reporters so the plain shape cannot drift between
 /// them.
@@ -239,11 +240,11 @@ impl BufferReporter {
 /// Assert that color is purely additive over whatever `render` prints.
 ///
 /// This is the output layer's own contract, so it lives here and no surface
-/// that paints restates it. Two failures are in scope. Painting a
-/// cell's padding along with the cell would misalign piped and `--color never`
-/// output, and making color the sole carrier of a fact would lose that fact
-/// wherever ANSI is stripped. Both streams are checked, so a renderer cannot
-/// pass by writing its painted bytes to the one nobody looked at.
+/// that paints restates it. Painting a cell's padding along with the cell
+/// would misalign piped and `--color never` output. Making color the sole
+/// carrier of a fact would lose that fact wherever ANSI is stripped. Both
+/// streams are checked, so a renderer cannot pass by writing its painted
+/// bytes to the one nobody looked at.
 #[cfg(test)]
 pub fn assert_color_is_additive(render: impl Fn(&mut BufferReporter)) {
     let mut plain = BufferReporter::new();
@@ -363,10 +364,9 @@ mod tests {
 
     #[test]
     fn confirm_plain_is_exactly_the_question_and_bracketed_keys() {
-        // Under the plain palette the composed confirm prompt must be the
-        // bare `<question> [y/N] `, with no escapes and the trailing space
-        // intact, so `--color never` and the buffer reporter emit the same
-        // bytes.
+        // Under the plain palette the composed confirm prompt is the bare
+        // `<question> [y/N] `, with no escapes and the trailing space intact.
+        // `--color never` and the buffer reporter both emit these bytes.
         let plain = compose_confirm(&Styles::plain(), "Apply?");
         assert_eq!(plain, "Apply? [y/N] ");
     }
@@ -374,9 +374,9 @@ mod tests {
     #[test]
     fn confirm_colored_highlights_y_and_n_distinctly_but_strips_to_plain() {
         // The colored composition must carry escapes and wrap the `y` and `N`
-        // in different styles from the prose (and each other), yet reduce to
-        // the exact plain form once every escape is removed, which proves
-        // color is purely additive over the stable bytes.
+        // in styles distinct from the prose and from each other. Stripping
+        // every escape must still reduce it to the plain form, proving color
+        // is purely additive over the stable bytes.
         let colored = compose_confirm(&Styles::colored(), "Apply?");
         assert!(
             colored.contains('\u{1b}'),

@@ -1,16 +1,15 @@
 //! The watcher's re-apply handler.
 //!
-//! On a debounced source-edit batch, the watcher re-runs the engine apply under
-//! [`LockPolicy::NonBlocking`](crate::LockPolicy): the engine self-acquires the
-//! exclusive advisory lock with a single non-blocking attempt and, on
-//! contention, returns
-//! [`LockError::Contended`] having mutated
-//! nothing, not even orphan recovery (the lock is resolved before
-//! recovery). The watcher therefore must **not**
-//! pre-acquire the lock and then call apply: doing so would self-contend
-//! against its own guard. It lets the engine acquire under `NonBlocking` and
-//! treats a contention error as "the CLI (or another holder) owns the lock
-//! right now": it logs a `lock_contention_skip` event and skips the cycle. The
+//! On a debounced source-edit batch, the watcher re-runs the engine apply
+//! under [`LockPolicy::NonBlocking`](crate::LockPolicy). The engine
+//! self-acquires the exclusive advisory lock with a single non-blocking
+//! attempt and, on contention, returns [`LockError::Contended`] having
+//! mutated nothing, not even orphan recovery (the lock is resolved before
+//! recovery). The watcher therefore must **not** pre-acquire the lock and
+//! then call apply, because doing so would self-contend against its own
+//! guard. It lets the engine acquire under `NonBlocking` and treats a
+//! contention error as "the CLI (or another holder) owns the lock right
+//! now". It logs a `lock_contention_skip` event and skips the cycle. The
 //! next FS event re-arms the debounce.
 //!
 //! A successful re-apply emits an info `re_apply` event carrying the
@@ -20,11 +19,11 @@
 //! [`current_timestamp`], exactly as `patina apply`
 //! keys its own.
 //!
-//! Re-applying unchanged source is a no-op at the filesystem level (the engine
-//! re-materializes byte-identical targets), so a self-triggered re-apply that
-//! produces an identical journal record does not loop: the journal-rescan path
-//! (the select-loop) re-reads the same record and recomputes the same
-//! subscription set.
+//! Re-applying unchanged source is a no-op at the filesystem level (the
+//! engine re-materializes byte-identical targets). A self-triggered re-apply
+//! that produces an identical journal record does not loop. The
+//! journal-rescan path (the select-loop) re-reads the same record and
+//! recomputes the same subscription set.
 
 use crate::ApplyRequest;
 use crate::ApplyResult;
@@ -117,7 +116,7 @@ pub async fn run_reapply() -> ReapplyOutcome {
 }
 
 /// Log a non-contention re-apply failure and return [`ReapplyOutcome::Failed`].
-/// A failed re-apply is logged and survived, never fatal to the watcher.
+/// A failed re-apply is logged, not fatal to the watcher.
 fn fail(id: &str, error: &EngineError) -> ReapplyOutcome {
     tracing::warn!(
         target: "patina_core",

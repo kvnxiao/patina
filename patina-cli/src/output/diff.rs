@@ -1,7 +1,7 @@
 //! Embedded diff rendering with the `similar` crate.
 //!
 //! The diff is computed from the [`ResolvedPlan`] produced by the engine:
-//! for each operation we compare the target's current on-disk content (or
+//! for each operation, it compares the target's current on-disk content (or
 //! link target) against what the apply would materialize. Copy and
 //! template-render modes produce a line-level content diff; symlink modes
 //! produce an `old link target -> new link target` line.
@@ -14,9 +14,9 @@
 //! Some content cannot be line-diffed: a present-but-non-UTF-8 (binary)
 //! source or target, or an unreadable file. It renders as a compact
 //! deterministic placeholder (`(binary content, N bytes)`) rather than an
-//! empty/full-insert diff. A binary copy source is legitimate, so it is a
-//! placeholder, not an error; the misleading "empty target" render would
-//! otherwise distort the apply consent decision.
+//! empty/full-insert diff. A binary copy source is legitimate, so the
+//! placeholder covers it without raising an error. The misleading "empty
+//! target" render would otherwise distort the apply consent decision.
 //!
 //! Removals are shown too. The engine reaps a target a prior apply
 //! materialized but the current plan no longer manages, on the next apply.
@@ -115,9 +115,9 @@ pub fn render(resolved: &ResolvedPlan, orphans: &[Utf8PathBuf]) -> Result<String
         render_removal(&mut out, orphan, &styles);
     }
 
-    // Exactly one deterministic summary line for the Unchanged count.
-    // Omitted when nothing is unchanged so a fully-changing plan's
-    // body is unchanged from prior behaviour.
+    // Exactly one deterministic summary line reports the unchanged count.
+    // It is omitted when the count is zero, so a fully-changing plan's body
+    // carries no zero-count line.
     if unchanged > 0 {
         let noun = if unchanged == 1 { "entry" } else { "entries" };
         emit(&mut out, format_args!("{unchanged} unchanged {noun}.\n"));
@@ -277,11 +277,10 @@ fn content_diff(
                 ChangeTag::Insert => (styles.insert, "  + "),
                 ChangeTag::Equal => (styles.context, "    "),
             };
-            // `similar` yields one line per change (with its own trailing
-            // newline, if any). Strip it so the style reset lands before the
-            // newline, then re-append exactly one, so every rendered line ends
-            // with exactly one newline even when the final line arrives
-            // unterminated.
+            // `similar` yields one line per change, with its own trailing
+            // newline if any. Strip it so the style reset lands before the
+            // newline. Then re-append exactly one newline, so every line ends
+            // with exactly one even when the final line arrives unterminated.
             let value = change.value();
             let line = value.strip_suffix('\n').unwrap_or(value);
             paint_line(out, style, sign, line);
@@ -441,8 +440,6 @@ mod tests {
 
     #[test]
     fn render_removal_of_a_file_deletes_each_line_under_a_remove_header() {
-        // A reaped regular file renders a `remove <target>` header and every
-        // current line as a deletion, with no insert side.
         let (_td, dir) = tempdir();
         let target = dir.join("gone.conf");
         fs_err::write(&target, "one\ntwo\n").expect("write target");
@@ -468,8 +465,8 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn render_removal_of_a_symlink_shows_the_link_target_not_the_linked_bytes() {
-        // A reaped symlink must show the link it pointed at, not read *through*
-        // it to the linked file's content: the link is what is being removed.
+        // Reading *through* the symlink would show the linked file's content;
+        // the removal must show the link itself, not what it points at.
         let (_td, dir) = tempdir();
         let linked = dir.join("real.conf");
         fs_err::write(&linked, "linked-bytes\n").expect("write link destination");
@@ -521,10 +518,8 @@ mod tests {
 
     #[test]
     fn colored_styles_wrap_changed_lines_while_plain_stays_escape_free() {
-        // Same inputs, two palettes. The colored palette must wrap the +/-
-        // bodies in ANSI escapes; the plain palette must produce
-        // escape-free, byte-stable output. Context lines use the empty
-        // context style, so they stay unstyled under both.
+        // Context lines use the empty context style, so they stay unstyled
+        // under both palettes.
         let current = DiffContent::Text("keep\ndrop\n".to_owned());
         let new = DiffContent::Text("keep\nadd\n".to_owned());
 

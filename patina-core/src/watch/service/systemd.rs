@@ -13,9 +13,9 @@
 //!
 //! Neither `install` nor `uninstall` invokes
 //! `loginctl enable-linger` / `disable-linger`, and there is no `--linger`
-//! flag: a user who wants the watcher to survive logout runs
+//! flag. A user who wants the watcher to survive logout runs
 //! `sudo loginctl enable-linger $USER` themselves. None of these paths require
-//! admin or sudo: a `systemd --user` unit is owned by the invoking user.
+//! admin or sudo. A `systemd --user` unit is owned by the invoking user.
 //!
 //! On some hosts `systemd --user` is unavailable, either a non-systemd init or
 //! a systemd build without the user bus reachable. The [`super::current`]
@@ -63,8 +63,8 @@ impl SystemdBackend {
     /// the `degraded` / `offline` non-zero ones, because the bus answered)
     /// proves the user bus is reachable. A spawn failure (no `systemctl`
     /// binary), or an explicit "Failed to connect to bus" message, means there
-    /// is no user manager to drive. We then fall back to the foreground
-    /// escape hatch.
+    /// is no user manager to drive. The factory then falls back to the
+    /// foreground escape hatch.
     #[must_use = "the availability decision selects the backend; ignoring it loses the dispatch"]
     pub fn is_available() -> bool {
         let Ok(output) = Command::new("systemctl")
@@ -135,7 +135,7 @@ impl ServiceBackend for SystemdBackend {
         }
         let unit_path = Self::unit_path()?;
 
-        // Stop and disable first (best-effort: a stopped / already-disabled
+        // Stop and disable first (best-effort, a stopped / already-disabled
         // service is not an error), then remove the unit file and reload so the
         // manager forgets the unit.
         let _stop = Self::systemctl(&["stop", UNIT_NAME]);
@@ -316,8 +316,9 @@ WantedBy=default.target\n"
 /// expands `%` specifiers (`%h`, `%t`, …), and treats a newline as the end of
 /// the directive. An unescaped path is therefore both fragile (a legitimate
 /// space-containing install prefix is split into spurious args) and a
-/// descriptor-injection vector (a `\n` would start a fresh directive). We
-/// neutralize all three by emitting the token as a single double-quoted word:
+/// descriptor-injection vector (a `\n` would start a fresh directive). The
+/// escaping neutralizes all three by emitting the token as a single
+/// double-quoted word:
 ///
 /// - the whole token is wrapped in `"…"`, so embedded whitespace stays part of
 ///   one argument;
@@ -394,7 +395,7 @@ mod tests {
         let binary = Utf8Path::new("/usr/local/bin/patina");
         let unit = render_unit(binary);
 
-        // the unit must declare on-failure restart, the
+        // The unit must declare on-failure restart, the
         // default.target install hook, and an ExecStart pointing at the
         // canonical binary invoked with `watch --foreground`.
         assert!(unit.contains("Restart=on-failure"));
@@ -416,8 +417,8 @@ mod tests {
         let binary = Utf8Path::new("/opt/my apps/pat%ina\nExecStartPost=/evil");
         let unit = render_unit(binary);
 
-        // The injected `\n` must be escaped, not emitted raw: there must be no
-        // line that begins a second ExecStart-family directive.
+        // The injected `\n` must be escaped, not emitted raw. There must be
+        // no line that begins a second ExecStart-family directive.
         assert!(
             !unit.contains("\nExecStartPost="),
             "a newline in the path must not inject a fresh directive, got: {unit}"
@@ -443,13 +444,14 @@ mod tests {
 
     #[test]
     fn bus_reachable_is_false_only_when_the_bus_connect_fails() {
-        // The connect-failure message means there is no user manager to drive:
-        // route to the unsupported `--foreground` fallback.
+        // The connect-failure message means there is no user manager to
+        // drive. Route to the unsupported `--foreground` fallback.
         assert!(!bus_reachable(
             "Failed to connect to bus: No such file or directory"
         ));
-        // Every other outcome means the user bus answered, so the host is a
-        // systemd host: a degraded/running state word, or empty stderr.
+        // Every other outcome, a degraded/running state word or empty
+        // stderr, means the user bus answered, so the host is a systemd
+        // host.
         assert!(bus_reachable(""));
         assert!(bus_reachable("degraded"));
         assert!(bus_reachable("running"));
@@ -459,7 +461,7 @@ mod tests {
     fn render_unit_has_the_three_canonical_sections() {
         let unit = render_unit(Utf8Path::new("/bin/patina"));
         // A valid systemd service unit needs the [Unit], [Service], and
-        // [Install] sections; the [Install] section is what makes
+        // [Install] sections; the [Install] section makes
         // `systemctl --user enable` create the default.target want symlink.
         assert!(unit.contains("[Unit]"));
         assert!(unit.contains("[Service]"));
@@ -499,9 +501,9 @@ ExecMainExitTimestamp=Sat 2026-05-31 11:00:00 UTC
 
     #[test]
     fn parse_systemctl_show_reports_none_when_never_run() {
-        // A unit that has never run: empty ExecMainExitTimestamp and a status
-        // that may be absent. Both the timestamp and (when absent) the exit
-        // code report None rather than a panic.
+        // A unit that has never run has an empty ExecMainExitTimestamp and a
+        // status that may be absent. Both the timestamp and (when absent) the
+        // exit code report None rather than a panic.
         let dump = "ActiveState=inactive\nExecMainExitTimestamp=\n";
         let parsed = parse_systemctl_show(dump);
         assert!(!parsed.running);
@@ -527,7 +529,7 @@ ExecMainExitTimestamp=Sat 2026-05-31 11:00:00 UTC
 
     #[test]
     fn resolve_unit_dir_prefers_xdg_config_home_over_home() {
-        // A set, non-empty XDG_CONFIG_HOME wins: the unit dir lives directly
+        // A set, non-empty XDG_CONFIG_HOME wins. The unit dir lives directly
         // under it, not under $HOME/.config.
         let dir = resolve_unit_dir(Some("/xdg"), Some("/home/u"))
             .expect("unit dir resolves under XDG_CONFIG_HOME");
@@ -548,9 +550,10 @@ ExecMainExitTimestamp=Sat 2026-05-31 11:00:00 UTC
 
     #[test]
     fn resolve_unit_dir_errors_when_no_base_is_available() {
-        // Neither XDG_CONFIG_HOME nor HOME: there is no per-user base to write
-        // the unit under, so resolution fails with a clear supervisor error
-        // rather than constructing a nonsensical relative path.
+        // Neither XDG_CONFIG_HOME nor HOME is set. There is no per-user base
+        // to write the unit under, so resolution fails with a clear
+        // supervisor error rather than constructing a nonsensical relative
+        // path.
         let err = resolve_unit_dir(None, None).expect_err("no base must error");
         assert!(matches!(err, ServiceError::Supervisor(_)));
     }

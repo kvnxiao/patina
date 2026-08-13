@@ -9,8 +9,8 @@
 //! tests write a cache file directly through the public `DriftCache::encode`
 //! API (the same bytes the watcher atomically renames into place) and point
 //! the CLI at it. That exercises the full binary path the scenario cares
-//! about: read the file, check the version envelope, decode the body, render
-//! to stdout.
+//! about. It reads the file, checks the version envelope, decodes the body,
+//! and renders it to stdout.
 
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
@@ -39,8 +39,8 @@ fn code(output: &Output) -> i32 {
 
 #[test]
 fn decodes_a_drift_cache_and_prints_version_timestamp_path_and_hashes() {
-    // A populated drift cache renders with `version:`, the bound
-    // journal timestamp, the target path, and both hash values; exit 0.
+    // A populated drift cache renders with `version:`, the bound journal
+    // timestamp, the target path, and both hash values.
     let temp = TempDir::new().expect("tempdir");
     let dir = Utf8Path::from_path(temp.path()).expect("utf8 tempdir");
     let entry = DriftEntry::new("/home/u/.gitconfig", [0xab; 32], [0xcd; 32], 1_700_000_000);
@@ -79,7 +79,6 @@ fn decodes_a_drift_cache_and_prints_version_timestamp_path_and_hashes() {
 
 #[test]
 fn missing_path_exits_one_and_names_the_path_on_stderr() {
-    // A non-existent path -> exit 1, path on stderr.
     let out = invoke(&["debug", "drift-cache", "/nonexistent/drift.cache"]);
     assert_eq!(code(&out), 1, "missing path must exit 1");
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -91,9 +90,9 @@ fn missing_path_exits_one_and_names_the_path_on_stderr() {
 
 #[test]
 fn newer_version_envelope_exits_one_and_names_both_versions() {
-    // A cache whose envelope major is u16::MAX is
-    // refused by a binary whose supported drift-cache major is 1 -> exit 1,
-    // both versions plus the word "version" on stderr.
+    // A cache whose envelope major is `u16::MAX` is refused by a binary
+    // that supports a lower major. It exits 1, and stderr names both
+    // versions plus the word "version".
     let temp = TempDir::new().expect("tempdir");
     let dir = Utf8Path::from_path(temp.path()).expect("utf8 tempdir");
     let cache = DriftCache::new("20260528T120000Z", vec![]);
@@ -120,7 +119,6 @@ fn newer_version_envelope_exits_one_and_names_both_versions() {
 
 #[test]
 fn debug_help_names_drift_cache_subcommand() {
-    // `patina debug --help` names `drift-cache` and exits 0.
     let out = invoke(&["debug", "--help"]);
     assert_eq!(
         code(&out),

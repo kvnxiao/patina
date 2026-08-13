@@ -142,7 +142,7 @@ fn rollback_restores_an_unmanaged_file_overwritten_by_a_copy() {
     // *unmanaged* regular file overwritten by a copy-mode apply is first backed
     // up, so `rollback --yes` restores its original bytes byte-for-byte. This is
     // the non-tree, content-mode companion to
-    // `rollback_restores_a_regular_file_replaced_by_a_symlink` above.
+    // `rollback_restores_a_regular_file_replaced_by_a_symlink` below.
     let f = Fixture::new();
     let module = f.module(
         "shell",
@@ -150,7 +150,7 @@ fn rollback_restores_an_unmanaged_file_overwritten_by_a_copy() {
     );
     fs_err::write(module.join("rc"), "managed-content\n").expect("write source");
 
-    // Given: ~/.rc pre-exists as an unmanaged regular file Patina did not create.
+    // ~/.rc pre-exists as an unmanaged regular file Patina did not create.
     let target = f.home.join(".rc");
     fs_err::write(&target, "user-original\n").expect("seed pre-existing unmanaged file");
 
@@ -162,7 +162,6 @@ fn rollback_restores_an_unmanaged_file_overwritten_by_a_copy() {
         "apply must overwrite the unmanaged file with the managed content"
     );
 
-    // Rollback restores the pre-apply bytes exactly.
     let rolled = f.rollback(&["--yes"]);
     assert_eq!(
         code(&rolled),
@@ -197,7 +196,6 @@ fn rollback_deletes_a_symlink_target_and_writes_the_sentinel() {
 
     let target = f.home.join(".zshrc");
     assert_applied(&f.apply(&["--yes"]));
-    // After apply the target is a symlink.
     assert!(
         fs_err::symlink_metadata(&target)
             .expect("stat after apply")
@@ -214,7 +212,6 @@ fn rollback_deletes_a_symlink_target_and_writes_the_sentinel() {
         String::from_utf8_lossy(&rolled.stderr)
     );
 
-    // The fresh link is removed and the sentinel is written.
     assert!(
         fs_err::symlink_metadata(&target).is_err(),
         "rollback must delete the freshly-created symlink"
@@ -239,11 +236,9 @@ fn rollback_restores_a_regular_file_replaced_by_a_symlink() {
     );
     fs_err::write(module.join("zshrc"), "export Z=1\n").expect("write source");
 
-    // Given: ~/.zshrc pre-exists as a regular file with content "original".
     let target = f.home.join(".zshrc");
     fs_err::write(&target, "original").expect("write pre-existing zshrc");
 
-    // When: apply replaces it with a symlink.
     assert_applied(&f.apply(&["--yes"]));
     assert!(
         fs_err::symlink_metadata(&target)
@@ -253,7 +248,6 @@ fn rollback_restores_a_regular_file_replaced_by_a_symlink() {
         "apply must replace the pre-existing file with a symlink"
     );
 
-    // When: rollback --yes.
     let rolled = f.rollback(&["--yes"]);
     assert_eq!(
         code(&rolled),
@@ -262,7 +256,6 @@ fn rollback_restores_a_regular_file_replaced_by_a_symlink() {
         String::from_utf8_lossy(&rolled.stderr)
     );
 
-    // Then: ~/.zshrc is a regular file again with content "original".
     let meta = fs_err::symlink_metadata(&target).expect("stat after rollback");
     assert!(
         meta.file_type().is_file(),
@@ -281,7 +274,6 @@ fn rollback_restores_a_regular_file_replaced_by_a_symlink() {
 
 #[test]
 fn rollback_deletes_a_freshly_created_target() {
-    // A target that did not exist before apply is deleted by rollback.
     let f = Fixture::new();
     let module = f.module(
         "git",
@@ -302,8 +294,6 @@ fn rollback_deletes_a_freshly_created_target() {
 
 #[test]
 fn rollback_with_no_prior_apply_exits_one_and_names_no_prior_apply() {
-    // No apply has committed -> exit 1, stderr names
-    // "no prior apply found".
     let f = Fixture::new();
     f.module(
         "shell",
@@ -333,14 +323,13 @@ fn multi_target_copy_entry_rolls_back_to_pre_apply_state() {
     );
     fs_err::write(module.join("agent.toml"), "new").expect("write source");
 
-    // Pre-create only the claude target with "old"; codex does not exist.
+    // Only the claude target is pre-created, with "old"; codex does not exist.
     let claude = f.home.join(".claude").join("agent.toml");
     let codex = f.home.join(".codex").join("agent.toml");
     fs_err::create_dir_all(claude.parent().expect("claude parent")).expect("mkdir claude");
     fs_err::write(&claude, "old").expect("write pre-existing claude");
 
     assert_applied(&f.apply(&["--yes"]));
-    // After apply both carry "new".
     assert_eq!(fs_err::read_to_string(&claude).expect("read claude"), "new");
     assert_eq!(fs_err::read_to_string(&codex).expect("read codex"), "new");
 
@@ -369,8 +358,6 @@ fn multi_target_copy_entry_rolls_back_to_pre_apply_state() {
 
 #[test]
 fn rolled_back_apply_drops_out_of_status_last_apply() {
-    // After rollback the apply is excluded from status's last-apply
-    // computation: status reports no last_apply.
     let f = Fixture::new();
     let module = f.module(
         "shell",

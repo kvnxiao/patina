@@ -58,10 +58,10 @@ pub struct RemoteInventory {
 
 /// Enumerate the resolved repository's declared remotes and their pins.
 ///
-/// Reads the root manifest alone: a remote exists because the root declares it,
-/// not because some module currently uses it. That is what lets `patina remote
-/// update` keep the committed lock complete for machines whose active entry set
-/// differs from this one's.
+/// Reads the root manifest alone. A remote exists because the root declares
+/// it, not because some module currently uses it. As a result, `patina remote
+/// update` keeps the committed lock complete for machines whose active entry
+/// set differs from this one's.
 ///
 /// # Errors
 ///
@@ -181,8 +181,8 @@ pub fn propose(
     let candidate_epoch = git::committer_time(&git_dir, &candidate_rev)?;
 
     // After a full-history fetch of the tracked ref, a pinned rev that is not
-    // even present in the repository is provably not reachable from the tip,
-    // which is exactly the rewrite the ancestry check exists to catch.
+    // even present in the repository is provably not reachable from the tip.
+    // The ancestry check exists to catch this kind of rewrite.
     let descends_from_pin = match &view.pin {
         None => None,
         Some(pin) => Some(

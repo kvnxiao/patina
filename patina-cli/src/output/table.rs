@@ -58,8 +58,8 @@ mod tests {
     use crate::output::reporter::BufferReporter;
 
     /// The widest cell in a column sets that column's width, so every row's
-    /// next cell begins at the same offset. A row that padded to its own width
-    /// would leave the block ragged, which is the whole failure this prevents.
+    /// next cell begins at the same offset. A row that padded to its own
+    /// width would leave the block ragged.
     #[test]
     fn every_row_starts_its_second_column_at_one_offset() {
         let aligned = align("a\tone\nlonger\ttwo\n");

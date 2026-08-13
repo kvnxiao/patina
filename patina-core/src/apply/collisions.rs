@@ -9,10 +9,10 @@
 //! Only a whole-directory `symlink` owns a subtree, because that is the one
 //! mode that plants a single object over the entire target path. A
 //! `symlink-tree` or `copy` `[[directory]]` materializes one object per source
-//! leaf, and the journal records each leaf as its own target. Its footprint is
-//! therefore those leaves, which is what the planner hands this module,
-//! already expanded. Two entries filling different parts of one directory are
-//! legal, and two entries writing one leaf of it are not.
+//! leaf, and the journal records each leaf as its own target. The planner
+//! hands this module those leaves already expanded, so its footprint is those
+//! leaves. Two entries filling different parts of one directory are legal,
+//! and two entries writing one leaf of it are not.
 //!
 //! Validation runs over the **active** set, after `when` filtering, so two
 //! entries aimed at one path under mutually exclusive guards are legal. Every

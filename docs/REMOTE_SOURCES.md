@@ -8,17 +8,11 @@ current for you: a third-party skill or prompt library you want
 deployed like a dotfile without hand-copying it on every upstream
 change.
 
-This page describes the remote model end to end. It covers how the root
-manifest declares a remote, how an entry selects one, and where the
-content is cached. It also covers how updates are gated against
-supply-chain risk, and how several machines share one deterministic view
-through a committed lockfile.
-
 ## Local sources
 
-A local source is what `[[file]]` and `[[directory]]` entries declare
-everywhere else in these docs: a path relative to the module directory,
-materialized as a symlink, rendered template, or byte copy. See
+`[[file]]` and `[[directory]]` entries declare a local source everywhere
+else in these docs: a path relative to the module directory, materialized
+as a symlink, rendered template, or byte copy. See
 `docs/USER_GUIDE.md` "Declaring dotfiles" for the entry kinds and
 modes. Everything on this page is additive; a repository that declares
 no remotes is unaffected by any of it.
@@ -41,9 +35,9 @@ min_age = "0s"           # optional; overrides remote_min_age for this remote
 # name = "humanizer"     # optional; derived from the URL
 ```
 
-A remote's **name** is what entries refer to it by. It also keys the
-remote's pin in the lockfile, its directory in the cache, and every
-`patina remote` verb. Write `name` outright, or let Patina take it from
+Entries refer to a remote by its **name**, which also keys the remote's
+pin in the lockfile, its directory in the cache, and every `patina
+remote` verb. Write `name` outright, or let Patina take it from
 the last path segment of the URL with any trailing `.git` removed.
 That gives `humanizer` for all of
 `https://github.com/blader/humanizer.git`,
@@ -162,23 +156,24 @@ updated_at = "2026-08-11T14:00:00Z"
 - An entry naming a remote with no lock entry is an error at plan time;
   the message points at `patina remote update <name>` to create the
   first pin.
-- Two `[remotes.<name>]` tables that address one remote are refused
-  rather than resolved. Patina's own writer replaces a pin instead of
-  joining a second one. A folded-equivalent pair therefore means a
-  hand-edit or an unfinished merge. Guessing which one wins would apply a
-  different commit than the machine that wrote the file.
+- Two `[remotes.<name>]` tables that address one remote are refused.
+  Patina's own writer always replaces a pin in place, so a second pin
+  for the same remote never appears in a manifest it wrote. A
+  folded-equivalent pair therefore means a hand-edit or an unfinished
+  merge. Guessing which one wins would apply a different commit than the
+  machine that wrote the file.
 
 The file is written through a same-directory temporary and a rename. A
 process killed mid-write therefore leaves either the old pins or the new
 ones, never a truncated file with no pins at all.
 
 The lockfile is a statement about the root manifest's declarations, not
-about what this machine happens to use. Two consequences follow.
-`patina remote update` with no argument covers **every** declaration,
-including one no entry currently names. The committed lock therefore
-stays complete for machines whose active entries differ from yours. And a
-pin whose `[[remote]]` you deleted is stale by definition: a
-`patina apply` that may write drops it and says so. A preview reports the
+about what this machine happens to use. `patina remote update` with no
+argument covers **every** declaration, including one no entry currently
+names. The committed lock therefore stays complete for machines whose
+active entries differ from yours. A pin whose `[[remote]]` you deleted is
+stale by definition: a `patina apply` that may write drops it and says
+so. A preview reports the
 stale pin and leaves the file alone, because a preview never writes your
 repository. A preview here means a non-interactive apply without `--yes`,
 or any `--json` run.
@@ -211,13 +206,13 @@ Materialization happens at plan time, because the plan is computed
 from the checkout's bytes. A preview is therefore not offline and not
 write-free in the strictest sense: a non-interactive apply without
 `--yes`, and any `--json` run, will fetch and write a checkout the
-cache lacks. What a preview never writes is your repository or any
-target: the lockfile rewrites are held back for exactly that reason.
+cache lacks. A preview never writes your repository or any target; the
+lockfile rewrites are held back for exactly that reason.
 
 The directory under `<state>/remotes/` is named by the remote's
 folded name (one case, one Unicode normal form), not by the spelling
 in the manifest. Respelling a declaration therefore keeps addressing the
-checkouts already on disk, instead of cold-starting a second tree.
+checkouts already on disk and starts no second tree.
 
 Git runs as a subprocess (`git` on `PATH`, verified by
 `patina doctor`), so your existing authentication (SSH agent,
@@ -333,7 +328,8 @@ must clear four checks, evaluated after fetching it:
    local clock is a hard reject.
 2. **Ancestry check.** A tip that is not a descendant of the pinned
    `rev` means upstream history was rewritten; Patina requires explicit
-   confirmation. This catches force-pushes, not additive commits.
+   confirmation. This catches force-pushes; additive commits pass
+   unaffected.
 3. **Backdating floor.** A committer time earlier than the lock's
    `updated_at` is anomalous and prompts for confirmation. It is a
    prompt rather than a reject because one honest workflow trips it: a
@@ -355,8 +351,8 @@ review in the consent diff. The gate exists to slow down *unattended*
 pin bumps. `--now` bypasses the age gate for one run, with a visible
 warning.
 
-The gate has one limit worth stating plainly: committer timestamps are
-authored by whoever makes the commit. The checks stop untargeted,
+Committer timestamps are authored by whoever makes the commit. The
+checks stop untargeted,
 fast-moving compromises, the common case where attackers race detection
 windows and publish with honest timestamps. An attacker who backdates a
 commit specifically to defeat this gate will pass it. Plain git offers
@@ -452,8 +448,8 @@ if (Test-Path $notice) { Get-Content $notice }
 Start-Process patina -ArgumentList 'remote','check','--hook' -WindowStyle Hidden
 ```
 
-The notice distinguishes two situations. When upstream tips have moved
-past your pins, it names the remotes and suggests
+When upstream tips have moved past your pins, the notice names the
+remotes and suggests
 `patina apply --update`. When your own dotfiles repository is behind
 its origin (the stale-server case: another machine already bumped the
 pins), it says so and suggests `git pull && patina apply`
@@ -488,14 +484,14 @@ object. A `symlink-tree` or `copy` `[[directory]]` materializes one
 object per source leaf, and journals each leaf as its own target. It
 therefore claims those leaves and nothing between them. Another entry may
 therefore deploy into a part of the same directory the tree does not
-fill. That is what makes "add one upstream file to a directory my
-repository also populates" expressible. Two entries writing one leaf is
-still refused, naming the leaf and the directory target it came from.
+fill. This lets you add one upstream file to a directory your repository
+also populates. Two entries writing one leaf is still refused, naming
+the leaf and the directory target it came from.
 
 The leaves are read from the source tree as it stands, so the verdict
 depends on what the source currently holds: a file appearing upstream
-under a tree source can newly fail a plan. That failure lands before
-any write, which is what a tree growing an unexpected file should do.
+under a tree source can newly fail a plan. That failure lands before any
+write, the correct outcome when a tree grows an unexpected file.
 
 Both comparisons ignore case and Unicode normal form, on every
 platform. Windows and macOS resolve two targets differing only in case

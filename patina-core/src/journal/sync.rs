@@ -56,9 +56,10 @@ impl Syncer for OsSyncer {
     fn sync_dir(&self, path: &Utf8Path) -> Result<(), std::io::Error> {
         // Opening a directory read-only and calling `sync_all` flushes
         // its entries on POSIX. On Windows a directory handle cannot be
-        // opened with the std file API and `sync_all` is not meaningful
-        // for directories, so the directory write is already durable via
-        // the file sync; treat a failure-to-open as a no-op there.
+        // opened with the std file API, and `sync_all` is not meaningful
+        // for directories. The directory write is already durable via the
+        // file sync, so the code treats a failure-to-open there as a
+        // no-op.
         match fs_err::File::open(path) {
             Ok(dir) => match dir.sync_all() {
                 Ok(()) => Ok(()),
@@ -73,8 +74,8 @@ impl Syncer for OsSyncer {
 }
 
 /// Whether an error from a directory `fsync` reflects a platform that
-/// does not support syncing directory handles (Windows), as opposed to a
-/// genuine I/O failure that must propagate.
+/// does not support syncing directory handles (Windows). The alternative
+/// is a genuine I/O failure that must propagate.
 fn is_unsupported_dir_sync(err: &std::io::Error) -> bool {
     matches!(
         err.kind(),

@@ -77,7 +77,7 @@ impl Scene {
             fs_err::create_dir_all(parent).expect("backup parent");
         }
         fs_err::write(&backup, original).expect("write backup");
-        // The crashed apply left the new (overwriting) content in place.
+        // The crashed apply left the new, overwriting content in place.
         fs_err::write(&target, new_content).expect("write overwriting target");
         PlannedOperation::copy(format!("repo/{name}"), target.as_str(), Disposition::Create)
     }
@@ -129,10 +129,8 @@ impl Scene {
     }
 }
 
-// An apply that completed 3 of 5 file operations before SIGKILL,
-// with the backup directory intact, when recovery runs, restores the 3
-// previously-overwritten targets from backups to their pre-apply content
-// and removes the orphaned plan + progress files.
+// The apply completes 3 of 5 operations before SIGKILL, with the backup
+// directory intact.
 #[test]
 fn restores_overwritten_targets_and_clears_orphan_files() {
     let scene = Scene::new();
@@ -147,7 +145,7 @@ fn restores_overwritten_targets_and_clears_orphan_files() {
         scene.stage_fresh_unstarted("e"),
     ];
     scene.write_orphan_plan(ops);
-    scene.write_progress(&[0, 1, 2]); // cursor: 3 of 5 done
+    scene.write_progress(&[0, 1, 2]);
 
     let report = recover_orphans(&scene.journal, &scene.backups).expect("recovery");
     assert_eq!(
@@ -156,25 +154,20 @@ fn restores_overwritten_targets_and_clears_orphan_files() {
         "the single orphan plan is recovered"
     );
 
-    // The 3 overwritten targets are restored to pre-apply content.
     for (name, original) in [("a", "orig-a"), ("b", "orig-b"), ("c", "orig-c")] {
         let got = fs_err::read_to_string(scene.target(name)).expect("read restored target");
         assert_eq!(got, original, "target {name} restored to pre-apply bytes");
     }
-    // The fresh creation that completed is deleted (no backup to restore).
+    // The completed fresh creation is deleted because no backup exists to restore.
     assert!(
         !scene.target("d").exists(),
         "freshly-created target is removed, converging to pre-apply (absent)"
     );
 
-    // The orphan plan and progress files are gone.
     assert!(!scene.plan_exists(), "orphan plan removed");
     assert!(!scene.progress_exists(), "orphan progress removed");
 }
 
-// An apply interrupted before any operation executed
-// leaves the filesystem in the pre-apply state; the plan and progress
-// files are removed.
 #[test]
 fn interrupted_before_any_op_touches_nothing_and_clears_orphan() {
     let scene = Scene::new();
@@ -183,7 +176,7 @@ fn interrupted_before_any_op_touches_nothing_and_clears_orphan() {
         scene.stage_fresh_unstarted("b"),
     ];
     scene.write_orphan_plan(ops);
-    scene.write_progress(&[]); // nothing completed
+    scene.write_progress(&[]);
 
     recover_orphans(&scene.journal, &scene.backups).expect("recovery");
 
@@ -193,9 +186,6 @@ fn interrupted_before_any_op_touches_nothing_and_clears_orphan() {
     assert!(!scene.progress_exists(), "orphan progress removed");
 }
 
-// Recovery is idempotent: running it twice yields
-// the same final state as running it once, with no error on the second
-// pass.
 #[test]
 fn recovery_is_idempotent() {
     let scene = Scene::new();
@@ -212,7 +202,6 @@ fn recovery_is_idempotent() {
     let a_after_first = fs_err::read_to_string(scene.target("a")).expect("read a");
     let b_exists_after_first = scene.target("b").exists();
 
-    // Second pass: the orphan plan is gone, so there is nothing to do.
     let second = recover_orphans(&scene.journal, &scene.backups).expect("second recovery");
     assert!(
         !second.recovered_any(),
@@ -233,9 +222,6 @@ fn recovery_is_idempotent() {
     assert!(!b_exists_after_first);
 }
 
-// Recovery never proceeds forward. An operation that
-// never started (fresh target absent, no backup) is left absent. Recovery
-// rolls back; it does not finish the half-done apply by creating it.
 #[test]
 fn recovery_rolls_back_and_never_completes_an_unstarted_op() {
     let scene = Scene::new();
@@ -259,10 +245,6 @@ fn recovery_rolls_back_and_never_completes_an_unstarted_op() {
     );
 }
 
-// Probe-over-cursor: a progress cursor that lies
-// (reports more completed than the filesystem reflects) does not change
-// the reversal, because recovery probes the filesystem and consults the
-// backup directory rather than trusting the cursor.
 #[test]
 fn lying_progress_cursor_is_ignored_in_favour_of_the_filesystem() {
     let scene = Scene::new();
@@ -272,7 +254,7 @@ fn lying_progress_cursor_is_ignored_in_favour_of_the_filesystem() {
         scene.stage_fresh_unstarted("b"),
     ];
     scene.write_orphan_plan(ops);
-    // The cursor lies: it claims both ops completed.
+    // The cursor lies. It claims both ops completed even though op 1 never ran.
     scene.write_progress(&[0, 1]);
 
     recover_orphans(&scene.journal, &scene.backups).expect("recovery");
@@ -283,7 +265,7 @@ fn lying_progress_cursor_is_ignored_in_favour_of_the_filesystem() {
         "orig-a",
         "the genuinely-overwritten target is restored"
     );
-    // Op 1's target was never created; recovery does not invent one to
+    // Op 1's target was never created. Recovery does not invent one to
     // satisfy the cursor's false claim.
     assert!(
         !scene.target("b").exists(),

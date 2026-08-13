@@ -7,13 +7,13 @@
 //! [`crate::variables::Resolver::with_profile`] once the active profile
 //! is resolved, to `Some(name)`, where the no-profile fallback is
 //! `Some("")`. While it is `None`, a `patina.profile` lookup is
-//! undefined: profile resolution itself evaluates `[[auto_match]]`
+//! undefined. Profile resolution itself evaluates `[[auto_match]]`
 //! predicates *before* the profile exists, so a rule referencing
 //! `patina.profile` accesses an undefined variable and errors rather
 //! than silently matching the empty string.
 //!
-//! The dynamic `patina.env.*` map is **not** snapshotted: each
-//! `patina.env.FOO` lookup reads `std::env::var("FOO")` at lookup time
+//! The dynamic `patina.env.*` map is **not** snapshotted. Each
+//! `patina.env.FOO` lookup reads `std::env::var("FOO")` at lookup time,
 //! so apply-time environment changes are observable.
 
 /// Snapshot of the `patina.*` built-in variable layer.
@@ -103,7 +103,7 @@ fn normalized_os(raw: &str) -> String {
 }
 
 /// Host name from the OS, via `whoami`, which is a `gethostname` /
-/// `GetComputerNameExW` syscall. The `$HOSTNAME` env var is not used: it is a
+/// `GetComputerNameExW` syscall. The `$HOSTNAME` env var is not used. It is a
 /// non-exported bash shell variable on Unix, and it is absent under the
 /// systemd/launchd watcher services. Empty when the query fails.
 fn current_hostname() -> String {

@@ -30,7 +30,6 @@ fn help_subcommand_is_rejected() {
 
 #[test]
 fn help_flag_still_works() {
-    // The `--help` flag remains the supported way to print usage and exits 0.
     let f = Fixture::new();
 
     let out = f.run(&["--help"], &[]);

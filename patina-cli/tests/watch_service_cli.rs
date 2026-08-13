@@ -65,13 +65,13 @@ fn start_with_no_installed_service_exits_one_with_a_clear_message() {
 }
 
 /// Whether a lifecycle command's stderr is one of the two valid not-installed
-/// outcomes: a backend with an installed-service supervisor (launchd on macOS,
-/// `systemd --user` on a systemd Linux host, the Scheduled Task on Windows)
-/// reports the "service not installed; run `patina watch install`" no-op; a
-/// host with no reachable backend (non-systemd Linux) reports the unsupported
-/// `--foreground` escape hatch. Which one fires depends on the test
-/// host's OS *and* (on Linux) whether `systemd --user` is reachable, so the
-/// lifecycle tests accept either rather than pinning to one.
+/// outcomes. A backend with an installed-service supervisor (launchd on
+/// macOS, `systemd --user` on a systemd Linux host, the Scheduled Task on
+/// Windows) reports the "service not installed; run `patina watch install`"
+/// no-op; a host with no reachable backend (non-systemd Linux) reports the
+/// unsupported `--foreground` escape hatch. Which one fires depends on the
+/// test host's OS and, on Linux, whether `systemd --user` is reachable, so
+/// the lifecycle tests accept either rather than pinning to one.
 fn not_installed_or_unsupported(stderr: &str) -> bool {
     let not_installed =
         stderr.contains("service not installed") && stderr.contains("patina watch install");
@@ -89,8 +89,9 @@ fn stop_and_uninstall_on_a_not_installed_service_do_not_error_spuriously() {
     for sub in [["watch", "stop"], ["watch", "restart"]] {
         let out = f.run(&sub, &[]);
         // Either the macOS not-installed no-op (exit 1, install hint) or the
-        // unsupported-backend error (exit 1, foreground hint): never a panic /
-        // supervisor crash. The shared assertion is a clean exit 1.
+        // unsupported-backend error (exit 1, foreground hint) applies here,
+        // never a panic or supervisor crash. The shared assertion is a clean
+        // exit 1.
         assert_eq!(
             code(&out),
             1,

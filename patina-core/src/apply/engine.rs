@@ -465,8 +465,8 @@ struct EntryOrigin {
 /// selecting that remote here. So the lockfile is read on the first selection
 /// of any remote, a checkout is materialized on the first selection of that
 /// remote, and both are memoized. A remote no active entry names on this host
-/// costs no `patina.lock` read and no fetch, which is what keeps a
-/// `when`-false entry from pulling the network into a plan.
+/// costs no `patina.lock` read and no fetch, so a `when`-false entry never
+/// pulls the network into a plan.
 struct RemoteRegistry<'a> {
     /// Every declaration, in root-manifest order.
     declared: &'a [RemoteSpec],
@@ -610,9 +610,9 @@ impl<'a> RemoteRegistry<'a> {
     /// The `(name, rev)` of every declared remote's pin, or `None` when this
     /// run never read the lockfile.
     ///
-    /// The distinction is what keeps the cache sweep honest. "No remote is
+    /// The cache sweep must tell the two cases apart: "no remote is
     /// pinned" and "which remotes are pinned was never established" both look
-    /// like an empty list. Deleting a checkout on the second would take out
+    /// like an empty list, but deleting a checkout on the second would remove
     /// the one the next run materializes.
     fn pins(&self) -> Option<Vec<(RemoteName, String)>> {
         Some(declared_pins(
@@ -957,15 +957,14 @@ impl ClaimTargets<'_> {
 /// upstream file into a directory the repository also fills is the ordinary
 /// case once remotes exist.
 ///
-/// The consequence is that the verdict depends on what the source tree holds
-/// right now, so a file appearing upstream under a tree source can newly fail a
-/// plan. That failure lands before any write, which is what a tree growing an
-/// unexpected file is supposed to do.
+/// The verdict depends on what the source tree holds right now, so a file
+/// appearing upstream under a tree source can newly fail a plan. Failing
+/// before any write is correct when a tree grows an unexpected file.
 ///
 /// The leaves are walked here rather than taken from the classified
 /// dispositions. Classification deliberately records none for a tree target
-/// that does not exist yet (the whole-op Create shortcut), and a fresh target
-/// is exactly when a collision must still be caught.
+/// that does not exist yet (the whole-op Create shortcut), but a collision
+/// must still be caught even for a fresh target.
 ///
 /// Claims come out in declaration order, every `[[file]]` entry and then every
 /// `[[directory]]` entry, so the reported pair is a function of the manifest.
@@ -1728,8 +1727,8 @@ pub async fn execute(
         let pruned = gc_retain(&backups_dir, crate::backups::RETENTION_COUNT)?;
         prune_cycles(&journal_dir, &pruned)?;
         // Remote checkouts follow the same retain-what-recovery-needs rule as
-        // backups, and for the same reason: a checkout an on-disk journal record
-        // still names is what `patina rollback` re-points links back to. Runs
+        // backups, and for the same reason: `patina rollback` re-points links
+        // back to whatever checkout an on-disk journal record still names. Runs
         // after the commit and after the journal prune, so the reachability set
         // it reads is this run's, and disk settles at roughly the current and
         // previous rev per remote. Currently pinned checkouts survive even

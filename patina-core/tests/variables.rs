@@ -66,10 +66,9 @@ fn cli_override_of_reserved_key_is_rejected() {
 }
 
 /// `patina.env.FOO` resolves to the value
-/// of `FOO` in the current process environment. Tests forbid mutating
-/// `std::env` under `unsafe_code = "forbid"`, so we exercise the path
-/// via `PATH`, which is reliably set on every host that runs the
-/// workspace tests.
+/// of `FOO` in the current process environment. `unsafe_code = "forbid"`
+/// blocks tests from mutating `std::env`, so this test uses `PATH`, which
+/// every host running the workspace tests reliably sets.
 #[test]
 fn patina_env_lookup_reads_process_environment() {
     let resolver = Resolver::new(Builtins::current());
@@ -108,15 +107,14 @@ fn patina_os_is_one_of_the_v1_platform_strings() {
         );
         assert_eq!(os, std::env::consts::OS);
     } else {
-        // Non-{macOS, Linux, Windows} hosts (BSDs) report through
-        // unchanged. Just assert it is non-empty.
+        // Other hosts, such as BSDs, only need patina.os to be non-empty.
         assert!(!os.is_empty());
     }
 }
 
-/// Profile injection is lazy: the resolved profile is wired in via
-/// [`Resolver::with_profile`] without forcing this task to depend on
-/// that wiring being complete.
+/// Profile injection is lazy. The resolved profile is wired in via
+/// [`Resolver::with_profile`], so this test does not depend on that
+/// wiring being complete.
 #[test]
 fn profile_injection_round_trips() {
     let resolver = Resolver::new(Builtins::for_tests()).with_profile("desktop");
@@ -124,7 +122,7 @@ fn profile_injection_round_trips() {
 }
 
 /// Lower-precedence layers still surface when no higher layer sets the
-/// key. Exercises the per-module → repo-shared fall-through.
+/// key. This test exercises the per-module-to-repo-shared fall-through.
 #[test]
 fn lookup_falls_through_to_lower_layers() {
     let resolver = Resolver::new(Builtins::for_tests())

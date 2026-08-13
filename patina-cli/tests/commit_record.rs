@@ -33,7 +33,7 @@ use patina_core::read_latest_commit;
 use std::process::Output;
 use tempfile::TempDir;
 
-/// A prepared fixture: an isolated repo + state dir + home.
+/// A prepared fixture with an isolated repo, state dir, and home.
 struct Fixture {
     _temp: TempDir,
     root: Utf8PathBuf,
@@ -173,17 +173,15 @@ fn content_hash_of(entry: &ExpectedTarget) -> [u8; 32] {
 /// test's expectation matches the recorded source byte-for-byte regardless
 /// of the platform's verbatim-prefix representation.
 fn canonical(path: &Utf8Path) -> String {
-    // `dunce::canonicalize` mirrors the engine's `canonicalize_path`: a
-    // filesystem canonicalize with the Windows `\\?\` verbatim prefix
-    // stripped where the plain form is equivalent.
+    // `dunce::canonicalize` mirrors the engine's `canonicalize_path`. Both
+    // do a filesystem canonicalize with the Windows `\\?\` verbatim prefix
+    // stripped when the plain form is equivalent.
     let canon = dunce::canonicalize(path.as_std_path()).expect("canonicalize path");
     camino::Utf8PathBuf::from_path_buf(canon)
         .expect("canonical path is utf8")
         .into_string()
 }
 
-// A copy-mode `[[file]]` records, for its target, the canonical
-// source path and a 32-byte blake3 hash of the source bytes.
 #[test]
 fn copy_target_records_canonical_source_and_blake3_hash() {
     let f = Fixture::new();
@@ -216,8 +214,6 @@ fn copy_target_records_canonical_source_and_blake3_hash() {
     );
 }
 
-// A symlink target records its canonical link target as
-// its source.
 #[test]
 fn symlink_target_records_link_target_as_source() {
     let f = Fixture::new();
@@ -250,8 +246,6 @@ fn symlink_target_records_link_target_as_source() {
     }
 }
 
-// Two consecutive applies of unchanged source record a
-// byte-identical blake3 hash for the content target.
 #[test]
 fn two_applies_record_byte_identical_hash() {
     let f = Fixture::new();
@@ -295,8 +289,6 @@ fn commit_envelope_major_matches_supported() {
     );
 }
 
-// The read side compares the recorded blake3: an
-// external edit drifts, no edit stays clean.
 #[test]
 fn status_uses_recorded_blake3_for_drift() {
     let f = Fixture::new();
@@ -308,7 +300,6 @@ fn status_uses_recorded_blake3_for_drift() {
 
     assert_applied(&f.apply(&["--yes"]));
 
-    // No edit: clean.
     let clean = f.status(&["--json"]);
     let clean_doc = status_doc(&clean);
     assert_eq!(
@@ -317,7 +308,6 @@ fn status_uses_recorded_blake3_for_drift() {
         "an unedited content target must be clean"
     );
 
-    // External edit to the materialized bytes: drifted.
     fs_err::write(f.home.join(".gitconfig"), b"edited externally\n").expect("edit target");
     let drifted = f.status(&["--json"]);
     let drifted_doc = status_doc(&drifted);
@@ -328,12 +318,12 @@ fn status_uses_recorded_blake3_for_drift() {
     );
 }
 
-// A committed apply over both the
-// `[[file]]` and `[[directory]]` table-arrays records a single monotonic
-// entry-index space: every declared entry gets a distinct index, no
-// `[[file]]` and `[[directory]]` entry collide, and targets sharing a
-// declared entry share its index, while the COMMIT version envelope major
-// stays the journal's supported major (no version bump).
+// A committed apply over both `[[file]]` and `[[directory]]` table-arrays
+// uses one monotonic entry-index space. Every declared entry gets a
+// distinct index. No `[[file]]` entry collides with a `[[directory]]`
+// entry. Targets sharing one declared entry share its index. The COMMIT
+// version envelope major stays the journal's supported major, with no
+// version bump.
 #[test]
 fn directory_and_file_entries_get_distinct_indices_and_envelope_major_is_unchanged() {
     let f = Fixture::new();
@@ -383,14 +373,11 @@ fn directory_and_file_entries_get_distinct_indices_and_envelope_major_is_unchang
         b, d_one,
         "a `[[file]]` and a `[[directory]]` entry must not collide on an index"
     );
-    // Files precede directories in the single monotonic space.
     assert!(
         a < d_one && b < d_one,
         "every `[[file]]` entry index must precede the `[[directory]]` entry index (got files {a},{b}; dir {d_one})"
     );
 
-    // The wire-format major is unchanged: it stays
-    // the journal's supported FILE_MAJOR_VERSION, with no version bump.
     let bytes = f.commit_bytes();
     let envelope = bytes.get(..2).expect("COMMIT file has a 2-byte envelope");
     let major = u16::from_le_bytes([envelope[0], envelope[1]]);

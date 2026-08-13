@@ -6,7 +6,7 @@ Your dotfiles, oxidized to perfection.
 
 `patina` is a symlink-first, multi-destination, layered dotfile manager
 written in Rust. It manages your dotfiles across macOS, Linux, and Windows
-from a single centralized git repository: it primarily creates symbolic
+from a single centralized git repository. It primarily creates symbolic
 links from that repo to system locations, with optional templated copies,
 profile-based selection, and per-OS variation. It also supports
 multi-destination links (one source to many targets), an always-on watcher

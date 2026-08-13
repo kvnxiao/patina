@@ -89,14 +89,13 @@ fn failed_second_target_rolls_the_first_forward_and_reports_partial() {
 
     let result = replay_entry(3, &[update(&t1), update(&t2)], &e.backups, ts);
 
-    // The entry fails atomically with a typed RollbackPartial naming entry 3.
     match result {
         Err(RollbackError::RollbackPartial { entry, .. }) => assert_eq!(entry, 3),
         other => panic!("expected RollbackPartial for entry 3, got {other:?}"),
     }
 
-    // Target 1 was reverted then rolled forward: it is back to its
-    // post-apply state, NOT the pre-apply backup. No partial restore.
+    // Target 1 is reverted, then rolled forward. It ends at its post-apply
+    // state, not the pre-apply backup, so there is no partial restore.
     assert_eq!(
         fs_err::read_to_string(&t1).expect("read t1 after abort"),
         "post-apply-1",
@@ -106,8 +105,8 @@ fn failed_second_target_rolls_the_first_forward_and_reports_partial() {
 
 #[test]
 fn fully_revertible_multi_target_entry_succeeds() {
-    // The happy-path counterpart: when every target reverts cleanly the
-    // entry returns Ok and both reach their pre-apply state.
+    // This is the happy-path counterpart. When every target reverts cleanly,
+    // the entry returns Ok and both reach their pre-apply state.
     let e = env();
     let ts = "20260528T120000Z";
 

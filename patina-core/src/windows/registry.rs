@@ -108,8 +108,8 @@ pub(crate) fn process_is_elevated() -> Result<bool, WindowsError> {
 
 /// Open `HKLM\{sub_key}` read-only and read `{value}` as a DWORD.
 ///
-/// A missing key or value is reported as `Ok(None)` rather than an error;
-/// Developer Mode being un-toggled is a normal state, not a failure.
+/// A missing key or value is reported as `Ok(None)` rather than an error,
+/// because Developer Mode being un-toggled is a normal state.
 /// (`co::ERROR` is a newtype over an integer and cannot appear in a match
 /// pattern, so the not-found case is checked with `==`.)
 fn read_dword(sub_key: &str, value: &str) -> Result<Option<u32>, WindowsError> {

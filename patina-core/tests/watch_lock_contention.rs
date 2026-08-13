@@ -5,17 +5,20 @@
 
 //! Cross-process coverage for the watcher's lock-contention skip.
 //!
-//! The watcher re-applies under [`LockPolicy::NonBlocking`]: the engine
-//! self-acquires the exclusive advisory lock with a single non-blocking attempt
-//! and, on contention, returns having mutated nothing. This test holds the
-//! exclusive lock in the test process, exactly as a concurrent CLI `apply` /
-//! `rollback` would in another process, and drives `run_reapply` in the
-//! `reapply_probe` child. It asserts the child reports `SKIPPED` and creates no
-//! target, then releases the lock and re-runs the child, asserting the cycle
-//! now reports `APPLIED` and materializes. The re-apply runs in a child because
-//! the crate forbids `unsafe`, so the test cannot mutate its own environment
-//! (which `run_reapply` reads to resolve the repo and state dir); the child
-//! inherits a clean environment via `Command::env`.
+//! The watcher re-applies under [`LockPolicy::NonBlocking`]. The engine
+//! self-acquires the exclusive advisory lock with a single non-blocking
+//! attempt. On contention, it returns having mutated nothing.
+//!
+//! This test holds the exclusive lock in the test process, exactly as a
+//! concurrent CLI `apply` or `rollback` would in another process. It drives
+//! `run_reapply` in the `reapply_probe` child. It asserts the child reports
+//! `SKIPPED` and creates no target. It then releases the lock, re-runs the
+//! child, and asserts the cycle now reports `APPLIED` and materializes.
+//!
+//! The re-apply runs in a child because the crate forbids `unsafe`. The test
+//! cannot mutate its own environment, which `run_reapply` reads to resolve
+//! the repo and state dir. The child inherits a clean environment via
+//! `Command::env`.
 
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
@@ -172,7 +175,7 @@ fn reapply_skips_without_mutating_while_the_exclusive_lock_is_held() {
         "a skipped re-apply must not create the target"
     );
 
-    // Release the lock; the next re-apply must proceed and materialize.
+    // Release the lock so the next re-apply can proceed.
     drop(guard);
     let released = fx.run_probe(&probe);
     assert_eq!(

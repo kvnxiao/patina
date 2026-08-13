@@ -8,7 +8,7 @@
 //! These drive [`patina_core::remote::update`] in-process against throwaway
 //! origin repositories, so each gate verdict is asserted against real git
 //! history rather than only through the CLI subprocess. The gate's arithmetic
-//! is unit-tested in `patina_core::remote::gate`; what is proven here is that
+//! is unit-tested in `patina_core::remote::gate`. These tests prove that
 //! the inputs it receives are derived correctly from a repository.
 //!
 //! See `docs/REMOTE_SOURCES.md` "Commands" and "The update gate".
@@ -234,7 +234,7 @@ fn a_fast_forward_past_the_cooldown_is_allowed() {
 fn a_rewritten_history_needs_confirmation() {
     let f = Fixture::new();
     let first = f.commit("one\n", NOW - 3 * WEEK);
-    // An orphan root commit promoted to `main` is what a force-push leaves.
+    // A force-push leaves an orphan root commit promoted to `main`.
     git_in(
         &f.origin,
         NOW - 2 * WEEK,
@@ -257,8 +257,9 @@ fn a_rewritten_history_needs_confirmation() {
 fn a_candidate_older_than_the_pin_timestamp_needs_confirmation() {
     let f = Fixture::new();
     let first = f.commit("one\n", NOW - 3 * WEEK);
-    // The new tip descends from the pin but carries an older committer date, the
-    // long-lived-branch fast-forward the backdating floor is a prompt for.
+    // The new tip descends from the pin but has an older committer date. A
+    // long-lived branch's fast-forward creates this pattern, which the
+    // backdating check flags.
     f.commit("two\n", NOW - 4 * WEEK);
     let inventory = f.inventory(Some(Duration::from_secs(0)), Some(pin(&first, 1)));
 

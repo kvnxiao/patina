@@ -6,7 +6,7 @@
 //! diff, and rendering without ever launching the elevated helper: a non-TTY
 //! subprocess without `--yes` previews and exits `0` by contract.
 //!
-//! The subject is what the CLI reports about a Defender exclusion list it
+//! These tests cover the CLI's report on a Defender exclusion list it
 //! cannot read. Run unelevated, as CI and a normal developer shell are,
 //! `Get-MpPreference` withholds the list, so these tests pin the honest
 //! rendering of that case. Run elevated they would see a real list and the
@@ -69,11 +69,11 @@ fn elevated() -> bool {
 ///
 /// Derived paths come out of the plan canonicalized, so a raw fixture path is
 /// not comparable to one. The two forms differ on a CI runner, whose `%TEMP%`
-/// resolves through a junction, and are identical on most developer machines,
-/// which is exactly the shape of difference that passes locally and fails in
-/// CI. `dunce::canonicalize` mirrors the engine's `canonicalize_path`: a
-/// filesystem canonicalize with the Windows `\\?\` verbatim prefix stripped
-/// where the plain form is equivalent.
+/// resolves through a junction, and match on most developer machines. That
+/// difference passes locally and fails in CI. `dunce::canonicalize` mirrors
+/// the engine's `canonicalize_path`: a filesystem canonicalize with the
+/// Windows `\\?\` verbatim prefix stripped where the plain form is
+/// equivalent.
 fn canonical(path: &camino::Utf8Path) -> String {
     let canon = dunce::canonicalize(path.as_std_path()).expect("canonicalize a fixture path");
     camino::Utf8PathBuf::from_path_buf(canon)
@@ -83,8 +83,8 @@ fn canonical(path: &camino::Utf8Path) -> String {
 
 #[test]
 fn apply_without_yes_previews_and_writes_nothing() {
-    // The contract a non-interactive shell relies on: no `--yes`, no mutation,
-    // exit 0. It is also what makes the rest of this suite safe to run.
+    // This is the contract a non-interactive shell relies on: no `--yes`, no
+    // mutation, exit 0. The rest of this suite depends on it holding.
     let fixture = fixture();
     let output = fixture.run(&["defender", "apply", "--json"], &[]);
 
@@ -159,7 +159,7 @@ fn status_reports_that_the_live_list_was_not_readable() {
 #[test]
 fn every_status_entry_carries_its_kind_and_state_as_data() {
     // The kind is color-only in human output, so `--json` is the only place it
-    // survives a pipe. The state token is what a consumer branches on.
+    // survives a pipe. The state token is the field a consumer branches on.
     let envelope = json_of(&fixture().run(&["defender", "status", "--json"], &[]));
 
     for entry in envelope["exclusions"]
@@ -206,8 +206,8 @@ fn the_preview_proposes_the_repo_root_and_each_managed_target() {
         proposed.contains(&(repo_root.as_str(), "folder")),
         "the repository root must be proposed as a folder exclusion: {proposed:?}"
     );
-    // The target does not exist yet, so canonicalize its parent and rejoin the
-    // leaf, which is what the engine's own path resolution does.
+    // The target does not exist yet. Canonicalize its parent and rejoin the
+    // leaf, matching the engine's own path resolution.
     let target = format!("{}\\.gitconfig", canonical(&fixture.home));
     assert!(
         proposed.contains(&(target.as_str(), "file")),

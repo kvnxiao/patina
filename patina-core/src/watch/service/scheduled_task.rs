@@ -11,7 +11,7 @@
 //! code, and recovers the watcher's log counters from the rotated structured
 //! log.
 //!
-//! None of these paths require admin: the task is registered in the current
+//! None of these paths require admin. The task is registered in the current
 //! user's folder (`\`) with `TASK_LOGON_INTERACTIVE_TOKEN` and a
 //! least-privilege run level, so the Task Scheduler accepts it for the
 //! invoking user without elevation. The HKCU-scoped, non-elevated nature is
@@ -134,7 +134,7 @@ const TASK_FOLDER: &str = r"\";
 /// `ITaskService` with COM already initialized for this call.
 ///
 /// The returned [`winsafe::guard::CoUninitializeGuard`] must be held for the
-/// lifetime of every COM object derived from the service: dropping it
+/// lifetime of every COM object derived from the service. Dropping it
 /// uninitializes COM on this thread and invalidates the interface pointers.
 /// Callers therefore bind the guard to a local that outlives the work.
 fn connect_service()
@@ -190,7 +190,7 @@ fn register_task(xml: &str) -> Result<(), ServiceError> {
     // Register under the current interactive user's token (no stored password,
     // non-elevated). CREATE refuses to clobber an existing task, but `install`
     // has already screened for that with `task_exists`, so the AlreadyInstalled
-    // error is surfaced before we get here.
+    // error surfaces before reaching this call.
     folder
         .RegisterTaskDefinition(
             Some(TASK_NAME),
@@ -321,8 +321,8 @@ const SCHED_S_TASK_HAS_NOT_RUN: i32 = 0x0004_1303;
 /// Scheduler also surfaces `ERROR_PATH_NOT_FOUND` (`0x8007_0003`) for a missing
 /// task path. Treating both as not-found keeps a never-installed task off the
 /// error path. Taking the raw `u32` (the caller passes `err.raw()`) keeps this
-/// classification pure and unit-testable without constructing an `HRESULT`:
-/// the workspace forbids `unsafe`, and `HRESULT::from_raw` is `unsafe`.
+/// classification pure and unit-testable without constructing an `HRESULT`.
+/// The workspace forbids `unsafe`, and `HRESULT::from_raw` is `unsafe`.
 fn is_not_found(raw: u32) -> bool {
     const FILE_NOT_FOUND: u32 = 0x8007_0002;
     const PATH_NOT_FOUND: u32 = 0x8007_0003;
@@ -433,7 +433,7 @@ mod tests {
         let binary = Utf8Path::new(r"C:\Users\dev\bin\patina.exe");
         let xml = render_task_xml(binary);
 
-        // a logon trigger, a non-elevated (least-privilege) run level,
+        // A logon trigger, a non-elevated (least-privilege) run level,
         // and an Exec action pointing at the canonical binary plus the
         // foreground tokens.
         assert!(
@@ -458,8 +458,8 @@ mod tests {
     fn render_task_xml_is_well_formed_task_scheduler_2_0_xml() {
         let xml = render_task_xml(Utf8Path::new(r"C:\bin\patina.exe"));
         assert!(xml.starts_with("<?xml version=\"1.0\""));
-        // The 2.0 schema namespace is what the Task Scheduler validates the
-        // registration XML against; an absent / wrong namespace is rejected at
+        // The Task Scheduler validates the registration XML against the 2.0
+        // schema namespace; an absent / wrong namespace is rejected at
         // RegisterTaskDefinition.
         assert!(
             xml.contains(
@@ -517,8 +517,8 @@ mod tests {
 
     #[test]
     fn map_task_status_reports_running_for_the_running_state() {
-        // RUNNING liveness with a recorded last run: running, and the recorded
-        // exit code / timestamp surface.
+        // RUNNING liveness with a recorded last run means running, and the
+        // recorded exit code / timestamp surface.
         let readout = map_task_status(co::TASK_STATE::RUNNING, 0, 45_000.5);
         assert!(
             readout.running,
@@ -543,7 +543,7 @@ mod tests {
 
     #[test]
     fn map_task_status_reports_none_exit_code_when_never_run() {
-        // a task that has never run reports the SCHED_S_TASK_HAS_NOT_RUN
+        // A task that has never run reports the SCHED_S_TASK_HAS_NOT_RUN
         // sentinel result and the epoch (0.0) last-run time; both map to None so
         // a freshly-installed task surfaces no exit code and no last-fired time.
         let readout = map_task_status(co::TASK_STATE::READY, SCHED_S_TASK_HAS_NOT_RUN, 0.0);

@@ -13,7 +13,7 @@
 //! and last-exit, and recovers the watcher's log counters from the rotated
 //! structured log.
 //!
-//! None of these paths require admin or sudo: a per-user GUI-domain
+//! None of these paths require admin or sudo. A per-user GUI-domain
 //! `LaunchAgent` is owned by the invoking user.
 
 use super::FOREGROUND_ARGS;
@@ -130,8 +130,8 @@ impl ServiceBackend for LaunchdBackend {
         }
         let plist_path = Self::plist_path()?;
 
-        // Stop the running watcher first (best-effort: a stopped service is not
-        // an error), then boot it out of the domain.
+        // Stop the running watcher first (best-effort, a stopped service is
+        // not an error), then boot it out of the domain.
         let _stop = Self::launchctl(&["stop", SERVICE_LABEL]);
         let _bootout = Self::launchctl(&["bootout", &Self::service_target()]);
 
@@ -185,8 +185,8 @@ impl ServiceBackend for LaunchdBackend {
         }
 
         // `launchctl print` exits non-zero when the service is installed but
-        // not currently loaded; treat that as "not running" rather than an
-        // error so a stopped-but-installed service still produces a clean
+        // not currently loaded. Treat that as "not running" rather than an
+        // error, so a stopped-but-installed service still produces a clean
         // status object.
         let print = Command::new("launchctl")
             .args(["print", &Self::service_target()])
@@ -404,7 +404,7 @@ gui/501/com.patina.watcher = {
 
     #[test]
     fn parse_launchctl_print_treats_a_non_running_state_as_stopped() {
-        // an installed-but-stopped service reports running = false and
+        // An installed-but-stopped service reports running = false and
         // surfaces the recorded last exit code.
         let dump = "\
 gui/501/com.patina.watcher = {
@@ -422,7 +422,7 @@ gui/501/com.patina.watcher = {
     fn write_plist_sets_the_file_mode_to_0644() {
         use std::os::unix::fs::PermissionsExt;
 
-        // the written LaunchAgent plist must exist with mode 0644.
+        // The written LaunchAgent plist must exist with mode 0644.
         // `write_plist` is pure filesystem work against a path argument, so a
         // tempdir-scoped write fully exercises the mode without launchctl.
         let tmp = tempfile::tempdir().expect("tempdir");

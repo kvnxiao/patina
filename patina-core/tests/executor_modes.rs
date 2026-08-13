@@ -12,10 +12,10 @@
 )]
 
 //! Integration coverage for the five file-mode executors. Each test drives
-//! the public [`materialize`] entry point against
-//! a real tempdir fixture and asserts the materialized filesystem object
-//! matches the mode's contract: symlink readlink targets, byte content for
-//! copies, rendered output for templates.
+//! the public [`materialize`] entry point against a real tempdir fixture.
+//! It asserts the materialized filesystem object matches the mode's
+//! contract: symlink readlink targets, byte content for copies, or
+//! rendered output for templates.
 
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
@@ -34,10 +34,10 @@ fn utf8_tempdir() -> (TempDir, Utf8PathBuf) {
     (td, canonical)
 }
 
-/// Read a link's target and canonicalize it. The contract is
-/// "readlink target equals the canonical source"; canonicalizing both
-/// sides makes the assertion independent of the platform's readlink
-/// representation (Windows returns the verbatim `\\?\` form).
+/// Read a link's target and canonicalize it. The contract is that the
+/// readlink target equals the canonical source. Canonicalizing both sides
+/// makes the assertion independent of the platform's readlink
+/// representation; Windows returns the verbatim `\\?\` form.
 fn read_link_canonical(target: &Utf8Path) -> Utf8PathBuf {
     let raw = fs_err::read_link(target.as_std_path()).expect("read_link target");
     let link_target = Utf8PathBuf::from_path_buf(raw).expect("link target is utf-8");
@@ -54,9 +54,9 @@ fn resolver() -> Resolver {
     Resolver::new(Builtins::for_tests())
 }
 
-/// A file source with `mode = "symlink"` (and the
-/// default mode) materializes the target as a symlink whose readlink
-/// target equals the canonical source path.
+/// A file source with `mode = "symlink"`, the default mode, materializes
+/// the target as a symlink. Its readlink target equals the canonical
+/// source path.
 #[test]
 fn symlink_mode_links_to_canonical_source() {
     let (_td, dir) = utf8_tempdir();
@@ -81,8 +81,8 @@ fn symlink_mode_links_to_canonical_source() {
     ));
 }
 
-/// A directory source under `symlink` mode produces one
-/// symlink per file at the mirrored target path (no atomic dir symlink).
+/// A directory source under `symlink` mode produces one symlink per file
+/// at the mirrored target path. It creates no atomic directory symlink.
 #[test]
 fn symlink_mode_directory_source_walks_per_file() {
     let (_td, dir) = utf8_tempdir();
@@ -148,8 +148,8 @@ fn symlink_dir_mode_creates_single_atomic_link() {
     );
 }
 
-/// At the single-target slice, `copy` mode materializes a regular file
-/// whose byte content equals the source.
+/// With a single target, `copy` mode materializes a regular file whose
+/// byte content equals the source.
 #[test]
 fn copy_mode_writes_byte_identical_file() {
     let (_td, dir) = utf8_tempdir();
@@ -205,10 +205,10 @@ fn copy_tree_mode_mirrors_directory() {
     );
 }
 
-/// A `.tmpl` *source* renders through `MiniJinja` and materializes at
-/// the declared suffix-less target as a regular file. The target
-/// is declared without a `.tmpl` suffix (`source = "gitconfig.tmpl"`,
-/// `target = "~/.gitconfig"`); the executor writes to it verbatim.
+/// A `.tmpl` source renders through `MiniJinja` and materializes at the
+/// declared suffix-less target as a regular file. The target is declared
+/// without a `.tmpl` suffix, for example `source = "gitconfig.tmpl"` and
+/// `target = "~/.gitconfig"`. The executor writes to that target verbatim.
 #[test]
 fn template_render_mode_renders_to_declared_target() {
     let (_td, dir) = utf8_tempdir();

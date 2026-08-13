@@ -65,7 +65,7 @@ flowchart TD
   exit code. `ShellExecuteEx` is the only way to raise the UAC dialog
   without `unsafe`. It returns as soon as the process is created and
   keeps no handle to wait on. Both launch sites therefore poll for the
-  helper's effect instead of reading a status.
+  helper's effect.
 
 User-facing output never uses `println!` / `eprintln!` outside the
 `Reporter` layer; everything else logs through `tracing`. See
@@ -83,7 +83,7 @@ progress cursor is a raw fixed-width byte log. `postcard` makes no
 wire-format-stability promise across versions, so every journal carries a
 version envelope. A future Patina can then detect and reject a journal it
 cannot decode, rather than misread it. See the product north star's
-Known-Unknowns note in AGENTS.md.
+Known unknowns note in AGENTS.md.
 
 ```mermaid
 flowchart LR
@@ -114,7 +114,7 @@ and checkouts are local. The planner's remote registry reads the lockfile
 on the first entry that selects any remote. It materializes a checkout
 on the first entry that selects that remote, and memoizes both. A remote
 that no active entry names therefore costs neither a read nor a fetch. The
-subsystem is four small pieces under `patina-core/src/remote/`:
+subsystem has four modules under `patina-core/src/remote/`:
 
 - The **`git`** module wraps the `git` binary on `PATH` via
   `std::process::Command`. Patina links no git library, so a user's SSH
@@ -134,11 +134,10 @@ subsystem is four small pieces under `patina-core/src/remote/`:
   candidate tip may become a pin, so every branch is unit-testable
   without a clock, a network, or a repository.
 
-Pruning is reachability-based over every journal commit sentinel on disk,
-not "keep the newest": rollback walks back through older records, so a
-checkout an older record still names must survive. When any sentinel
-cannot be decoded, the sweep is suspended rather than risking a stranded
-rollback.
+Pruning is reachability-based over every journal commit sentinel on disk.
+Rollback walks back through older records, so a checkout an older record
+still names must survive. When any sentinel cannot be decoded, the sweep
+suspends to avoid a stranded rollback.
 
 `docs/REMOTE_SOURCES.md` is the normative behavioural spec.
 
@@ -182,7 +181,7 @@ sequenceDiagram
 
 ## Recovery
 
-Crash safety is the engine's headline guarantee: a `kill -9` mid-apply
+The engine's central guarantee is crash safety: a `kill -9` mid-apply
 leaves the filesystem in either the pre-apply or post-apply state,
 never an intermediate one. This holds for process termination, where
 the page cache survives. Backups are copied but not `fsync`ed before an

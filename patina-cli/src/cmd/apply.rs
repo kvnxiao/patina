@@ -252,9 +252,9 @@ fn names_of(remotes: &[patina_core::RemoteName]) -> Vec<String> {
 /// Run `patina remote update` over every remote before the apply proper.
 ///
 /// Failures here never fail the apply: an unreachable remote degrades to a
-/// plain apply against the committed pins, with a warning, which is exactly
-/// what an offline `apply --update` should do. Whatever pins the pass did
-/// manage to bump are already written, so the apply that follows sees them.
+/// plain apply against the committed pins, with a warning, matching what an
+/// offline `apply --update` should do. Whatever pins the pass did manage to
+/// bump are already written, so the apply that follows sees them.
 ///
 /// The gate is not auto-accepted: `yes` is `false` regardless of the apply's
 /// own `--yes`. A rewritten-history or backdated bump is held (or, on a TTY,
@@ -334,7 +334,7 @@ fn confirm_apply(
 ///
 /// On macOS / Linux [`decide_symlink_gate`] reports `Proceed` (the probe is
 /// `NotWindows`), so this never reads the registry and never spawns the
-/// helper, which is what proves the cross-platform guarantee.
+/// helper, which proves the cross-platform guarantee.
 fn drive_dev_mode_gate(
     resolved: &ResolvedPlan,
     reporter: &mut impl Reporter,

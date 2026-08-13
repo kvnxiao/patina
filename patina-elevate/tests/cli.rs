@@ -1,13 +1,12 @@
 //! Process-level integration tests for the `patina-elevate` binary.
 //!
-//! These assert the real exit codes the spawned process produces: the
-//! arg-parsing contract that the library unit tests cover in-process, here
-//! proven end-to-end through `clap`'s own `Error::exit`.
+//! These tests assert the real exit codes the spawned process produces.
+//! The library's unit tests cover the arg-parsing contract in-process; here
+//! it is proven end-to-end through `clap`'s own `Error::exit`.
 //!
-//! The binary is gated behind the `windows` feature, so
-//! it is only built when that feature is enabled. When it is absent (a plain
-//! `cargo test` on any host without `--features windows`) the
-//! process-spawning tests no-op. Run them with
+//! The binary is built only when the `windows` feature is enabled. When it
+//! is absent (a plain `cargo test` on any host without `--features
+//! windows`), the process-spawning tests no-op. Run them with
 //! `cargo test -p patina-elevate --features windows`.
 
 use std::process::Command;
@@ -16,11 +15,12 @@ use std::process::Command;
 /// built (the `windows` feature was off, so Cargo skipped it).
 ///
 /// Cargo sets `CARGO_BIN_EXE_patina-elevate` at compile time even when the
-/// bin's `required-features` (`windows`) are off and the bin was
-/// never produced, so the compile-time env var alone is not a reliable
-/// "was it built" signal. Guard on the file actually existing on disk;
-/// otherwise a plain `cargo test` (no `--features windows`) would spawn a
-/// non-existent path and panic instead of no-opping as intended.
+/// bin's `required-features` (`windows`) are off and the bin was never
+/// produced. The compile-time env var alone is therefore not a reliable
+/// "was it built" signal. This function therefore guards on the file
+/// actually existing on disk. Otherwise a plain `cargo test` (no
+/// `--features windows`) would spawn a non-existent path and panic,
+/// instead of no-opping as intended.
 fn elevate_bin() -> Option<&'static str> {
     let path = option_env!("CARGO_BIN_EXE_patina-elevate")?;
     std::path::Path::new(path).exists().then_some(path)
@@ -28,11 +28,9 @@ fn elevate_bin() -> Option<&'static str> {
 
 #[test]
 fn unknown_subcommand_exits_2() {
-    // An unsupported subcommand exits 2 and prints a usage
-    // message listing `enable-developer-mode`. The process surfaces the clap
-    // usage error as exit code 2, and `parse_or_exit` appends the
-    // supported-subcommand listing to that error's stderr so the named
-    // scenario's "listing" half is gated on the exit-2 path itself.
+    // The process surfaces the clap usage error as exit code 2.
+    // `parse_or_exit` appends the supported-subcommand listing to that
+    // error's stderr.
     let Some(bin) = elevate_bin() else {
         return;
     };
@@ -76,7 +74,7 @@ fn help_lists_the_supported_subcommand() {
 #[test]
 fn enable_developer_mode_off_windows_exits_1() {
     // On a non-Windows build the registry write does not exist, so the action
-    // takes the typed NotWindows failure path: exit 1 with a message on
+    // takes the typed NotWindows failure path, exiting 1 with a message on
     // stderr. (On Windows this path instead performs the real write, covered
     // by the `#[ignore]` host test below.)
     let Some(bin) = elevate_bin() else {
@@ -124,19 +122,18 @@ fn enable_developer_mode_elevated_sets_flag_and_exits_0() {
     assert_eq!(flag, Some(1), "the Developer Mode flag must read back as 1");
 }
 
-/// The elevated `apply-defender-exclusions` action adds a path exclusion, its
-/// mandatory re-read confirms the write took (so the process exits `0` and
-/// records `applied`), and a follow-up removal clears it again. Gated
-/// `#[cfg(windows)]` `#[ignore]` because it needs an elevated Windows host with
-/// an active, unmanaged Defender, which CI does not provide. On a
+/// The elevated `apply-defender-exclusions` action adds a path exclusion.
+/// Its mandatory re-read confirms the write took, so the process exits `0`
+/// and records `applied`. A follow-up removal clears the exclusion again.
+/// Gated `#[cfg(windows)]` `#[ignore]` because it needs an elevated Windows
+/// host with an active, unmanaged Defender, which CI does not provide. On a
 /// Tamper-Protected or policy-managed host the add instead exits `1` and
-/// records `blocked`, since
-/// the re-read shows the exclusion never appeared. Run by hand on an elevated
-/// Windows shell with `--ignored`.
+/// records `blocked`, since the re-read shows the exclusion never appeared.
+/// Run by hand on an elevated Windows shell with `--ignored`.
 ///
-/// The result file is asserted alongside the exit code because it, not the exit
-/// code, is what the unprivileged CLI actually reads. `ShellExecuteEx` gives
-/// the launcher no way to collect a child's status.
+/// The result file is asserted alongside the exit code, because the CLI
+/// reads the result file, not the exit code. `ShellExecuteEx` gives the
+/// launcher no way to collect a child's status.
 #[cfg(windows)]
 #[test]
 #[ignore = "needs an elevated Windows host with an active, unmanaged Defender"]
@@ -184,16 +181,17 @@ fn apply_defender_exclusions_adds_then_removes_a_path() {
     );
 }
 
-/// A request the helper refuses records `failed`, not `blocked`: the launching
-/// CLI must not tell the user Defender rejected a change Defender never saw.
+/// A request the helper refuses records `failed`, not `blocked`. The
+/// launching CLI must not tell the user Defender rejected a change Defender
+/// never saw.
 ///
-/// Needs no elevation and no Defender, because the path is rejected by the
-/// helper's own validator before any cmdlet runs, so unlike the test above this
-/// one runs unattended in CI on Windows.
+/// This test needs no elevation and no Defender. The path is rejected by
+/// the helper's own validator before any cmdlet runs. Unlike the test
+/// above, this one runs unattended in CI on Windows.
 ///
-/// It skips when the helper binary is absent, like the argument-parsing tests
-/// above: the bin exists only under `--features windows`, and CI's per-OS test
-/// leg runs a bare `cargo test --workspace`.
+/// It skips when the helper binary is absent, like the argument-parsing
+/// tests above. The bin exists only under `--features windows`, and CI's
+/// per-OS test leg runs a bare `cargo test --workspace`.
 #[cfg(windows)]
 #[test]
 fn a_refused_path_is_recorded_as_failed_not_blocked() {
@@ -202,7 +200,7 @@ fn a_refused_path_is_recorded_as_failed_not_blocked() {
     };
     let dir = tempfile::tempdir().expect("create a temp dir for the request");
     let request = dir.path().join("request.txt");
-    // A drive root: refused by the validator, so the run never reaches Defender.
+    // A drive root is refused by the validator, so the run never reaches Defender.
     std::fs::write(&request, "A C:\\\n").expect("write the request file");
 
     let output = Command::new(bin)

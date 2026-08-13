@@ -88,8 +88,6 @@ fn post_apply_hook_failure_exits_3() {
 
 #[test]
 fn toml_syntax_error_exits_1_and_names_the_failure() {
-    // A `patina.toml` that is not valid TOML is a generic failure: exit 1
-    // with the parse error surfaced on stderr.
     let f = Fixture::new();
     // `=` with no value is a TOML syntax error the parser rejects.
     f.module("broken", "[[file]]\nsource =\n");
@@ -139,7 +137,6 @@ fn exclusive_lock_timeout_exits_4() {
 
 #[test]
 fn successful_apply_exits_0() {
-    // A clean apply that lands its single file exits 0.
     let f = Fixture::new();
     let module = f.module(
         "shell",
