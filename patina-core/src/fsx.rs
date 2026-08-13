@@ -195,10 +195,9 @@ pub(crate) fn symlink_to(link: &Utf8Path, target: &Utf8Path) -> std::io::Result<
 ///
 /// The rename is the atomic point. POSIX `rename(2)` and Windows `MoveFileEx`
 /// both swap the destination in one operation. A concurrent reader, or a
-/// process killed mid-write, therefore observes either the previous file whole
-/// or the new one whole, never a truncated one. Writing to the destination
-/// directly
-/// would leave neither on a kill between the truncate and the last byte.
+/// process killed mid-write, therefore observes either the previous file
+/// whole or the new one whole. Writing to the destination directly would
+/// leave neither on a kill between the truncate and the last byte.
 ///
 /// The temporary is a sibling, so it shares a filesystem with the destination
 /// and the rename cannot degrade into a cross-device copy. It also carries the

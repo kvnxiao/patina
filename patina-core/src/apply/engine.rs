@@ -441,9 +441,9 @@ enum CachePolicy {
 /// For an entry with no `remote` key this is simply its module's directory.
 /// For an entry naming a remote it is the
 /// immutable checkout of the rev `patina.lock` pins, so the module directory
-/// contributes only the manifest that declared the entry. That is also why a
-/// `patina.toml` inside a checkout is inert: module discovery walks the
-/// repository, never the cache.
+/// contributes only the manifest that declared the entry. Module discovery
+/// walks the repository rather than the cache, so a `patina.toml` inside a
+/// checkout is inert.
 struct EntryOrigin {
     /// The directory the entry's `source` is joined onto, or `None` for a
     /// remote whose checkout is not materialized on this machine (only
@@ -2002,11 +2002,10 @@ fn is_full_noop(resolved: &ResolvedPlan, reap: bool) -> Result<bool, EngineError
 /// prior commit present, and nothing to reap.
 ///
 /// The CLI calls this *before* prompting so a fully-satisfied repo skips the
-/// diff-and-prompt confirmation and never reads stdin. It is a
-/// read-only probe: [`execute`] re-checks the same condition under the held
-/// lock, so this decision only governs the prompt, never whether a write
-/// happens. Because the CLI's `apply` path always reaps, this fixes `reap`
-/// to `true`.
+/// diff-and-prompt confirmation and never reads stdin. This is a read-only
+/// probe. [`execute`] re-checks the same condition under the held lock, so
+/// this decision only governs the prompt. Because the CLI's `apply` path
+/// always reaps, this fixes `reap` to `true`.
 ///
 /// # Errors
 ///
@@ -2025,9 +2024,9 @@ pub fn plan_is_full_noop(resolved: &ResolvedPlan) -> Result<bool, EngineError> {
 /// *before* prompting, so an entry removed from config is never silently
 /// deleted on confirm. It is a read-only probe over the same orphan set
 /// [`execute`] re-derives under the held lock, so it only informs the
-/// preview, never whether a removal happens. Sorting makes the preview a
-/// stable function of the reap set (orphans have no config declaration order
-/// to preserve), upholding the byte-identical-stdout contract.
+/// preview. Sorting makes the preview a stable function of the reap set
+/// (orphans have no config declaration order to preserve), upholding the
+/// byte-identical-stdout contract.
 ///
 /// # Errors
 ///

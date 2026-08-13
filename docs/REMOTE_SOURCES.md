@@ -164,8 +164,8 @@ updated_at = "2026-08-11T14:00:00Z"
   machine that wrote the file.
 
 The file is written through a same-directory temporary and a rename. A
-process killed mid-write therefore leaves either the old pins or the new
-ones, never a truncated file with no pins at all.
+process killed mid-write therefore leaves either the old pins or the
+new ones.
 
 The lockfile is a statement about the root manifest's declarations, not
 about what this machine happens to use. `patina remote update` with no
@@ -184,7 +184,7 @@ fails on) a stray lockfile.
 
 ## The remote cache
 
-Checkouts live in the per-machine state directory, never in your
+Checkouts live in the per-machine state directory, outside your
 repository:
 
 ```
@@ -395,10 +395,9 @@ and spawning one detached process per session, after the first
 command rather than at startup.
 
 A hook holds the shared lock only while it reads the manifest and the
-lockfile, never across `ls-remote`. `git` has no timeout of its own. A
-hook that kept the lock over the network could make a concurrent
-`apply` wait out its own lock timeout. The `apply` would then fail
-because a server went quiet.
+lockfile. `git` has no timeout of its own. A hook that kept the lock
+over the network could make a concurrent `apply` wait out its own lock
+timeout. The `apply` would then fail because a server went quiet.
 
 fish (`conf.d/patina-remotes.fish`):
 

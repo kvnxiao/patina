@@ -6,7 +6,7 @@ Patina is a cross-platform dotfile manager written in Rust. This file orients LL
 
 ## Product north star
 
-Its source of truth is a user's centralized git repository. A user runs `patina apply` and the configurations declared in `patina.toml` files materialize at the right targets: symbolic links pointing back into the repo, rendered template output, or byte copies where a link is not appropriate. The engine guarantees that an apply interrupted by process termination (`kill -9`) leaves the filesystem in either the pre-apply or post-apply state, never an intermediate one. Power-loss durability is a post-1.0 hardening item (see Known unknowns).
+Its source of truth is a user's centralized git repository. A user runs `patina apply` and the configurations declared in `patina.toml` files materialize at the right targets: symbolic links pointing back into the repo, rendered template output, or byte copies where a link is not appropriate. The engine guarantees that an apply interrupted by process termination (`kill -9`) leaves the filesystem in either the pre-apply or the post-apply state. Power-loss durability is a post-1.0 hardening item (see Known unknowns).
 
 ### Users
 

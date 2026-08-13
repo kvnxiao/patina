@@ -300,7 +300,7 @@ The desired set is the repository root plus **one** exclusion per
 managed target: a folder exclusion for a directory entry
 (`symlink` / `symlink-tree` / `copy`) and a file exclusion for a file
 entry (`symlink` / `copy` / template). A `symlink-tree` of forty files
-contributes the one declared target directory, never forty entries.
+contributes the one declared target directory rather than forty entries.
 Patina emits exact paths only, with no wildcards and no process or
 extension exclusions. It refuses to exclude a UNC path, a drive root, or a
 system directory (`%SystemRoot%`, `%ProgramFiles%`, and friends).
@@ -511,8 +511,8 @@ filesystem. Patina never treats remote content as a template, and never
 reads it as configuration.
 
 Cached checkouts live in the per-machine [state
-directory](#state-directory), never in your repository, and are pruned
-automatically once no journal record needs them.
+directory](#state-directory) and are pruned automatically once no
+journal record needs them.
 
 Read [`REMOTE_SOURCES.md`](REMOTE_SOURCES.md) for the whole model. It
 covers the lockfile format, the cache layout, and each gate check with
@@ -522,8 +522,8 @@ background update notice, and the multi-machine flow.
 ## State directory
 
 Patina writes its journal, backups, advisory lock, and drift cache to a
-**per-machine state directory**, never into your dotfiles repository.
-The location is OS-appropriate:
+**per-machine state directory** outside your dotfiles repository. The
+location is OS-appropriate:
 
 | OS      | State directory                          | Override                  |
 | ------- | ---------------------------------------- | ------------------------- |
@@ -554,11 +554,11 @@ another local-disk path; do not point it at any of the providers above.
 
 Patina is built so an interrupted apply converges deterministically on
 the next run. If `patina apply` is killed mid-write, the filesystem
-ends up in either the pre-apply or the post-apply state, never a torn
-intermediate. The next invocation reads the journal and rolls forward
-or back to reach a consistent state. This guarantee covers process
-termination (a `kill -9` or crash where the page cache survives); a
-power loss or kernel panic mid-apply is out of scope for v1.0.
+ends up in either the pre-apply or the post-apply state. The next
+invocation reads the journal and rolls forward or back to reach a
+consistent state. This guarantee covers process termination (a
+`kill -9` or crash where the page cache survives); a power loss or
+kernel panic mid-apply is out of scope for v1.0.
 
 Two commands help you recover deliberately:
 

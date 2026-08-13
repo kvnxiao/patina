@@ -181,14 +181,14 @@ sequenceDiagram
 
 ## Recovery
 
-The engine's central guarantee is crash safety: a `kill -9` mid-apply
-leaves the filesystem in either the pre-apply or post-apply state,
-never an intermediate one. This holds for process termination, where
-the page cache survives. Backups are copied but not `fsync`ed before an
-overwrite. Power loss or a kernel panic mid-apply can therefore leave an
-overwrite durable while its backup is not. That is a genuinely
-intermediate state. Full power-loss durability (atomic temp+rename target writes plus
-`fsync` of backups and parent directories) is a post-1.0 hardening item.
+A `kill -9` mid-apply leaves the filesystem in either the pre-apply or
+the post-apply state. That crash-safety guarantee covers process
+termination, where the page cache survives. Backups are copied but not
+`fsync`ed before an overwrite. Power loss or a kernel panic mid-apply
+can therefore leave an overwrite durable while its backup is not. That
+is a genuinely intermediate state. Full power-loss durability (atomic
+temp+rename target writes plus `fsync` of backups and parent
+directories) is a post-1.0 hardening item.
 
 On the next run, before computing a fresh plan, recovery reads each
 journal envelope and converges deterministically:
@@ -199,12 +199,12 @@ journal envelope and converges deterministically:
   recorded disposition and whether a backup exists. An `Unchanged`
   target is left alone. A target with a backup is restored from it. A
   target with no backup was a fresh creation, so it is deleted. The
-  decision reads the filesystem and the backup directory, never the
-  progress cursor. The engine then computes and applies a fresh plan.
+  decision reads the filesystem and the backup directory rather than
+  the progress cursor. The engine then computes and applies a fresh plan.
 - Backups taken before an overwrite are retained for the last ten apply
   cycles; older cycles are pruned at the end of each successful apply,
   right after its COMMIT. Backups live in the per-machine state
-  directory and never inside the repository.
+  directory, outside the repository.
 
 `patina rollback` reverses the last successful apply. It reads the
 journal and restores the recorded pre-apply bytes. Afterwards the

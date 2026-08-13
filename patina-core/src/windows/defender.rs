@@ -733,10 +733,9 @@ pub fn parse_receipt(content: &str) -> Option<DefenderReceipt> {
 
 /// The per-machine record of the exclusions **Patina** owns.
 ///
-/// Written only by the unprivileged CLI, never by the elevated helper. It lets
-/// a reconcile reap a stale Patina exclusion while leaving a user-added
-/// exclusion untouched: a path absent from the ledger is never a removal
-/// candidate.
+/// Written only by the unprivileged CLI. It lets a reconcile reap a stale
+/// Patina exclusion while leaving a user-added exclusion untouched, because a
+/// path absent from the ledger is never a removal candidate.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DefenderLedger {
     /// The Patina-owned exclusions, stored sorted for a deterministic file.
@@ -1213,7 +1212,7 @@ mod tests {
     fn derive_tree_contributes_one_folder_not_leaves() {
         // A symlink-tree entry's ResolvedOperation carries the single declared
         // target directory (leaves live in its dispositions); derive must emit
-        // exactly that one folder, never a per-leaf entry.
+        // exactly that one folder.
         let desired = derive_exclusions(&plan(vec![op(
             FileMode::SymlinkTree,
             &[r"C:\Users\kevin\.config\fish"],

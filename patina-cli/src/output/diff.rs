@@ -227,8 +227,8 @@ impl DiffContent {
     }
 
     /// A compact, deterministic one-line descriptor for the opaque-diff
-    /// fallback. Carries only byte counts and fixed words, never OS error
-    /// strings, so byte-identical stdout is preserved.
+    /// fallback. Carries only byte counts and fixed words, so byte-identical
+    /// stdout is preserved.
     fn describe(&self) -> String {
         match self {
             DiffContent::Absent => "(absent)".to_owned(),

@@ -425,10 +425,10 @@ pub fn apply_defender_exclusions(_request: &Path) -> Result<(), DefenderError> {
 /// The request path is embedded as a single-quoted PowerShell literal, with
 /// any embedded quote doubled, so it is read as data via
 /// `Get-Content -LiteralPath`. The exclusion paths themselves are only ever
-/// bound to `$path` variables, never interpolated into a command string. On a
-/// verification mismatch the script raises with the specific paths and the live
-/// Tamper-Protection status, which surfaces here as
-/// [`DefenderError::Blocked`]; any other non-zero exit is
+/// bound to `$path` variables, so no caller-supplied path is interpolated
+/// into the script text. On a verification mismatch the script raises with
+/// the specific paths and the live Tamper-Protection status, which surfaces
+/// here as [`DefenderError::Blocked`]; any other non-zero exit is
 /// [`DefenderError::Apply`].
 #[cfg(windows)]
 fn run_apply_and_verify(request: &Path) -> Result<(), DefenderError> {
