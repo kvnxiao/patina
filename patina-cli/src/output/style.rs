@@ -1,8 +1,8 @@
 //! Terminal styles for user-facing output.
 //!
 //! A [`Styles`] bundles the `anstyle` styles the diff renderer and the
-//! [`Reporter`](super::reporter::Reporter) paint with. Two concerns are kept
-//! apart:
+//! [`Reporter`](super::reporter::Reporter) paint with, separating whether
+//! styled bytes are generated from whether they reach the user:
 //!
 //! - **Whether styled bytes are generated** is [`Styles`]. `Styles::plain`
 //!   (test-only) holds empty styles that render to zero bytes, so a plain
@@ -141,7 +141,7 @@ pub struct RemoteStyles {
 /// / `(folder)` text alongside. Color is therefore the only place the kind
 /// appears in human output, and it is lost wherever ANSI is stripped: piped
 /// output, `--color never`, `NO_COLOR`. `--json` carries `kind` as a field for
-/// exactly that reason; a consumer that needs the distinction should read that
+/// that reason; a consumer that needs the distinction should read that
 /// instead.
 #[cfg(windows)]
 #[derive(Debug, Clone, Copy)]
@@ -288,8 +288,8 @@ impl Styles {
 /// Wrap `text` in `style`'s opening escape and reset.
 ///
 /// An empty style renders to zero bytes on both, so under the plain palette
-/// this returns `text` unchanged, which is what keeps a plain render
-/// byte-identical to unstyled output.
+/// this returns `text` unchanged. That keeps a plain render byte-identical
+/// to unstyled output.
 #[must_use = "the painted string is what gets written"]
 pub fn paint(style: Style, text: &str) -> String {
     format!("{}{text}{}", style.render(), style.render_reset())
@@ -300,9 +300,9 @@ mod tests {
     use super::*;
 
     /// The plain palette must render to zero bytes on both the opening code
-    /// and the reset. That is what keeps plain output byte-identical to
-    /// unstyled and underpins the deterministic-stdout contract. A regression
-    /// giving `plain()` a real color would make this fail.
+    /// and the reset. That keeps plain output byte-identical to unstyled and
+    /// underpins the deterministic-stdout contract. A regression giving
+    /// `plain()` a real color would make this fail.
     #[test]
     fn plain_styles_render_to_zero_bytes() {
         let p = Styles::plain();
@@ -442,9 +442,9 @@ mod tests {
         ]);
     }
 
-    /// The four state colors are what let a reader scan a long listing without
-    /// reading every state word, so two states rendering alike would defeat the
-    /// whole reason `status` is painted.
+    /// The four state colors let a reader scan a long listing without
+    /// reading every state word. Two states rendering alike would defeat
+    /// that purpose.
     #[test]
     fn colored_status_roles_are_distinct_and_escaped() {
         let s = Styles::colored().status;
@@ -477,8 +477,8 @@ mod tests {
     }
 
     /// Kind and state appear on the same line, so a hue shared between the two
-    /// groups would make one read as the other. The three state colors are
-    /// also the only thing separating the three states.
+    /// groups would make one read as the other. The three state colors let a
+    /// reader tell the states apart without reading the bracketed tag.
     #[cfg(windows)]
     #[test]
     fn colored_exclusion_roles_are_distinct_and_escaped() {

@@ -19,8 +19,8 @@
 //!
 //! The three exit-1 outcomes share a code but never a message. Only a genuine
 //! rejection is reported as one; an apply whose outcome nobody observed says so
-//! instead of guessing, which is the whole point of routing verification
-//! through the elevated helper.
+//! instead of guessing. Verification routes through the elevated helper so the
+//! command never has to guess.
 
 use crate::cli::DefenderArgs;
 use crate::cli::DefenderCommand;
@@ -795,9 +795,9 @@ mod tests {
 
     #[test]
     fn an_exclusion_defender_has_that_patina_does_not_record_is_called_out() {
-        // The state that was previously invisible: Defender already excludes the
-        // path, so nothing will be added, but the ledger does not own it, which
-        // is what decides whether `clear` can ever reap it.
+        // Defender already excludes the path, so nothing will be added, but the
+        // ledger does not own it. That determines whether `clear` can ever reap
+        // it.
         let fixture = Fixture::new(&[(REPO, ExclusionKind::Folder)], &known(&[REPO]), &[]);
         let out = fixture.preview();
 
@@ -929,7 +929,7 @@ mod tests {
 
     /// Every exclusion state, listed by hand. Adding a variant is caught by the
     /// wildcard-free matches in [`state_label`] and [`state_token`]; this array
-    /// is what checks the new wording and token do not collide with an existing
+    /// checks that the new wording and token do not collide with an existing
     /// one, so it has to be extended alongside them.
     const ALL_STATES: [ExclusionState; 5] = [
         ExclusionState::Owned,

@@ -5,17 +5,17 @@
 
 //! Integration coverage for the plan journal.
 //!
-//! These tests drive the `patina_core::journal` module directly and prove
-//! the load-bearing properties those scenarios depend on:
+//! These tests drive the `patina_core::journal` module directly. Each
+//! proves one load-bearing property:
 //!
-//! - the single up-front plan fsync paired with a directory fsync, with no
-//!   per-operation progress fsync (fsync shape);
-//! - a flushed plan is durable before the first mutation, with no COMMIT
-//!   sentinel until the run commits (crash-window state);
-//! - a newer-version plan is refused with a typed error naming both versions
-//!   (version-envelope scenario);
-//! - committing deletes the plan and progress files, leaving only the COMMIT
-//!   sentinel (cleanup scenario).
+//! - the fsync shape: a single up-front plan fsync paired with a directory
+//!   fsync, with no per-operation progress fsync.
+//! - the crash-window state: a flushed plan is durable before the first
+//!   mutation, with no COMMIT sentinel until the run commits.
+//! - the version-envelope scenario: a newer-version plan is refused with a
+//!   typed error naming both versions.
+//! - the cleanup scenario: committing deletes the plan and progress files,
+//!   leaving only the COMMIT sentinel.
 
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
@@ -34,8 +34,8 @@ use patina_core::journal::Syncer;
 use std::cell::RefCell;
 use tempfile::TempDir;
 
-/// A `Syncer` that issues the real fsyncs (so durability still holds for
-/// the crash-window assertions) and records every `(kind, path)` it was
+/// A `Syncer` that issues the real fsyncs, so durability still holds for
+/// the crash-window assertions. It records every `(kind, path)` it was
 /// asked to sync, so the test can assert the exact fsync shape.
 #[derive(Default)]
 struct RecordingSyncer {
@@ -68,8 +68,8 @@ impl Syncer for RecordingSyncer {
         self.calls
             .borrow_mut()
             .push((SyncKind::File, path.to_owned()));
-        // Write handle (no truncation): Windows FlushFileBuffers needs
-        // write access, mirroring OsSyncer.
+        // Opens a write handle without truncating, because Windows
+        // FlushFileBuffers needs write access; this mirrors OsSyncer.
         let file = fs_err::OpenOptions::new().write(true).open(path)?;
         file.sync_all()
     }
@@ -78,8 +78,9 @@ impl Syncer for RecordingSyncer {
         self.calls
             .borrow_mut()
             .push((SyncKind::Dir, path.to_owned()));
-        // Best-effort real dir fsync; on Windows opening a dir handle may
-        // fail and that is fine (matches OsSyncer's platform handling).
+        // A best-effort real directory fsync. On Windows, opening a
+        // directory handle may fail; that matches OsSyncer's platform
+        // handling.
         if let Ok(dir) = fs_err::File::open(path) {
             drop(dir.sync_all());
         }
@@ -110,9 +111,6 @@ fn three_op_plan() -> Plan {
     ])
 }
 
-// A three-operation apply records exactly one fsync on the plan
-// file, one on the journal parent directory, one on the COMMIT sentinel,
-// and zero per-operation fsyncs on the progress file.
 #[test]
 fn three_op_apply_fsyncs_plan_dir_commit_but_never_progress() {
     let temp = TempDir::new().expect("create tempdir");
@@ -123,7 +121,7 @@ fn three_op_apply_fsyncs_plan_dir_commit_but_never_progress() {
     let mut journal = Journal::flush_plan_and_fsync(&dir, "20260528T120000Z", &plan, &syncer)
         .expect("flush plan");
 
-    // Drive the three progress records the way the executor loop will.
+    // Simulates the executor loop recording progress after each operation.
     for i in 0..plan.len() {
         journal
             .record_progress(u32::try_from(i).expect("index fits in u32"))
@@ -158,8 +156,6 @@ fn three_op_apply_fsyncs_plan_dir_commit_but_never_progress() {
         "the journal dir is fsync'd once after the plan and once after COMMIT"
     );
 
-    // The progress file still exists during the run, but it must contain
-    // three records and never have been fsync'd. After commit it is gone.
     assert!(
         !dir.join(format!("20260528T120000Z{PROGRESS_SUFFIX}"))
             .exists(),
@@ -167,9 +163,6 @@ fn three_op_apply_fsyncs_plan_dir_commit_but_never_progress() {
     );
 }
 
-// Immediately after `flush_plan_and_fsync` returns and before
-// the first mutation, the journal dir holds exactly one `<ts>.plan` file
-// and no COMMIT sentinel. (The progress file exists but may be empty.)
 #[test]
 fn after_flush_plan_exists_with_no_commit_sentinel() {
     let temp = TempDir::new().expect("create tempdir");
@@ -181,8 +174,8 @@ fn after_flush_plan_exists_with_no_commit_sentinel() {
         "/home/u/.gitconfig",
         Disposition::Create,
     )]);
-    // Simulate the crash window: flush, then drop the handle without
-    // recording any progress or committing, as if SIGKILL'd here.
+    // This simulates the crash window. It flushes, then drops the handle
+    // without recording progress or committing, as if SIGKILL'd here.
     let handle = Journal::flush_plan_and_fsync(&dir, "20260528T130000Z", &plan, &syncer)
         .expect("flush plan");
     drop(handle);
@@ -215,9 +208,8 @@ fn after_flush_plan_exists_with_no_commit_sentinel() {
     );
 }
 
-// Version-envelope scenario: a plan whose envelope u16 is
-// u16::MAX is refused on a binary compiled for major version 1, with a
-// typed error naming both versions.
+// Version-envelope scenario: a plan with envelope `u16::MAX` is refused on
+// a binary compiled for major version 1.
 #[test]
 fn newer_major_version_is_refused_with_both_versions_named() {
     // Build a byte buffer with a poisoned envelope: u16::MAX followed by
@@ -307,8 +299,8 @@ fn commit_deletes_plan_and_progress_leaving_only_commit_sentinel() {
     drop(next);
 }
 
-// The encoded plan is byte-identical for the same
-// operations (the timestamp lives only in the filename, not the body).
+// The encoded plan is byte-identical for the same operations. The
+// timestamp lives only in the filename, not in the body.
 #[test]
 fn same_plan_encodes_to_identical_bytes() {
     let a = three_op_plan().encode().expect("encode a");

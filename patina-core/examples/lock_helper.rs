@@ -9,8 +9,8 @@
 //! abnormal termination.
 //!
 //! It is wired as an `examples/` target (rather than a `[[bin]]`) so it
-//! ships only with the crate's test build and never pollutes the public
-//! binary surface. The integration test locates the compiled artifact at
+//! ships only with the crate's test build, keeping the public binary
+//! surface clean. The integration test locates the compiled artifact at
 //! `target/<profile>/examples/lock_helper`.
 //!
 //! Usage:

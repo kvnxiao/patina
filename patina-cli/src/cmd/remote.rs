@@ -626,7 +626,7 @@ enum Action {
     /// with no window to report.
     Held { eligible_at: Option<i64> },
     /// The user was asked and said no. Distinct from [`Action::Held`] because
-    /// a declined prompt is what exit code 5 means across every command.
+    /// exit code 5 means a declined prompt across every command.
     Declined,
     /// A hard reject.
     Rejected,

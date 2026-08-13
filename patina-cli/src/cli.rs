@@ -23,8 +23,7 @@ use clap::ValueEnum;
 /// [`ExitCode`] via [`ExitCode::from_error_chain`]: the lock timeout
 /// becomes `4`, every other failure `1`.
 ///
-/// The returned `i32` is what [`crate::main`] hands to
-/// [`std::process::exit`].
+/// [`crate::main`] hands the returned `i32` to [`std::process::exit`].
 #[must_use = "the returned code is the process's terminal exit status"]
 pub fn resolve_exit_code(outcome: anyhow::Result<i32>, reporter: &mut impl Reporter) -> i32 {
     match outcome {

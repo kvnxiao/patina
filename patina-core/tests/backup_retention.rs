@@ -6,13 +6,12 @@
 //! Integration coverage for count-based backup retention.
 //!
 //! These tests drive the `patina_core::backups::gc_retain` entry point
-//! directly by staging the on-disk backup tree they cover and asserting
-//! retention converges to the expected shape. Each test maps to one
-//! retention bullet:
+//! directly. Each test stages an on-disk backup tree and asserts retention
+//! converges to the expected shape. Each test maps to one retention bullet:
 //!
-//! - 15 historical cycles + a successful apply prune down to exactly 10,
+//! - 15 historical cycles plus a successful apply prune down to exactly 10,
 //!   keeping the newest.
-//! - "a failed apply triggers no GC": a caller that never commits never calls
+//! - a failed apply triggers no GC: a caller that never commits never calls
 //!   `gc_retain`, so its historical cycles plus the partial attempt all
 //!   survive.
 
@@ -74,9 +73,6 @@ impl Scene {
 
 #[test]
 fn a_successful_apply_prunes_to_exactly_ten_keeping_the_newest() {
-    // 15 timestamped subdirectories; after the just-completed
-    // apply's GC, exactly 10 remain, the 10 most recent, and the 5 oldest
-    // are gone.
     let scene = Scene::new();
     let names = scene.seed_cycles(15);
 
@@ -97,17 +93,14 @@ fn a_successful_apply_prunes_to_exactly_ten_keeping_the_newest() {
 
 #[test]
 fn a_failed_apply_leaves_historical_backups_untouched() {
-    // An apply that fails before COMMIT never runs GC.
-    // We model that by *not* calling gc_retain, because the failed attempt's
-    // caller short-circuits, and assert the three historical cycles plus
-    // the partial attempt directory all survive.
+    // An apply that fails before COMMIT never runs GC, because the failed
+    // attempt's caller short-circuits before the commit that would trigger
+    // it. The test models that by not calling gc_retain at all.
     let scene = Scene::new();
     let historical = scene.seed_cycles(3);
     // A partial backup directory the failed attempt wrote before crashing.
     let partial = "202699T120000Z";
     fs_err::create_dir_all(scene.backups.join(partial).join("home")).expect("partial attempt dir");
-
-    // No gc_retain call: the failure path does not commit, so it does not GC.
 
     let mut expected = historical.clone();
     expected.push(partial.to_owned());
@@ -121,10 +114,10 @@ fn a_failed_apply_leaves_historical_backups_untouched() {
 
 #[test]
 fn pruned_backup_cycles_drop_their_commit_sentinels_in_lockstep() {
-    // H1 regression: retention removes the oldest backup cycle directories;
-    // the matching journal COMMIT sentinels must be dropped alongside them.
-    // Otherwise `patina rollback` could walk back to a commit whose backups
-    // are gone and *delete* an overwrite target it can no longer restore.
+    // Retention removes the oldest backup cycle directories. The matching
+    // journal COMMIT sentinels must be dropped alongside them. Otherwise
+    // `patina rollback` could walk back to a commit whose backups are gone,
+    // and delete an overwrite target it can no longer restore.
     let scene = Scene::new();
     let names = scene.seed_cycles(11);
     let journal = scene
@@ -133,8 +126,8 @@ fn pruned_backup_cycles_drop_their_commit_sentinels_in_lockstep() {
         .expect("backups has a parent")
         .join("journal");
     fs_err::create_dir_all(&journal).expect("create journal dir");
-    // One COMMIT sentinel per seeded backup cycle (the body is opaque to
-    // pruning, which keys on the filename).
+    // One COMMIT sentinel per seeded backup cycle. Pruning keys on the
+    // filename, not the sentinel body.
     for ts in &names {
         fs_err::write(journal.join(format!("{ts}.COMMIT")), b"record").expect("commit sentinel");
     }

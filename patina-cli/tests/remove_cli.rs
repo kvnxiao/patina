@@ -66,7 +66,6 @@ fn remove_replaces_target_drops_entry_and_status_omits_it() {
         stderr(&out)
     );
 
-    // The target is now a regular file with the last-applied content.
     assert!(!is_symlink(&zshrc), "~/.zshrc must no longer be a symlink");
     assert!(zshrc.is_file(), "~/.zshrc must be a regular file");
     assert_eq!(
@@ -74,7 +73,6 @@ fn remove_replaces_target_drops_entry_and_status_omits_it() {
         "shell-config"
     );
 
-    // The `[[file]]` entry is gone from the module manifest.
     let manifest = fx.root.join("zsh").join("patina.toml");
     let body = fs_err::read_to_string(manifest.as_std_path()).expect("read module manifest");
     assert!(
@@ -82,7 +80,6 @@ fn remove_replaces_target_drops_entry_and_status_omits_it() {
         "the [[file]] entry must be removed, got: {body}"
     );
 
-    // The repository source file is untouched.
     assert!(source.is_file(), "<repo>/zsh/zshrc must still exist");
     assert_eq!(
         fs_err::read_to_string(source.as_std_path()).expect("read repo source"),
@@ -90,7 +87,6 @@ fn remove_replaces_target_drops_entry_and_status_omits_it() {
         "the repository source must be unchanged"
     );
 
-    // A subsequent `patina status --json` no longer lists the target.
     let status = fx.run(&["status", "--json"], &[]);
     assert_eq!(
         code(&status),
@@ -133,13 +129,11 @@ fn remove_purge_deletes_target_and_drops_entry() {
         stderr(&out)
     );
 
-    // The target does not exist on disk (not as a symlink, not as a file).
     assert!(
         fs_err::symlink_metadata(zshrc.as_std_path()).is_err(),
         "~/.zshrc must not exist after --purge"
     );
 
-    // The entry is gone; the repository source is unchanged.
     let manifest = fx.root.join("zsh").join("patina.toml");
     let body = fs_err::read_to_string(manifest.as_std_path()).expect("read module manifest");
     assert!(
@@ -175,13 +169,11 @@ fn remove_unmanaged_path_exits_1() {
         "stderr must name the path and say it is not managed, got: {stderr}"
     );
 
-    // The unmanaged file is untouched.
     assert_eq!(
         fs_err::read_to_string(bashrc.as_std_path()).expect("read ~/.bashrc"),
         "untouched",
         "the unmanaged file must be unchanged"
     );
-    // The managed module manifest is untouched (still carries the entry).
     let manifest = fx.root.join("zsh").join("patina.toml");
     let body = fs_err::read_to_string(manifest.as_std_path()).expect("read module manifest");
     assert!(

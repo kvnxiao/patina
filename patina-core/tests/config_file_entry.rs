@@ -14,7 +14,6 @@ use patina_core::config::parse_module_config_str;
 
 #[test]
 fn parses_single_target_explicit_symlink_mode() {
-    // source = "zshrc", target = "~/.zshrc", mode = "symlink".
     let toml = r#"
 [[file]]
 source = "zshrc"
@@ -36,8 +35,6 @@ mode = "symlink"
 
 #[test]
 fn file_with_omitted_mode_resolves_to_file_kind_symlink() {
-    // A [[file]] with source = "zshrc", target = "~/.zshrc" and
-    // no mode resolves to file kind and symlink mode.
     let toml = r#"
 [[file]]
 source = "zshrc"
@@ -51,8 +48,6 @@ target = "~/.zshrc"
 
 #[test]
 fn directory_symlink_tree_resolves_to_directory_kind_per_leaf_symlink() {
-    // A [[directory]] with source = "mpv", target = "~/.config/mpv",
-    // mode = "symlink-tree" resolves to directory kind and per-leaf symlink.
     let toml = r#"
 [[directory]]
 source = "mpv"
@@ -73,8 +68,8 @@ mode = "symlink-tree"
 
 #[test]
 fn directory_omitted_mode_resolves_to_atomic_whole_directory_symlink() {
-    // A [[directory]] with mode omitted resolves to the
-    // atomic whole-directory symlink (the prior `symlink-dir` behavior).
+    // Omitted mode maps to `FileMode::SymlinkDir`, the historical
+    // `symlink-dir` name.
     let toml = r#"
 [[directory]]
 source = "nvim-config"
@@ -87,8 +82,8 @@ target = "~/.config/nvim"
 
 #[test]
 fn directory_copy_resolves_to_recursive_copy() {
-    // A [[directory]] with mode = "copy" resolves to a
-    // recursive directory copy (the prior `copy-tree` behavior).
+    // mode = "copy" maps to `FileMode::CopyTree`, the historical
+    // `copy-tree` name.
     let toml = r#"
 [[directory]]
 source = "scripts"
@@ -102,7 +97,6 @@ mode = "copy"
 
 #[test]
 fn parses_targets_array_with_copy_mode() {
-    // A [[file]] with targets = ["~/a", "~/b"], mode = "copy" -> Copy.
     let toml = r#"
 [[file]]
 source = "agent.toml"
@@ -121,8 +115,8 @@ mode = "copy"
 
 #[test]
 fn carries_optional_when_expression_verbatim() {
-    // The optional `when` field is parsed and carried as raw source
-    // (not evaluated here).
+    // The optional `when` field is parsed and carried as raw source. It is
+    // not evaluated here.
     let toml = r#"
 [[file]]
 source = "wmrc"
@@ -139,9 +133,6 @@ when = "patina.os == 'windows'"
 
 #[test]
 fn file_with_symlink_tree_mode_is_rejected_naming_accepted_file_modes() {
-    // A [[file]] declaring mode = "symlink-tree" fails with a
-    // typed error whose message contains `symlink-tree` and the accepted
-    // [[file]] modes `symlink` and `copy`.
     let toml = r#"
 [[file]]
 source = "x"
@@ -161,8 +152,6 @@ mode = "symlink-tree"
 
 #[test]
 fn file_with_removed_dir_mode_names_accepted_file_modes() {
-    // A [[file]] declaring a removed `symlink-dir` /
-    // `copy-tree` mode is rejected naming the accepted [[file]] modes.
     for removed in ["symlink-dir", "copy-tree"] {
         let toml = format!(
             r#"
@@ -186,9 +175,6 @@ mode = "{removed}"
 
 #[test]
 fn directory_with_removed_mode_names_accepted_directory_modes() {
-    // A [[directory]] declaring `symlink-dir` or
-    // `copy-tree` is rejected naming the accepted [[directory]] modes
-    // `symlink`, `symlink-tree`, `copy`.
     for removed in ["symlink-dir", "copy-tree"] {
         let toml = format!(
             r#"
@@ -213,8 +199,8 @@ mode = "{removed}"
 
 #[test]
 fn directory_with_tmpl_source_is_rejected() {
-    // A [[directory]] whose source ends in `.tmpl` is rejected:
-    // template render is file-only.
+    // Directory sources ending in `.tmpl` are rejected because template
+    // render is file-only.
     let toml = r#"
 [[directory]]
 source = "theme.tmpl"
@@ -232,7 +218,7 @@ target = "~/.config/theme"
 
 #[test]
 fn rejects_target_and_targets_both_set_on_file() {
-    // Exactly-one-of rule applies to [[file]].
+    // A file entry requires exactly one of `target` or `targets`.
     let toml = r#"
 [[file]]
 source = "agent.toml"
@@ -252,7 +238,7 @@ targets = ["~/.codex/agent.toml"]
 
 #[test]
 fn rejects_target_and_targets_both_set_on_directory() {
-    // The exactly-one-of rule applies identically to [[directory]].
+    // The same exactly-one-of rule applies to `[[directory]]`.
     let toml = r#"
 [[directory]]
 source = "d"
@@ -285,7 +271,7 @@ source = "agent.toml"
 
 #[test]
 fn rejects_empty_targets_array_on_directory() {
-    // The non-empty-targets rule applies identically to [[directory]].
+    // The non-empty-targets rule applies to `[[directory]]` too.
     let toml = r#"
 [[directory]]
 source = "d"
@@ -301,9 +287,10 @@ targets = []
     ));
 }
 
-/// Every ASCII control character is refused in a target, down to the ones that
-/// leave a line-oriented render intact. TOML's own escapes are the only way to
-/// author one, so each case here spells what a manifest would contain.
+/// Every ASCII control character is refused in a target, including ones that
+/// leave a line-oriented render intact. TOML's own escapes are the only way
+/// to author one, so each case here spells out what the manifest would
+/// contain.
 #[test]
 fn rejects_a_control_character_in_a_target() {
     for (escape, codepoint) in [
@@ -363,8 +350,8 @@ target = \"~/.claude/skills\"
     ));
 }
 
-/// The rule covers every element of a `targets` fan-out, down to the last, and
-/// applies to `[[directory]]` exactly as to `[[file]]`.
+/// The rule covers every element of a `targets` fan-out, including the last
+/// one, and applies to `[[directory]]` exactly as it does to `[[file]]`.
 #[test]
 fn rejects_a_control_character_in_a_later_fan_out_target() {
     let toml = "
@@ -380,9 +367,9 @@ targets = [\"~/.config/a\", \"~/.config/b\\tc\"]
     ));
 }
 
-/// The rule refuses the ASCII control range and nothing else. A space and a
-/// non-ASCII character are both legal in a path on every supported OS, so a
-/// predicate that reached past the control range would break real manifests.
+/// The rule refuses the ASCII control range only. A space and a non-ASCII
+/// character are both legal in a path on every supported OS, so a predicate
+/// that reached past the control range would break real manifests.
 #[test]
 fn accepts_spaces_and_non_ascii_in_paths() {
     let toml = "
@@ -399,8 +386,8 @@ target = \"~/Application Support/ünïcode 😀/agent.toml\"
 
 #[test]
 fn rejects_unknown_file_mode_naming_accepted_values() {
-    // A wholly unknown mode on [[file]] is rejected naming the accepted
-    // [[file]] modes only (not the removed dir-mode spellings).
+    // The error names only the accepted `[[file]]` modes, not the removed
+    // dir-mode spellings.
     let toml = r#"
 [[file]]
 mode = "merge-json"
@@ -424,8 +411,6 @@ target = "y"
 
 #[test]
 fn rejects_tmpl_source_with_explicit_mode_on_file() {
-    // A [[file]] .tmpl source plus an explicit mode is rejected, naming the
-    // .tmpl suffix and the implicit-template rule.
     let toml = r#"
 [[file]]
 source = "foo.tmpl"
@@ -447,8 +432,6 @@ mode = "copy"
 
 #[test]
 fn tmpl_file_source_resolves_to_template_render_mode() {
-    // A [[file]] .tmpl source with no explicit mode resolves to
-    // FileMode::TemplateRender.
     let toml = r#"
 [[file]]
 source = "gitconfig.tmpl"
@@ -462,9 +445,6 @@ target = "~/.gitconfig"
 
 #[test]
 fn both_tables_parse_together_into_their_respective_vecs() {
-    // A manifest with both a [[file]] (mode omitted) and
-    // a [[directory]] with mode = "symlink-tree" resolves the file entry to
-    // a single-file symlink and the directory entry to per-leaf symlinks.
     let toml = r#"
 [[file]]
 source = "zshrc"
@@ -484,8 +464,6 @@ mode = "symlink-tree"
 
 #[test]
 fn variables_table_is_preserved() {
-    // A module's [variables] table is captured raw and surfaced on
-    // ModuleConfig.variables.
     let toml = r#"
 [variables]
 email = "kevin@example.com"

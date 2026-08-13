@@ -7,9 +7,9 @@
 //!
 //! Two consecutive `patina apply` invocations against
 //! an unchanged source repository produce byte-identical stdout in both
-//! `--json` and human modes, and that no wall-clock timestamp, PID, or
-//! random ID leaks into user-facing output. The journal `<ts>` filename is
-//! the only place a timestamp is permitted, and it never appears on stdout.
+//! `--json` and human modes. No wall-clock timestamp, PID, or random ID
+//! leaks into user-facing output. The journal `<ts>` filename is the only
+//! place a timestamp is permitted, and it never appears on stdout.
 //!
 //! Each test builds a self-contained tempdir dotfiles repository, points
 //! `PATINA_REPO` at it, and isolates the per-machine state directory under
@@ -20,8 +20,8 @@ mod common;
 use common::Fixture;
 use common::code;
 
-/// A fixture rich enough to exercise multiple modes and a multi-target
-/// entry, the kind this behaviour leans on for a meaningful proof.
+/// A fixture that exercises multiple modes and a multi-target entry, so
+/// determinism is proven on more than a trivial plan.
 fn rich_fixture() -> Fixture {
     let f = Fixture::new();
     // A copy mode and a template mode in one module; module order is fixed
@@ -42,11 +42,9 @@ fn rich_fixture() -> Fixture {
 
 #[test]
 fn json_apply_is_byte_identical_across_two_runs() {
-    // Against an unchanged repository, two consecutive
-    // `--yes --json` applies emit byte-identical stdout. The repo is first
-    // converged with a priming apply so the two *measured* runs both observe
-    // the same on-disk state. The property guarded is stability of
-    // stdout as a function of inputs, and the inputs are identical here.
+    // The repo is first converged with a priming apply, so the two measured
+    // runs both observe the same on-disk state before their stdout is
+    // compared.
     let f = rich_fixture();
 
     let prime = f.apply(&["--json", "--yes"]);
@@ -83,9 +81,8 @@ fn json_apply_is_byte_identical_across_two_runs() {
 
 #[test]
 fn human_apply_is_byte_identical_across_two_runs() {
-    // Against an unchanged repository, two consecutive
-    // human-mode `--yes` applies emit byte-identical stdout. As above, a
-    // priming apply converges the repo so the two measured runs share state.
+    // As in the JSON variant above, a priming apply converges the repo
+    // first, so the two measured runs share state.
     let f = rich_fixture();
 
     let prime = f.apply(&["--yes"]);
@@ -122,11 +119,8 @@ fn human_apply_is_byte_identical_across_two_runs() {
 
 #[test]
 fn fully_satisfied_applies_are_byte_identical_and_report_up_to_date() {
-    // Against a fully-satisfied repo, two consecutive human-mode `--yes`
-    // applies are both full no-ops. Their stdout must be
-    // byte-identical and both must carry the deterministic up-to-date message
-    // with no timestamp, PID, or state path leaking in. A priming apply converges
-    // the repo so both measured runs observe the satisfied state.
+    // A priming apply converges the repo first, so both measured runs are
+    // full no-ops against an already-satisfied state.
     let f = rich_fixture();
 
     assert_eq!(
@@ -153,10 +147,10 @@ fn fully_satisfied_applies_are_byte_identical_and_report_up_to_date() {
 
 #[test]
 fn multi_target_rows_preserve_input_declaration_order() {
-    // A multi-target [[file]] whose `targets` are declared in deliberately
-    // non-alphabetical order. "Deterministic" means "stable function of
-    // inputs", not "alphabetised": the plan rows must appear in the
-    // declared order (.codex before .claude), not sorted.
+    // A multi-target [[file]] entry with `targets` declared in deliberately
+    // non-alphabetical order. Determinism means a stable function of
+    // inputs, not an alphabetized sort, so the plan rows must keep declared
+    // order (.codex before .claude).
     let f = Fixture::new();
     let agent = f.module(
         "agent",

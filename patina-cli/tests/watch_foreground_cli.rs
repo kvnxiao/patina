@@ -157,7 +157,7 @@ mod foreground {
         }
 
         /// The number of stderr *lines* containing `needle`. Counts log events
-        /// rather than raw substrings: a single structured event line repeats
+        /// rather than raw substrings. A single structured event line repeats
         /// its event name across its field names (`re_apply re_apply_id=…`), so
         /// a substring count would over-count one event many times.
         fn count_event_lines(&self, needle: &str) -> usize {
@@ -213,8 +213,6 @@ mod foreground {
 
     #[test]
     fn sigint_shuts_down_cleanly_and_exits_zero() {
-        // A running foreground watcher, SIGINT -> exit 0 within 1s and
-        // stderr contains `shutdown`.
         let f = applied_fixture();
         let mut watcher = Watcher::spawn(&f);
 
@@ -244,8 +242,6 @@ mod foreground {
 
     #[test]
     fn sigterm_follows_the_same_clean_exit_path_as_sigint() {
-        // SIGTERM produces the same clean-exit path as SIGINT (exit 0,
-        // `shutdown` logged).
         let f = applied_fixture();
         let mut watcher = Watcher::spawn(&f);
 
@@ -273,9 +269,8 @@ mod foreground {
 
     #[test]
     fn logs_its_subscription_set_on_startup() {
-        // The foreground watcher logs its
-        // computed subscription set, naming the watched source path, so a
-        // harness can inspect it from stderr.
+        // The subscription log names the watched source path, so a harness
+        // can inspect it from stderr.
         let f = applied_fixture();
         let watcher = Watcher::spawn(&f);
 
@@ -336,20 +331,20 @@ mod foreground {
 
     #[test]
     fn five_touches_within_the_debounce_window_coalesce_to_one_reapply() {
-        // A burst of writes to a watched source must coalesce into
-        // exactly one `re_apply` event (the 500ms debounce window swallows the
-        // burst).
+        // A burst of writes to a watched source must coalesce into exactly
+        // one `re_apply` event, since the 500ms debounce window swallows the
+        // burst.
         //
-        // The five writes are issued back-to-back with NO inter-write sleep, on
-        // purpose. An earlier revision slept 20ms between writes to mimic an
-        // editor's multi-event save; under a loaded CI runner those sleeps
-        // stretched (a 20ms `sleep` is a yield point and can be descheduled into
-        // hundreds of ms), spreading the burst across more than the 500ms
-        // window. It then split into several debounce batches and fired one
-        // re-apply per straggler, up to one per write, flaking the `== 1`
-        // assertion below. A bare `write` loop has no yield point, so the burst
-        // stays well inside one window regardless of scheduler load; do not
-        // reintroduce a per-write sleep here.
+        // The five writes are issued back-to-back with no inter-write sleep,
+        // on purpose. An earlier revision slept 20ms between writes to mimic
+        // an editor's multi-event save. Under a loaded CI runner those sleeps
+        // stretched, since a 20ms `sleep` is a yield point that can be
+        // descheduled into hundreds of ms, spreading the burst across more
+        // than the 500ms window. It then split into several debounce batches
+        // and fired one re-apply per straggler, up to one per write, flaking
+        // the `== 1` assertion below. A bare `write` loop has no yield point,
+        // so the burst stays well inside one window regardless of scheduler
+        // load. Do not reintroduce a per-write sleep here.
         let f = applied_copy_fixture();
         let watcher = Watcher::spawn(&f);
 
@@ -409,20 +404,21 @@ mod foreground {
             watcher.stderr_snapshot()
         );
 
-        // This scenario models an external `patina apply` that COMMITS new state
-        // while the watcher runs: the watcher must detect the new journal
-        // record under the watched journal dir and rescan. Since
-        // an unchanged re-apply is a full no-op that writes no
-        // journal, the parallel apply must change committed state
-        // to produce the `.COMMIT` this scenario is about: an idempotent
-        // re-apply correctly produces neither a journal nor a rescan.
+        // This scenario models an external `patina apply` that commits new
+        // state while the watcher runs. The watcher must detect the new
+        // journal record under the watched journal dir and rescan. An
+        // unchanged re-apply is a full no-op that writes no journal, so the
+        // parallel apply must change committed state to produce the
+        // `.COMMIT` this scenario needs. An idempotent re-apply produces
+        // neither a journal nor a rescan.
         //
-        // Introduce a brand-new entry AFTER the watcher has subscribed, so it
-        // is outside the current subscription set: the parallel apply performs
-        // a real Create and commits a fresh journal record, and the watcher
-        // reacts to that journal write (not to the new source/target, which it
-        // is not yet watching). This isolates the "external apply commits ->
-        // journal_rescan" behaviour the loop guard is about.
+        // Introduce a brand-new entry after the watcher has subscribed, so it
+        // falls outside the current subscription set. The parallel apply
+        // then performs a real Create and commits a fresh journal record, and
+        // the watcher reacts to that journal write rather than to the new
+        // source/target, which it is not yet watching. This isolates the loop
+        // guard's target behaviour, an external apply's commit triggering a
+        // journal rescan.
         let extra = f.module(
             "extra",
             "[[file]]\nsource = \"extra_src\"\ntarget = \"~/extra_out\"\nmode = \"copy\"\n",
@@ -438,9 +434,9 @@ mod foreground {
             watcher.stderr_snapshot()
         );
 
-        // No unbounded loop: after settling, the rescan count stays bounded
-        // (a single CLI apply drives a small, finite number of rescans, not a
-        // runaway). A runaway loop would push this into the dozens.
+        // After settling, the rescan count stays bounded. A single CLI apply
+        // drives a small, finite number of rescans, not a runaway loop, which
+        // would push the count into the dozens.
         std::thread::sleep(Duration::from_secs(1));
         let rescans = watcher.count_event_lines("journal_rescan");
         assert!(
@@ -472,19 +468,18 @@ mod foreground {
 
     #[test]
     fn an_external_target_edit_logs_drift_and_populates_the_cache() {
-        // The platform-independent, deterministic slice:
-        // a running watcher over an applied copy-mode `~/.gitconfig`, when the
-        // target is overwritten with bytes that hash differently, logs a `drift`
-        // event, records the divergence in `<state>/drift.cache` with the
-        // recorded and observed hashes, and `patina status` then reports the
-        // target DRIFTED from its own live re-hash.
+        // This covers the platform-independent, deterministic slice. A
+        // running watcher over an applied copy-mode `~/.gitconfig`, when the
+        // target is overwritten with bytes that hash differently, logs a
+        // `drift` event, records the divergence in `<state>/drift.cache` with
+        // the recorded and observed hashes, and `patina status` then reports
+        // the target DRIFTED from its own live re-hash.
         //
-        // The notification *count* (the "exactly one") is asserted
-        // deterministically by the `patina-core` drift unit tests against the
-        // capture sink: the CLI binary always uses the real
-        // `notify-rust` sink, which a headless CI runner cannot capture, so the
-        // count is not assertable here. This test owns the observable on-disk
-        // and status side-effects instead.
+        // The notification count is asserted deterministically by the
+        // `patina-core` drift unit tests against the capture sink. The CLI
+        // binary always uses the real `notify-rust` sink, which a headless CI
+        // runner cannot capture, so the count is not assertable here. This
+        // test owns the observable on-disk and status side-effects instead.
         let f = applied_copy_fixture();
         let target = f.home.join(".gitconfig");
         // The fixture applied the source bytes to the target; capture the
@@ -498,13 +493,13 @@ mod foreground {
             watcher.stderr_snapshot()
         );
 
-        // Overwrite the target out-of-band with content that hashes differently
-        // (H2 ≠ H1). This is the "modified outside Patina" edit drift detects.
+        // Overwrite the target out-of-band with content that hashes
+        // differently (H2 ≠ H1). This is the kind of change made outside
+        // Patina that drift detection is meant to catch.
         let drifted = format!("{applied}; drifted = true\n");
         assert_ne!(drifted, applied, "the overwrite must change the bytes");
         fs_err::write(target.as_std_path(), &drifted).expect("overwrite target");
 
-        // The watcher logs a `drift` event for the divergent target.
         assert!(
             watcher.wait_for_stderr("drift", Duration::from_secs(5)),
             "the external edit must log a drift event; stderr: {}",
@@ -530,8 +525,9 @@ mod foreground {
             watcher.stderr_snapshot()
         );
 
-        // The watcher must NOT re-apply the divergent target (a re-apply would
-        // rewrite it back to source and re-trigger): no re_apply event fired.
+        // The watcher must not re-apply the divergent target, since a
+        // re-apply would rewrite it back to source and re-trigger. No
+        // re_apply event fired.
         assert_eq!(
             watcher.count_event_lines("patina_core: re_apply re_apply_id"),
             0,
@@ -567,7 +563,6 @@ mod foreground {
             drifted_gitconfig,
             "status JSON must report .gitconfig as drifted from its own live re-hash; got: {stdout}"
         );
-        // The aggregate `drifted` counter is at least 1.
         let drifted_count = doc.get("drifted").and_then(serde_json::Value::as_u64);
         assert!(
             drifted_count.is_some_and(|n| n >= 1),
@@ -619,10 +614,10 @@ mod foreground {
             watcher.stderr_snapshot()
         );
 
-        // Poll for the new COMMIT rather than sleeping a fixed interval: the
+        // Poll for the new COMMIT rather than sleeping a fixed interval. The
         // re_apply event is logged after the engine commits, so the COMMIT is
-        // already on disk, but polling absorbs scheduler jitter under parallel
-        // test load.
+        // already on disk, but polling absorbs scheduler jitter under
+        // parallel test load.
         let two_commits = {
             let deadline = Instant::now() + Duration::from_secs(3);
             loop {

@@ -2,20 +2,20 @@
 //!
 //! Patina never clobbers a pre-existing user file without first stashing
 //! the original. Before the executor overwrites any target that already
-//! exists on disk, including replacing a regular file with a symlink,
-//! it calls [`backup_before_overwrite`], which copies the original bytes
+//! exists on disk, including replacing a regular file with a symlink, it
+//! calls [`backup_before_overwrite`]. That call copies the original bytes
 //! to `<state>/patina/backups/<ts>/<mirrored-target-path>`. The mirrored
 //! path is the inverse map crash recovery reads back, so both
 //! agree on where an original lives; the mapping itself is owned by
 //! [`crate::journal::mirror_backup_path`] and reused here verbatim.
 //!
-//! A target that does *not* pre-exist produces no backup entry: there is
+//! A target that does *not* pre-exist produces no backup entry. There is
 //! nothing to restore, and recovery's "no backup means fresh creation,
 //! delete it" rule depends on the absence being meaningful.
 //!
 //! The backup tree lives entirely under the per-machine state directory.
-//! Nothing in this module writes to the dotfiles repository (the repo is
-//! never written during apply).
+//! Nothing in this module writes to the dotfiles repository; the
+//! repository is never written during apply.
 //!
 //! ## Retention
 //!

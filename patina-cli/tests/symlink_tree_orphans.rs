@@ -31,7 +31,7 @@ use common::code;
 
 /// The OS family string the engine's `patina.os` built-in resolves to on
 /// this host (`"macos"`, `"linux"`, or `"windows"`). `std::env::consts::OS`
-/// is exactly the value the engine's `normalized_os` returns on the three
+/// equals the value the engine's `normalized_os` returns on the three
 /// supported platforms, so a `when` built from it is deterministically true
 /// here (matching `conditional_entries.rs`).
 fn current_os_family() -> &'static str {
@@ -81,10 +81,10 @@ fn state_for(doc: &serde_json::Value, suffix: &str) -> String {
 /// Recording the first spelling and re-deriving the second must therefore yield
 /// one managed key, or the reap deletes what the second apply just wrote.
 ///
-/// The status document is the host-independent half of the proof: classifying
-/// the recorded target is a comparison of managed keys, so it answers ORPHANED
-/// under an unfolded key on every filesystem. The surviving bytes only prove
-/// anything where the two spellings name one object.
+/// The status document is the host-independent half of the proof. Classifying
+/// the recorded target only compares managed keys, so it reports ORPHANED
+/// under an unfolded key on every filesystem. The surviving bytes prove the
+/// outcome only where the two spellings name one object.
 fn respell_target(first: &str, second: &str) -> (common::Fixture, serde_json::Value) {
     let f = Fixture::new();
     let module = f.module("cfg", &copy_entry(first));
@@ -153,9 +153,9 @@ fn a_normalization_only_target_respelling_does_not_reap_the_live_target() {
 
 #[test]
 fn deleted_symlink_tree_source_leaf_is_reported_orphaned() {
-    // An applied `symlink-tree` whose source contained `sub/b.conf`,
-    // with that source leaf then deleted, makes `patina status` classify
-    // `~/d/sub/b.conf` as orphaned: the managed set walks the *live* source
+    // An applied `symlink-tree` whose source contained `sub/b.conf`, with
+    // that source leaf then deleted, makes `patina status` classify
+    // `~/d/sub/b.conf` as orphaned. The managed set walks the live source,
     // and the deleted leaf is no longer in it.
     let f = Fixture::new();
     let module = f.module(
@@ -223,7 +223,7 @@ fn next_apply_reaps_orphan_leaf_and_keeps_sibling_and_directory() {
         "the nested leaf must exist after the initial apply"
     );
 
-    // Delete the source leaf, then re-apply: the orphan leaf link is reaped.
+    // Delete the source leaf, then re-apply. The orphan leaf link is reaped.
     fs_err::remove_file(src.join("sub").join("b.conf")).expect("delete source leaf");
     let reaped = f.apply(&["--yes"]);
     assert_eq!(
@@ -245,7 +245,6 @@ fn next_apply_reaps_orphan_leaf_and_keeps_sibling_and_directory() {
         sub_meta.file_type().is_dir() && !sub_meta.file_type().is_symlink(),
         "`~/d/sub` must remain a real directory after the leaf is reaped"
     );
-    // The surviving leaf stays a symbolic link.
     let a_meta = fs_err::symlink_metadata(leaf_a.as_std_path()).expect("stat surviving leaf");
     assert!(
         a_meta.file_type().is_symlink(),
@@ -255,12 +254,11 @@ fn next_apply_reaps_orphan_leaf_and_keeps_sibling_and_directory() {
 
 #[test]
 fn when_flipped_to_false_orphans_then_reaps_target_with_backup() {
-    // A `[[file]]` entry with a true `when` whose target was
-    // materialized, then its `when` edited to a predicate false on this host,
-    // is classified orphaned by `patina status`, and the next
-    // `patina apply --yes` removes the target after recording its prior bytes
-    // in a backup (proven by finding those bytes in the reaping run's backup
-    // tree).
+    // A `[[file]]` entry with a true `when` whose target was materialized,
+    // then its `when` edited to a predicate false on this host, is
+    // classified orphaned by `patina status`. The next `patina apply --yes`
+    // removes the target after recording its prior bytes in a backup, proven
+    // by finding those bytes in the reaping run's backup tree.
     let f = Fixture::new();
     let true_when = format!("patina.os == '{}'", current_os_family());
     let manifest_true = format!(
@@ -288,7 +286,6 @@ fn when_flipped_to_false_orphans_then_reaps_target_with_backup() {
          when = \"patina.os == 'definitely-not-this-os'\"\n";
     fs_err::write(module.join("patina.toml"), manifest_false).expect("rewrite manifest");
 
-    // Status classifies the now-unmanaged target orphaned.
     let doc = status_json(&f.run(&["status", "--json"], &[]));
     assert_eq!(
         state_for(&doc, "/.gitconfig"),
@@ -296,7 +293,6 @@ fn when_flipped_to_false_orphans_then_reaps_target_with_backup() {
         "a `when`-flipped-false target must classify orphaned: {doc}"
     );
 
-    // The next apply reaps it.
     let reaped = f.apply(&["--yes"]);
     assert_eq!(
         code(&reaped),
@@ -309,16 +305,16 @@ fn when_flipped_to_false_orphans_then_reaps_target_with_backup() {
         "the orphaned `~/.gitconfig` must be removed by the reaping apply"
     );
 
-    // The prior bytes were recorded in a backup before removal: the reaping
+    // The prior bytes were recorded in a backup before removal. The reaping
     // run's backup tree holds a `.gitconfig` whose bytes are the original
-    // target's. Searching the backup tree (rather than poking at a specific
-    // `<ts>` directory) proves the never-overwrite-without-backup guarantee
-    // held for the reap without coupling the test to the timestamp layout.
+    // target's. Searching the backup tree, rather than a specific `<ts>`
+    // directory, proves the never-overwrite-without-backup guarantee held for
+    // the reap without coupling the test to the timestamp layout.
     // The backup tree lives under the *resolved* state root, which differs
-    // per platform (`XDG_STATE_HOME`/`LOCALAPPDATA` on Linux/Windows but
-    // `$HOME/Library/Application Support/patina` on macOS), so search
-    // `f.state_root()` (the per-platform resolver) rather than the raw
-    // `f.state` env value, which only backs the state dir on Linux/Windows.
+    // per platform (`XDG_STATE_HOME` / `LOCALAPPDATA` on Linux/Windows,
+    // `$HOME/Library/Application Support/patina` on macOS). The test searches
+    // `f.state_root()`, the per-platform resolver; the raw `f.state` env
+    // value only backs the state dir on Linux/Windows.
     let state_root = f.state_root();
     let backup = find_backup_with_bytes(&state_root, ".gitconfig", b"[user]\n  name = me\n");
     assert!(

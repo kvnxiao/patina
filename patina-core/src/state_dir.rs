@@ -9,21 +9,20 @@
 //! - **macOS:** `$HOME/Library/Application Support/patina/`.
 //! - **Windows:** `%LOCALAPPDATA%\patina\`.
 //!
-//! [`resolve`] is the public entry point. It inspects the running
-//! host, reads the process environment, materializes the directory
-//! tree (`<state>/patina/`, `<state>/patina/journal/`,
-//! `<state>/patina/backups/`, `<state>/patina/remotes/`) on first call, and
-//! returns the canonical absolute path. It is idempotent: a second call on the
-//! same host returns the same path and is a filesystem no-op.
+//! [`resolve`] is the public entry point. It inspects the running host and
+//! reads the process environment. On first call it materializes the
+//! directory tree (`<state>/patina/`, `<state>/patina/journal/`,
+//! `<state>/patina/backups/`, `<state>/patina/remotes/`) and returns the
+//! canonical absolute path. It is idempotent: a second call on the same
+//! host returns the same path and is a filesystem no-op.
 //!
-//! The lazily-created files `profile`, `default_repo`, and `lock`
-//! belong to their owning subsystems; this
-//! module only creates the directory tree.
+//! The lazily-created files `profile`, `default_repo`, and `lock` belong to
+//! their owning subsystems. This module only creates the directory tree.
 //!
-//! `<state>/patina/logs/` is deliberately NOT created here. The watcher
-//! owns that directory and its rotating-log stack,
-//! creating it lazily on first start via [`crate::watch::logging`];
-//! [`resolve`] creates only `journal/` and `backups/`.
+//! `<state>/patina/logs/` is deliberately NOT created here. The watcher owns
+//! that directory and its rotating-log stack, creating it lazily on first
+//! start via [`crate::watch::logging`]. [`resolve`] creates only `journal/`
+//! and `backups/`.
 //!
 //! The dotfiles repository is never written to by this module.
 //!
@@ -147,9 +146,9 @@ where
 ///
 /// This is the pure, side-effect-free core of [`resolve`]: it does not
 /// create any directory. [`resolve`] layers directory materialization on
-/// top; repository discovery ([`crate::discovery`]) calls this directly so
-/// it can locate the persisted-default file without the side effect of
-/// creating the state tree on a read-only path.
+/// top. Repository discovery ([`crate::discovery`]) calls this directly, so
+/// it can locate the persisted-default file without creating the state
+/// tree on a read-only path.
 pub(crate) fn compute_root<F>(host: HostOs, env: &F) -> Result<Utf8PathBuf, StateDirError>
 where
     F: Fn(&str) -> Option<String>,

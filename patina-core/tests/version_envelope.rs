@@ -1,15 +1,13 @@
 //! Integration coverage for the shared version-envelope helper.
-//! The helper is the single codec the journal plan file, the
-//! committed apply record, and the drift cache frame their
-//! `postcard` bodies with.
+//! The helper is the single codec that frames the `postcard` bodies
+//! of the journal plan file, the committed apply record, and the
+//! drift cache.
 
 use patina_core::FILE_MAJOR_VERSION;
 use patina_core::version_envelope::EnvelopeError;
 use patina_core::version_envelope::decode_envelope;
 use patina_core::version_envelope::encode_with_envelope;
 
-/// Scenario 1: a body framed at major 2 and decoded at major 2 returns the
-/// original body unchanged.
 #[test]
 fn encode_then_decode_returns_the_original_body() {
     let body = b"arbitrary postcard body bytes";
@@ -18,8 +16,8 @@ fn encode_then_decode_returns_the_original_body() {
     assert_eq!(decoded, body);
 }
 
-/// Scenario 2: a buffer whose leading `u16` is `FILE_MAJOR_VERSION + 1` is
-/// refused by a `FILE_MAJOR_VERSION` reader, naming both versions.
+/// A buffer whose leading `u16` exceeds `FILE_MAJOR_VERSION` is refused,
+/// naming both the found and the supported version.
 #[test]
 fn newer_major_is_refused_naming_found_and_supported() {
     let framed = encode_with_envelope(FILE_MAJOR_VERSION + 1, b"future body");

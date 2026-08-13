@@ -5,8 +5,8 @@
 //! calls [`recover_orphans`]. It scans the journal directory for *orphan*
 //! plans: a `<ts>.plan` with neither a `<ts>.COMMIT` (the apply
 //! committed) nor a `<ts>.ROLLED_BACK` (a prior rollback closed it
-//! out) sentinel. An orphan is the fingerprint of a `kill -9`
-//! mid-apply: the plan was made durable but the run never reached commit.
+//! out) sentinel. An orphan indicates a `kill -9` mid-apply: the plan
+//! was made durable but the run never reached commit.
 //!
 //! For each orphan, recovery:
 //!
@@ -28,15 +28,17 @@
 //! 4. Deletes the orphan `<ts>.plan` and `<ts>.progress` files once every
 //!    operation has been reversed.
 //!
-//! Recovery is **idempotent**: the second run finds no orphan (the plan
-//! file was removed by the first), so it is a no-op and yields the same
-//! filesystem state. Within a single run it is also self-idempotent:
-//! restoring a backup over an already-restored target rewrites identical
-//! bytes, and deleting an already-absent fresh target is a no-op.
+//! Recovery is **idempotent**: the second run finds no orphan, because the
+//! plan file was removed by the first. It is therefore a no-op that
+//! yields the same filesystem state. Within a single run it is also
+//! self-idempotent: restoring a backup over an already-restored target
+//! rewrites identical bytes, and deleting an already-absent fresh target
+//! is a no-op.
 //!
 //! The advisory progress cursor is **ignored** for the reversal decision:
 //! recovery trusts the filesystem probe and the backup directory, not the
-//! cursor's last record, which may lie about how far the apply got.
+//! cursor's last record, which may not reflect how far the apply
+//! actually got.
 //!
 //! # Examples
 //!
@@ -171,9 +173,10 @@ fn reverse_orphan(
     }
 
     // The plan and progress files are removed only after every reversal
-    // succeeds, so a crash mid-recovery leaves the orphan in place and the
-    // next startup retries it (still idempotent: restores rewrite the
-    // same bytes, deletes of absent targets are no-ops).
+    // succeeds. A crash mid-recovery leaves the orphan in place, and the
+    // next startup retries it. This retry is still idempotent: restoring
+    // a backup rewrites the same bytes, and deleting an absent target is
+    // a no-op.
     super::remove_if_present(&plan_path)?;
     super::remove_if_present(&journal_dir.join(format!("{timestamp}{PROGRESS_SUFFIX}")))?;
     Ok(())
@@ -182,19 +185,19 @@ fn reverse_orphan(
 /// Reverse a single planned operation back to its pre-apply state.
 ///
 /// An operation the plan recorded as [`Disposition::Unchanged`] is left in
-/// place ahead of the backup-presence decision: apply skips the
-/// write and the backup for such a target, so its live state already *is*
-/// the pre-apply state and there is nothing to reverse. This holds at any
-/// crash point because the plan is fsync'd before any mutation, so the
+/// place before the backup-presence check runs. Apply skipped the write
+/// and the backup for such a target, so nothing needs reversing: its
+/// live state already matches the pre-apply state. This holds at any
+/// crash point, because the plan is fsync'd before any mutation, so the
 /// disposition the orphan plan carries is authoritative. The
-/// disposition read here is the durable per-op aggregate, so a tree op
-/// whose aggregate is `Unchanged` is left whole.
+/// disposition read here is the durable per-op aggregate, so a tree
+/// operation whose aggregate is `Unchanged` is left whole.
 ///
 /// Otherwise the decision is driven by the backup directory, not the
-/// progress cursor: a backup existing for the target means the apply was
-/// about to (or did) overwrite a pre-existing entry, so the original is
-/// restored; no backup means the target was created fresh, so it is deleted
-/// if present.
+/// progress cursor. A backup existing for the target means the apply
+/// was about to, or did, overwrite a pre-existing entry, so the original
+/// is restored. No backup means the target was created fresh, so it is
+/// deleted if present.
 ///
 /// Both restore and delete go through the kind-preserving [`crate::fsx`]
 /// helpers. The original is therefore recreated as the same kind it was: a
@@ -219,8 +222,9 @@ fn reverse_operation(
 
     if crate::fsx::entry_present(&backup) {
         // Overwrite case: restore the original entry the engine stashed
-        // before mutating, replacing whatever is at the target now (a new
-        // symlink, a half-written copy, or the already-restored original).
+        // before mutating. This replaces whatever is at the target now: a
+        // new symlink, a half-written copy, or the already-restored
+        // original.
         crate::fsx::clone_entry(&backup, target).map_err(JournalError::Filesystem)
     } else {
         // Fresh-creation case: there was nothing to back up, so reversing
@@ -300,10 +304,10 @@ mod tests {
 
     #[test]
     fn unchanged_marked_orphan_target_is_left_in_place() {
-        // An orphan plan whose target is marked
-        // `Unchanged` must be preserved by recovery even though no backup
-        // exists for it: apply skipped the write and the backup, so the
-        // live entry already is the pre-apply entry.
+        // An orphan plan whose target is marked `Unchanged` must be
+        // preserved by recovery, even though no backup exists for it.
+        // Apply skipped the write and the backup, so the live entry
+        // already is the pre-apply entry.
         let d = dirs();
         let root = d.journal.parent().expect("journal has a parent");
         let ts = "20260528T130000Z";
@@ -346,10 +350,10 @@ mod tests {
 
     #[test]
     fn create_marked_orphan_target_with_no_backup_is_deleted() {
-        // An orphan plan whose target is marked `Create`
-        // with no backup is a fresh creation the crashed apply made, so
-        // recovery removes it. This is the unchanged Create-with-no-backup
-        // behavior, asserted now that the Unchanged arm precedes it.
+        // An orphan plan whose target is marked `Create` with no backup is
+        // a fresh creation the crashed apply made, so recovery removes it.
+        // This delete behavior already existed; this test re-confirms it
+        // still holds now that the `Unchanged` arm runs first.
         let d = dirs();
         let root = d.journal.parent().expect("journal has a parent");
         let ts = "20260528T140000Z";
@@ -384,12 +388,12 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn overwrite_of_a_pre_existing_symlink_restores_the_symlink() {
-        // C1 regression at the recovery layer: an orphan apply that
-        // overwrote a pre-existing *symlink* target must, on recovery,
-        // restore the symlink, not leave a regular file holding the
-        // destination's bytes. The backup is a symlink (what
-        // `backup_before_overwrite` now stashes), and its destination need
-        // not exist for the restore to find and recreate the link.
+        // C1 regression at the recovery layer: an orphan apply overwrote a
+        // pre-existing *symlink* target. Recovery must restore the
+        // symlink, not leave a regular file holding the destination's
+        // bytes. The backup is a symlink, the kind `backup_before_overwrite`
+        // now stashes. Its destination does not need to exist for the
+        // restore to find and recreate the link.
         let d = dirs();
         let root = d.journal.parent().expect("journal has a parent");
         let ts = "20260528T120000Z";

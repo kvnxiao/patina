@@ -22,17 +22,17 @@ use common::Fixture;
 use common::code;
 
 /// The OS family string the engine's `patina.os` built-in resolves to on
-/// this host. Matches `current_os_family` in `conditional_entries.rs`:
-/// `std::env::consts::OS` is exactly the value the engine normalizes to on
-/// the three supported platforms, so a `when` built from it is
-/// deterministically true here.
+/// this host. Matches `current_os_family` in `conditional_entries.rs`.
+/// `std::env::consts::OS` equals the value the engine normalizes to on the
+/// three supported platforms, so a `when` built from it is deterministically
+/// true here.
 fn current_os_family() -> &'static str {
     std::env::consts::OS
 }
 
 /// Assert that the apply wrote no `*.plan` or `*.COMMIT` journal file for the
-/// run: the plan-time-failure guarantee that a mismatched entry mutates
-/// nothing. The journal directory is `<state>/patina/journal`; it
+/// run. This is the plan-time-failure guarantee that a mismatched entry
+/// mutates nothing. The journal directory is `<state>/patina/journal`; it
 /// may not exist at all on a plan-phase failure, which is itself proof that
 /// nothing was flushed.
 fn assert_no_journal_artifacts(f: &Fixture) {
@@ -157,15 +157,15 @@ fn when_true_entry_with_absent_source_fails_as_source_not_found() {
 fn when_false_entry_with_absent_wrong_kind_source_is_not_validated() {
     // A `[[directory]]` entry gated off on this OS
     // (`when = "patina.os == 'definitely-not-this-os'"`) with an absent
-    // source exits 0 with no missing-source or kind error: step (3) never
-    // runs on a `when`-false entry (the ordering guarantee).
+    // source exits 0 with no missing-source or kind error. Source-kind
+    // validation never runs on a `when`-false entry.
     let f = Fixture::new();
     f.module(
         "wm",
         "[[directory]]\nsource = \"only-on-other-os\"\ntarget = \"~/.config/wm\"\n\
          when = \"patina.os == 'definitely-not-this-os'\"\n",
     );
-    // Deliberately do not create `only-on-other-os`: a gated-off entry must
+    // Deliberately do not create `only-on-other-os`. A gated-off entry must
     // never be canonicalized or kind-checked.
 
     let out = f.apply(&["--yes"]);
@@ -189,7 +189,7 @@ fn when_false_entry_with_absent_wrong_kind_source_is_not_validated() {
 
 #[test]
 fn when_true_entry_with_present_source_does_apply() {
-    // A control alongside the wrong-OS case: an entry whose `when` is true on
+    // A control alongside the wrong-OS case. An entry whose `when` is true on
     // this host and whose source exists with the matching kind applies
     // cleanly. Guards against `validate_source_kind` rejecting a valid entry.
     let f = Fixture::new();

@@ -14,7 +14,7 @@
 //!
 //! [`write_atomic`] is here for a related reason: several subsystems keep a
 //! small file whose readers must never see it half-written, and one
-//! implementation of stage-then-rename is what keeps them from drifting apart.
+//! implementation of stage-then-rename keeps them from drifting apart.
 //!
 //! These helpers are crate-internal plumbing, called from the modules that
 //! materialize, stash, and restore filesystem entries.
@@ -22,14 +22,14 @@
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
 
-/// Whether an entry exists at `path`, detected with `symlink_metadata` so a
+/// Whether an entry exists at `path`, detected with `symlink_metadata`. A
 /// symbolic link, including a dangling one whose destination no longer
-/// exists, is reported present rather than followed.
+/// exists, counts as present without being followed.
 ///
-/// Callers deciding "is there a backup to restore from here?" must use this
-/// rather than [`Utf8Path::exists`]: `exists` follows the link and would
-/// report a backed-up symlink whose original destination is gone as absent,
-/// causing restore to delete the target instead of recreating the link.
+/// Callers deciding whether a backup exists to restore from must call this
+/// function, not [`Utf8Path::exists`]. `exists` follows the link, so a
+/// backed-up symlink whose destination is gone reads as absent. Restore
+/// then deletes the target and fails to recreate the link.
 #[must_use = "the presence result decides whether to restore from or delete the entry"]
 pub(crate) fn entry_present(path: &Utf8Path) -> bool {
     fs_err::symlink_metadata(path).is_ok()
@@ -50,12 +50,11 @@ pub(crate) fn remove_entry(path: &Utf8Path) -> std::io::Result<()> {
         Ok(meta) => {
             let file_type = meta.file_type();
             if file_type.is_symlink() {
-                // Remove the link itself, never following it. The branches
-                // below would mis-handle it: on Windows a *directory* symlink
-                // cannot be removed with `remove_file` (Access Denied / os
-                // error 5), and `remove_dir_all` on a symlink could recurse
-                // into the link's target. `remove_symlink` picks the right
-                // primitive per platform and link flavour.
+                // Remove the link itself, never following it. On Windows, a
+                // directory symlink cannot be removed with `remove_file`
+                // (Access Denied, OS error 5). `remove_dir_all` on a symlink
+                // could recurse into the link's target. `remove_symlink`
+                // picks the right primitive per platform and link flavour.
                 remove_symlink(path, file_type)
             } else if file_type.is_dir() {
                 fs_err::remove_dir_all(path)
@@ -71,10 +70,10 @@ pub(crate) fn remove_entry(path: &Utf8Path) -> std::io::Result<()> {
 /// Remove a symbolic link itself, never following it.
 ///
 /// On Unix a single `remove_file` deletes a link to either a file or a
-/// directory. On Windows the call must match the link flavour: a directory
-/// symlink requires `remove_dir` (`remove_file` fails with Access Denied), a
-/// file symlink requires `remove_file`. Either way only the link is removed;
-/// the destination is left untouched.
+/// directory. On Windows the call must match the link flavour. A directory
+/// symlink requires `remove_dir`; `remove_file` fails with Access Denied. A
+/// file symlink requires `remove_file`. Either way, only the link is
+/// removed. The destination is left untouched.
 #[cfg(unix)]
 fn remove_symlink(path: &Utf8Path, _file_type: std::fs::FileType) -> std::io::Result<()> {
     fs_err::remove_file(path)
@@ -196,10 +195,9 @@ pub(crate) fn symlink_to(link: &Utf8Path, target: &Utf8Path) -> std::io::Result<
 ///
 /// The rename is the atomic point. POSIX `rename(2)` and Windows `MoveFileEx`
 /// both swap the destination in one operation. A concurrent reader, or a
-/// process killed mid-write, therefore observes either the previous file whole
-/// or the new one whole, never a truncated one. Writing to the destination
-/// directly
-/// would leave neither on a kill between the truncate and the last byte.
+/// process killed mid-write, therefore observes either the previous file
+/// whole or the new one whole. Writing to the destination directly would
+/// leave neither on a kill between the truncate and the last byte.
 ///
 /// The temporary is a sibling, so it shares a filesystem with the destination
 /// and the rename cannot degrade into a cross-device copy. It also carries the
@@ -356,10 +354,10 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn clone_entry_preserves_a_symlink_as_a_symlink() {
-        // The C1 regression: a symlink source must clone to a symlink with
-        // the same link target, not be flattened to a regular file by a
-        // following copy. The link's destination need not exist (a dangling
-        // link round-trips just the same).
+        // A symlink source must clone to a symlink with the same link
+        // target. A following copy would flatten it to a regular file
+        // instead. The link's destination need not exist; a dangling link
+        // round-trips the same way.
         let (_td, dir) = utf8_tempdir();
         let from = dir.join("link");
         fs_err::os::unix::fs::symlink("/some/where/original", &from).expect("create symlink");
@@ -382,8 +380,9 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn entry_present_is_true_for_a_dangling_symlink() {
-        // `Utf8Path::exists` follows the link and would say false; the whole
-        // point of `entry_present` is to report the link itself as present.
+        // `Utf8Path::exists` follows the link and returns false for a
+        // dangling target. `entry_present` reports the link itself as
+        // present.
         let (_td, dir) = utf8_tempdir();
         let link = dir.join("dangling");
         fs_err::os::unix::fs::symlink("/no/such/destination", &link).expect("create dangling link");

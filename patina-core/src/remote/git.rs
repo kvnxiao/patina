@@ -1,14 +1,14 @@
 //! The `git` subprocess layer.
 //!
-//! Patina shells out to the `git` on `PATH` rather than linking a git library,
-//! so a user's existing authentication (SSH agent, credential helper,
-//! insteadOf rewrites, proxy config) applies untouched. `patina doctor`
-//! reports when the binary is missing. See `docs/REMOTE_SOURCES.md` "The remote
-//! cache".
+//! Patina shells out to the `git` on `PATH` rather than linking a git library.
+//! A user's existing authentication, such as an SSH agent, a credential
+//! helper, insteadOf rewrites, or proxy config, then applies untouched.
+//! `patina doctor` reports when the binary is missing. See
+//! `docs/REMOTE_SOURCES.md` "The remote cache".
 //!
 //! Every function here is a thin, typed wrapper over one `git` invocation. The
-//! layer captures `stderr` into its errors and prints nothing itself:
-//! user-facing output belongs to the CLI's reporter.
+//! layer captures `stderr` into its errors and prints nothing itself.
+//! User-facing output belongs to the CLI's reporter.
 
 use camino::Utf8Path;
 use std::process::Command;
@@ -239,8 +239,8 @@ pub fn has_commit(git_dir: &Utf8Path, rev: &str) -> Result<bool, GitError> {
 /// Fetch the single commit `rev` from `url` into the bare repository at
 /// `git_dir`, shallow.
 ///
-/// A depth-1 fetch of one exact SHA is the cheapest thing that can materialize
-/// a pinned rev. Some servers refuse a SHA they were not asked to advertise,
+/// A depth-1 fetch of one exact SHA is the cheapest way to materialize a
+/// pinned rev. Some servers refuse a SHA they were not asked to advertise,
 /// with `uploadpack.allowReachableSHA1InWant` off. When `git_ref` is known and
 /// the SHA fetch fails, the ref is fetched instead and `rev` is re-checked. The
 /// pinned SHA still decides what gets checked out, so the fallback changes only
@@ -338,16 +338,17 @@ pub fn fetch_history(git_dir: &Utf8Path, url: &str, git_ref: Option<&str>) -> Re
 /// beside the checkout and is removed afterwards.
 ///
 /// A checkout is a cache of the commit, so it must hold the commit's bytes on
-/// every machine. Anything machine-local that could rewrite them on the way out
-/// is switched off for the write: line-ending translation (`core.autocrlf`),
-/// the per-user and system attribute files, and real symlinks. An in-tree
-/// `.gitattributes` is committed content and identical everywhere, but can
-/// still make a checkout diverge from the raw bytes; attribute-blind
-/// materialization is a post-1.0 item (see `REMOTE_SOURCES.md`).
+/// every machine. The write disables everything machine-local that could
+/// rewrite the bytes on the way out. That includes line-ending translation
+/// (`core.autocrlf`), the per-user and system attribute files, and real
+/// symlinks. An in-tree `.gitattributes` is committed content and identical
+/// everywhere, but can still make a checkout diverge from the raw bytes.
+/// Attribute-blind materialization is a post-1.0 item (see
+/// `REMOTE_SOURCES.md`).
 ///
 /// `core.symlinks=false` also denies a malicious remote a symlink the resolver
-/// could follow out of the checkout, writing the target text as a regular file
-/// instead.
+/// could follow out of the checkout. Git writes the link's target text as a
+/// regular file instead.
 ///
 /// # Errors
 ///
@@ -358,14 +359,16 @@ pub fn checkout_commit(git_dir: &Utf8Path, rev: &str, dest: &Utf8Path) -> Result
         path: dest.to_path_buf(),
         source,
     })?;
-    // Appended rather than substituted for the extension: `dest` is a staging
-    // directory whose name is unique per process, and the index must be too, or
-    // two concurrent materializations would corrupt each other's checkout.
+    // The extension is appended rather than substituted. `dest` is a staging
+    // directory whose name is unique per process. The index name must be
+    // unique too, or two concurrent materializations would corrupt each
+    // other's checkout.
     let index = camino::Utf8PathBuf::from(format!("{dest}.index"));
     let git_dir_arg = git_dir.as_str();
     let work_tree_arg = format!("--work-tree={dest}");
-    // Beats setting these in the bare repo's config: the override travels with
-    // the invocation, so it cannot be lost if the cache repo is ever re-created.
+    // Passing these per invocation is better than setting them in the bare
+    // repo's config. The override travels with the invocation, so a
+    // re-created cache repo cannot lose it.
     let verbatim = [
         "-c",
         "core.autocrlf=false",
@@ -427,7 +430,7 @@ fn run_with_index(args: &[&str], cwd: &Utf8Path, index: &Utf8Path) -> Result<(),
 /// Returns [`GitError::Spawn`] when `git` cannot start, or [`GitError::Failed`]
 /// when either revision is missing from `git_dir`. `git merge-base
 /// --is-ancestor` reports a plain "no" as exit 1, which is a `false` answer
-/// rather than a failure; any other non-zero code is surfaced.
+/// rather than a failure. Any other non-zero code is surfaced as an error.
 pub fn is_ancestor(git_dir: &Utf8Path, ancestor: &str, descendant: &str) -> Result<bool, GitError> {
     let args = [
         "--git-dir",
@@ -453,9 +456,9 @@ pub fn is_ancestor(git_dir: &Utf8Path, ancestor: &str, descendant: &str) -> Resu
 
 /// The committer time of `rev`, as Unix seconds.
 ///
-/// The gate's future, backdating, and age checks all read this one value. It is
-/// the *committer* time, not the author time: a rebased or cherry-picked commit
-/// keeps its original author date, so author time would let ordinary
+/// The gate's future, backdating, and age checks all read this one value. It
+/// is the committer time, not the author time. A rebased or cherry-picked
+/// commit keeps its original author date, so author time would let ordinary
 /// maintenance trip the gate.
 ///
 /// # Errors
@@ -514,10 +517,11 @@ pub fn resolve_commit(git_dir: &Utf8Path, rev: &str) -> Result<String, GitError>
 /// Whether the dotfiles repository at `repo_root` is out of sync with the
 /// branch it tracks on its origin.
 ///
-/// Answered with `ls-remote` only, so it downloads no objects: the remote tip
-/// is compared to the local `HEAD`. That makes it a "differs from origin" test
-/// rather than a strict "is behind" one. It is still the right signal for the
-/// notice, because either way the user's next move is `git pull`.
+/// Answered with `ls-remote` only, so it downloads no objects. The check
+/// compares the remote tip to the local `HEAD`. That makes it a "differs from
+/// origin" test rather than a strict "is behind" one. It is still the right
+/// signal for the notice, because either way the user's next move is
+/// `git pull`.
 ///
 /// Every failure reads as "not behind". The repository may not be a git
 /// repository at all, may have no configured remote, or the network may be
@@ -546,20 +550,22 @@ fn try_repo_differs_from_origin(repo_root: &Utf8Path) -> Option<bool> {
     if branch == "HEAD" {
         return Some(false);
     }
-    // The local branch name is not the upstream one: a branch may track any
-    // ref, and `work` tracking `origin/main` compared against a nonexistent
-    // `origin/work` would read as never behind. One spawn answers both halves
-    // of the tracking configuration, with `lstrip` reducing the upstream to
-    // the branch name `ls-remote` takes. A branch tracking nothing falls back
-    // to its own name on `origin`, which is where a clone's branches live.
+    // The local branch name is not always the upstream one. A branch named
+    // `work` may track `origin/main`; comparing it against a nonexistent
+    // `origin/work` would incorrectly read as never behind. One spawn answers
+    // both halves of the tracking configuration. `lstrip` reduces the
+    // upstream to the branch name `ls-remote` takes. A branch tracking
+    // nothing falls back to its own name on `origin`, which is where a
+    // clone's branches live.
     let tracking = in_repo(&[
         "for-each-ref",
         "--format=%(upstream:remotename)%09%(upstream:lstrip=3)",
         &format!("refs/heads/{branch}"),
     ])?;
-    // Trailing whitespace is trimmed off the captured output, so a branch that
-    // tracks nothing answers with an empty string rather than a lone
-    // separator, and one that names only a remote loses its trailing field.
+    // `stdout_of` trims trailing whitespace from the captured output. A
+    // branch that tracks nothing then answers with an empty string rather
+    // than a lone separator, and one that names only a remote loses its
+    // trailing field.
     let (remote, upstream) = tracking.split_once('\t').unwrap_or((tracking.as_str(), ""));
     let remote = if remote.is_empty() { "origin" } else { remote };
     let upstream = if upstream.is_empty() {
@@ -598,7 +604,7 @@ mod tests {
 
     #[test]
     fn ls_remote_peels_an_annotated_tag_to_its_commit() {
-        // The unpeeled `refs/tags/v1` names the tag object; `^{}` names the
+        // The unpeeled `refs/tags/v1` names the tag object. `^{}` names the
         // commit. Pinning the tag object would make every later `cat-file
         // -e ^{commit}` and checkout indirect for no reason.
         let text = "1111111111111111111111111111111111111111\trefs/tags/v1\n\

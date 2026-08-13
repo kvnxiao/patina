@@ -152,9 +152,10 @@ pub enum EngineError {
     /// the advisory lock, the journal flush, or any mutation, rather than
     /// surfacing later from the executor. Because `paths::canonicalize`
     /// falls back to lexical resolution for a non-existent path, a missing
-    /// source does not fail at canonicalization; this is an explicit
-    /// existence probe on the canonical source. The executor retains its own
-    /// existence check as a materialize-time TOCTOU backstop.
+    /// source does not fail at canonicalization. This variant is an
+    /// explicit existence probe on the canonical source. The executor
+    /// retains its own existence check as a materialize-time TOCTOU
+    /// backstop.
     #[error("the source {path} declared by a managed entry does not exist")]
     SourceNotFound {
         /// The canonical source path that was not found on disk.

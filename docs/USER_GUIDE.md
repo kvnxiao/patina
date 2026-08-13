@@ -6,10 +6,6 @@ your centralized git repository. You declare configuration in
 declaration at the right target as a symbolic link, rendered template
 output, or byte copy.
 
-This guide covers installation, declaring dotfiles, the apply flow,
-where Patina keeps per-machine state, how to recover from a bad apply,
-and common troubleshooting.
-
 ## Installation
 
 Patina is a single binary. Build it from source with a current Rust
@@ -79,7 +75,7 @@ source out to many. (The earlier single `[[file]]` table with the
 `[[directory]]` entry instead.)
 
 Neither a `source` nor a `target` may contain an ASCII control
-character (`U+0000`–`U+001F` or `U+007F`), which covers tab, newline,
+character (`U+0000` through `U+001F` or `U+007F`), which covers tab, newline,
 and carriage return. Patina refuses the whole manifest at parse time and
 names the offending character by code point, since a control character
 is invisible in an editor. Spaces and non-ASCII characters are fine:
@@ -110,7 +106,7 @@ renders templates and resolves `[[auto_match]]` profile rules. The same
 predicate engine runs at every `when` site. It uses
 strict-undefined semantics. A reference to a variable that was never
 defined fails the run with an error, rather than yielding a
-silently-false predicate. A typo like `patina.oss` instead of
+silently-false predicate. A typo such as `patina.oss` for
 `patina.os` is such a reference. Built-in
 facts such as `patina.os` and `patina.hostname` are always available;
 `patina.profile` is not defined during profile resolution, so an
@@ -209,7 +205,7 @@ five commands for setting up a repository and migrating existing
 dotfiles into management. Each of the mutating commands accepts two
 common flags:
 
-- `--json` emits a structured JSON envelope instead of human-readable
+- `--json` emits a structured JSON envelope in place of human-readable
   output. For read-only commands this is a pure formatting switch.
 - `--yes` proceeds without the interactive confirmation prompt. The
   commands that overwrite or delete data (`remove`, `promote`, and
@@ -300,11 +296,11 @@ that an exclusion you delete by hand in the Defender UI goes unnoticed.
 Run `patina defender status` from an elevated shell to see it: that reads
 the live list and reports `present` or `missing` against it.
 
-The desired set is exactly the repository root plus **one** exclusion per
+The desired set is the repository root plus **one** exclusion per
 managed target: a folder exclusion for a directory entry
 (`symlink` / `symlink-tree` / `copy`) and a file exclusion for a file
 entry (`symlink` / `copy` / template). A `symlink-tree` of forty files
-contributes the one declared target directory, never forty entries.
+contributes the one declared target directory rather than forty entries.
 Patina emits exact paths only, with no wildcards and no process or
 extension exclusions. It refuses to exclude a UNC path, a drive root, or a
 system directory (`%SystemRoot%`, `%ProgramFiles%`, and friends).
@@ -356,7 +352,7 @@ acting; a non-interactive shell requires `--yes`. Accepting raises one UAC
 prompt (the main `patina.exe` never runs elevated, only a small bundled
 helper does). Declining the prompt exits `5`.
 
-The helper is also what verifies the change, since it is the only part of
+The helper also verifies the change, since it is the only part of
 Patina elevated enough to read the exclusion list back. It re-reads after
 writing and records the verdict, which the waiting `patina.exe` picks up.
 Three outcomes exit `1`, and they say different things:
@@ -500,8 +496,8 @@ and one manifest may draw on several remotes. An entry with no `remote`
 key resolves against its module directory exactly as it always has.
 
 The commit each machine materializes lives in `patina.lock`, next to
-your root `patina.toml`, and is committed like any other file. That is
-what makes a remote update flow through your repository: you bump the pin
+your root `patina.toml`, and is committed like any other file. That lets
+a remote update flow through your repository: you bump the pin
 on the machine you work from, commit it, and every other machine catches
 up with `git pull && patina apply`.
 
@@ -515,8 +511,8 @@ filesystem. Patina never treats remote content as a template, and never
 reads it as configuration.
 
 Cached checkouts live in the per-machine [state
-directory](#state-directory), never in your repository, and are pruned
-automatically once no journal record needs them.
+directory](#state-directory) and are pruned automatically once no
+journal record needs them.
 
 Read [`REMOTE_SOURCES.md`](REMOTE_SOURCES.md) for the whole model. It
 covers the lockfile format, the cache layout, and each gate check with
@@ -526,8 +522,8 @@ background update notice, and the multi-machine flow.
 ## State directory
 
 Patina writes its journal, backups, advisory lock, and drift cache to a
-**per-machine state directory**, never into your dotfiles repository.
-The location is OS-appropriate:
+**per-machine state directory** outside your dotfiles repository. The
+location is OS-appropriate:
 
 | OS      | State directory                          | Override                  |
 | ------- | ---------------------------------------- | ------------------------- |
@@ -558,11 +554,11 @@ another local-disk path; do not point it at any of the providers above.
 
 Patina is built so an interrupted apply converges deterministically on
 the next run. If `patina apply` is killed mid-write, the filesystem
-ends up in either the pre-apply or the post-apply state, never a torn
-intermediate. The next invocation reads the journal and rolls forward
-or back to reach a consistent state. This guarantee covers process
-termination (a `kill -9` or crash where the page cache survives); a
-power loss or kernel panic mid-apply is out of scope for v1.0.
+ends up in either the pre-apply or the post-apply state. The next
+invocation reads the journal and rolls forward or back to reach a
+consistent state. This guarantee covers process termination (a
+`kill -9` or crash where the page cache survives); a power loss or
+kernel panic mid-apply is out of scope for v1.0.
 
 Two commands help you recover deliberately:
 

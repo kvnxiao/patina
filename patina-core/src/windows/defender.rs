@@ -1,10 +1,11 @@
 //! Windows Defender path-exclusion derivation, diffing, validation, and the
 //! per-machine ledger: the pure, cross-platform layer.
 //!
-//! An antivirus exclusion is a permanent blind spot, so this whole feature is
-//! deliberately explicit, opt-in, previewed, consented, and reversible. This
-//! module owns the parts that decide *which* exact paths Patina would exclude
-//! and *how* a run reconciles the current Defender state against that set.
+//! An antivirus exclusion is a permanent blind spot. This feature previews
+//! every exclusion, asks for consent before applying it, and records it so it
+//! can be reversed. This module owns the parts that decide *which* exact
+//! paths Patina would exclude and *how* a run reconciles the current
+//! Defender state against that set.
 //! All of it is IO-free and hostable on any platform, so the derivation and
 //! diff logic is unit-testable on Linux CI with no real Defender in the loop.
 //!
@@ -16,7 +17,7 @@
 //!
 //! # The exclusion set
 //!
-//! The desired set is exactly `{ repo_root as Folder }` plus, for each managed
+//! The desired set is `{ repo_root as Folder }` plus, for each managed
 //! target the current plan materializes, **one** exclusion whose kind mirrors
 //! the config: a [`ExclusionKind::Folder`] for a directory mode
 //! (`symlink` / `symlink-tree` / `copy` on a `[[directory]]`) and a
@@ -27,7 +28,7 @@
 //! than [`crate::apply::engine::current_managed_targets`] (that helper expands
 //! trees to per-leaf keys, the opposite of the 1:1 decision here).
 //!
-//! # Why the normalized key matters
+//! # The normalized key
 //!
 //! `Get-MpPreference` may echo an excluded path back with different casing or a
 //! trailing separator than Patina wrote. If the diff compared raw strings,
@@ -35,8 +36,8 @@
 //! deterministic-stdout contract would break. [`Exclusion`]'s `Eq` / `Ord` /
 //! `Hash` therefore key on a normalized form: case-folded, separators unified,
 //! trailing separator stripped. The original casing is preserved for display
-//! and for the add/remove call. This is the single most important
-//! correctness point in the feature: it is what makes re-runs idempotent.
+//! and for the add/remove call. Re-run idempotency depends on this
+//! normalization.
 //!
 //! # Who can see the live exclusion list
 //!
@@ -333,8 +334,8 @@ pub enum ExclusionState {
 impl ExclusionState {
     /// Whether a reconcile would send an add for this exclusion.
     ///
-    /// True exactly for the states that read as "not in Defender as far as this
-    /// process can tell", which is what puts an entry in
+    /// True for the states that read as "not in Defender as far as this
+    /// process can tell". Matching one of those states puts an entry in
     /// [`DefenderDiff::to_add`].
     #[must_use = "the verdict selects how the entry is rendered"]
     pub fn needs_add(self) -> bool {
@@ -434,27 +435,27 @@ impl DefenderDiff {
 ///
 /// - `to_add` = the desired exclusions whose path is not already present.
 /// - `to_remove` = the ledger entries (Patina-owned) that are no longer desired
-///   **and** are actually still present. Anchoring removals to the ledger is
-///   what guarantees a user-added exclusion is never touched: a path Patina did
-///   not record is never a removal candidate. Anchoring them to `current` too
-///   keeps the diff honest: an already-gone entry is not re-removed.
+///   **and** are actually still present. Anchoring removals to the ledger
+///   guarantees a user-added exclusion is never touched: a path Patina did not
+///   record is never a removal candidate. Anchoring them to `current` too keeps
+///   the diff honest: an already-gone entry is not re-removed.
 ///
 /// With the list withheld ([`CurrentExclusions::Unreadable`]) the ledger stands
 /// in for what is present, so `to_add` = `desired - ledger` and `to_remove` =
 /// `ledger - desired`. Removals stay ledger-anchored, so the never-touch-a-
-/// user-added-exclusion guarantee holds either way; what is lost is the
-/// `current` anchor, which only means a removal may be sent for a path already
-/// gone, which `Remove-MpPreference` treats as a no-op.
+/// user-added-exclusion guarantee holds either way. The `current` anchor is
+/// lost, which only means a removal may be sent for a path already gone,
+/// and `Remove-MpPreference` treats that as a no-op.
 ///
 /// The identity case (desired equals the present set, ledger equals desired)
-/// yields an empty diff under both readings, which is the idempotency guarantee
-/// re-runs depend on. Deriving `to_add` from the ledger rather than from
-/// `desired` outright is what preserves it when the list is withheld: the
-/// alternative would re-propose every exclusion on every run and raise a UAC
-/// prompt each time.
+/// yields an empty diff under both readings. That is the idempotency
+/// guarantee re-runs depend on. Deriving `to_add` from the ledger rather
+/// than from `desired` outright preserves that guarantee when the list is
+/// withheld. The alternative would re-propose every exclusion on every run
+/// and raise a UAC prompt each time.
 ///
-/// Both readings run through [`ExclusionClassifier`], which is also what the
-/// listing renders. One implementation of "is this already excluded" means the
+/// Both readings run through [`ExclusionClassifier`], which also backs the
+/// listing. One implementation of "is this already excluded" means the
 /// preview cannot propose an add for an entry the listing calls present.
 #[must_use = "the diff must be previewed and enacted"]
 pub fn plan_defender(
@@ -471,9 +472,9 @@ pub fn plan_defender(
             .cloned()
             .collect(),
         // A ledger entry classifies as present exactly when the live list shows
-        // it. With the list withheld it always does, since being in the ledger
-        // is the whole evidence. That reproduces the `current` anchor where it
-        // exists and drops it where it does not, which is what the two readings
+        // it. With the list withheld it always does, because the ledger is the
+        // only evidence available. That reproduces the `current` anchor where it
+        // exists and drops it where it does not, matching what the two readings
         // above call for.
         to_remove: ledger
             .iter()
@@ -542,8 +543,8 @@ pub fn validate_exclusion_path(path: &Utf8Path) -> Result<(), ExclusionPathError
 /// The env-derived system-directory denylist for the running process.
 ///
 /// Off Windows every variable is unset, so this is empty and only the
-/// structural checks in [`validate_exclusion_path_with`] apply, which is what
-/// keeps the structural rejections testable on Linux CI.
+/// structural checks in [`validate_exclusion_path_with`] apply. That keeps
+/// the structural rejections testable on Linux CI.
 fn system_dir_denylist() -> Vec<Utf8PathBuf> {
     SYSTEM_DIR_ENV_VARS
         .iter()
@@ -589,8 +590,8 @@ fn validate_exclusion_path_with(
 
 /// Whether `s` is a drive-letter-absolute Windows path (`X:\...` or `X:/...`).
 ///
-/// A pure string check so it holds the same verdict on every platform: this is
-/// what lets Linux CI validate a Windows path string.
+/// A pure string check holds the same verdict on every platform, so Linux CI
+/// can validate a Windows path string.
 fn is_windows_absolute(s: &str) -> bool {
     let bytes = s.as_bytes();
     let (Some(&drive), Some(&b':'), Some(&sep)) = (bytes.first(), bytes.get(1), bytes.get(2))
@@ -715,9 +716,8 @@ pub enum DefenderReceipt {
 ///
 /// The body is one line: a verdict token, optionally followed by a space and a
 /// single-line detail. Anything else, an empty file included, yields `None`.
-/// The poll treats `None` as "no verdict yet" rather than as a failure. A
-/// half-written or unrecognized receipt therefore makes the launcher keep
-/// waiting, instead of reporting a verdict it did not understand.
+/// The poll treats `None` as "no verdict yet" rather than as a failure, so a
+/// half-written or unrecognized receipt simply keeps the launcher polling.
 #[must_use = "the receipt is the helper's verdict and decides the outcome"]
 pub fn parse_receipt(content: &str) -> Option<DefenderReceipt> {
     let line = content.lines().next()?.trim();
@@ -733,10 +733,9 @@ pub fn parse_receipt(content: &str) -> Option<DefenderReceipt> {
 
 /// The per-machine record of the exclusions **Patina** owns.
 ///
-/// Written only by the unprivileged CLI, never by the elevated helper. It is
-/// what lets a reconcile reap a stale Patina exclusion while leaving a
-/// user-added exclusion untouched: a path absent from the ledger is never a
-/// removal candidate.
+/// Written only by the unprivileged CLI. It lets a reconcile reap a stale
+/// Patina exclusion while leaving a user-added exclusion untouched, because a
+/// path absent from the ledger is never a removal candidate.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DefenderLedger {
     /// The Patina-owned exclusions, stored sorted for a deterministic file.
@@ -918,10 +917,10 @@ mod host {
     impl DefenderProbe for HostDefenderProbe {
         fn read_exclusions(&self) -> Result<CurrentExclusions, DefenderError> {
             // Defender withholds the exclusion list from an unelevated caller,
-            // so asking costs a PowerShell start to be told nothing. The
-            // process token settles it up front, and settles it on the
-            // definitive signal rather than on the wording of the placeholder
-            // Defender would have returned.
+            // so asking costs a PowerShell start only to be told nothing. The
+            // process-token check settles this up front, using the definitive
+            // signal rather than the wording of the placeholder Defender
+            // would have returned.
             if !is_elevated() {
                 return Ok(CurrentExclusions::Unreadable);
             }
@@ -1213,7 +1212,7 @@ mod tests {
     fn derive_tree_contributes_one_folder_not_leaves() {
         // A symlink-tree entry's ResolvedOperation carries the single declared
         // target directory (leaves live in its dispositions); derive must emit
-        // exactly that one folder, never a per-leaf entry.
+        // exactly that one folder.
         let desired = derive_exclusions(&plan(vec![op(
             FileMode::SymlinkTree,
             &[r"C:\Users\kevin\.config\fish"],
@@ -1295,8 +1294,8 @@ mod tests {
 
     #[test]
     fn plan_never_removes_a_path_outside_the_ledger() {
-        // A user-added exclusion (present, not desired, not in the ledger) is
-        // never a removal candidate.
+        // A user-added exclusion is present in Defender without being desired
+        // or recorded in the ledger. It is never a removal candidate.
         let desired = set(&[(REPO, ExclusionKind::Folder)]);
         let ledger = set(&[(REPO, ExclusionKind::Folder)]);
         let current = known(&[REPO, r"C:\Users\kevin\user-added"]);
@@ -1740,7 +1739,7 @@ mod tests {
         // `patina-elevate` cannot depend on this crate, so it spells this
         // basename itself and derives the path as a sibling of the request file
         // it was handed. Renaming the constant here alone would break the
-        // handoff silently; pinning the literal is what makes it fail loudly.
+        // handoff silently; pinning the literal here makes that break loud.
         let state_dir = Utf8Path::new(r"C:\Users\kevin\AppData\Local\patina");
         assert_eq!(
             defender_result_path(state_dir).file_name(),

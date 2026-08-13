@@ -3,9 +3,8 @@
 //! The three public async entry points, [`apply`](fn@crate::apply),
 //! [`status`](fn@crate::status), and [`rollback`](fn@crate::rollback),
 //! define the engine's outer contract. They return
-//! [`Result<_, EngineError>`](EngineError); the CLI wraps that into
-//! `anyhow::Result` at the call site (per the project rule that
-//! `anyhow` lives only in the binary).
+//! [`Result<_, EngineError>`](EngineError). The CLI wraps that into
+//! `anyhow::Result` at the call site; `anyhow` lives only in the binary.
 
 pub mod apply;
 pub mod backups;
@@ -218,10 +217,10 @@ pub use windows::plan_has_symlink_op;
 pub use windows::windows_build_supports_dev_mode;
 
 /// Options accepted by [`apply`](fn@crate::apply). The TTY-driven prompt,
-/// `--json` envelope, and `--pager` plumbing live in the CLI ([`plan_apply`] /
-/// [`execute_plan`] are the two engine primitives it drives); this
-/// convenience entry point unconditionally plans and executes, mirroring
-/// `patina apply --yes`.
+/// `--json` envelope, and `--pager` plumbing live in the CLI, which drives
+/// the plan through [`plan_apply`] and [`execute_plan`], the two engine
+/// primitives. This convenience entry point unconditionally plans and
+/// executes, mirroring `patina apply --yes`.
 #[derive(Debug, Default, Clone)]
 #[non_exhaustive]
 pub struct ApplyOptions {
@@ -229,7 +228,7 @@ pub struct ApplyOptions {
     /// `-v` overrides).
     pub request: ApplyRequest,
     /// Timestamp keying this run's journal and backup files. The CLI
-    /// supplies a real UTC timestamp; tests supply a fixed string.
+    /// supplies a real UTC timestamp. Tests supply a fixed string.
     pub timestamp: String,
 }
 
@@ -257,8 +256,8 @@ pub async fn apply(options: ApplyOptions) -> Result<ApplyResult, EngineError> {
 }
 
 /// Report drift between the resolved dotfiles repository and the current
-/// filesystem state, classifying every managed target as CLEAN / DRIFTED /
-/// MISSING / ORPHANED against the last committed apply.
+/// filesystem state. Classify every managed target as CLEAN, DRIFTED,
+/// MISSING, or ORPHANED against the last committed apply.
 ///
 /// # Errors
 ///
@@ -278,7 +277,7 @@ pub async fn status(_options: StatusOptions) -> Result<StatusReport, EngineError
 /// Roll back the most recent committed apply to its pre-apply filesystem
 /// state using the journaled backups.
 ///
-/// Delegates to [`run_rollback`], which takes the exclusive lock, finds the
+/// Delegates to [`run_rollback`]. It takes the exclusive lock, finds the
 /// most recent committed-and-not-rolled-back apply, reverts each `[[file]]`
 /// entry's inverse operations atomically, and marks the apply rolled back.
 ///

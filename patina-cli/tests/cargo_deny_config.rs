@@ -18,10 +18,10 @@
 //!
 //! The test gates the *policy* encoded in `deny.toml`: table presence by key
 //! and the allow/deny decisions that determine `cargo deny` outcomes. It does
-//! not substring-match the file's comments or re-assert a production constant:
-//! `deny.toml` is the policy artifact itself, and each assertion would fail for
-//! a realistic regression (a dropped table, a GPL licence slipping into the
-//! allowlist, `wildcards` relaxed to `"allow"`).
+//! not substring-match the file's comments or re-assert a production
+//! constant. `deny.toml` is the policy artifact itself, and each assertion
+//! would fail for a realistic regression (a dropped table, a GPL licence
+//! slipping into the allowlist, `wildcards` relaxed to `"allow"`).
 
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
@@ -61,8 +61,8 @@ fn deny_toml_has_four_top_level_tables() {
 #[test]
 fn licenses_allowlist_excludes_gpl_family() {
     // No GPL-family licence is in the allowlist, so a
-    // GPL-3.0 dependency fails `cargo deny check licenses`. Catches a GPL
-    // licence slipping into `allow` in a future edit.
+    // GPL-3.0 dependency fails `cargo deny check licenses`. This catches a
+    // GPL licence slipping into `allow` in a future edit.
     let doc = parse_deny_toml();
     let allow = doc
         .get("licenses")
@@ -85,8 +85,8 @@ fn licenses_allowlist_excludes_gpl_family() {
 #[test]
 fn bans_denies_wildcard_versions() {
     // `[bans].wildcards = "deny"` so a
-    // `some-crate = "*"` dependency fails `cargo deny check bans`. Catches a
-    // relaxation to "allow"/"warn".
+    // `some-crate = "*"` dependency fails `cargo deny check bans`. This
+    // catches a relaxation to "allow" or "warn".
     let doc = parse_deny_toml();
     let wildcards = doc
         .get("bans")

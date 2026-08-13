@@ -17,7 +17,7 @@
 //! ```
 //!
 //! Each format owns its own major-version constant and versions
-//! independently; this module is only the format-agnostic prefix codec
+//! independently. This module is only the format-agnostic prefix codec
 //! they share.
 //!
 //! # Examples

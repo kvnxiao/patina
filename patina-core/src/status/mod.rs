@@ -1,11 +1,11 @@
 //! `patina status`: classify every managed target as CLEAN / DRIFTED /
 //! MISSING / ORPHANED against the last committed apply.
 //!
-//! Status is the read-only mirror of apply. It reads the most recent
-//! committed apply record from the journal, which is the `<ts>.COMMIT`
-//! sentinel the commit path populates. It recomputes the *current* repository
-//! plan to know which targets are still managed. It then compares each
-//! recorded target to the live filesystem.
+//! Status reads the most recent committed apply record from the journal,
+//! the `<ts>.COMMIT` sentinel the commit path populates. It recomputes the
+//! *current* repository plan to know which targets are still managed, then
+//! compares each recorded target to the live filesystem. It writes nothing
+//! to disk.
 //!
 //! ## States
 //!
@@ -20,7 +20,7 @@
 //! A `[[file]]` entry with N targets contributes N entries to the report
 //! and N to the aggregate counters. The recorded apply already holds one
 //! [`ExpectedTarget`](crate::journal::ExpectedTarget) per materialized
-//! object, so the per-target shape falls out for free.
+//! object, so the per-target shape needs no extra bookkeeping.
 //!
 //! ## Locking
 //!
@@ -144,9 +144,9 @@ pub fn report(managed: &ManagedTargets) -> Result<StatusReport, EngineError> {
     let lock_path = state_dir.join("lock");
 
     let mut warnings = Vec::new();
-    // Shared lock with the read-only escape hatch: a timeout means a
-    // mutating apply held the lock past SHARED_TIMEOUT, so we warn and read
-    // anyway rather than blocking the user.
+    // The shared lock has a read-only escape hatch. A timeout means a
+    // mutating apply held the lock past SHARED_TIMEOUT, so status warns and
+    // reads anyway instead of blocking the user.
     let _guard = match acquire_lock(&lock_path, LockKind::Shared, SHARED_TIMEOUT) {
         Ok(guard) => Some(guard),
         Err(LockError::Timeout { path, waited, .. }) => {
@@ -190,9 +190,9 @@ pub fn report(managed: &ManagedTargets) -> Result<StatusReport, EngineError> {
         let path = Utf8PathBuf::from(expected.target());
         let still_managed = managed.governs(&manage_key(&path));
         let state = classify(expected, still_managed);
-        // A target the current plan dropped *and* that is already gone from
-        // disk is fully done, so there is nothing to surface (it would classify
-        // Missing, but there is no managed target to be missing).
+        // A target the current plan dropped and that is already gone from
+        // disk needs no report. It would classify Missing, but no managed
+        // target remains to be missing.
         if !still_managed && state == TargetState::Missing {
             continue;
         }
@@ -252,9 +252,10 @@ pub fn current_plan_targets() -> Result<ManagedTargets, EngineError> {
 /// case or Unicode normal form stays the same key. Without the fold, renaming
 /// `~/.Config` to `~/.config` would leave the recorded key unmatched. On a
 /// case-insensitive filesystem the reap would then delete the very object the
-/// respelled entry had just materialized. Folding on a case-sensitive
-/// filesystem is the safe direction of the same trade: a genuinely distinct
-/// old path is left behind rather than deleted.
+/// respelled entry had just materialized. On a case-sensitive filesystem the
+/// same fold can instead merge two genuinely distinct paths, but the
+/// resulting mistake only leaves an old path in place; it does not delete
+/// anything live.
 ///
 /// Public so the `remove` / `promote` commands can match a user-supplied
 /// target path against a journaled

@@ -7,8 +7,8 @@
 //! - upstream tips have moved past your pins, so `patina apply --update` is the
 //!   next step;
 //! - your own dotfiles repository is behind its origin (another machine already
-//!   bumped the pins), so `git pull && patina apply` is, since those changes
-//!   are already decided and gated.
+//!   bumped the pins), so `git pull && patina apply` is the next step, since
+//!   those changes are already decided and gated.
 //!
 //! `<state>/remotes/last_check` stamps the last real check so
 //! `patina remote check --hook` can self-throttle to at most one per day.
@@ -113,9 +113,10 @@ pub fn repo_behind_message() -> String {
 
 /// Record which remotes the last check found behind, one module name per line.
 ///
-/// The `notice` file is prose for a human to read at a shell prompt; this is
-/// the same fact in a form `patina remote list` and `patina status` can report
-/// per-remote without parsing English. An empty list removes the file.
+/// The `notice` file is prose for a human to read at a shell prompt. This file
+/// carries the same fact in a form `patina remote list` and `patina status`
+/// can report per-remote without parsing English. An empty list removes the
+/// file.
 ///
 /// # Errors
 ///
@@ -144,13 +145,13 @@ pub fn is_pending(pending: &BTreeSet<String>, remote: &RemoteName) -> bool {
 /// `pending` file and the prose `notice` to match, and clearing both when
 /// nothing remains.
 ///
-/// This is the notice side of a settled pin: whoever bumps a pin (or finds it
-/// already at its tip) calls this, so a stale announcement never outlives the
+/// This is the notice side of a settled pin. Whoever bumps a pin, or finds it
+/// already at its tip, calls this, so a stale announcement never outlives the
 /// update it asked for. Only `remote check` otherwise rewrites these files,
 /// and its `--hook` form self-throttles for a day.
 ///
-/// A repo-behind notice is left in place: it outranks pending updates (the
-/// user's next move is `git pull` regardless), and only a `check` can learn
+/// A repo-behind notice is left in place. It outranks pending updates, because
+/// the user's next move is `git pull` regardless. Only a `check` can learn
 /// whether the repository has caught up.
 ///
 /// # Errors
@@ -213,8 +214,8 @@ pub fn record_check(state_dir: &Utf8Path, epoch: i64) -> Result<(), RemoteError>
 ///
 /// The shell integration can spawn a `patina remote check` in every session,
 /// so several processes may write these files at once while a shell's
-/// `test -s` reads one. Staging into a same-directory temporary and renaming is
-/// what makes every such reader see one whole version.
+/// `test -s` reads one. Staging into a same-directory temporary, then
+/// renaming, ensures every such reader sees one whole version.
 fn atomic_write(path: &Utf8Path, bytes: &[u8]) -> Result<(), RemoteError> {
     crate::fsx::write_atomic(path, bytes).map_err(|source| {
         RemoteRepr::Cache {

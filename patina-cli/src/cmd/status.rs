@@ -335,8 +335,7 @@ mod tests {
     #[test]
     fn pending_remotes_are_reported_before_the_first_apply() {
         // The pre-apply early return is a separate path through `render_human`,
-        // and a fresh machine with a pending pin is exactly where the reminder
-        // is most useful.
+        // and the reminder matters most on a fresh machine with a pending pin.
         let report = StatusReport {
             remotes_pending: vec!["humanizer".to_owned()],
             ..StatusReport::default()
