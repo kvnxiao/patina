@@ -5,11 +5,10 @@
 
 //! Integration coverage for `patina add`.
 //!
-//! Each test spawns the real `patina` binary against an isolated tempdir
-//! repo, state, and home (via the shared [`common::Fixture`]). The binary
-//! runs as a subprocess, so its stdin is not a TTY. These tests cover the
-//! non-interactive paths, such as missing-flag refusals and no prompts. The
-//! TTY prompt branches are unit-tested in `cmd::add`.
+//! Each test drives the real `patina` binary through [`common::Fixture`], so
+//! the paths covered here are the non-interactive ones: the missing-flag
+//! refusals, and a run that prompts for nothing. The TTY prompt branches are
+//! unit-tested in `cmd::add`.
 
 mod common;
 

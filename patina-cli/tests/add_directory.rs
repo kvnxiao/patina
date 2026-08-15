@@ -7,8 +7,7 @@
 //! A file source writes a `[[file]]` entry, a directory source writes a
 //! `[[directory]]` entry, and the mode flags are kind-checked.
 //!
-//! Each test spawns the real `patina` binary against an isolated tempdir
-//! repo, state, and home (via the shared [`common::Fixture`]).
+//! Each test drives the real `patina` binary through [`common::Fixture`].
 
 mod common;
 

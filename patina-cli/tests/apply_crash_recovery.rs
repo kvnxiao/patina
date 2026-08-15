@@ -3,8 +3,8 @@
     reason = "integration tests use .expect() on fixture setup and assertions; allow-expect-in-tests covers #[cfg(test)] modules but not the top level of a tests/*.rs integration crate."
 )]
 
-//! End-to-end crash-safety coverage. This interrupts a real `patina apply`
-//! process mid-materialize, then proves the next run converges.
+//! End-to-end crash-safety coverage: interrupt a real `patina apply` process
+//! mid-materialize, then prove the next run converges.
 //!
 //! Unlike `patina-core/tests/recovery_crash.rs`, which stages on-disk orphan
 //! states and calls `recover_orphans` directly, this suite spawns the actual

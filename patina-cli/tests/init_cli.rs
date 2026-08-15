@@ -5,10 +5,9 @@
 
 //! Integration coverage for `patina init`.
 //!
-//! Each test spawns the real `patina` binary against an isolated tempdir
-//! repo + state + home (via the shared [`common::Fixture`]). `init` targets
-//! a fresh directory under the fixture's home so the fixture's own root
-//! manifest never collides with the directory under test.
+//! Each test drives the real `patina` binary through [`common::Fixture`].
+//! `init` targets a fresh directory under the fixture's home, so the
+//! fixture's own root manifest never collides with the directory under test.
 
 mod common;
 

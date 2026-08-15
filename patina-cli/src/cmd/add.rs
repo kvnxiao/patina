@@ -5,12 +5,9 @@
 //! subdirectory (`<repo>/<module>/<source>`). It then appends the table-array
 //! entry matching the source kind to that module's `patina.toml`, creating
 //! the manifest if absent. A file source gets a `[[file]]` entry, a directory
-//! source a `[[directory]]` entry. The original target is left in place. The
-//! command does NOT drive the engine apply path.
-//! Materialization (turning the target into a symlink / copy / rendered
-//! template) is deferred to a later `patina apply`: `add` copies the bytes
-//! into the repository and leaves the target where it is, so the next apply
-//! converges it.
+//! source a `[[directory]]` entry. `add` copies the bytes into the repository
+//! and leaves the target where it is; a later `patina apply` materializes it
+//! as a symlink, a copy, or a rendered template.
 //!
 //! `add` is a mutating command: it acquires the engine's
 //! exclusive advisory lock at `<state>/lock` before any filesystem
@@ -33,10 +30,8 @@
 //! offending flag and the source kind, before any mutation. A directory
 //! source therefore never emits a `[[file]]` entry and vice versa.
 //!
-//! Module-level engine semantics (manifest editing, repo discovery,
-//! tilde expansion, canonicalization) live in `patina_core`; this module
-//! is presentation and control flow only, all output routed through the
-//! [`Reporter`].
+//! Manifest editing, repo discovery, tilde expansion, and canonicalization
+//! all live in `patina_core`; this module is presentation and control flow.
 
 use crate::cli::AddArgs;
 use crate::cmd::MANIFEST_FILENAME;
@@ -220,8 +215,7 @@ pub async fn run(
     reader: &mut impl PromptReader,
     reporter: &mut impl Reporter,
 ) -> Result<i32> {
-    // Resolve the mode flag and module up front (before any lock or
-    // mutation), failing fast on the non-TTY-missing-input paths.
+    // Before any lock or mutation, so a missing-input refusal costs nothing.
     let Some(mode_flag) = resolve_mode_flag(args, tty, reader, reporter)? else {
         return Ok(ExitCode::Generic.code());
     };
@@ -233,23 +227,17 @@ pub async fn run(
     let home = resolve_home()?;
     let target = expand_tilde(&args.path, &home);
 
-    // Detect the source kind from the on-disk target and validate the mode
-    // flag against it before taking the lock or mutating anything:
-    // a `--symlink-tree` on a file, or a `--template` on a directory, is
-    // rejected here with a typed error naming the flag and the kind.
+    // Kind-check before the lock, so an incompatible flag/kind pair never
+    // mutates anything.
     let kind = detect_source_kind(&target)?;
     let mode = AddMode::resolve(mode_flag, kind)?;
 
-    // Take the exclusive advisory lock before any mutation.
     let state = resolve_state_dir().map_err(EngineError::from)?;
     let lock_path = state.join("lock");
     let _guard = acquire_lock(&lock_path, LockKind::Exclusive, exclusive_timeout())
         .map_err(EngineError::from)
         .context("failed to acquire the exclusive lock")?;
 
-    // Refuse a path that is already managed: scan every module's
-    // manifest for a `[[file]]` or `[[directory]]` whose target resolves to
-    // the same path.
     if let Some(existing_module) = find_managed(&repo_root, &target, &home)? {
         let message = format!(
             "{} is already managed by module `{existing_module}`",
@@ -270,9 +258,6 @@ pub async fn run(
     let file_name = target
         .file_name()
         .ok_or_else(|| anyhow!("the path `{}` has no file name", args.path))?;
-    // The repository source name strips the leading dot of a dotfile so the
-    // repo holds `zsh/zshrc`, not `zsh/.zshrc`
-    // (`~/.zshrc` → `<repo>/zsh/zshrc`).
     let basename = repo_source_name(file_name);
     // A `--template` source records the `.tmpl` suffix so the engine derives
     // the implicit template mode; the on-disk copied file keeps that suffix.
@@ -300,11 +285,8 @@ pub async fn run(
 
     stage_into_repo(&target, &dest, kind)?;
 
-    // Append the entry to the module manifest, creating it if absent,
-    // routing a directory source to the `[[directory]]` table and a file
-    // source to `[[file]]`. The target is stored as the user
-    // wrote it (e.g. `~/.zshrc`) so the manifest stays portable across
-    // machines.
+    // The target is stored as the user wrote it (e.g. `~/.zshrc`), so the
+    // manifest stays portable across machines.
     let manifest_path = module_dir.join(MANIFEST_FILENAME);
     let existing_text = read_manifest_text(&manifest_path)?;
     let new_text = if mode.is_directory() {
@@ -481,16 +463,12 @@ fn find_managed(
     Ok(None)
 }
 
-/// Stage the target into the repository at `to`, leaving the original
-/// `from` in place.
+/// Stage the target into the repository at `to`, leaving the original `from`
+/// in place. Until the next `patina apply` runs, `~/.zshrc` is still a
+/// regular file with its original bytes.
 ///
-/// `add` brings a dotfile under management without materializing it. The
-/// repository gets the source bytes, and the target stays in place. A
-/// subsequent `patina apply` then converges it into the declared mode. Until
-/// that apply runs, `~/.zshrc` is still a regular file with the original
-/// bytes. A directory source is copied recursively;
-/// a file source is a single byte copy. The bytes are copied (not renamed
-/// away) precisely so the original target survives.
+/// A directory source is copied recursively; a file source is a single byte
+/// copy.
 fn stage_into_repo(from: &Utf8Path, to: &Utf8Path, kind: SourceKind) -> Result<()> {
     match kind {
         SourceKind::File => {
@@ -729,10 +707,8 @@ mod tests {
 
     #[test]
     fn add_mode_resolves_each_compatible_flag_kind_pair() {
-        // The full compatibility matrix: --symlink / --copy work
-        // for either kind; --template is file-only; --symlink-tree is
-        // directory-only. Each resolved mode maps to the FileMode the
-        // writer records and selects the right table-array.
+        // The full compatibility matrix. Each row: flag, source kind,
+        // resolved mode, recorded FileMode, is_directory.
         let cases = [
             (
                 ModeFlag::Symlink,

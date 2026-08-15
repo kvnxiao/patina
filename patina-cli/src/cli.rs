@@ -1,8 +1,7 @@
 //! The clap-derived command-line surface for `patina`.
 //!
-//! The derive surface is kept thin, parsing only, so the command logic
-//! lives in [`crate::cmd`] and stays unit-testable without going through
-//! clap.
+//! The derive surface parses and nothing more. The command logic lives in
+//! [`crate::cmd`], where a unit test reaches it without going through clap.
 
 use crate::exit_code::ExitCode;
 use crate::output::reporter::Reporter;
@@ -14,8 +13,8 @@ use clap::ValueEnum;
 
 /// Resolve a command's outcome to a process exit code.
 ///
-/// This is the single funnel every subcommand terminates through, so the
-/// exit-code contract lives in one place. A subcommand returns
+/// Every subcommand terminates through this funnel, so the exit-code
+/// contract lives in one place. A subcommand returns
 /// `Ok(code)` when it reached a terminal state under its own control (a
 /// successful apply, an aborted-by-hook apply, a declined prompt); the
 /// code is returned verbatim. An `Err` is an engine-level failure: its
@@ -29,9 +28,8 @@ pub fn resolve_exit_code(outcome: anyhow::Result<i32>, reporter: &mut impl Repor
     match outcome {
         Ok(code) => code,
         Err(error) => {
-            // Render the full context chain so the underlying cause (e.g.
-            // the offending TOML line) reaches the user, not just the
-            // outermost `anyhow` context line.
+            // Every cause in the chain, so the underlying one (the
+            // offending TOML line, say) reaches the user.
             for cause in error.chain() {
                 reporter.error(&cause.to_string());
             }

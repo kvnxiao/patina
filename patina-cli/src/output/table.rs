@@ -13,11 +13,10 @@ use tabwriter::TabWriter;
 
 /// Align tab-separated cells into columns.
 ///
-/// ANSI mode measures a cell by printable width, so a painted cell pads exactly
-/// as its stripped form does. Piped, `--color never`, and `NO_COLOR` output
-/// therefore align identically to a terminal's. Writing to a `Vec`
-/// cannot fail, so the unaligned fallback is unreachable and exists only
-/// because a print path must not carry a panic.
+/// ANSI mode measures a cell by printable width, so a painted cell pads
+/// exactly as its stripped form does. Writing to a `Vec` cannot fail, so the
+/// unaligned fallback is unreachable; it exists because a print path must not
+/// panic.
 #[must_use = "the aligned block is what gets printed"]
 pub fn align(table: &str) -> String {
     let mut aligned: Vec<u8> = Vec::new();

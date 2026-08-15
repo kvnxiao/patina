@@ -70,14 +70,12 @@ fn when_true_entry_materializes_and_second_run_is_byte_identical() {
     // its target. Two consecutive applies over the unchanged source produce
     // byte-identical stdout, so `when`-parity holds when a `when` is present.
     // As in `deterministic_stdout.rs`, a priming apply converges the repo
-    // first, so the two measured runs observe the same on-disk state. This
-    // checks that stdout is a stable function of identical inputs.
+    // first, so the two measured runs observe the same on-disk state.
     //
-    // This uses a copy-mode entry because a symlink's plan diff renders its
-    // link target differently on a fresh run versus a converged run, an
-    // orthogonal quirk that `deterministic_stdout.rs` also sidesteps by using
-    // copy or template modes. Copy mode isolates the `when`-parity property
-    // under test.
+    // Copy mode isolates the property under test: a symlink's plan diff
+    // renders its link target differently on a fresh run versus a converged
+    // run, an orthogonal quirk `deterministic_stdout.rs` sidesteps the same
+    // way.
     let f = Fixture::new();
     let when = format!("patina.os == '{}'", current_os_family());
     let module = f.module(

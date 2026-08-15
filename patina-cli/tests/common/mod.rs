@@ -7,13 +7,13 @@
     reason = "this shared fixture module is included by several integration-test crates via `mod common;`; each crate uses a subset of the helpers, so methods unused by one crate would be flagged dead there but are live in another. `allow` (not `expect`) because the set of used helpers differs per including crate, so no single expectation is fulfilled everywhere."
 )]
 
-//! Shared test fixture for the `patina apply` integration suites.
+//! Shared test fixture for the CLI integration suites.
 //!
 //! Each test builds a self-contained tempdir dotfiles repository and points
-//! `PATINA_REPO` at it. It isolates the per-machine state directory under
-//! the tempdir, so the apply never touches the developer's real `$HOME`.
-//! The binary runs as a subprocess, so its stdin is not a TTY and it
-//! exercises the non-interactive path.
+//! `PATINA_REPO` at it. The per-machine state directory and the home
+//! directory are isolated under the same tempdir, so no run touches the
+//! developer's real `$HOME`. The binary runs as a subprocess, so its stdin
+//! is never a TTY and every suite exercises the non-interactive path.
 
 use camino::Utf8Path;
 use camino::Utf8PathBuf;

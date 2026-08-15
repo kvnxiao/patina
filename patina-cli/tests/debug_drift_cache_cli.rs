@@ -8,9 +8,8 @@
 //! The subcommand decodes a binary `drift.cache` file and renders it. These
 //! tests write a cache file directly through the public `DriftCache::encode`
 //! API (the same bytes the watcher atomically renames into place) and point
-//! the CLI at it. That exercises the full binary path the scenario cares
-//! about. It reads the file, checks the version envelope, decodes the body,
-//! and renders it to stdout.
+//! the CLI at it. That exercises the whole path: read the file, check the
+//! version envelope, decode the body, render to stdout.
 
 use camino::Utf8Path;
 use camino::Utf8PathBuf;

@@ -4,16 +4,14 @@
 //! `[[file]]` entry from its module's `patina.toml`, and replaces the target
 //! on disk with a regular file holding the last-applied content, so the
 //! user's system stays functional. It then re-journals the new managed set.
-//! `patina status` therefore treats the path as deliberately unmanaged, and
+//! `patina status` therefore treats the path as deliberately unmanaged and
 //! leaves it out of the report, rather than reporting an ORPHANED leftover.
-//! With `--purge` the
-//! target is deleted from disk entirely instead of replaced.
+//! With `--purge` the target is deleted from disk entirely instead of
+//! replaced.
 //!
-//! This is the first command to drive the engine re-apply under
-//! [`LockPolicy::Held`](patina_core::LockPolicy): it holds ONE exclusive
-//! advisory lock for the whole command so the re-apply that writes
-//! the fresh `<ts>.COMMIT` reuses the already-held guard instead of
-//! self-contending against the command's own lock.
+//! `remove` holds one exclusive advisory lock for the whole command and
+//! re-journals under [`LockPolicy::Held`](patina_core::LockPolicy) through
+//! the shared [`crate::cmd::managed`] scaffolding.
 //!
 //! ## Reconstructing the last-applied content
 //!
@@ -24,13 +22,12 @@
 //! blake3 hash of the rendered bytes; such a target has a journaled source
 //! ending in `.tmpl`. The content is therefore reconstructed by re-rendering
 //! the source through `MiniJinja`, against the variable context resolved at
-//! remove time. That is the
-//! deliberate "reset to current source intent" semantics.
+//! remove time. Those are the deliberate "reset to current source intent"
+//! semantics.
 //!
-//! Module-level engine semantics (planning, journaling, manifest editing,
-//! repo discovery, template rendering) live in `patina_core`; this module is
-//! presentation and control flow only, all output routed through the
-//! [`Reporter`].
+//! Planning, journaling, manifest editing, repo discovery, and template
+//! rendering live in `patina_core`; this module is presentation and control
+//! flow.
 
 use crate::cli::RemoveArgs;
 use crate::cmd::MANIFEST_FILENAME;
@@ -79,9 +76,6 @@ pub async fn run(
     let target = expand_tilde(&args.path, &home);
     let target_key = manage_key(&target);
 
-    // Take ONE exclusive advisory lock for the whole command. The
-    // re-apply below reuses this guard via LockPolicy::Held rather than
-    // acquiring a second time (which would self-contend).
     let (state, guard) = acquire_state_and_lock()?;
 
     // Locate the journaled expectation for this target in the latest commit.
@@ -97,43 +91,34 @@ pub async fn run(
         return Ok(report_unmanaged(args, reporter));
     };
 
-    // Confirm before mutating (never mutate without consent).
     if !confirm(args, tty, reader, reporter) {
         return Ok(ExitCode::UserDeclined.code());
     }
 
-    // Plan against the CURRENT managed set (before the entry is removed) so
-    // the resolver carries the variable context a template target needs for
-    // its last-applied re-render.
+    // Plan against the still-current managed set, before the entry is
+    // removed, so the resolver carries the variable context a template
+    // target needs for its last-applied re-render.
     let timestamp = current_timestamp();
     let resolved =
         plan_apply(&ApplyRequest::default(), &timestamp).context("failed to compute the plan")?;
 
-    // Reconstruct the last-applied content (skipped for --purge, which
-    // deletes the target outright).
     let content = if args.purge {
         None
     } else {
         Some(reconstruct_content(expected, &resolved)?)
     };
 
-    // Replace the target on disk: this is remove-specific filesystem work
-    // done BEFORE the re-apply. The target path is the journaled canonical
-    // path of the materialized object.
+    // Replace the target on disk, before the re-apply. The target path is
+    // the journaled canonical path of the materialized object.
     let target_path = Utf8PathBuf::from(expected.target());
     replace_target(&target_path, content.as_deref())?;
 
-    // Remove the `[[file]]` entry from the owning module's manifest. The
-    // owning module is the journaled source's parent directory.
     let source = Utf8PathBuf::from(expected.source());
     let manifest_path = owning_manifest(&source)?;
     remove_entry(&manifest_path, args.path.as_str(), &target_path)?;
 
-    // Re-journal by re-applying under the held lock: the fresh plan now omits
-    // the removed entry, so the new <ts>.COMMIT omits the target and
-    // `patina status` no longer lists it. Re-plan AFTER the manifest edit so
-    // the new plan reflects the removal; drive the apply with the lock we
-    // already hold.
+    // The re-plan runs after the manifest edit, so the fresh <ts>.COMMIT
+    // omits the removed target and `patina status` stops listing it.
     rejournal(guard).await?;
 
     report_success(args, &target_path, reporter);
@@ -216,8 +201,6 @@ fn remove_entry(
 ) -> Result<()> {
     let text = fs_err::read_to_string(manifest_path.as_std_path())
         .with_context(|| format!("failed to read {manifest_path}"))?;
-    // The entry's `target` key matches the manifest spelling; fall back to
-    // the canonical absolute path in case the manifest stored that form.
     let edited = match remove_file_entry(&text, entry_target) {
         Ok(edited) => edited,
         Err(_) => remove_file_entry(&text, canonical_target.as_str())

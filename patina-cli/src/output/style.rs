@@ -14,10 +14,8 @@
 //!   strips ANSI when the destination is not a terminal, or when `--color
 //!   never` / `NO_COLOR` is in effect.
 //!
-//! The renderer always emits the colored palette; the auto-stream removes it
-//! when color is not wanted. This preserves the deterministic-stdout contract
-//! (piped / redirected output is always plain) while a real terminal gets
-//! color.
+//! Piped and redirected output therefore comes out plain every time, which is
+//! the deterministic-stdout contract.
 
 use anstyle::AnsiColor;
 use anstyle::Color;
@@ -79,8 +77,8 @@ pub struct Styles {
 /// The roles the `patina status` table paints with, one per
 /// [`TargetState`](patina_core::TargetState).
 ///
-/// Each row keeps its state word in text, so the color only makes a clean
-/// repository scannable without reading four counters.
+/// Each row keeps its state word in text, so the color only speeds the scan:
+/// a clean repository reads at a glance rather than through four counters.
 #[derive(Debug, Clone, Copy)]
 pub struct StatusStyles {
     /// A target matching the last apply.

@@ -7,8 +7,7 @@
 //!
 //! The engine owns the semantics: [`patina_core::remote::update`] computes a
 //! proposal per remote and [`patina_core::remote::gate`] decides. This module
-//! is control flow, lock acquisition, prompting, and output, all of it through
-//! the [`Reporter`].
+//! is control flow, lock acquisition, prompting, and output.
 //!
 //! Locking follows the read/write split the rest of the CLI uses. `update` and
 //! `prune` mutate (the working-tree lockfile, the cache) and take the exclusive
@@ -724,7 +723,7 @@ fn bump(
 /// Ask whether to accept a flagged pin bump.
 ///
 /// `--yes` accepts without asking. A non-interactive shell cannot be asked, so
-/// it declines: leaving the pin where it is, is the safe answer for a check
+/// it declines and leaves the pin where it is, the safe answer for a check
 /// that exists to catch a rewritten or backdated upstream.
 fn confirm(
     name: &str,
@@ -1128,9 +1127,9 @@ mod tests {
         );
     }
 
-    /// The status cell is the only place a human learns why a pin did not move,
-    /// so each action has to produce its own wording. Three of these are pinned
-    /// by the integration suite (`already at`, `holding`, `min_age`), and a
+    /// The status cell is the only place a human learns why a pin did not
+    /// move, so each action has to produce its own wording. The integration
+    /// suite pins the `already at`, `holding`, and `min_age` phrasings, and a
     /// cooldown must name the instant it becomes eligible.
     #[test]
     fn each_action_reports_its_own_status() {

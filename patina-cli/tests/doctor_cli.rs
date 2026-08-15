@@ -5,12 +5,11 @@
 
 //! Integration coverage for `patina doctor`.
 //!
-//! Each test spawns the real `patina` binary against an isolated tempdir
-//! repo + state + home (via the shared [`common::Fixture`]). The read-only
-//! path (no `--fix`) and the `--fix` remediation path are both
-//! covered here. The binary's stdin is not a TTY: the read-only path never
-//! prompts, and `--fix` is driven with `--yes` (which auto-accepts) or run
-//! without `--yes` to exercise the non-TTY refusal.
+//! Each test drives the real `patina` binary through [`common::Fixture`].
+//! Both the read-only path (no `--fix`) and the `--fix` remediation path are
+//! covered. With no TTY the read-only path never prompts, and `--fix` runs
+//! either with `--yes`, which auto-accepts, or without it, which exercises
+//! the non-TTY refusal.
 
 mod common;
 
@@ -228,9 +227,8 @@ fn windows_fix_enables_dev_mode_and_exits_zero() {
 }
 
 /// The DOC-WIN-UNC finding rests on the cross-platform [`is_unc_path`]
-/// predicate. This test asserts that predicate distinguishes a UNC
-/// repository path from a POSIX one, exercising the finding's trigger on
-/// macOS/Linux CI where a real UNC mount is unavailable.
+/// predicate, so checking that predicate exercises the finding's trigger on
+/// macOS/Linux CI, where a real UNC mount is unavailable.
 #[test]
 fn unc_predicate_distinguishes_unc_from_posix_repo_paths() {
     assert!(

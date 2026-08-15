@@ -4,10 +4,9 @@
 //! `blake3` hash of the materialized bytes, behind a version envelope whose
 //! major is the journal's `FILE_MAJOR_VERSION` (held at `1` pre-release).
 //!
-//! Each test builds a self-contained tempdir dotfiles repository, points
-//! `PATINA_REPO` at it, isolates the per-machine state directory under the
-//! tempdir, drives `patina apply --yes` as a subprocess, then decodes the
-//! COMMIT record from the isolated journal dir and asserts its provenance.
+//! Each test drives `patina apply --yes` through [`common::Fixture`], then
+//! decodes the COMMIT record from the isolated journal dir and asserts its
+//! provenance.
 
 #![expect(
     clippy::expect_used,

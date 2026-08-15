@@ -9,11 +9,10 @@
 
 //! Integration coverage for `patina promote`.
 //!
-//! Each test spawns the real `patina` binary against an isolated tempdir
-//! repo + state + home (via the shared [`common::Fixture`]). A fixture first
-//! `patina apply`s a module so a committed `<ts>.COMMIT` record exists for
-//! `promote` to read; the binary's stdin is not a TTY, so the `--yes`-driven
-//! non-interactive path is the one under test.
+//! Each test drives the real `patina` binary through [`common::Fixture`],
+//! applying a module first so a committed `<ts>.COMMIT` record exists for
+//! `promote` to read. With no TTY, the path under test is the `--yes`-driven
+//! one.
 
 mod common;
 

@@ -1,11 +1,10 @@
 //! `patina rollback` command logic.
 //!
 //! Reverses the most recent committed apply to its pre-apply filesystem
-//! state. The engine semantics (lock, journal scan, per-entry atomic
-//! inverse replay, rolled-back sentinel) live in `patina_core::rollback`;
-//! this module owns the TTY-prompt / `--yes` / `--json` decision tree and
-//! maps the engine outcome onto the process exit code, all output routed
-//! through the [`Reporter`].
+//! state. The lock, the journal scan, the per-entry atomic inverse replay,
+//! and the rolled-back sentinel live in `patina_core::rollback`. This module
+//! owns the TTY-prompt / `--yes` / `--json` decision tree and maps the engine
+//! outcome onto the process exit code.
 //!
 //! ## Exit codes
 //!
@@ -74,8 +73,6 @@ pub async fn run(
             }
             Ok(ExitCode::Success.code())
         }
-        // The two typed user-facing outcomes exit 1 with the message on
-        // stderr rather than bubbling up as an `anyhow` error.
         Err(EngineError::Rollback(
             err @ (RollbackError::NoPriorApply | RollbackError::RollbackPartial { .. }),
         )) => {

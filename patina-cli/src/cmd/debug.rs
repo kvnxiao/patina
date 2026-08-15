@@ -3,11 +3,9 @@
 //!
 //! The `debug` group is a namespace for post-mortem tooling; `journal`
 //! decodes a binary `<ts>.plan` file and `drift-cache` decodes a watcher
-//! `drift.cache` file. Each renders human-readably to stdout, routed
-//! through the [`Reporter`] like every other user-facing output path. The
-//! renders themselves live in `patina_core` (the version-envelope decode
-//! and the formatting are engine concerns); this module is control flow
-//! and exit-code mapping only.
+//! `drift.cache` file. Both the version-envelope decode and the formatting
+//! are engine concerns and live in `patina_core`; this module is control flow
+//! and exit-code mapping.
 //!
 //! ## Exit codes
 //!
@@ -16,9 +14,8 @@
 //! | File decoded and rendered                 | 0    |
 //! | Missing / unreadable path, version mismatch, corrupt body | 1 |
 //!
-//! A version mismatch (a file written by a newer binary) and a missing
-//! path are both generic failures under the exit-code-1 bucket; the
-//! reporter names the path and, for a mismatch, both versions.
+//! Whichever way a decode fails, the reporter names the path, and adds both
+//! majors on a version mismatch (a file written by a newer binary).
 
 use crate::cli::DebugCommand;
 use crate::cli::DebugDriftCacheArgs;
@@ -32,9 +29,9 @@ use patina_core::render_plan;
 
 /// Dispatch a `patina debug` subcommand, returning the process exit code.
 ///
-/// A failed decode is surfaced to the user through the reporter and mapped
-/// to exit code 1 rather than bubbled as an error: the `debug` group, like
-/// the rest of the CLI, expresses terminal states as exit codes.
+/// A failed decode reaches the user through the reporter and maps to exit
+/// code 1: the `debug` group expresses its terminal states as exit codes,
+/// like the rest of the CLI.
 #[must_use = "the returned exit code is the process's terminal status"]
 pub fn run(command: &DebugCommand, reporter: &mut impl Reporter) -> i32 {
     match command {
@@ -55,7 +52,7 @@ fn run_journal(args: &DebugJournalArgs, reporter: &mut impl Reporter) -> i32 {
             // The typed error's own `Display` is the single source of truth
             // for the human-readable line: `Read` carries its IO cause and
             // `Decode` carries its `JournalError` (a version mismatch names
-            // both majors). Mirrors `rollback.rs`'s `err.to_string()` path.
+            // both majors).
             reporter.warn(&err.to_string());
             ExitCode::Generic.code()
         }
@@ -71,13 +68,12 @@ fn run_drift_cache(args: &DebugDriftCacheArgs, reporter: &mut impl Reporter) -> 
             ExitCode::Success.code()
         }
         Err(err) => {
-            // The typed `DriftCacheError`'s own `Display` is the source of
-            // truth for the failure reason (its `VersionMismatch` arm names
-            // both the found and supported majors). Its `Filesystem` arm,
-            // however, is a `#[from] std::io::Error` that does not carry the
-            // path, so this control-flow layer, which holds `args.path`,
-            // prefixes it to honour the contract that a debug failure names
-            // the file it was pointed at.
+            // `DriftCacheError`'s `Display` is the source of truth for the
+            // failure reason; its `VersionMismatch` arm names both the found
+            // and supported majors. Its `Filesystem` arm is a
+            // `#[from] std::io::Error` and drops the path, so this layer
+            // prefixes `args.path`: a debug failure has to name the file it
+            // was pointed at.
             reporter.warn(&format!("{}: {err}", args.path));
             ExitCode::Generic.code()
         }

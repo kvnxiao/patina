@@ -6,13 +6,12 @@
 //! diff, and rendering without ever launching the elevated helper: a non-TTY
 //! subprocess without `--yes` previews and exits `0` by contract.
 //!
-//! These tests cover the CLI's report on a Defender exclusion list it
-//! cannot read. Run unelevated, as CI and a normal developer shell are,
-//! `Get-MpPreference` withholds the list, so these tests pin the honest
-//! rendering of that case. Run elevated they would see a real list and the
-//! `current_readable` assertions would legitimately flip, so each one that
-//! depends on the distinction skips when the process is elevated rather than
-//! asserting something only true unprivileged.
+//! These tests cover the CLI's report on a Defender exclusion list it cannot
+//! read. Unelevated, as CI and a normal developer shell are,
+//! `Get-MpPreference` withholds the list, and the tests pin the honest
+//! rendering of that case. Elevated, a real list arrives and the
+//! `current_readable` assertions legitimately flip, so every test that turns
+//! on the distinction skips when the process is elevated.
 //!
 //! This doc block sits *above* the `cfg` deliberately. `patina defender` is
 //! Windows-only, so the crate is gated away elsewhere, and a crate root

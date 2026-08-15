@@ -1,10 +1,6 @@
 //! Integration tests for the `patina apply` CLI surface.
 //!
-//! Each test builds a self-contained tempdir dotfiles repository and points
-//! `PATINA_REPO` at it. It isolates the per-machine state directory under
-//! the tempdir, so the apply never touches the developer's real `$HOME`.
-//! The binary runs as a subprocess, so its stdin is not a TTY and it
-//! exercises the non-interactive path.
+//! Each test drives the real `patina` binary through [`common::Fixture`].
 
 mod common;
 
@@ -215,12 +211,10 @@ fn missing_pager_falls_back_with_warning() {
 #[cfg(not(windows))]
 #[test]
 fn non_windows_symlink_apply_skips_dev_mode_flow() {
-    // On macOS or Linux, a symlink `[[file]]` apply proceeds with no gate.
-    // The Developer Mode gate reports `Proceed` because the probe is
-    // `NotWindows`, so no registry read happens and `patina-elevate` is
-    // never spawned. This test proves the positive case. The symlink lands
-    // and the command exits 0, which is only possible if the gate did not
-    // short-circuit the apply.
+    // On macOS or Linux the probe reports `NotWindows`, so the Developer
+    // Mode gate returns `Proceed` without reading a registry or spawning
+    // `patina-elevate`. The symlink landing and an exit 0 are only possible
+    // if the gate left the apply alone.
     let f = Fixture::new();
     let module = f.module(
         "shell",
@@ -237,8 +231,7 @@ fn non_windows_symlink_apply_skips_dev_mode_flow() {
         String::from_utf8_lossy(&out.stderr)
     );
 
-    // The symlink materialized, pointing back at the repo source. The gate
-    // proceeded rather than refusing to mutate.
+    // The symlink materialized, pointing back at the repo source.
     let target = f.home.join(".rc");
     let meta = fs_err::symlink_metadata(&target).expect("symlink target must exist");
     assert!(

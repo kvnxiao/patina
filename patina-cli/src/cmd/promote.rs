@@ -8,9 +8,9 @@
 //!
 //! Two target shapes are refused (exit 1):
 //!
-//! - **Symbolic-link targets** ([`ExpectedTarget::Symlink`]). A symlink IS its
-//!   source: the bytes the user sees through the link are the repository bytes,
-//!   so there is nothing to copy back and promotion is meaningless.
+//! - **Symbolic-link targets** ([`ExpectedTarget::Symlink`]). The bytes a user
+//!   sees through the link are already the repository's, so there is nothing to
+//!   copy back.
 //! - **Template-rendered targets** (the journaled source ends in `.tmpl`).
 //!   Templating is non-invertible: the rendered bytes cannot be turned back
 //!   into a template, so promotion cannot recover the source.
@@ -19,15 +19,13 @@
 //! tree: the journal carries one [`ExpectedTarget`] per materialized leaf, so
 //! the lookup resolves the single leaf and only its source is rewritten.
 //!
-//! Like `remove`, `promote` holds ONE exclusive advisory lock for the whole
-//! command. It re-journals under
-//! [`LockPolicy::Held`](patina_core::LockPolicy) via the shared
-//! [`crate::cmd::managed`] scaffolding, so the re-apply reuses the held guard
-//! instead of self-contending.
+//! Like `remove`, `promote` holds one exclusive advisory lock for the whole
+//! command and re-journals under
+//! [`LockPolicy::Held`](patina_core::LockPolicy) through the shared
+//! [`crate::cmd::managed`] scaffolding.
 //!
-//! Module-level engine semantics (planning, journaling, repo discovery) live
-//! in `patina_core`; this module is presentation and control flow only, all
-//! output routed through the [`Reporter`].
+//! Planning, journaling, and repo discovery live in `patina_core`; this
+//! module is presentation and control flow.
 
 use crate::cli::PromoteArgs;
 use crate::cmd::add::resolve_home;
@@ -68,8 +66,6 @@ pub async fn run(
     let target = expand_tilde(&args.target, &home);
     let target_key = manage_key(&target);
 
-    // Take ONE exclusive advisory lock for the whole command. The
-    // re-apply below reuses this guard via LockPolicy::Held.
     let (state, guard) = acquire_state_and_lock()?;
 
     // Locate the journaled expectation for this target in the latest commit.
@@ -91,13 +87,10 @@ pub async fn run(
         return Ok(code);
     }
 
-    // Confirm before mutating (never mutate without consent).
     if !confirm(args, tty, reader, reporter) {
         return Ok(ExitCode::UserDeclined.code());
     }
 
-    // Copy the target's current bytes back into the repository source the
-    // target was materialized from (the journal records that canonical source).
     let target_path = Utf8PathBuf::from(expected.target());
     let source_path = Utf8PathBuf::from(expected.source());
     let bytes = fs_err::read(target_path.as_std_path())
@@ -105,9 +98,6 @@ pub async fn run(
     fs_err::write(source_path.as_std_path(), &bytes)
         .with_context(|| format!("failed to write the repository source {source_path}"))?;
 
-    // Re-journal by re-applying under the held lock: the fresh <ts>.COMMIT
-    // records content_hash(new bytes) as the expected hash, so `status`
-    // classifies the target CLEAN.
     rejournal(guard).await?;
 
     report_success(args, &target_path, &source_path, reporter);

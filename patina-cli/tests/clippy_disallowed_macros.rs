@@ -8,7 +8,7 @@
 //! The `output::Reporter` abstraction is the only sanctioned site
 //! for user-facing prints: `println!`, `eprintln!`, `print!`, and `eprint!`
 //! are denied everywhere else via the workspace `clippy.toml`'s
-//! `disallowed-macros` list. This suite proves the contract holds. A fresh
+//! `disallowed-macros` list. A fresh
 //! `println!("hi")` in a non-`output` file makes clippy fail with a
 //! `clippy::disallowed_macros` diagnostic that names the offending file, while
 //! the `tracing`-style macros and a module-scoped
@@ -48,7 +48,7 @@ fn scratch_crate(temp: &TempDir, body: &str) -> Utf8PathBuf {
         root.join("Cargo.toml"),
         // A leaf crate, deliberately not part of the patina workspace
         // (`[workspace]` makes it its own root), so clippy resolves the
-        // clippy.toml we copy beside it rather than the repo's.
+        // clippy.toml copied beside it rather than the repo's.
         "[package]\nname = \"scratch\"\nversion = \"0.0.0\"\nedition = \"2021\"\n\n[workspace]\n",
     )
     .expect("write Cargo.toml");
@@ -59,8 +59,6 @@ fn scratch_crate(temp: &TempDir, body: &str) -> Utf8PathBuf {
     // private `mod` would make them dead code, so `-D warnings` would fail
     // for that reason instead of the one under test.
     fs_err::write(root.join("src/lib.rs"), "pub mod plan;\n").expect("write lib.rs");
-    // This reuses the real workspace clippy.toml verbatim, because it is the
-    // artifact under test.
     let clippy_toml = fs_err::read_to_string(workspace_clippy_toml()).expect("read clippy.toml");
     fs_err::write(root.join("clippy.toml"), clippy_toml).expect("write scratch clippy.toml");
     root

@@ -4,8 +4,7 @@
 //! silently: it derives the exact exclusion set from the current plan, previews
 //! every add and removal, asks for consent, and only then launches the elevated
 //! helper behind one UAC prompt. The engine owns the derivation, diff, and
-//! validation ([`patina_core`]); this module is presentation and control flow,
-//! all output routed through the [`Reporter`].
+//! validation ([`patina_core`]); this module is presentation and control flow.
 //!
 //! ## Exit codes
 //!
@@ -17,10 +16,10 @@
 //! | The helper never reported an outcome         | 1    |
 //! | User declined the prompt or UAC consent      | 5    |
 //!
-//! The three exit-1 outcomes share a code but never a message. Only a genuine
-//! rejection is reported as one; an apply whose outcome nobody observed says so
-//! instead of guessing. Verification routes through the elevated helper so the
-//! command never has to guess.
+//! The three exit-1 outcomes share a code but never a message. Verification
+//! routes through the elevated helper, so a rejection message means Defender
+//! really rejected the write, and an apply whose outcome nobody observed says
+//! exactly that.
 
 use crate::cli::DefenderArgs;
 use crate::cli::DefenderCommand;
@@ -154,9 +153,10 @@ fn run_reconcile(
     reporter: &mut impl Reporter,
 ) -> Result<i32> {
     // `apply` derives its desired set from the plan, so it needs a resolvable
-    // repository. `clear` reconciles to the empty set, so it must stay usable as
-    // the reversibility escape hatch even when the repository is broken or
-    // gone, so it resolves the state directory directly and never plans.
+    // repository. `clear` reconciles to the empty set and has to stay usable
+    // as the reversibility escape hatch even when the repository is broken or
+    // gone; it therefore resolves the state directory directly and never
+    // plans.
     let (state_dir, repo_root, desired) = match action {
         Action::Apply => {
             let resolved = plan_apply(&ApplyRequest::default(), current_timestamp())
@@ -273,8 +273,8 @@ fn enact(reconcile: &Reconcile<'_>, reporter: &mut impl Reporter) -> Result<i32>
     reporter.line("Elevating to apply and verify the change; this takes a few seconds.");
     match write_and_launch(reconcile.state_dir, reconcile.diff)? {
         DefenderOutcome::Applied => {
-            // Only after the helper's re-read confirms the change do we record
-            // the new patina-owned set.
+            // The new patina-owned set is recorded only after the helper's
+            // re-read confirms the change.
             reconcile.record_ledger()?;
             reporter.line("Applied Defender exclusion changes.");
             Ok(ExitCode::Success.code())
@@ -429,8 +429,8 @@ fn state_tag(state: ExclusionState, styles: &Styles) -> String {
 
 /// A bracketed tag carrying arbitrary prose, in the not-in-place style.
 ///
-/// Only the stale-entry line needs this: its phrase is not one of the five
-/// exclusion states, because a stale entry is not a desired exclusion at all.
+/// Only the stale-entry line needs this. A stale entry is not a desired
+/// exclusion, so its phrase is none of the exclusion states.
 fn stale_tag(styles: &Styles) -> String {
     paint(
         styles.exclusion.state_absent,
@@ -465,9 +465,8 @@ fn render_preview(reconcile: &Reconcile<'_>, reporter: &mut impl Reporter) {
     for exclusion in &diff.to_remove {
         table.push_str(&listing_row("  - ", exclusion, None, styles));
     }
-    // Everything the reconcile will not add, tagged with why it need not be.
-    // This is where an exclusion Defender already has but Patina does not own
-    // becomes visible.
+    // Everything the reconcile will not add, tagged with why. An exclusion
+    // Defender already has but Patina does not own shows up here.
     for exclusion in desired {
         let state = classifier.classify(exclusion);
         if !state.needs_add() {

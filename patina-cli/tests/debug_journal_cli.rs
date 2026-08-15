@@ -7,11 +7,10 @@
 //!
 //! The subcommand decodes a binary `<ts>.plan` file and renders it. A
 //! committed apply deletes its plan file at commit, so these tests write a
-//! plan file directly through the public `Plan::encode` API (the same
-//! bytes the engine fsyncs before mutating) and point the CLI at it. That
-//! exercises the full binary path the scenario cares about. It reads the
-//! file, checks the version envelope, decodes the body, and renders it to
-//! stdout.
+//! plan file directly through the public `Plan::encode` API (the same bytes
+//! the engine fsyncs before mutating) and point the CLI at it. That exercises
+//! the whole path: read the file, check the version envelope, decode the
+//! body, render to stdout.
 
 use camino::Utf8Path;
 use camino::Utf8PathBuf;

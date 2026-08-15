@@ -215,10 +215,10 @@ target = "~/.rc"
     );
 
     // The journal directory gained no `*.plan` / `*.COMMIT` entry, and the
-    // backups directory gained no new cycle. Comparing the full entry set,
-    // not just counts, also catches a stray `.progress` file. This check
-    // alone cannot detect a same-second overwrite; the identity asserts below
-    // make removing the feature turn this test red.
+    // backups directory gained no new cycle. Comparing the full entry set
+    // rather than counts also catches a stray `.progress` file. A same-second
+    // overwrite slips past this check, which is what the identity asserts
+    // below cover.
     assert_eq!(
         entry_names(&journal_dir),
         journal_before,

@@ -1,10 +1,9 @@
 //! The CLI's formalized process exit codes.
 //!
-//! Every terminal CLI state maps to exactly one of these codes. The
-//! contract is enforced in one place: subcommands return an [`ExitCode`]
-//! (or an `anyhow::Error` carrying a [`patina_core::EngineError`]), and
-//! [`crate::cli::resolve_exit_code`] is the single funnel that turns either
-//! into a process exit status.
+//! Every terminal CLI state maps to exactly one of these codes. A subcommand
+//! returns an [`ExitCode`], or an `anyhow::Error` carrying a
+//! [`patina_core::EngineError`], and [`crate::cli::resolve_exit_code`] turns
+//! either into a process exit status.
 //!
 //! | Code | Meaning                                                       |
 //! |------|---------------------------------------------------------------|
@@ -29,9 +28,9 @@
 //!   (elevation), deliberately different codes: "cannot proceed" vs "you said
 //!   no".
 //!
-//! The numeric values are the contract, and downstream tooling and the
-//! integration suite assert on them, so the discriminants are pinned
-//! explicitly rather than left to declaration order.
+//! Downstream tooling and the integration suite assert on the numeric
+//! values, so the discriminants are pinned explicitly rather than left to
+//! declaration order.
 
 use patina_core::EngineError;
 use patina_core::LockError;
@@ -70,14 +69,14 @@ impl ExitCode {
         self as i32
     }
 
-    /// Map an [`EngineError`] to the exit code it is assigned.
+    /// Map an [`EngineError`] to its exit code.
     ///
     /// Only the exclusive-lock timeout maps to a dedicated code (`4`); every
     /// other engine failure is a generic error (`1`). The hook-driven codes
     /// (`2`, `3`) and the declined-prompt code (`5`) never travel as an
-    /// `EngineError`, so they are not produced here. The engine reports a
-    /// failed `must_succeed` hook as an `ApplyResult` outcome, and a declined
-    /// prompt is a control-flow decision in the command layer.
+    /// `EngineError`: the engine reports a failed `must_succeed` hook as an
+    /// `ApplyResult` outcome, and a declined prompt is a control-flow decision
+    /// in the command layer.
     #[must_use = "the returned exit code is the process's terminal status"]
     pub fn from_engine_error(error: &EngineError) -> Self {
         match error {
@@ -89,10 +88,9 @@ impl ExitCode {
     /// Map the error chain of an `anyhow::Error` to an exit code.
     ///
     /// The command layer wraps engine failures with `anyhow` context, so the
-    /// `EngineError` is rarely the outermost error. This walks the chain for
-    /// the first [`EngineError`] and applies [`ExitCode::from_engine_error`];
-    /// a chain carrying no `EngineError` (a pure presentation-layer failure)
-    /// falls through to [`ExitCode::Generic`].
+    /// `EngineError` is rarely the outermost error. A chain carrying none at
+    /// all (a pure presentation-layer failure) falls through to
+    /// [`ExitCode::Generic`].
     #[must_use = "the returned exit code is the process's terminal status"]
     pub fn from_error_chain(error: &anyhow::Error) -> Self {
         error

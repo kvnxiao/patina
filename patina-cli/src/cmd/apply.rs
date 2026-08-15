@@ -1,11 +1,9 @@
 //! `patina apply` command logic.
 //!
-//! This module owns the decision tree (TTY prompt vs non-TTY preview,
-//! `--yes`, `--json`, `--pager`) and maps the engine's
-//! [`ApplyResult`] onto the process exit code. The engine semantics
-//! (planning, journaling, executors, hooks, rollback) live in
-//! `patina_core`; this module is presentation and control flow only, all
-//! output routed through the [`Reporter`].
+//! Owns the decision tree (TTY prompt vs non-TTY preview, `--yes`, `--json`,
+//! `--pager`) and maps the engine's [`ApplyResult`] onto the process exit
+//! code. Planning, journaling, the executors, the hooks, and rollback live in
+//! `patina_core`; presentation and control flow live here.
 //!
 //! ## Exit codes
 //!
@@ -114,16 +112,11 @@ pub async fn run(
         return run_json(&resolved, &request, args.yes, reporter).await;
     }
 
-    // Full no-op probe: a fully-satisfied repo with nothing to reap
-    // shows no diff and no confirmation prompt, and reads no stdin. The engine
-    // re-checks this under the held lock; this probe only governs the
-    // prompt-skip. `execute_plan` then writes nothing and reports
-    // the deterministic up-to-date line.
+    // The engine re-checks this under the held lock. This probe governs only
+    // whether the human path renders a diff and prompts.
     let is_full_noop =
         plan_is_full_noop(&resolved).context("failed to determine apply plan state")?;
 
-    // The diff render and prompt belong to the human review path only; a full
-    // no-op skips both and proceeds straight to the (no-op) execute below.
     if !is_full_noop {
         // Orphans the reap phase would delete this run are not plan
         // operations, so pass them to the renderer explicitly; the engine
@@ -139,10 +132,6 @@ pub async fn run(
         Confirmation::Declined => return Ok(ExitCode::UserDeclined.code()),
     }
 
-    // Windows-only Developer Mode gate: if the plan creates
-    // symbolic links and Developer Mode is off (and we are not elevated),
-    // drive the one-time UAC elevation flow before mutating. On macOS /
-    // Linux this is always `Proceed`.
     if let Some(exit) = drive_dev_mode_gate(&resolved, reporter)? {
         return Ok(exit);
     }
@@ -204,8 +193,6 @@ fn prune_stale_pins(
         patina_core::exclusive_timeout(),
     )
     .context("failed to acquire the exclusive lock to prune stale patina.lock pins")?;
-    // Re-read under the lock: a `patina remote update` may have rewritten the
-    // file since the unlocked probe.
     let Ok(mut lockfile) = Lockfile::load(&path) else {
         return Ok(());
     };
@@ -230,7 +217,8 @@ fn prune_stale_pins(
 /// Planning has already succeeded, so no entry needed the lockfile this run.
 /// Refusing to apply over one that will not parse would break the guarantee
 /// that a stray `patina.lock` costs a repository nothing until an entry
-/// actually selects a remote; the engine's own read raises it when one does.
+/// actually selects a remote. The engine's own read raises the parse error
+/// when one does.
 fn stale_pins(
     path: &camino::Utf8Path,
     resolved: &patina_core::ResolvedPlan,
@@ -253,15 +241,14 @@ fn names_of(remotes: &[patina_core::RemoteName]) -> Vec<String> {
 /// Run `patina remote update` over every remote before the apply proper.
 ///
 /// Failures here never fail the apply: an unreachable remote degrades to a
-/// plain apply against the committed pins, with a warning, matching what an
-/// offline `apply --update` should do. Whatever pins the pass did manage to
-/// bump are already written, so the apply that follows sees them.
+/// plain apply against the committed pins, with a warning. Whatever pins the
+/// pass did bump are already written, so the apply that follows sees them.
 ///
 /// The gate is not auto-accepted: `yes` is `false` regardless of the apply's
-/// own `--yes`. A rewritten-history or backdated bump is held (or, on a TTY,
-/// prompted) rather than waved through, so `apply --yes` never silently accepts
-/// a supply-chain concern the gate exists to surface; `patina remote update
-/// --yes` remains the explicit way to accept one.
+/// own `--yes`. A rewritten-history or backdated bump is held, or prompted on
+/// a TTY, so `apply --yes` never silently accepts a supply-chain concern the
+/// gate exists to surface. `patina remote update --yes` remains the explicit
+/// way to accept one.
 fn run_remote_updates(tty: Tty, reader: &mut impl PromptReader, reporter: &mut impl Reporter) {
     match crate::cmd::remote::run_update_all(tty, reader, reporter) {
         Ok(code) if code == ExitCode::Success.code() => {}
@@ -287,15 +274,12 @@ enum Confirmation {
     Declined,
 }
 
-/// Decide whether to proceed with the apply, prompting the user only on the
+/// Decide whether to proceed with the apply, prompting only on the
 /// interactive review path.
 ///
-/// A full no-op (`is_full_noop`) proceeds **without** touching the reporter's
-/// prompt or reading a line from `reader`: the short-circuit precedes the
-/// diff-and-prompt branch, so a fully-satisfied repo is never asked to
-/// confirm and `execute_plan` then writes nothing. This is the core
-/// observable, the interactive-TTY prompt-skip, exercised directly
-/// by the unit tests below with a recording reader that counts stdin reads.
+/// A full no-op (`is_full_noop`) short-circuits ahead of the diff-and-prompt
+/// branch, so a fully-satisfied repo neither sees the prompt nor has a line
+/// read from `reader`.
 fn confirm_apply(
     is_full_noop: bool,
     yes: bool,
@@ -304,8 +288,7 @@ fn confirm_apply(
     reporter: &mut impl Reporter,
 ) -> Confirmation {
     if is_full_noop {
-        // No diff, no prompt, no stdin read: the no-op writes nothing whether
-        // or not the user would have confirmed.
+        // Safe either way: a no-op writes nothing whatever the user answers.
         return Confirmation::Proceed;
     }
     match (yes, tty) {
@@ -329,13 +312,13 @@ fn confirm_apply(
 /// Returns `Ok(None)` when the apply may proceed (no symlink in the plan,
 /// not on Windows, Developer Mode already on, or the helper just enabled
 /// it). Returns `Ok(Some(code))` to short-circuit the command with a
-/// terminal exit code: `5` when the user declines the UAC consent dialog,
-/// honouring the stderr-substring contract. Returns `Err` when the
-/// helper ran but the flag still reads off afterward (exit 1).
+/// terminal exit code: `5` when the user declines the UAC consent dialog.
+/// Returns `Err` when the helper ran but the flag still reads off afterward
+/// (exit 1).
 ///
 /// On macOS / Linux [`decide_symlink_gate`] reports `Proceed` (the probe is
 /// `NotWindows`), so this never reads the registry and never spawns the
-/// helper, which proves the cross-platform guarantee.
+/// helper.
 fn drive_dev_mode_gate(
     resolved: &ResolvedPlan,
     reporter: &mut impl Reporter,
@@ -365,8 +348,7 @@ fn drive_elevation(reporter: &mut impl Reporter) -> Result<Option<i32>> {
     match patina_core::launch_elevate_helper().context("failed to launch the elevation helper")? {
         patina_core::ElevationOutcome::EnabledNow => Ok(None),
         patina_core::ElevationOutcome::Declined => {
-            // stderr must name `Developer Mode` and
-            // `patina doctor --fix`; exit 5 (user declined).
+            // stderr must name `Developer Mode` and `patina doctor --fix`.
             reporter.warn(
                 "Developer Mode was not enabled (elevation declined). \
                  Run `patina doctor --fix` to enable it, then re-run \
@@ -382,12 +364,9 @@ fn drive_elevation(reporter: &mut impl Reporter) -> Result<Option<i32>> {
 }
 
 /// Non-Windows builds never reach a `RequireElevation` verdict (the probe
-/// reports `NotWindows`), so this arm is unreachable in practice; it exists
+/// reports `NotWindows`), so this arm is unreachable in practice. It exists
 /// only so the cross-platform gate compiles without a `#[cfg]` at the call
-/// site. The `_reporter` is unused here.
-// The `Result` is never an `Err` on this platform, but the return type must
-// match the Windows variant above (which genuinely is fallible) so the
-// single call site compiles on every platform, hence the allow.
+/// site.
 #[cfg(not(windows))]
 #[expect(
     clippy::unnecessary_wraps,
@@ -404,21 +383,16 @@ async fn run_json(
     yes: bool,
     reporter: &mut impl Reporter,
 ) -> Result<i32> {
-    // Compute the reap set before any mutation so the envelope reports what
-    // this run would remove, matching the human diff (which renders reaps
-    // before execute). The engine re-derives the same set under the lock.
+    // Before any mutation, so the envelope reports what this run would
+    // remove. The engine re-derives the same set under the lock.
     let reaped = plan_orphans(resolved).context("failed to determine the reap set")?;
 
     if !yes {
-        // --json without --yes is a preview; never mutate.
         let document = json_envelope(resolved, &reaped, "previewed");
         reporter.json(&document);
         return Ok(ExitCode::Success.code());
     }
 
-    // Windows Developer Mode gate applies to the JSON apply path
-    // too: a symlink-bearing plan on a dev-mode-disabled host drives the
-    // UAC flow before any mutation. No-op on macOS / Linux.
     if let Some(exit) = drive_dev_mode_gate(resolved, reporter)? {
         return Ok(exit);
     }
@@ -439,16 +413,12 @@ async fn run_json(
 /// Build the `--json` envelope: `repo_root`, `profile`, `plan`, `reaped`,
 /// `result`.
 ///
-/// Each plan row carries a `state` field whose value is the target's
-/// [`Disposition`](patina_core::Disposition) label: `create`, `update`, or
-/// `unchanged`. It is derived purely from the plan-time classification, and
-/// reuses the canonical
-/// [`Disposition::label`](patina_core::Disposition::label) mapping. For tree
-/// modes the array lists per-leaf rows with per-leaf `state`, mirroring the
-/// per-leaf routing the human diff uses. A drifted tree therefore reports each
-/// leaf's own state, not the per-op aggregate. The `state` field is a pure
-/// function of the disposition, so it inherits the deterministic-stdout
-/// contract.
+/// Each plan row carries a `state` field: the target's
+/// [`Disposition`](patina_core::Disposition) label (`create`, `update`, or
+/// `unchanged`), through the canonical
+/// [`Disposition::label`](patina_core::Disposition::label) mapping. It is a
+/// pure function of the plan-time classification, so it inherits the
+/// deterministic-stdout contract.
 ///
 /// `reaped` lists what this run would remove: orphans of a prior apply the
 /// current plan no longer manages. They are not plan operations, so they are
@@ -503,7 +473,6 @@ fn plan_rows(
     disposition: &patina_core::TargetDisposition,
 ) -> Vec<serde_json::Value> {
     if disposition.leaves.is_empty() {
-        // Single-target mode: one row for the whole target.
         vec![serde_json::json!({
             "mode": mode_label(op.mode),
             "source": op.source.as_str(),
@@ -511,8 +480,6 @@ fn plan_rows(
             "state": disposition.aggregate.label(),
         })]
     } else {
-        // Tree mode: one row per materialized leaf, keyed by the leaf path
-        // under the declared source/target, carrying the per-leaf state.
         disposition
             .leaves
             .iter()
@@ -555,9 +522,9 @@ fn render_diff(
             pager.binary()
         ));
     }
-    // Patina does not pipe to an external pager; the embedded renderer is
-    // always the source of the rendered string so output stays
-    // deterministic for the fallback path.
+    // Patina never pipes to an external pager. The embedded renderer is
+    // always the source of the rendered string, so stdout stays
+    // deterministic.
     Ok(rendered)
 }
 
@@ -571,8 +538,7 @@ fn report_result(result: &ApplyResult, reporter: &mut impl Reporter) {
             for warning in warnings {
                 reporter.warn(warning);
             }
-            // A full no-op prints a deterministic up-to-date line
-            // (no timestamp, PID, or state path) instead of "Applied.".
+            // Both lines are deterministic: no timestamp, PID, or state path.
             let outcome = if *up_to_date {
                 "Already up to date. No changes to apply."
             } else {
@@ -669,11 +635,8 @@ mod tests {
 
     #[test]
     fn full_noop_interactive_skips_prompt_and_reads_no_stdin() {
-        // The core observable: a fully-satisfied plan on an
-        // interactive TTY must NOT present the confirmation prompt and must
-        // read no stdin. `RecordingReader` counts every `read_line`, so the
-        // `reads == 0` assertion fails on a single stray read; `BufferReporter.err`
-        // captures any prompt text, so a single `prompt` invocation fails too.
+        // A fully-satisfied plan on an interactive TTY must not prompt, and
+        // must read no stdin.
         let mut reader = RecordingReader::default();
         let mut reporter = BufferReporter::new();
         let decision = confirm_apply(
@@ -703,11 +666,10 @@ mod tests {
     }
 
     #[test]
-    fn non_noop_interactive_does_prompt_and_reads_the_answer(/* guards the skip */) {
-        // Counterpart to the no-op test: when the plan is NOT a no-op, the
-        // interactive path MUST prompt and read the answer. This is the red
-        // guard: if `confirm_apply` skipped the prompt unconditionally, the
-        // `Apply?` text would be absent and the decline answer ignored.
+    fn non_noop_interactive_does_prompt_and_reads_the_answer() {
+        // Counterpart to the no-op test: a plan that is not a no-op must
+        // prompt on an interactive TTY and read the answer. A `confirm_apply`
+        // that skipped the prompt unconditionally fails here.
         let mut reader = ScriptedReader {
             lines: std::collections::VecDeque::from(["n\n".to_owned()]),
         };

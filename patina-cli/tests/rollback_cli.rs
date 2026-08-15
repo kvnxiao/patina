@@ -5,12 +5,9 @@
 
 //! Integration tests for the `patina rollback` CLI surface.
 //!
-//! Each test builds a self-contained tempdir dotfiles repository, applies
-//! it (`patina apply --yes`), then runs `patina rollback --yes` and asserts
-//! the filesystem returns to its pre-apply state and a `<ts>.ROLLED_BACK`
-//! sentinel appears in the journal. The per-machine state directory is
-//! isolated under the tempdir so neither apply nor rollback touches the
-//! developer's real `$HOME`.
+//! Each test applies a [`common::Fixture`] repository (`patina apply --yes`),
+//! then runs `patina rollback --yes` and asserts the filesystem returns to
+//! its pre-apply state with a `<ts>.ROLLED_BACK` sentinel in the journal.
 
 use camino::Utf8Path;
 use camino::Utf8PathBuf;

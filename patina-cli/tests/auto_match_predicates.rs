@@ -3,16 +3,15 @@
     reason = "integration tests use .expect() on fixture setup and assertions; allow-expect-in-tests covers #[cfg(test)] modules but not the top level of a tests/*.rs integration crate."
 )]
 
-//! The one shared `MiniJinja` engine evaluates every `when` site, including
-//! `[[auto_match]]` profile rules. The narrow single-equality predicate
-//! evaluator no longer exists.
+//! One shared `MiniJinja` engine evaluates every `when` site, including
+//! `[[auto_match]]` profile rules.
 //!
 //! These end-to-end tests drive `PATINA_REPO=<tempdir> patina apply` over
 //! fixture repos and assert four behaviours:
 //!
 //! - An `[[auto_match]]` rule matching the host's `patina.os` resolves its
-//!   profile (parity with the removed evaluator).
-//! - A `[[file]]` `when` using `!=`, which the narrow evaluator rejected, now
+//!   profile.
+//! - A `[[file]]` `when` using an operator other than `==`, here `!=`,
 //!   evaluates true and materializes its target.
 //! - A `[[file]]` `when` misspelling a built-in (`patina.oss`) fails the apply
 //!   with a typed error naming the variable.
@@ -75,8 +74,8 @@ fn auto_match_rule_on_os_resolves_its_profile() {
 #[test]
 fn file_inequality_predicate_materializes_target() {
     // A `[[file]]` `when` using `!=` evaluates true and materializes the
-    // target. The narrow single-equality evaluator could not express `!=`,
-    // so this guards against a regressed `UnsupportedPredicate` error.
+    // target. An evaluator narrowed back to single equality would raise
+    // `UnsupportedPredicate` here.
     let f = Fixture::new();
     let module = f.module(
         "shell",

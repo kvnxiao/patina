@@ -11,9 +11,7 @@
 //! leaks into user-facing output. The journal `<ts>` filename is the only
 //! place a timestamp is permitted, and it never appears on stdout.
 //!
-//! Each test builds a self-contained tempdir dotfiles repository, points
-//! `PATINA_REPO` at it, and isolates the per-machine state directory under
-//! the tempdir so the apply never touches the developer's real `$HOME`.
+//! Each test drives the real `patina` binary through [`common::Fixture`].
 
 mod common;
 

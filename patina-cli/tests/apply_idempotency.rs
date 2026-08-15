@@ -67,8 +67,8 @@ fn dir_symlink_re_apply_is_idempotent() {
         String::from_utf8_lossy(&first.stderr)
     );
 
-    // Before the fix the executor never cleared the existing directory link,
-    // so this second apply failed with EEXIST (os error 183).
+    // An executor that does not clear the existing directory link fails this
+    // second apply with EEXIST (os error 183).
     let second = f.apply(&["--yes"]);
     assert_eq!(
         code(&second),

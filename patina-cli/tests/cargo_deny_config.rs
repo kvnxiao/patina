@@ -11,17 +11,16 @@
 //!    `bans`, and `sources`.
 //! 2. No GPL-family licence appears in the `[licenses].allow` allowlist, so a
 //!    GPL-3.0 dependency is rejected by `cargo deny check`. Whether the binary
-//!    actually exits non-zero on such a tree is a CI-execution fact; what is
-//!    scriptable here is the policy that makes it so.
+//!    actually exits non-zero on such a tree is a CI-execution fact; this test
+//!    scripts the policy that makes it so.
 //! 3. `[bans].wildcards` is set to `"deny"`, so a `some-crate = "*"` dependency
 //!    is rejected.
 //!
-//! The test gates the *policy* encoded in `deny.toml`: table presence by key
-//! and the allow/deny decisions that determine `cargo deny` outcomes. It does
-//! not substring-match the file's comments or re-assert a production
-//! constant. `deny.toml` is the policy artifact itself, and each assertion
-//! would fail for a realistic regression (a dropped table, a GPL licence
-//! slipping into the allowlist, `wildcards` relaxed to `"allow"`).
+//! `deny.toml` is the policy artifact itself, so what the test gates is table
+//! presence by key and the allow/deny decisions that determine `cargo deny`
+//! outcomes. Each assertion fails for a realistic regression: a dropped
+//! table, a GPL licence slipping into the allowlist, `wildcards` relaxed to
+//! `"allow"`.
 
 use camino::Utf8Path;
 use camino::Utf8PathBuf;

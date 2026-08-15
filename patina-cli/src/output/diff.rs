@@ -13,18 +13,17 @@
 //!
 //! Some content cannot be line-diffed: a present-but-non-UTF-8 (binary)
 //! source or target, or an unreadable file. It renders as a compact
-//! deterministic placeholder (`(binary content, N bytes)`) rather than an
-//! empty/full-insert diff. A binary copy source is legitimate, so the
-//! placeholder covers it without raising an error. The misleading "empty
-//! target" render would otherwise distort the apply consent decision.
+//! deterministic placeholder (`(binary content, N bytes)`) instead. A binary
+//! copy source is legitimate, so the placeholder covers it without raising an
+//! error. The user consents from this diff, so an empty or full-insert render
+//! of a binary target would mislead them.
 //!
-//! Removals are shown too. The engine reaps a target a prior apply
-//! materialized but the current plan no longer manages, on the next apply.
-//! That covers an entry dropped from a `patina.toml`, and a `when` flipped
-//! false. Those
-//! orphan targets are not [`ResolvedPlan`] operations, so the CLI passes them
-//! in alongside; each renders as a `remove <target>` block whose deleted body
-//! is the link it pointed at or its current content, so the reap is never
+//! Removals render as well. On the next apply the engine reaps a target a
+//! prior apply materialized but the current plan no longer manages, which
+//! covers an entry dropped from a `patina.toml` and a `when` flipped false.
+//! Those orphan targets are not [`ResolvedPlan`] operations, so the CLI passes
+//! them in alongside. Each renders as a `remove <target>` block whose deleted
+//! body is the link it pointed at or its current content, so no reap is
 //! invisible in the consent diff.
 
 use crate::output::style::Styles;
@@ -62,9 +61,6 @@ pub fn render(resolved: &ResolvedPlan, orphans: &[Orphan]) -> Result<String, Str
 
     let engine = TemplateEngine::new();
     let vars = &resolved.resolver;
-    // The renderer always emits the colored palette; the reporter's
-    // auto-stream strips it when the destination is not a terminal (or
-    // `--color never` / `NO_COLOR`), so piped output stays plain.
     let styles = Styles::colored();
 
     // Only `Create` and `Update` targets render a
@@ -76,7 +72,6 @@ pub fn render(resolved: &ResolvedPlan, orphans: &[Orphan]) -> Result<String, Str
     for op in &resolved.operations {
         for (target, disposition) in op.targets.iter().zip(&op.dispositions) {
             if disposition.leaves.is_empty() {
-                // Single-target mode: one disposition for the whole target.
                 if disposition.aggregate == Disposition::Unchanged {
                     unchanged += 1;
                 } else {
@@ -311,16 +306,14 @@ fn current_link_target(target: &Utf8Path) -> Option<String> {
     raw.into_os_string().into_string().ok()
 }
 
-/// Append formatted text to an in-memory diff buffer. Writing to a
-/// `String` is infallible, so the `fmt::Result` is intentionally
-/// discarded here (keeping the must-use lint satisfied without a bare
-/// `let _`).
+/// Append formatted text to an in-memory diff buffer. Writing to a `String`
+/// is infallible.
 fn emit(out: &mut String, args: std::fmt::Arguments<'_>) {
     discard(out.write_fmt(args));
 }
 
-/// Intentionally consume an infallible `fmt::Result` without binding it,
-/// so neither the must-use nor the unused-variable lint fires.
+/// Consume an infallible `fmt::Result` without binding it, so neither the
+/// must-use nor the unused-variable lint fires.
 fn discard(_result: std::fmt::Result) {}
 
 #[cfg(test)]
@@ -394,8 +387,8 @@ mod tests {
             &Styles::plain(),
         );
 
-        // The placeholder pair must appear, and the new text must NOT be
-        // rendered as a full-insert line diff against an assumed-empty target.
+        // The placeholder pair must appear, and the new text must not render
+        // as a full-insert line diff against an assumed-empty target.
         assert!(
             out.contains("  - (binary content, 3 bytes)"),
             "the binary current side must render as a placeholder, got:\n{out}"

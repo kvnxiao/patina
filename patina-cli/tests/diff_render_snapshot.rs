@@ -6,9 +6,8 @@
 //!
 //! The diff is exercised end-to-end through the real `patina apply` binary on
 //! the non-interactive path: with no `--yes` and a non-TTY stdin, `apply`
-//! renders the diff to stdout and then previews-only (exit 0) without writing
-//! anything. The snapshot pins that captured stdout as the rendered diff
-//! body.
+//! renders the diff to stdout, then exits 0 as a preview and writes nothing.
+//! The snapshot pins that captured stdout as the rendered diff body.
 //!
 //! The per-run tempdir home prefix is redacted to `[HOME]` so the snapshot is
 //! stable across runs and machines while still proving the path-naming shape
@@ -65,13 +64,10 @@ mode = "copy"
         String::from_utf8_lossy(&first.stderr)
     );
 
-    // Drift exactly one target's bytes: `b_out` now differs from `b_src`, so
-    // the next plan classifies it Update while a/c/d stay Unchanged.
+    // Drift exactly one target's bytes.
     let b_out = f.home.join("b_out");
     fs_err::write(&b_out, b"b-drifted\n").expect("drift b_out");
 
-    // No `--yes`, non-TTY stdin (subprocess): `apply` renders the diff and
-    // previews-only (exit 0), so stdout holds exactly the rendered diff body.
     // `--color never` makes the strip unconditional: the renderer emits ANSI
     // that the reporter's auto-stream removes, and forcing `never` keeps the
     // pinned bytes plain regardless of the runner's terminal / CLICOLOR_FORCE

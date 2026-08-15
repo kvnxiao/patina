@@ -8,14 +8,12 @@
 //! [`patina_core::watch::service`] backend.
 //!
 //! All lifecycle subcommands except `status` acquire the exclusive advisory
-//! lock; `status` acquires the shared lock. The engine
-//! semantics (state-dir resolution, the service backend, log-counter recovery)
-//! live in `patina_core`; this module is control flow, lock acquisition, and
-//! output formatting only, all routed through the [`Reporter`].
+//! lock; `status` acquires the shared lock. State-dir resolution, the service
+//! backend, and log-counter recovery live in `patina_core`; this module is
+//! control flow, lock acquisition, and output formatting.
 //!
-//! Before starting any mode, the command surfaces the forward-compatible-but-
-//! ignored `[watcher] debounce_ms` warning through the
-//! reporter.
+//! Either mode starts by warning about a `[watcher] debounce_ms` key, which
+//! the manifest accepts and the watcher ignores.
 
 use crate::cli::WatchArgs;
 use crate::cli::WatchCommand;
@@ -127,8 +125,6 @@ fn dispatch_lifecycle(
         WatchCommand::Start => backend.start(),
         WatchCommand::Stop => backend.stop(),
         WatchCommand::Restart => backend.restart(),
-        // `status` returned above, before the exclusive-lock acquisition, so it
-        // never reaches this mutating branch; treat it as a no-op result.
         WatchCommand::Status => Ok(LifecycleResult::NotInstalled),
     };
     render_lifecycle(result, json, reporter)
@@ -138,10 +134,10 @@ fn dispatch_lifecycle(
 ///
 /// On success it emits the `result` word (a JSON envelope under `--json`, a
 /// human line otherwise) and returns `0`. A [`LifecycleResult::NotInstalled`]
-/// is a no-op (no supervisor action, no mutation) that names the clear
-/// "service not installed" message on stderr and exits `1` per the
-/// behavior block. An error is surfaced through the reporter and returns `1`;
-/// an already-installed `install` therefore exits 1 with its typed message.
+/// is a no-op (no supervisor action, no mutation) that names the
+/// "service not installed" message on stderr and exits `1`. An error is
+/// surfaced through the reporter and returns `1`; an already-installed
+/// `install` therefore exits 1 with its typed message.
 fn render_lifecycle(
     result: std::result::Result<LifecycleResult, ServiceError>,
     json: bool,
@@ -149,8 +145,8 @@ fn render_lifecycle(
 ) -> i32 {
     match result {
         Ok(LifecycleResult::NotInstalled) => {
-            // No-op: not a spurious supervisor error, but the behavior block
-            // signals exit 1 with this exact stderr message.
+            // A no-op rather than a supervisor error, and still exit 1 with
+            // this exact stderr message.
             reporter.warn("service not installed; run `patina watch install` first");
             if json {
                 reporter.json(
@@ -400,9 +396,6 @@ mod tests {
 
     #[test]
     fn dispatch_status_arm_is_a_defensive_no_op_that_never_queries_the_backend() {
-        // `status` is handled by `run_lifecycle` before dispatch (it takes the
-        // shared lock and returns early), so the `Status` arm here is defensive:
-        // it maps to NotInstalled → exit 1 without querying the backend.
         let backend = RecordingBackend::new(LifecycleResult::Installed);
         let mut reporter = BufferReporter::new();
         let code = dispatch_lifecycle(&backend, &WatchCommand::Status, false, &mut reporter);
@@ -512,9 +505,6 @@ mod tests {
 
     #[test]
     fn render_lifecycle_not_installed_warns_and_exits_one() {
-        // The behavior block: a lifecycle action on a not-installed service
-        // names the clear "service not installed" message on stderr and exits
-        // 1 (a no-op, not a spurious supervisor error).
         let mut reporter = BufferReporter::new();
         let code = render_lifecycle(Ok(LifecycleResult::NotInstalled), false, &mut reporter);
         assert_eq!(code, ExitCode::Generic.code());

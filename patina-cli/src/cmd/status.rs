@@ -2,15 +2,13 @@
 //!
 //! Classifies every managed target as CLEAN / DRIFTED / MISSING / ORPHANED
 //! against the last committed apply. Renders the result as a human-readable
-//! table by default, and as a JSON envelope under `--json`.
-//! The engine semantics (journal read, current-plan recomputation,
-//! classification, shared lock) live in `patina_core::status`; this module
-//! is presentation and control flow only, all output routed through the
-//! [`Reporter`].
+//! table by default, and as a JSON envelope under `--json`. The journal read,
+//! the current-plan recomputation, the classification, and the shared lock all
+//! live in `patina_core::status`; this module is presentation and control flow.
 //!
-//! Status is read-only: it never mutates and always exits 0 on a
-//! successful read. A shared-lock timeout is surfaced as a stderr warning
-//! (the read-only escape hatch), not a non-zero exit.
+//! `status` writes nothing and exits 0 on any successful read. A shared-lock
+//! timeout reaches the user as a stderr warning (the read-only escape hatch)
+//! and leaves the exit code alone.
 
 use crate::cli::StatusArgs;
 use crate::exit_code::ExitCode;
@@ -32,8 +30,7 @@ use patina_core::TargetState;
 ///
 /// Returns an error when the engine-level status read fails (repository
 /// discovery, manifest parse, state-directory resolution, or a journal
-/// read error). A shared-lock timeout is not an error: it is reported as
-/// a warning on the report.
+/// read error).
 pub async fn run(args: &StatusArgs, reporter: &mut impl Reporter) -> Result<i32> {
     let report = patina_core::status(StatusOptions::default())
         .await

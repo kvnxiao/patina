@@ -2,34 +2,25 @@
 //!
 //! `patina doctor` inspects the per-machine state directory, the resolved
 //! repository path, the running OS, and the declared file modes in the
-//! repository, then emits an exhaustively-specified set of findings. The
-//! finding set is the complete v1.0 set (cloud-sync detection is out of
-//! scope).
+//! repository, then emits the v1.0 finding set. Cloud-sync detection is out
+//! of scope.
 //!
-//! The read-only path (no `--fix`) acquires only the SHARED advisory lock
-//! with the read-only escape hatch: a
-//! [`SHARED_TIMEOUT`] expiry warns and proceeds
-//! rather than blocking the user.
+//! The read-only path (no `--fix`) acquires only the shared advisory lock,
+//! with the read-only escape hatch: a [`SHARED_TIMEOUT`] expiry warns and
+//! proceeds rather than blocking the user.
 //!
-//! The `--fix` path is mutating. It acquires the EXCLUSIVE lock, then walks
-//! the fixable findings: Developer Mode missing on Windows, and a missing
-//! `default_repo` pointer. It prompts per finding, or auto-accepts under
-//! `--yes`, and remediates on accept. Non-fixable findings (UNC paths,
-//! OS-too-old) are still surfaced with their warning. A non-TTY `--fix`
-//! without `--yes` cannot prompt, so it refuses with exit 1 naming the missing
-//! flag. Each remediation that runs emits a structured `tracing` event
-//! recording the finding code, the chosen remediation, and the outcome.
+//! The `--fix` path is mutating. It acquires the exclusive lock, then prompts
+//! per fixable finding (Developer Mode missing on Windows, a missing
+//! `default_repo` pointer) and remediates on accept. Every remediation emits
+//! a structured `tracing` event naming the finding code, the remediation, and
+//! the outcome.
 //!
-//! Exit codes: 0 when only warning/info findings were raised;
-//! 1 only on an error-level finding. The v1.0 finding set has no error-level
-//! finding, so the exit-1 path is reserved for future additions.
+//! Exit codes: 0 when only warning/info findings were raised; 1 on an
+//! error-level finding.
 //!
 //! Output: human findings to stderr, `--json` emits a single
 //! deterministic document on stdout (no timestamps / PIDs / random ids), so
-//! two runs against unchanged state are byte-identical. The findings
-//! computation ([`compute_findings`]) is pure over its inputs, so the whole
-//! finding set is unit-testable on the macOS/Linux CI. The Windows-specific
-//! reads sit behind the [`Inputs`] struct the caller fills.
+//! two runs against unchanged state are byte-identical.
 
 use crate::cli::DoctorArgs;
 use crate::cmd::apply::PromptReader;
@@ -123,16 +114,14 @@ impl FindingCode {
     }
 }
 
-/// A finding's severity. `Info` is advisory, `Warning` does not fail the
-/// command, `Error` would (no v1.0 finding is `Error`; the variant reserves
-/// the exit-1 path for future additions).
+/// A finding's severity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Level {
     /// Advisory note; never affects the exit code.
     Info,
     /// A warning; the command still exits 0.
     Warning,
-    /// An error; the command exits 1. No v1.0 finding uses this.
+    /// An error; the command exits 1.
     Error,
 }
 
@@ -149,24 +138,22 @@ impl Level {
     }
 }
 
-/// The host-state inputs the finding computation reads, gathered by [`run`]
-/// before the pure [`compute_findings`] decides the finding set.
+/// The host-state inputs [`compute_findings`] reads, gathered by
+/// [`gather_inputs`].
 ///
-/// Abstracting the reads behind this struct lets the whole finding set be
-/// unit-tested on any platform: the Windows-specific reads (Developer Mode
-/// status, OS-build support) are plain fields the test fills directly, with
-/// no real registry in the loop.
+/// A test fills these fields directly, including the Windows-specific reads
+/// (Developer Mode status, OS-build support), so the whole finding set is
+/// unit-testable on any platform with no real registry in the loop.
 #[derive(Debug, Clone)]
 #[expect(
     clippy::struct_excessive_bools,
-    reason = "each bool is an independent host-state fact gathered from a distinct source (the platform, the repository's declared modes, the OS-build query, the state-directory pointer), not a state machine that would be better modelled as an enum. They are read once in compute_findings and never combined into a single mode."
+    reason = "each bool is an independent host-state fact gathered from a distinct source (the platform, the repository's declared modes, the OS-build query, the state-directory pointer), not a state machine that would be better modelled as an enum."
 )]
 pub struct Inputs {
-    /// Whether the running host is Windows. Off Windows the three `DOC-WIN-*`
-    /// findings never fire regardless of the other fields.
+    /// Whether the running host is Windows. Off Windows, no `DOC-WIN-*`
+    /// finding fires.
     pub is_windows: bool,
-    /// The Developer Mode registry status (from
-    /// [`dev_mode_status`]).
+    /// The Developer Mode registry status (from [`dev_mode_status`]).
     pub dev_mode: DevModeStatus,
     /// Whether the running OS build supports Developer Mode (Windows 10 1703+).
     pub build_supports_dev_mode: bool,
@@ -179,8 +166,8 @@ pub struct Inputs {
     /// Whether the `default_repo` pointer exists in the state directory.
     pub default_repo_present: bool,
     /// Whether the resolved repository declares at least one remote-backed
-    /// module. Off, the git finding never fires: a repository with no remotes
-    /// never shells out to git.
+    /// module. A repository with no remotes never shells out to git, so the
+    /// git finding cannot fire.
     pub repo_declares_remote: bool,
     /// Whether a `git` binary resolves on `PATH`.
     pub git_available: bool,
@@ -192,23 +179,16 @@ pub struct Inputs {
 
 /// Run `patina doctor`. Returns the process exit code.
 ///
-/// Without `--fix` this is the read-only diagnostic path: acquire the SHARED
-/// lock (with the read-only escape hatch) and report findings. With `--fix`
-/// it is the mutating remediation path: acquire the EXCLUSIVE lock,
-/// then prompt-and-remediate each fixable finding.
-///
 /// # Errors
 ///
 /// Returns an error (exit 1) when the per-machine state directory cannot be
-/// resolved. On the read-only path, repository-discovery and manifest-parse
-/// failures are not fatal: doctor is a diagnostic, so it reports what it can
-/// and treats an unresolvable repository as "no repository-scoped findings"
-/// rather than aborting; a shared-lock timeout is downgraded to a stderr
-/// warning (the read-only escape hatch). On the `--fix` path an
-/// exclusive-lock timeout maps to exit 4 via the engine-error chain. A
-/// remediation failure is a hard error (exit 1). That covers the
-/// persisted-default write, and the Windows helper running but leaving the
-/// flag off.
+/// resolved, or when a `--fix` remediation fails: the persisted-default
+/// write, or the Windows helper running but leaving the flag off. On the
+/// `--fix` path an exclusive-lock timeout maps to exit 4 via the engine-error
+/// chain.
+///
+/// Repository-discovery and manifest-parse failures are never fatal, and a
+/// shared-lock timeout is downgraded to a stderr warning.
 pub fn run(
     args: &DoctorArgs,
     tty: Tty,
@@ -226,7 +206,7 @@ pub fn run(
 
 /// The read-only diagnostic path (no `--fix`).
 ///
-/// Acquires only the SHARED lock, with the read-only escape hatch: a timeout
+/// Acquires only the shared lock, with the read-only escape hatch: a timeout
 /// warns and proceeds rather than blocking the user behind a concurrent
 /// mutating apply.
 fn run_report(args: &DoctorArgs, state: &Utf8Path, reporter: &mut impl Reporter) -> Result<i32> {
@@ -258,7 +238,7 @@ fn run_report(args: &DoctorArgs, state: &Utf8Path, reporter: &mut impl Reporter)
 ///
 /// A non-TTY `--fix` without `--yes` cannot prompt, so it refuses up front
 /// with exit 1 before taking any lock or mutating anything. With a
-/// TTY (or `--yes`) it acquires the EXCLUSIVE lock, recomputes the
+/// TTY (or `--yes`) it acquires the exclusive lock, recomputes the
 /// findings under the lock, then walks each fixable finding: prompt (or
 /// auto-accept under `--yes`) and remediate on accept. Non-fixable findings
 /// still surface as warnings. Each remediation that runs emits a structured
@@ -270,8 +250,6 @@ fn run_fix(
     reader: &mut impl PromptReader,
     reporter: &mut impl Reporter,
 ) -> Result<i32> {
-    // Non-TTY without --yes: no per-finding consent is possible, so refuse
-    // before acquiring the lock or mutating anything.
     if !args.yes && tty == Tty::NonInteractive {
         reporter.warn(
             "`patina doctor --fix` cannot prompt in a non-TTY shell; \
@@ -280,9 +258,8 @@ fn run_fix(
         return Ok(ExitCode::Generic.code());
     }
 
-    // Take the EXCLUSIVE lock before any mutation, distinct from the
-    // read-only path's shared lock. A contention timeout reaches the exit-4
-    // mapping through the engine-error chain.
+    // A contention timeout reaches the exit-4 mapping through the
+    // engine-error chain.
     let lock_path = state.join("lock");
     let _guard = acquire_lock(&lock_path, LockKind::Exclusive, exclusive_timeout())
         .map_err(EngineError::from)
@@ -329,9 +306,8 @@ fn run_fix(
 /// The CWD is validated as a repository root (an existing directory holding a
 /// `patina.toml` with `[patina].root = true`) via
 /// [`patina_core::validate_repo_root`], the same predicate repository
-/// discovery uses. A non-repository CWD (or a canonicalization failure) is a
-/// hard error (exit 1) so `doctor --fix` cannot record a directory that is not
-/// a Patina repository as the default.
+/// discovery uses. A non-repository CWD, or a canonicalization failure, is a
+/// hard error (exit 1).
 fn fix_default_repo(
     args: &DoctorArgs,
     state: &Utf8Path,
@@ -370,8 +346,6 @@ fn fix_default_repo(
 
 /// Remediate the `DOC-WIN-DEVMODE` finding by driving the one-time UAC
 /// elevation flow and re-checking the registry afterward.
-/// Off Windows this finding never fires, so the body is Windows-only; the
-/// non-Windows stub keeps the single call site compiling on every platform.
 #[cfg(windows)]
 fn fix_dev_mode(
     args: &DoctorArgs,
@@ -421,14 +395,13 @@ fn fix_dev_mode(
     }
 }
 
-/// Non-Windows stub: the `DOC-WIN-DEVMODE` finding never fires off Windows
-/// (the three `DOC-WIN-*` findings are gated to `is_windows` in
-/// [`compute_findings`]), so this arm is unreachable in practice. It exists
-/// only so the `--fix` match compiles without a `#[cfg]` at the call site.
+/// Non-Windows stub: [`compute_findings`] gates every `DOC-WIN-*` finding to
+/// `is_windows`, so this arm is unreachable in practice. It exists only so
+/// the `--fix` match compiles without a `#[cfg]` at the call site.
 #[cfg(not(windows))]
 #[expect(
     clippy::unnecessary_wraps,
-    reason = "signature parity with the fallible #[cfg(windows)] variant so the single call site in run_fix compiles on every platform"
+    reason = "signature parity with the fallible #[cfg(windows)] variant"
 )]
 fn fix_dev_mode(
     _args: &DoctorArgs,
@@ -461,7 +434,7 @@ fn confirm(
     }
 }
 
-/// Gather the host-state [`Inputs`] the finding computation reads.
+/// Gather the host-state [`Inputs`].
 ///
 /// Repository discovery is best-effort: a failure to resolve the repository
 /// (no `patina.toml`, no persisted default) yields `repo_root = None` and
@@ -517,8 +490,8 @@ fn repository_declares_remote(repo_root: &Utf8Path) -> bool {
 }
 
 /// Whether `repo_root`'s modules declare any `symlink` / `symlink-dir`
-/// `[[file]]` entry. A module whose manifest fails to parse is skipped (it is
-/// not a symlink declaration we can confirm); a discovery failure yields
+/// `[[file]]` entry. A module whose manifest fails to parse is skipped, since
+/// nothing in it confirms a symlink declaration; a discovery failure yields
 /// `false`.
 fn repository_declares_symlink(repo_root: &Utf8Path) -> bool {
     let Ok(modules) = discover_modules(repo_root) else {
@@ -539,8 +512,7 @@ fn repository_declares_symlink(repo_root: &Utf8Path) -> bool {
 /// filesystem, registry, or environment access, so the whole v1.0 finding set
 /// is unit-testable on any platform.
 ///
-/// The order is stable (UNC, Developer Mode, OS-too-old, then the
-/// state-directory note) so the rendered output is deterministic.
+/// The push order below is fixed, so the rendered output is deterministic.
 #[must_use = "the computed findings drive the output and exit code"]
 pub fn compute_findings(inputs: &Inputs) -> Vec<Finding> {
     let mut findings = Vec::new();
@@ -646,9 +618,9 @@ pub fn compute_findings(inputs: &Inputs) -> Vec<Finding> {
     findings
 }
 
-/// The exit code: 1 if any error-level finding was raised,
-/// otherwise 0. The v1.0 finding set has no error-level finding, so this is 0
-/// in practice; the error branch reserves the exit-1 path for future additions.
+/// 1 when any finding is error-level, otherwise 0. No v1.0 finding is
+/// error-level, so the error branch never fires today; it reserves the exit-1
+/// path for a future addition.
 fn exit_code(findings: &[Finding]) -> ExitCode {
     if findings.iter().any(|f| f.level == Level::Error) {
         ExitCode::Generic
@@ -768,8 +740,8 @@ mod tests {
 
     #[test]
     fn confirm_non_tty_without_yes_declines() {
-        // The NonInteractive arm declines; run_fix refuses before we get here,
-        // so this conservative default never auto-remediates.
+        // The NonInteractive arm declines. `run_fix` refuses before this
+        // point, so the conservative default never auto-remediates.
         let mut reader = ScriptedReader::new(&[]);
         let mut reporter = BufferReporter::new();
         assert!(!confirm(
@@ -805,9 +777,9 @@ mod tests {
 
     #[test]
     fn fix_in_non_tty_without_yes_refuses_exit_one() {
-        // A non-TTY --fix without --yes cannot prompt, so it refuses
-        // with exit 1 naming the missing --yes flag, before any lock or
-        // mutation. The state path is never touched because we return first.
+        // A non-TTY --fix without --yes cannot prompt, so it refuses with
+        // exit 1 naming the missing --yes flag, before any lock or mutation.
+        // The refusal returns first, so the state path is never touched.
         let mut reader = ScriptedReader::new(&[]);
         let mut reporter = BufferReporter::new();
         let code = run_fix(
@@ -1067,8 +1039,8 @@ mod tests {
 
     #[test]
     fn finding_order_is_stable() {
-        // All four findings present at once: order is UNC, DevMode, OSOld,
-        // NoDefaultRepo, fixed so the rendered output is deterministic.
+        // Inputs that trigger the Windows findings and the state-directory
+        // note at once. The order is fixed, so the render is deterministic.
         let inputs = Inputs {
             is_windows: true,
             dev_mode: DevModeStatus::Disabled,

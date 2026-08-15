@@ -1,16 +1,16 @@
 //! Shared scaffolding for the commands that edit a single managed target
 //! under one held exclusive lock and re-journal by re-applying.
 //!
-//! `remove` and `promote` follow the same shape. Each takes ONE exclusive
+//! `remove` and `promote` follow the same shape. Each takes one exclusive
 //! advisory lock for the whole command, then locates the journaled
 //! [`ExpectedTarget`](patina_core::ExpectedTarget) for an input path in the
 //! latest commit. Each then does command-specific filesystem work, and
 //! re-journals by driving the engine re-apply under [`LockPolicy::Held`]. The
-//! fresh `<ts>.COMMIT` therefore reflects the new managed state. This module
-//! factors those two shared
-//! pieces, the lock acquisition and the re-apply, so neither command
-//! duplicates the lock path, the engine-error mapping, or the re-plan /
-//! re-execute sequence.
+//! fresh `<ts>.COMMIT` therefore reflects the new managed state.
+//!
+//! Two of those pieces are shared and live here: the lock acquisition and the
+//! re-apply. Neither command repeats the lock path, the engine-error mapping,
+//! or the re-plan / re-execute sequence.
 
 use anyhow::Context;
 use anyhow::Result;
@@ -29,9 +29,9 @@ use patina_core::resolve_state_dir;
 
 /// The `.tmpl` source suffix marking an implicit template-rendered target.
 ///
-/// Shared by the two commands `managed.rs` scaffolds: `remove` re-renders
-/// such sources to reconstruct last-applied content, and `promote` refuses to
-/// promote a template-rendered target.
+/// Both commands scaffolded here read it: `remove` re-renders such a source
+/// to reconstruct last-applied content, and `promote` rejects the target
+/// outright.
 pub(crate) const TEMPLATE_SUFFIX: &str = ".tmpl";
 
 /// Resolve the per-machine state directory and acquire the engine's
