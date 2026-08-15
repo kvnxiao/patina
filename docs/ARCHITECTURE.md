@@ -9,8 +9,8 @@ through, and the recovery primitives that make a mid-apply crash safe.
 Patina is a three-crate Cargo workspace. The `patina-core` /
 `patina-cli` split keeps engine logic free of CLI concerns and lets the
 engine be tested without spawning a process; `patina-elevate` is a
-standalone Windows-only helper added later for the one-time Developer
-Mode elevation flow.
+standalone Windows-only helper for the one-time Developer Mode elevation
+flow.
 
 ```mermaid
 flowchart TD
@@ -60,12 +60,12 @@ flowchart TD
 
   The helper also *verifies* its own work, because it is the only part of
   Patina elevated enough to read back what it changed: `Get-MpPreference`
-  withholds the exclusion list from an unelevated caller. Its verdict
+  returns the exclusion list only to an elevated caller. Its verdict
   reaches the launching `patina.exe` through a result file rather than an
   exit code. `ShellExecuteEx` is the only way to raise the UAC dialog
-  without `unsafe`. It returns as soon as the process is created and
-  keeps no handle to wait on. Both launch sites therefore poll for the
-  helper's effect.
+  without `unsafe`, and it returns as soon as the process is created, with
+  no handle to wait on. Both launch sites therefore poll for the helper's
+  effect.
 
 User-facing output never uses `println!` / `eprintln!` outside the
 `Reporter` layer; everything else logs through `tracing`. See
@@ -74,13 +74,13 @@ AGENTS.md "Hard rules" for the enforcement detail.
 ## Journal format
 
 Before Patina mutates any file, it writes the entire plan to a journal
-in the per-machine state directory. It then `fsync`s both the plan file
-and its parent directory, up front. The journal is the source of truth a
-later recovery run reads to converge the filesystem.
+in the per-machine state directory, then `fsync`s both the plan file and
+its parent directory. The journal is the source of truth a later recovery
+run reads to converge the filesystem.
 
 The plan file and the commit record are encoded with `postcard`; the
-progress cursor is a raw fixed-width byte log. `postcard` makes no
-wire-format-stability promise across versions, so every journal carries a
+progress cursor is a raw fixed-width byte log. `postcard` promises no
+wire-format stability across versions, so every journal opens with a
 version envelope. A future Patina can then detect and reject a journal it
 cannot decode, rather than misread it. See the product north star's
 Known unknowns note in AGENTS.md.
@@ -114,7 +114,7 @@ and checkouts are local. The planner's remote registry reads the lockfile
 on the first entry that selects any remote. It materializes a checkout
 on the first entry that selects that remote, and memoizes both. A remote
 that no active entry names therefore costs neither a read nor a fetch. The
-subsystem has four modules under `patina-core/src/remote/`:
+subsystem lives under `patina-core/src/remote/`:
 
 - The **`git`** module wraps the `git` binary on `PATH` via
   `std::process::Command`. Patina links no git library, so a user's SSH
@@ -134,17 +134,17 @@ subsystem has four modules under `patina-core/src/remote/`:
   candidate tip may become a pin, so every branch is unit-testable
   without a clock, a network, or a repository.
 
-Pruning is reachability-based over every journal commit sentinel on disk.
-Rollback walks back through older records, so a checkout an older record
-still names must survive. When any sentinel cannot be decoded, the sweep
-suspends to avoid a stranded rollback.
+The sweep reads every journal commit sentinel on disk and keeps any
+checkout one of them still names, because rollback walks back through
+older records. Where the sweep cannot decode a sentinel, it suspends
+rather than stranding a rollback.
 
 `docs/REMOTE_SOURCES.md` is the normative behavioural spec.
 
 ## Apply phases
 
-`patina apply` runs three phases in order. The first two are read-only;
-only the third touches the filesystem, and it does so only after the
+`patina apply` runs three phases in order. Plan and Diff only read.
+Mutate is the phase that touches the filesystem, and only after the
 journal is durable.
 
 ```mermaid
@@ -181,39 +181,38 @@ sequenceDiagram
 
 ### Tree enumeration and `ignore`
 
-Every phase of a tree-mode entry has to agree on which leaves it owns:
-plan-time classification, target-collision claims, the executors, the
-committed journal record, and the managed-target set that `status` and the
-orphan reap consult. They share one enumerator, `apply::walk_files`, which
+Every phase of a tree-mode entry enumerates its leaves through one
+function: plan-time classification, target-collision claims, the
+executors, the committed journal record, and the managed-target set
+`status` and the orphan reap consult all call `apply::walk_files`. It
 takes a compiled matcher and prunes ignored directories during descent
-rather than filtering a flat result list. Pruning at descent avoids reading
-inside `__pycache__`. It also drops the nested `__pycache__/x.pyc`. A flat
-filter would keep that file, because gitignore matching tests one path at a
-time and a directory pattern never matches a file inside it.
+rather than filtering a flat result list. Pruning at descent skips reading
+inside `__pycache__`, and it drops the nested `__pycache__/x.pyc` too. A
+flat filter would keep that file, because gitignore matching tests one
+path at a time and a directory pattern never matches a file inside it.
 
 The matcher is built once per entry, in `ignore_rules::build`, from the root
 manifest's `[patina] ignore` followed by the entry's own list, anchored at
-the entry's canonical source. The resolved entry stores it, and every phase
-downstream of planning reuses it instead of recompiling.
+the entry's canonical source. The resolved entry stores it for every phase
+downstream of planning.
 
-One walk deliberately does not prune. `insert_managed_targets` enumerates
-unfiltered and partitions each leaf into managed or ignored, because
-attributing a reap to a pattern requires seeing the leaves that pattern
-dropped. Each leaf goes through `ignore_rules::prunes`, which replays the
-walk's decision for one relative path; that function's doc comment says why
-neither `Gitignore` method substitutes for it. The partition lets
-`plan_orphans` return `ignored` rather than an unexplained removal. Its cost:
-`status` and the reap read inside ignored directories, where the executor
-path never does.
+`insert_managed_targets` deliberately enumerates unfiltered and partitions
+each leaf into managed or ignored, because attributing a reap to a pattern
+means seeing the leaves that pattern dropped. Each leaf goes through
+`ignore_rules::prunes`, which replays the walk's decision for one relative
+path; that function's doc comment says why neither `Gitignore` method
+substitutes for it. The partition lets `plan_orphans` return `ignored`
+rather than an unexplained removal. It costs a read inside every ignored
+directory, in `status` and the reap; the executor path skips them.
 
 An entry whose leaves are all ignored materializes nothing, because both
 executors create leaf directories on demand. Classification walks before
 calling an absent target a `Create`, so such an entry settles instead of
 re-prompting on every apply.
 
-No on-disk format changes: an ignored leaf never enters the `ApplyRecord`,
-and reap reasons are computed at plan time by diffing that record against
-the current managed set.
+An ignored leaf never enters the `ApplyRecord`. Reap reasons are computed
+at plan time, by diffing that record against the current managed set, so
+the on-disk format is unchanged.
 
 ## Recovery
 
@@ -221,8 +220,8 @@ A `kill -9` mid-apply leaves the filesystem in either the pre-apply or
 the post-apply state. That crash-safety guarantee covers process
 termination, where the page cache survives. Backups are copied but not
 `fsync`ed before an overwrite. Power loss or a kernel panic mid-apply
-can therefore leave an overwrite durable while its backup is not. That
-is a genuinely intermediate state. Full power-loss durability (atomic
+can therefore leave an overwrite durable while its backup is not, a
+genuinely intermediate state. Full power-loss durability (atomic
 temp+rename target writes plus `fsync` of backups and parent
 directories) is a post-1.0 hardening item.
 
@@ -247,8 +246,7 @@ journal and restores the recorded pre-apply bytes. Afterwards the
 filesystem matches the pre-apply state in content and entry kind (file,
 symlink, or directory). Mode and timestamp bits are excluded, as are
 files the user touched outside Patina. `patina status` reports drift
-between the
-declared end-state and the live filesystem. The per-machine state
-directory that holds journal, backups, lock, and drift cache uses
+between the declared end-state and the live filesystem. The per-machine
+state directory for the journal, backups, lock, and drift cache uses
 OS-appropriate locations and must not live on a cloud-sync mount. See
-`docs/USER_GUIDE.md` "State directory".
+`docs/OPERATING_ENVIRONMENT.md`.

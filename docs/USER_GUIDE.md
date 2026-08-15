@@ -22,8 +22,8 @@ patina --version
 ```
 
 On Windows, creating symbolic links requires either Developer Mode
-enabled or an elevated (UAC) session. Patina surfaces a clear error
-when it lacks the privilege rather than failing cryptically.
+enabled or an elevated (UAC) session. Without one of the two, Patina
+names the missing privilege in the error.
 
 ## Declaring dotfiles
 
@@ -55,10 +55,9 @@ target = "~/.config/mpv"
 mode = "symlink-tree"
 ```
 
-The table you declare an entry under fixes its source kind, and the
-`mode` names are shared across both tables: they mean "symlink this
-thing" or "copy this thing", with the table supplying the file/dir
-context:
+The table fixes the source kind. Both tables share the `mode` names:
+`symlink` and `copy` mean the same thing either way, with the table
+supplying the file-or-directory context.
 
 - A `[[file]]` accepts `mode = "symlink"` (the default, a symbolic link
   to the source file) or `mode = "copy"` (a byte copy). A `.tmpl` source
@@ -70,29 +69,27 @@ context:
   copy of the tree.
 
 Use `target` for a single destination or `targets = [...]` to fan one
-source out to many. (The earlier single `[[file]]` table with the
-`symlink-dir` / `copy-tree` mode names is no longer accepted; declare a
-`[[directory]]` entry instead.)
+source out to many.
 
-Neither a `source` nor a `target` may contain an ASCII control
-character (`U+0000` through `U+001F` or `U+007F`), which covers tab, newline,
-and carriage return. Patina refuses the whole manifest at parse time and
-names the offending character by code point, since a control character
-is invisible in an editor. Spaces and non-ASCII characters are fine:
-`~/Application Support/café` is a legal target. The rule exists because
-every listing Patina prints (`status`, the apply diff, the Defender
+Neither a `source` nor a `target` may contain an ASCII control character
+(`U+0000` through `U+001F` or `U+007F`), which covers tab, newline, and
+carriage return. Patina refuses the whole manifest at parse time and
+names the offending character by code point, since a control character is
+invisible in an editor. Spaces and non-ASCII characters are fine:
+`~/Application Support/café` is a legal target.
+
+Every listing Patina prints (`status`, the apply diff, the Defender
 listing, the `debug journal` dump) puts one path per line in
-tab-separated columns. A tab would open a column the row never closes,
-and a newline would split one row into two, which would let a filename
-forge a row that reads as Patina's own output.
+tab-separated columns. A tab would open a column the row never closes. A
+newline would split one row in two, letting a filename forge a row that
+reads as Patina's own output.
 
 ### Excluding generated files with `ignore`
 
-A `symlink-tree` or `copy` `[[directory]]` walks its source tree on every
-apply, so anything a tool drops beside your files becomes another leaf to
-deploy. Run a Python script from a deployed tree and `__pycache__/*.pyc`
-appears in the repository; macOS leaves `.DS_Store`, Windows leaves
-`Thumbs.db`. Declare an `ignore` list and those paths stop being enumerated:
+A `symlink-tree` or `copy` `[[directory]]` deploys every file under its
+source: the `__pycache__/*.pyc` a Python run left behind, `.DS_Store` on
+macOS, `Thumbs.db` on Windows. An `ignore` list drops those paths from
+the enumeration:
 
 ```toml
 # Root patina.toml: patterns every tree-mode entry starts from.
@@ -113,11 +110,11 @@ ignore = ["__pycache__/", "*.pyc"]
 Patterns use gitignore syntax: `*` and `?` wildcards, `**` for any depth,
 `{a,b}` alternates, a trailing `/` for directories only, a leading `/` to
 anchor, and a leading `!` to bring back a path an earlier pattern excluded.
-Matching is last-match-wins, which lets a per-entry `!keep.pyc` override a
-repo-wide `*.pyc`. Git's exception to that carries over: a `!` cannot
-bring back a path inside an excluded directory. `["build/", "!build/keep.txt"]`
-still drops `keep.txt`, because the walk stops at `build` and never looks
-inside. Exclude the files rather than the directory when you need one back.
+Last match wins, so a per-entry `!keep.pyc` overrides a repo-wide `*.pyc`.
+Git's exception to that carries over: a `!` cannot bring back a path
+inside an excluded directory. `["build/", "!build/keep.txt"]` still drops
+`keep.txt`, because the walk stops at `build` and never looks inside.
+Exclude the files themselves when you need one back.
 
 Where this departs from git, deliberately:
 
@@ -127,21 +124,20 @@ Where this departs from git, deliberately:
 - **Matching ignores case on every platform.** One `Thumbs.db` pattern also
   covers `thumbs.db`. Git decides this per clone, which would make one
   manifest behave three ways across macOS, Linux, and Windows.
-- **There are no `.gitignore` or `.patinaignore` files.** Every pattern is
-  authored in a manifest, and a `.gitignore` inside a remote checkout is
-  third-party content Patina never reads.
-- **Patina ships no built-in patterns.** What a repository deploys stays a
-  function of its own manifest. `patina init` scaffolds the root block
-  above commented out, ready to uncomment.
+- **Every pattern is authored in a manifest.** Patina reads no
+  `.gitignore` or `.patinaignore` file, and a `.gitignore` inside a remote
+  checkout is third-party content it never opens.
+- **No default patterns.** A repository deploys what its own manifests
+  say. `patina init` scaffolds the root block above commented out, ready
+  to uncomment.
 
-`ignore` is accepted only on the `[[directory]]` modes that enumerate a
-tree, `symlink-tree` and `copy`. A whole-directory `mode = "symlink"`
-creates one link and exposes the directory through it, beyond the reach of
-any list. Declaring `ignore` there is a parse error that points you at
-`symlink-tree`. Declaring it on a `[[file]]`, or putting
-`[patina] ignore` in a module manifest rather than the root, is refused for
-the same reason: silently accepting it would leave you believing a filter is
-running that never is.
+`ignore` is accepted on the `[[directory]]` modes that enumerate a tree:
+`symlink-tree` and `copy`. Declaring it on a `[[file]]`, on a
+`[[directory]]` with `mode = "symlink"`, or under `[patina]` in a module
+manifest is a parse error. `ignore` filters a tree walk. A `[[file]]`
+deploys a single path, and a whole-directory `symlink` deploys one link
+that exposes everything beneath it. Only the root manifest's
+`[patina] ignore` is read. Each error names where the patterns do belong.
 
 If a pattern you add excludes a path a previous apply already deployed, the
 next `patina apply` removes it. The diff labels that removal `ignored` so
@@ -154,7 +150,7 @@ remove /home/kevin/bin/stale.pyc (ignored)
 ```
 
 An entry whose every leaf is ignored deploys nothing and leaves its target
-directory absent. `apply` reports it as unchanged rather than as pending work.
+directory absent. `apply` reports it as unchanged, not as pending work.
 
 `patina add` refuses a path that a tree entry's `ignore` list already
 excludes, because the new `[[file]]` entry would deploy exactly what the
@@ -175,15 +171,13 @@ target = "~/Documents/PowerShell/profile.ps1"
 when = "patina.os == 'windows'"
 ```
 
-`when` expressions are evaluated by the same MiniJinja engine that
-renders templates and resolves `[[auto_match]]` profile rules. The same
-predicate engine runs at every `when` site. It uses
+One MiniJinja engine evaluates every `when` expression, renders every
+template, and resolves the `[[auto_match]]` profile rules, under
 strict-undefined semantics. A reference to a variable that was never
-defined fails the run with an error, rather than yielding a
-silently-false predicate. A typo such as `patina.oss` for
-`patina.os` is such a reference. Built-in
-facts such as `patina.os` and `patina.hostname` are always available;
-`patina.profile` is not defined during profile resolution, so an
+defined fails the run with an error, so a typo such as `patina.oss` for
+`patina.os` stops you rather than yielding a silently-false predicate.
+Built-in facts such as `patina.os` and `patina.hostname` are always
+available. `patina.profile` is undefined during profile resolution, so an
 `[[auto_match]]` rule must not reference it.
 
 ### Variables
@@ -204,10 +198,8 @@ editor = "nvim"
 editor = "code"
 ```
 
-Templates are rendered with MiniJinja under the same strict-undefined
-semantics as `when`: referencing a variable that was never defined is an
-error at render time, not a silent empty string. Profiles select the
-machine-specific variable set layered on top of the repo-shared one.
+Profiles select the machine-specific variable set layered on top of the
+repo-shared one.
 
 ## Apply flow
 
@@ -221,12 +213,12 @@ diff-and-prompt loop by default:
    actually on disk and prints the diff. A target a prior apply
    materialized, but the current plan no longer manages, shows as a
    `remove <target>` block. That covers an entry you dropped from a
-   `patina.toml`, and one whose `when` is now false. Patina backs the
-   target up and deletes it on apply, so the reap is never hidden from
-   the consent diff. A dropped target that
-   now sits inside another entry's target is left alone instead: that
-   entry owns the path, and where it is a whole-directory `symlink` the
-   dropped path leads through the link into the entry's source.
+   `patina.toml` and one whose `when` is now false. Patina backs the
+   target up and deletes it on apply, inside the consent diff like every
+   other change. One exception: a dropped target that now sits inside
+   another entry's target is left alone, because that entry owns the
+   path. Where the owner is a whole-directory `symlink`, the dropped path
+   leads through the link into the owner's source.
 3. **Prompt.** In an interactive terminal, Patina asks for
    confirmation before writing anything. In a non-interactive shell
    (CI, a piped invocation), it falls through to plan-only and writes
@@ -236,16 +228,14 @@ Re-running `patina apply` against unchanged source is a no-op: the same
 plan, no writes, and byte-identical stdout. Patina never overwrites a
 file it does not own without taking a backup first.
 
-On a terminal the diff is colorized (green additions, red removals,
-bold entry headers), and warnings and errors are styled too. The
-confirmation prompt is shown in a distinct prompt color, and its
-`[y/N]` keys are highlighted apart from the prose and each other: a
-green affirmative `y`, a red default `N`. Color is a display concern
-only: piped or redirected
-output is always plain, so the byte-identical-stdout guarantee is
-unchanged. The `--color` flag (global, accepted before or after any
-subcommand) forces the choice: `auto` (the default) colors a terminal
-and strips otherwise, `always` colors even when piped, `never` disables
+On a terminal the diff is colorized: green additions, red removals, bold
+entry headers, styled warnings and errors. The confirmation prompt is
+colorized too: a green affirmative `y` and a red default `N`, each set
+apart from the prose and from the other. Piped
+or redirected output is always plain. Stdout therefore stays
+byte-identical between runs. The `--color` flag (global, before or after any
+subcommand) forces the choice: `auto` (the default) colors a terminal and
+strips otherwise, `always` colors even when piped, `never` disables
 color. `NO_COLOR` in the environment is honoured under `auto`.
 
 Every multi-row listing lines its columns up the same way, sized to the
@@ -254,8 +244,8 @@ update`, `patina watch status`, `patina doctor`, and the Defender
 listing. Painted cells pad by printable width, so a piped run and a
 terminal run stay aligned identically.
 
-`patina status` prints one row per managed target and a summary of the
-four counters:
+`patina status` prints one row per managed target, then a summary line of
+the counters:
 
 ```text
 clean     /home/u/.zshrc
@@ -266,18 +256,15 @@ clean: 1  drifted: 1  missing: 1  orphaned: 1
 ```
 
 On a terminal the state word is green (clean), yellow (drifted), red
-(missing), or magenta (orphaned); an orphan gets its own hue because it
-is a leftover awaiting a reap, with no place on a severity scale. In the
-summary only a non-zero counter is painted, so a clean repository reads
-at a glance. Every state is in the text as well, so a stripped run loses
-the color and nothing else.
+(missing), or magenta (orphaned). The summary paints only
+a non-zero counter, so a clean repository reads at a glance. Every state
+is in the text as well, and a stripped run loses the color alone.
 
 ## Commands
 
 Beyond `apply`, `status`, `rollback`, and `debug journal`, Patina ships
-five commands for setting up a repository and migrating existing
-dotfiles into management. Each of the mutating commands accepts two
-common flags:
+commands for setting up a repository, migrating existing dotfiles into
+management, and tracking remote sources. Two flags run across them:
 
 - `--json` emits a structured JSON envelope in place of human-readable
   output. For read-only commands this is a pure formatting switch.
@@ -286,17 +273,17 @@ common flags:
   `doctor --fix`) follow the same prompt semantics as `apply`: a bare
   invocation in an interactive terminal prompts before mutating; a
   non-interactive shell refuses to mutate unless you pass `--yes`.
-  `init` and `add` do not have a confirm-before-mutate gate. `init`
-  writes unconditionally (it refuses only if a manifest already
-  exists), and accepts `--yes` for parity without acting on it. `add`
-  prompts only for an omitted mode or module, and only in an interactive
-  terminal. In a non-interactive shell it refuses *those specific*
-  missing inputs. Once mode and module are supplied it writes without
-  prompting.
+  `init` and `add` gate differently. `init` writes unconditionally,
+  refusing only where a manifest already exists, and accepts `--yes` for
+  parity without acting on it. `add` prompts for an omitted mode or
+  module, and only in an interactive terminal; a non-interactive shell
+  refuses *those specific* missing inputs. Once mode and module are
+  supplied, `add` writes without prompting.
 
 `add` also accepts `--force`, which overrides its ignore-conflict refusal
 (see [Excluding generated files](#excluding-generated-files-with-ignore)).
-That is a separate axis from `--yes`, which only skips prompts.
+`--force` and `--yes` are separate axes: one overrides a refusal, the
+other skips a prompt.
 
 | Command   | Purpose                                                                                       |
 | --------- | --------------------------------------------------------------------------------------------- |
@@ -307,9 +294,8 @@ That is a separate axis from `--yes`, which only skips prompts.
 | `doctor`  | Inspect the environment for known problems (UNC repository paths, missing Windows Developer Mode, OS-too-old, missing default repo, missing `git`, targets a new `ignore` pattern stranded). |
 | `remote`  | Manage remote git sources: `list` the pins, `check` upstream tips, `update` a pin through the update gate, `prune` cached checkouts. See [Remote sources](#remote-sources). |
 
-`patina remove` has a `--purge` flag: instead of leaving a regular file
-behind with the last-applied content, `--purge` deletes the target
-outright.
+`patina remove --purge` deletes the target outright, where a bare
+`remove` leaves a regular file holding the last-applied content.
 
 `patina doctor` is read-only by default and reports its findings as
 warnings. With `--fix`, it walks the findings it knows how to remediate,
@@ -335,24 +321,24 @@ Patina uses one exit-code scheme across every command:
 
 Creating symbolic links on Windows requires either Developer Mode or an
 elevated session. When Patina needs the privilege and Developer Mode is
-off, it offers a one-time elevation: a single UAC prompt appears, and
-accepting it toggles Developer Mode on via the bundled
-`patina-elevate.exe` helper so future runs need no elevation. If you
-decline the UAC prompt, Patina exits with code `5` and points you at
-`patina doctor --fix`, which offers the same Developer Mode remediation.
+off, it offers a one-time elevation. A single UAC prompt appears, and
+accepting it turns Developer Mode on through the bundled
+`patina-elevate.exe` helper. Later runs need no prompt. Declining exits
+`5` and points you at
+`patina doctor --fix`, which offers the same remediation.
 
 ## Windows Defender exclusions
 
 On Windows, Microsoft Defender scans file I/O in real time. A dotfiles
 repository is a pile of small git objects, and `apply` reads and writes
-many links and copies. That per-access scan is therefore pure overhead
-for paths you already trust. `patina defender` adds Defender **path exclusions** for
-the repository and its deployed targets to remove it. The command is
-Windows-only and does not appear in `--help` on macOS or Linux.
+many links and copies. That per-access scan costs you throughput over
+paths you already trust. `patina defender` adds Defender **path
+exclusions** for the repository and its deployed targets. The command is
+Windows-only and stays out of `--help` on macOS and Linux.
 
-An exclusion is a permanent hole in your antivirus coverage, so this is
-never something `patina apply` does on its own. You run it deliberately,
-you see every path first, and you consent before anything changes:
+An exclusion is a permanent hole in your antivirus coverage. `patina
+apply` never opens one on its own. You run the command deliberately, you
+see every path first, and you consent before anything changes:
 
 | Command                   | Purpose                                                                             |
 | ------------------------- | ----------------------------------------------------------------------------------- |
@@ -362,32 +348,32 @@ you see every path first, and you consent before anything changes:
 
 ### What Patina can see without administrator
 
-Not the exclusion list. `Get-MpPreference` returns it only to an elevated
-caller. Unelevated it reports `N/A: Must be an administrator to view
-exclusions` and exits successfully, so there is nothing to compare against.
+`Get-MpPreference` returns the exclusion list only to an elevated caller.
+Unelevated it reports `N/A: Must be an administrator to view exclusions`
+and exits successfully, leaving nothing to compare against.
 
-Without administrator, Patina reports state from its own ledger and labels
-it as such: `recorded` and `not recorded` rather than `present` and
-`missing`, under a note saying where the state came from. `--json` carries
-the same distinction as `current_readable: false`. The practical limit is
-that an exclusion you delete by hand in the Defender UI goes unnoticed.
-Run `patina defender status` from an elevated shell to see it: that reads
-the live list and reports `present` or `missing` against it.
+Patina then reports state from its own ledger and labels it as such:
+`recorded` and `not recorded` in place of `present` and `missing`, under
+a note saying where the state came from. `--json` marks the same
+distinction as `current_readable: false`. Patina misses one case: an
+exclusion you delete by hand in the Defender UI. Run `patina defender
+status` from an elevated shell to catch it. That run reads the live list
+and reports `present` or `missing` against it.
 
 The desired set is the repository root plus **one** exclusion per
 managed target: a folder exclusion for a directory entry
 (`symlink` / `symlink-tree` / `copy`) and a file exclusion for a file
 entry (`symlink` / `copy` / template). A `symlink-tree` of forty files
-contributes the one declared target directory rather than forty entries.
-Patina emits exact paths only, with no wildcards and no process or
-extension exclusions. It refuses to exclude a UNC path, a drive root, or a
-system directory (`%SystemRoot%`, `%ProgramFiles%`, and friends).
+contributes its one declared target directory. Patina emits exact paths
+only, with no wildcards and no process or extension exclusions, and it
+declines a UNC path, a drive root, or a system directory
+(`%SystemRoot%`, `%ProgramFiles%`, and friends).
 
 ### Reading the listing
 
-The listing carries the exclusion kind as **color on the path**, and the
-state as a colored tag after it. The tags share one column, sized to the
-widest path, so a reader scans the state straight down a long list:
+The listing paints the exclusion kind onto the path itself and puts the
+state in a colored tag after it. The tags share one column, sized to the
+widest path: the states read straight down a long list.
 
 ```text
   C:\Users\kevin\dotfiles      [present]
@@ -408,32 +394,33 @@ widest path, so a reader scans the state straight down a long list:
 | Green `[recorded]`                         | Ledger records it; the live list was not readable          |
 | Red `[not recorded]`                       | Ledger does not record it; the live list was not readable  |
 
-`[present, not recorded by patina]` is worth acting on. The path is already
-excluded, so `apply` will not touch Defender for it. But the ledger does
-not own it, and **`clear` will not reap it**. You get this when you excluded the
-path by hand, or when a Patina run applied it without recording the result.
-Running `apply` adopts it: the ledger converges on the whole desired set, so
-the entry becomes `present` and `clear` can reverse it afterwards.
+`[present, not recorded by patina]` is worth acting on. The path is
+already excluded, so `apply` leaves Defender alone for it, and
+**`clear` skips it** because the ledger does not own it. You get this tag
+when you excluded the path by hand, or when a Patina run applied it
+without recording the result. Running `apply` adopts it: the ledger
+converges on the whole desired set, the entry becomes `present`, and
+`clear` can reverse it afterwards.
 
-Spotting an unowned exclusion needs the live list, so it only shows up on an
-elevated run. Unprivileged there is nothing to compare against, and you see
-the two ledger-derived states instead.
+Spotting an unowned exclusion needs the live list, so the tag appears
+only on an elevated run. Unprivileged you see the two ledger-derived
+states instead.
 
-Color is the only place the kind appears, so it is gone wherever ANSI is
-stripped: a pipe, a redirect, `--color never`, `NO_COLOR`. Use `--json` when
-you need this as data. Every entry there carries an explicit `kind` (`file`
-or `folder`) and `state` (`owned`, `unmanaged`, `absent`, `recorded`,
-`unrecorded`).
+Color is the only place the kind appears, and it goes wherever ANSI is
+stripped: a pipe, a redirect, `--color never`, `NO_COLOR`. Use `--json`
+when you need this as data. Every entry there names an explicit `kind`
+(`file` or `folder`) and `state` (`owned`, `unmanaged`, `absent`,
+`recorded`, `unrecorded`).
 
 `apply` and `clear` preview the additions and removals, then prompt before
 acting; a non-interactive shell requires `--yes`. Accepting raises one UAC
 prompt (the main `patina.exe` never runs elevated, only a small bundled
 helper does). Declining the prompt exits `5`.
 
-The helper also verifies the change, since it is the only part of
-Patina elevated enough to read the exclusion list back. It re-reads after
-writing and records the verdict, which the waiting `patina.exe` picks up.
-Three outcomes exit `1`, and they say different things:
+The helper also verifies the change, since it is the only part of Patina
+elevated enough to read the exclusion list back. It re-reads after
+writing and records the verdict for the waiting `patina.exe`. Three
+outcomes exit `1`, and each says something different:
 
 | Outcome                                | What it means                                                                        |
 | -------------------------------------- | ------------------------------------------------------------------------------------ |
@@ -441,27 +428,23 @@ Three outcomes exit `1`, and they say different things:
 | The helper could not apply the request | It never reached Defender: a path it refused, or a request file it could not read.     |
 | The helper reported no result          | Nobody observed the outcome. The exclusions may have been applied without being recorded, so re-run `apply`, which is idempotent. |
 
-The distinction matters because the fix differs. Patina will not report a
-success it could not confirm, and it will not blame Defender for an outcome
-it never saw.
-
 Patina records only the exclusions it added, in a per-machine ledger.
-`apply` therefore reaps a stale patina-owned exclusion, and **never
-touches a user-added exclusion**. `clear` removes only what Patina owns.
+`apply` therefore reaps a stale patina-owned exclusion and **never
+touches a user-added one**. `clear` removes only what Patina owns.
 
-If you are on Windows 11, consider a [Dev Drive](https://learn.microsoft.com/windows/dev-drive/)
-(ReFS) in Defender *performance mode*. It scans asynchronously instead of
-not at all, so it is the lower-risk choice where it applies.
+On Windows 11, consider a [Dev Drive](https://learn.microsoft.com/windows/dev-drive/)
+(ReFS) in Defender *performance mode*. It scans asynchronously rather
+than skipping the scan, the lower-risk choice where it applies.
 
 ## Watch service
 
 `patina watch` runs a per-user background watcher. It re-applies your
 configuration when the source repository changes, and surfaces drift when
-a managed target is edited outside Patina. It never needs admin or sudo
-on its default path.
+a managed target is edited outside Patina. Its default path needs neither
+admin nor sudo.
 
-The watcher has two shapes. The lifecycle subcommands manage a background
-service registered with your OS supervisor:
+The lifecycle subcommands manage a background service registered with
+your OS supervisor:
 
 | Command                  | Purpose                                                            |
 | ------------------------ | ------------------------------------------------------------------ |
@@ -472,10 +455,10 @@ service registered with your OS supervisor:
 | `patina watch restart`   | Stop then start the installed service.                             |
 | `patina watch status`    | Report the service's installed / running state, last-exit code, and the watcher's subscription and re-apply counters. Read-only. |
 
-`patina watch --foreground` instead runs the watcher loop inline,
+`patina watch --foreground` runs the watcher loop inline instead,
 attached to the current terminal, and shuts down cleanly on Ctrl-C
-(SIGINT) or SIGTERM. The installed background service runs the same
-foreground loop under your supervisor.
+(SIGINT) or SIGTERM. The installed background service runs that same
+loop under your supervisor.
 
 `install` writes a per-user service descriptor whose location depends on
 the OS:
@@ -486,46 +469,35 @@ the OS:
 | Linux   | `~/.config/systemd/user/patina-watcher.service`         | `systemd --user` |
 | Windows | Scheduled Task named `Patina Watcher` (HKCU, logon trigger) | Task Scheduler |
 
-### Surviving logout on Linux
+### Linux caveats
 
 A `systemd --user` service stops when you log out and starts again when
-you next log in. You may want the watcher to keep running across logout,
-for example on a server you SSH in and out of. Enable lingering for your
-user once:
+you next log in. To keep the watcher running across logout, say on a
+server you SSH in and out of, enable lingering for your user once:
 
 ```sh
 sudo loginctl enable-linger $USER
 ```
 
-Patina does not run this for you and ships no `--linger` flag: the
-command needs sudo, and Patina's invariant is that it never prompts for
-elevated privilege on your behalf. Run it yourself when you need
-survive-logout behavior; skip it on a desktop where the watcher only
-needs to run while you are logged in.
-
-### Non-systemd init systems
-
-`patina watch install` targets `systemd --user` on Linux. On a
-distribution without systemd (Void, Devuan with a non-systemd init,
-Alpine), run `patina watch --foreground` under your own supervisor
-(runit, s6, OpenRC) instead. Patina does not ship service templates for
-these init systems in v1.0.
+`patina watch install` writes a `systemd --user` unit. On Void, Devuan
+with a non-systemd init, or Alpine, run `patina watch --foreground` under
+runit, s6, or OpenRC instead.
+[`OPERATING_ENVIRONMENT.md`](OPERATING_ENVIRONMENT.md) covers both cases,
+including why Patina runs `enable-linger` for nobody.
 
 ### Drift notifications
 
-The watcher hashes every non-symlink managed target when it changes, and
+When a non-symlink managed target changes, the watcher hashes it and
 compares the result against the hash recorded at the last apply. Those
 targets are copy-mode files, copied directory trees, and rendered
-templates. On divergence it
-emits a desktop notification titled "Patina: drift detected" naming the
-target, and records the event in a drift cache at
-`<state>/patina/drift.cache`. Notifications are rate-limited to at most
-one per target per 60-second window. Symlink targets are not watched for
-drift: editing a symlinked file is editing the source, which the source
-watcher already catches.
+templates. On divergence it emits a desktop notification titled
+"Patina: drift detected" naming the target, and records the event in a
+drift cache at `<state>/patina/drift.cache`. Notifications are
+rate-limited to at most one per target per 60-second window. Editing a
+symlinked target is editing the source, which the source watcher already
+catches, so symlinks stay out of the drift hashing.
 
-Drift surfaces two ways, and you do not need the watcher running to see
-it the second way:
+Drift surfaces two ways:
 
 - As the desktop notification above, **only while the watcher is
   running**.
@@ -533,9 +505,8 @@ it the second way:
   drift by re-hashing the target live, independent of the watcher. A
   file you edit and then revert to its recorded bytes therefore reports
   `clean`, even though the watcher logged the intervening edit. The
-  drift cache is
-  the watcher's own notification ledger; `patina status` does not read
-  it.
+  drift cache is the watcher's own notification ledger, and
+  `patina status` never reads it.
 
 Resolve a drifted target either way:
 
@@ -571,74 +542,58 @@ target = "~/.claude/skills/humanizer/SKILL.md"
 
 Entries with and without a `remote` key sit side by side in one manifest,
 and one manifest may draw on several remotes. An entry with no `remote`
-key resolves against its module directory exactly as it always has.
+key resolves against its module directory.
 
-The commit each machine materializes lives in `patina.lock`, next to
-your root `patina.toml`, and is committed like any other file. That lets
-a remote update flow through your repository: you bump the pin
-on the machine you work from, commit it, and every other machine catches
-up with `git pull && patina apply`.
+`patina.lock` records the commit each machine materializes. It sits next
+to your root `patina.toml` and is committed like any other file. A remote
+update therefore moves like any other dotfile change: you bump the pin on
+the machine you work from, commit it, and every other machine catches up
+with `git pull && patina apply`.
 
 Bumping a pin is the moment third-party code changes what lands on your
 machines, so `patina remote update` slows it down. A candidate commit
-must not be dated in the future, and must descend from the pin you
-already have. It must not predate the pin's own timestamp, and must be at
-least `min_age` old (72 hours unless you say otherwise). Every byte still
-passes the ordinary diff-and-prompt loop before it reaches your
-filesystem. Patina never treats remote content as a template, and never
-reads it as configuration.
+must not be dated in the future, must descend from the pin you already
+have, must be no older than the pin's own timestamp, and must be at least
+`min_age` old (72 hours unless you say otherwise). Every byte then passes
+the ordinary diff-and-prompt loop before it reaches your filesystem.
+Patina never renders remote content as a template, and never reads it as
+configuration.
 
 Cached checkouts live in the per-machine [state
 directory](#state-directory) and are pruned automatically once no
 journal record needs them.
 
-Read [`REMOTE_SOURCES.md`](REMOTE_SOURCES.md) for the whole model. It
-covers the lockfile format, the cache layout, and each gate check with
-what it can and cannot stop. It also covers the shell snippets for the
-background update notice, and the multi-machine flow.
+Read [`REMOTE_SOURCES.md`](REMOTE_SOURCES.md) for the whole model: the
+lockfile format, the cache layout, each gate check with what it can and
+cannot stop, the shell snippets for the background update notice, and the
+multi-machine flow.
 
 ## State directory
 
 Patina writes its journal, backups, advisory lock, and drift cache to a
-**per-machine state directory** outside your dotfiles repository. The
-location is OS-appropriate:
+**per-machine state directory** outside your dotfiles repository, at
+`~/.local/state/patina/` on Linux, `~/Library/Application
+Support/patina/` on macOS, and `%LOCALAPPDATA%\patina\` on Windows.
 
-| OS      | State directory                          | Override                  |
-| ------- | ---------------------------------------- | ------------------------- |
-| Linux   | `~/.local/state/patina/`                 | `$XDG_STATE_HOME/patina/` |
-| macOS   | `~/Library/Application Support/patina/`  | (none in v1.0)            |
-| Windows | `%LOCALAPPDATA%\patina\`                 | (none in v1.0)            |
-
-The state directory must live on a local-disk filesystem. Patina's
-crash-safety guarantee depends on the journal being written atomically
-and surviving a `kill -9`; cloud-sync providers intermediate writes
-through their own queueing and versioning layers, which breaks atomic
-`fsync`, reorders recovery reads, and leaves the advisory lock
-undefined. **Patina does not detect cloud-sync directories in v1.0.**
-Keep both the state directory and your dotfiles repository off the
-following kinds of mounts:
-
-- iCloud Drive
-- OneDrive
-- Dropbox
-- Box
-- Google Drive
-- Syncthing
-
-If you must move the state directory, point `XDG_STATE_HOME` (Linux) at
-another local-disk path; do not point it at any of the providers above.
+Both that directory and your dotfiles repository must sit on local disk.
+A cloud-sync mount (iCloud Drive, OneDrive, Dropbox, Box, Google Drive,
+Syncthing) queues and versions writes behind your back, and that breaks
+the crash-safety guarantee under Recovery. **Patina does not detect one
+in v1.0.** See
+[`OPERATING_ENVIRONMENT.md`](OPERATING_ENVIRONMENT.md) for the directory
+layout, the `XDG_STATE_HOME` override, and what each failure mode looks
+like.
 
 ## Recovery
 
-Patina is built so an interrupted apply converges deterministically on
-the next run. If `patina apply` is killed mid-write, the filesystem
-ends up in either the pre-apply or the post-apply state. The next
-invocation reads the journal and rolls forward or back to reach a
-consistent state. This guarantee covers process termination (a
-`kill -9` or crash where the page cache survives); a power loss or
-kernel panic mid-apply is out of scope for v1.0.
+An interrupted apply converges deterministically on the next run. Kill
+`patina apply` mid-write and the filesystem ends up in either the
+pre-apply or the post-apply state; the next invocation reads the journal
+and rolls forward or back to reach a consistent one. That covers process
+termination (a `kill -9` or crash where the page cache survives). A power
+loss or kernel panic mid-apply is out of scope for v1.0.
 
-Two commands help you recover deliberately:
+Two commands recover deliberately:
 
 - `patina status` reports drift between what your configuration
   declares and what is currently on disk.
@@ -649,28 +604,26 @@ Two commands help you recover deliberately:
   Patina.
 
 For a post-mortem, `patina debug journal <path>` decodes the binary
-journal into human-readable form so you can see exactly what the
-interrupted or completed apply intended to do. The parallel
-`patina debug drift-cache <path>` decodes the watcher's binary drift
-cache (`<state>/patina/drift.cache`). It prints the version envelope, the
-journal timestamp the cache is bound to, and one block per recorded
-divergence. Each block names the target path, the expected and actual
-hashes, and the detection time. Both refuse a file written by a newer Patina with a typed
-error naming the version mismatch, and exit 1 on an invalid path.
+journal into human-readable form, showing what the interrupted or
+completed apply intended to do. `patina debug drift-cache <path>` does
+the same for the watcher's binary drift cache
+(`<state>/patina/drift.cache`): the version envelope, the journal
+timestamp the cache is bound to, and one block per recorded divergence,
+each naming the target path, the expected and actual hashes, and the
+detection time. Both refuse a file written by a newer Patina with a typed
+error naming the version mismatch, and both exit 1 on an invalid path.
 
 ## Troubleshooting
 
-- **`patina apply` writes nothing and only prints a plan.** You are in
-  a non-interactive shell. Apply falls through to plan-only when stdin
-  is not a TTY. Run it in an interactive terminal to get the
-  confirmation prompt.
-- **Symlink creation fails on Windows.** Enable Developer Mode or run
-  the command from an elevated (UAC) session so Patina has the
-  privilege to create symbolic links.
+- **`patina apply` writes nothing and only prints a plan.** Apply falls
+  through to plan-only when stdin is not a TTY. Run it in an interactive
+  terminal to get the confirmation prompt.
+- **Symlink creation fails on Windows.** Enable Developer Mode, or run
+  the command from an elevated (UAC) session.
 - **A template render fails with an undefined-variable error.** Patina
-  uses strict-undefined semantics on purpose. Define the variable in
-  the appropriate scope or profile rather than relying on an empty
-  default.
+  uses strict-undefined semantics. Define the variable in the
+  appropriate scope or profile; there is no empty default to fall back
+  on.
 - **Apply seems to hang.** Another `patina` process may hold the
   advisory lock. Patina waits up to a bounded timeout and then exits
   with the lock-timeout exit code; check for a concurrent apply or a

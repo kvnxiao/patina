@@ -20,7 +20,7 @@ assignees: []
 - [ ] <prerequisite work item X complete>
 - [ ] <prerequisite work item Y complete>
 
-If any are not yet complete, this issue should be picked up only after they are.
+Pick this issue up only once every prerequisite above is complete.
 
 ## Deliverables
 
@@ -28,7 +28,7 @@ If any are not yet complete, this issue should be picked up only after they are.
 
 ## Validation criteria
 
-<!-- How we know the work is correct. -->
+<!-- What shows the work is correct. -->
 
 - [ ] ✅ <criterion 1>
 - [ ] ✅ <criterion 2>
@@ -36,9 +36,9 @@ If any are not yet complete, this issue should be picked up only after they are.
 
 ## Implementer notes
 
-<!-- Anything specific to this implementation attempt. Useful when:
-     - The work has been attempted before and rolled back.
-     - There are open questions that need resolving first.
+<!-- Anything specific to this implementation attempt. Worth filling in when:
+     - A previous attempt was rolled back.
+     - Open questions need resolving first.
      - Manual validation steps need scheduling. -->
 
 ## Definition of done
