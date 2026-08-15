@@ -1,6 +1,5 @@
 <!--
-Thanks for contributing to patina! Fill out this template so reviewers
-(human or agent) can verify the change.
+Fill out this template so reviewers, human or agent, can verify the change.
 -->
 
 ## Summary
@@ -34,7 +33,7 @@ If any criteria are NOT addressed by this PR, explain why and what follow-up is 
 
 ## Documentation
 
-Both new docs and existing docs must stay current. Confirm each:
+New and existing docs both have to stay current. Confirm each:
 
 - [ ] User-facing docs (`docs/USER_GUIDE.md`) reflect any user-observable change (CLI flags, config schema, output format, install/setup steps).
 - [ ] Architecture doc (`docs/ARCHITECTURE.md`) reflects any module / data-flow / abstraction change.
@@ -52,7 +51,7 @@ If a checkbox doesn't apply (no observable change in that area), state that expl
 - [ ] `cargo fmt --all --check` passes.
 - [ ] `cargo doc --workspace --no-deps --all-features` builds clean (with `RUSTDOCFLAGS=-D warnings`).
 - [ ] `cargo deny check` passes.
-- [ ] Coverage threshold (≥85% lines) holds.
+- [ ] Line coverage stays at or above 85%.
 - [ ] MSRV job (`cargo build` against the documented `rust-version`) passes.
 - [ ] If a manual validation checklist applies, it is signed off under `docs/manual-validation/`.
 
@@ -63,4 +62,4 @@ If a checkbox doesn't apply (no observable change in that area), state that expl
 
 ---
 
-*If you are an agent, identify yourself in a `Co-authored-by:` trailer in your final commit (e.g., `Co-authored-by: claude-opus-4-7 <noreply@anthropic.com>`).*
+*If you are an agent, name yourself in a `Co-authored-by:` trailer on your final commit (e.g. `Co-authored-by: claude-opus-5 <noreply@anthropic.com>`).*

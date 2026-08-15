@@ -4,18 +4,18 @@
 
 Your dotfiles, oxidized to perfection.
 
-`patina` is a symlink-first, multi-destination, layered dotfile manager
-written in Rust. It manages your dotfiles across macOS, Linux, and Windows
-from a single centralized git repository. It primarily creates symbolic
-links from that repo to system locations, with optional templated copies,
-profile-based selection, and per-OS variation. It also supports
-multi-destination links (one source to many targets), an always-on watcher
-with per-OS service installation, and crash-safe transactional apply.
+`patina` is a dotfile manager written in Rust. One centralized git
+repository drives macOS, Linux, and Windows. Most targets are symbolic
+links back into that repo; a `.tmpl` source renders through MiniJinja, and
+a byte copy covers what a link cannot. Profiles and per-OS variation pick
+what lands on this machine, and one source can fan out to many targets. A
+background watcher re-applies on change, installed as a per-OS service.
+Apply is transactional: a `kill -9` mid-run leaves either the pre-apply
+or the post-apply state.
 
 **Status:** Pre-release (`0.1.0`), in active development. The v1.0 command
-surface is implemented and tested on macOS, Linux, and Windows, but there
-are no published binaries yet. Install from source (below). Interfaces may
-still shift before a tagged release.
+surface is implemented and tested on macOS, Linux, and Windows. Interfaces
+may still shift before a tagged release.
 
 ## Install
 
@@ -28,8 +28,8 @@ patina --version
 ```
 
 On Windows, creating symbolic links requires either Developer Mode enabled
-or an elevated (UAC) session; `patina doctor --fix` walks you through
-enabling Developer Mode.
+or an elevated (UAC) session. `patina doctor --fix` offers to turn
+Developer Mode on under a single UAC prompt.
 
 ## Quick start
 
@@ -53,7 +53,9 @@ patina watch install        # auto-reapply on change via a per-OS background ser
 | `status` | Classify each managed target: `clean` / `drifted` / `missing` / `orphaned`. |
 | `rollback` | Reverse the most recent successful apply from the journal and backups. |
 | `doctor` | Inspect the environment for known problems; `--fix` interactively remediates fixable findings. |
+| `remote` | Manage third-party git sources: `list` the pins, `check` upstream tips, `update` a pin through the update gate, `prune` cached checkouts. |
 | `watch` | `--foreground` runs the watcher inline; `install` / `uninstall` / `start` / `stop` / `restart` / `status` manage the per-OS background service. |
+| `defender` | Windows only. `status` / `apply` / `clear` manage Microsoft Defender path exclusions for the repo and its targets. |
 | `debug journal` / `debug drift-cache` | Decode the binary journal / drift cache for post-mortem inspection. |
 
 Every command except the `debug` family accepts `--json` for
@@ -73,10 +75,10 @@ accept `--yes` to skip the prompt.
 
 ## Design
 
-`patina` is built spec-first. Each slice of the product is designed,
-decomposed, implemented, and reviewed against written requirements with
-acceptance scenarios before it ships. See [`AGENTS.md`](AGENTS.md) for the
-product north star and the contributor workflow.
+`patina` is built spec-first. Every slice gets written requirements and
+acceptance scenarios before anyone implements it, and review checks the
+code against them. See [`AGENTS.md`](AGENTS.md) for the product north star
+and the contributor workflow.
 
 ## Contributing
 
@@ -103,9 +105,9 @@ See [`.githooks/README.md`](.githooks/README.md) for details, the git 2.54
 just check        # = just lint + just test; run before opening a PR
 ```
 
-CI runs the same gates natively across macOS, Linux, and Windows. A green
-local `just check` is necessary but not sufficient. The full per-OS test
-behaviour matrix, the MSRV build, and coverage run only in CI.
+CI runs the same gates natively across macOS, Linux, and Windows, plus the
+per-OS test-behaviour matrix, the MSRV build, and coverage. Watch the PR
+checks after pushing.
 
 ## License
 
