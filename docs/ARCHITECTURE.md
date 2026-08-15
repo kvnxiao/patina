@@ -179,6 +179,42 @@ sequenceDiagram
    formalized exit-code funnel. Mutations and read-only commands
    coordinate through an advisory file lock.
 
+### Tree enumeration and `ignore`
+
+Every phase of a tree-mode entry has to agree on which leaves it owns:
+plan-time classification, target-collision claims, the executors, the
+committed journal record, and the managed-target set that `status` and the
+orphan reap consult. They share one enumerator, `apply::walk_files`, which
+takes a compiled matcher and prunes ignored directories during descent
+rather than filtering a flat result list. Pruning at descent avoids reading
+inside `__pycache__`. It also drops the nested `__pycache__/x.pyc`. A flat
+filter would keep that file, because gitignore matching tests one path at a
+time and a directory pattern never matches a file inside it.
+
+The matcher is built once per entry, in `ignore_rules::build`, from the root
+manifest's `[patina] ignore` followed by the entry's own list, anchored at
+the entry's canonical source. The resolved entry stores it, and every phase
+downstream of planning reuses it instead of recompiling.
+
+One walk deliberately does not prune. `insert_managed_targets` enumerates
+unfiltered and partitions each leaf into managed or ignored, because
+attributing a reap to a pattern requires seeing the leaves that pattern
+dropped. Each leaf goes through `ignore_rules::prunes`, which replays the
+walk's decision for one relative path; that function's doc comment says why
+neither `Gitignore` method substitutes for it. The partition lets
+`plan_orphans` return `ignored` rather than an unexplained removal. Its cost:
+`status` and the reap read inside ignored directories, where the executor
+path never does.
+
+An entry whose leaves are all ignored materializes nothing, because both
+executors create leaf directories on demand. Classification walks before
+calling an absent target a `Create`, so such an entry settles instead of
+re-prompting on every apply.
+
+No on-disk format changes: an ignored leaf never enters the `ApplyRecord`,
+and reap reasons are computed at plan time by diffing that record against
+the current managed set.
+
 ## Recovery
 
 A `kill -9` mid-apply leaves the filesystem in either the pre-apply or

@@ -50,12 +50,14 @@ use patina_core::EngineError;
 use patina_core::FileMode;
 use patina_core::LockError;
 use patina_core::LockKind;
+use patina_core::OrphanReason;
 use patina_core::SHARED_TIMEOUT;
 use patina_core::acquire_lock;
 use patina_core::dev_mode_status;
 use patina_core::discover_modules;
 use patina_core::exclusive_timeout;
 use patina_core::is_unc_path;
+use patina_core::journal_orphans;
 use patina_core::parse_module_config;
 use patina_core::parse_root_config;
 use patina_core::persisted_default_present;
@@ -100,6 +102,9 @@ pub enum FindingCode {
     /// The repository declares a remote-backed module but no `git` binary
     /// resolves on `PATH`.
     NoGit,
+    /// A prior apply materialized targets that the current `ignore` lists now
+    /// exclude, so the next apply will reap them.
+    IgnoredDeployed,
 }
 
 impl FindingCode {
@@ -113,6 +118,7 @@ impl FindingCode {
             FindingCode::WinOsOld => "DOC-WIN-OSOLD",
             FindingCode::NoDefaultRepo => "DOC-NO-DEFAULT-REPO",
             FindingCode::NoGit => "DOC-NO-GIT",
+            FindingCode::IgnoredDeployed => "DOC-IGNORED-DEPLOYED",
         }
     }
 }
@@ -178,6 +184,10 @@ pub struct Inputs {
     pub repo_declares_remote: bool,
     /// Whether a `git` binary resolves on `PATH`.
     pub git_available: bool,
+    /// Targets a prior apply materialized that the current ignore lists now
+    /// exclude, sorted by path. Empty when there is no prior commit, when
+    /// nothing is ignored, or when the query failed.
+    pub ignored_deployed: Vec<Utf8PathBuf>,
 }
 
 /// Run `patina doctor`. Returns the process exit code.
@@ -293,7 +303,10 @@ fn run_fix(
             }
             // Non-fixable findings: surface the warning, name why Patina
             // cannot remedy them, and move on.
-            FindingCode::WinUnc | FindingCode::WinOsOld | FindingCode::NoGit => {
+            FindingCode::WinUnc
+            | FindingCode::WinOsOld
+            | FindingCode::NoGit
+            | FindingCode::IgnoredDeployed => {
                 reporter.warn(&format!(
                     "[{}] {} is not auto-fixable: {}",
                     finding.level.label(),
@@ -469,7 +482,31 @@ fn gather_inputs(state: &Utf8Path) -> Inputs {
         default_repo_present: persisted_default_present(state),
         repo_declares_remote,
         git_available: patina_core::git_available(),
+        ignored_deployed: deployed_but_now_ignored(state),
     }
+}
+
+/// Targets the last committed apply materialized that the current ignore lists
+/// now exclude.
+///
+/// Read-only and best-effort. A repository that cannot be planned, a state
+/// directory with no commit, or a manifest that fails to parse all yield an
+/// empty list rather than an error. The next `apply` reaps the same set behind
+/// its diff-and-prompt, so this finding only warns.
+fn deployed_but_now_ignored(state: &Utf8Path) -> Vec<Utf8PathBuf> {
+    // The reap set filtered by reason, not a second query over
+    // `managed.ignored`: the reap also skips a target already gone from disk, a
+    // directory, and one a second entry still governs.
+    let Ok(orphans) = journal_orphans(&state.join("journal")) else {
+        return Vec::new();
+    };
+    let mut found: Vec<Utf8PathBuf> = orphans
+        .into_iter()
+        .filter(|orphan| matches!(orphan.reason, OrphanReason::Ignored))
+        .map(|orphan| orphan.target)
+        .collect();
+    found.dedup();
+    found
 }
 
 /// Whether `repo_root`'s manifest declares any `[[remote]]`. A root manifest
@@ -588,6 +625,21 @@ pub fn compute_findings(inputs: &Inputs) -> Vec<Finding> {
                       git, so `apply` cannot materialize a pin that is not already cached."
                 .to_owned(),
             path: None,
+        });
+    }
+
+    if let Some(first) = inputs.ignored_deployed.first() {
+        let count = inputs.ignored_deployed.len();
+        let noun = if count == 1 { "target" } else { "targets" };
+        findings.push(Finding {
+            code: FindingCode::IgnoredDeployed,
+            level: Level::Warning,
+            message: format!(
+                "a prior apply materialized {count} {noun} that an `ignore` list now \
+                 excludes; the next `patina apply` reaps them and names `ignored` \
+                 as the reason."
+            ),
+            path: Some(first.clone()),
         });
     }
 
@@ -784,6 +836,7 @@ mod tests {
             default_repo_present: true,
             repo_declares_remote: false,
             git_available: true,
+            ignored_deployed: Vec::new(),
         }
     }
 
@@ -899,6 +952,7 @@ mod tests {
             default_repo_present: true,
             repo_declares_remote: false,
             git_available: true,
+            ignored_deployed: Vec::new(),
         };
         let findings = compute_findings(&inputs);
         assert!(
@@ -1024,6 +1078,7 @@ mod tests {
             default_repo_present: false,
             repo_declares_remote: false,
             git_available: true,
+            ignored_deployed: Vec::new(),
         };
         let findings = compute_findings(&inputs);
         assert_eq!(

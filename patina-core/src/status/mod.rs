@@ -72,6 +72,15 @@ pub struct ManagedTargets {
     pub indeterminate_roots: BTreeSet<Utf8PathBuf>,
     /// The remotes whose checkouts those roots are waiting on, for reporting.
     pub unmaterialized_remotes: BTreeSet<String>,
+    /// Target keys ([`manage_key`] form) of leaves that exist in a source tree
+    /// but that the entry's ignore rules exclude.
+    ///
+    /// These are *not* managed: they are absent from
+    /// [`targets`](Self::targets), and [`governs`](Self::governs) answers false
+    /// for them. Tracking them separately lets a reap say *why* it is removing
+    /// a target the last apply deployed. An author who adds `*.pyc` today
+    /// should read "ignored" tomorrow rather than an unexplained deletion.
+    pub ignored: BTreeSet<Utf8PathBuf>,
 }
 
 impl ManagedTargets {

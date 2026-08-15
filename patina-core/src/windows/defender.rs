@@ -1110,6 +1110,7 @@ mod tests {
                 })
                 .collect(),
             entry_index: 0,
+            ignore_rules: crate::ignore_rules::none(),
         }
     }
 
