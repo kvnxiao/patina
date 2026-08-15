@@ -256,9 +256,7 @@ clean: 1  drifted: 1  missing: 1  orphaned: 1
 ```
 
 On a terminal the state word is green (clean), yellow (drifted), red
-(missing), or magenta (orphaned). An orphan is a leftover awaiting a
-reap, not a severity, so it sits off the green-yellow-red scale. The
-summary paints only
+(missing), or magenta (orphaned). The summary paints only
 a non-zero counter, so a clean repository reads at a glance. Every state
 is in the text as well, and a stripped run loses the color alone.
 
@@ -623,7 +621,7 @@ error naming the version mismatch, and both exit 1 on an invalid path.
 - **Symlink creation fails on Windows.** Enable Developer Mode, or run
   the command from an elevated (UAC) session.
 - **A template render fails with an undefined-variable error.** Patina
-  uses strict-undefined semantics on purpose. Define the variable in the
+  uses strict-undefined semantics. Define the variable in the
   appropriate scope or profile; there is no empty default to fall back
   on.
 - **Apply seems to hang.** Another `patina` process may hold the

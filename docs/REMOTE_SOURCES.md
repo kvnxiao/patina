@@ -285,9 +285,8 @@ prompts    2d5f8c1a4e7b0936d8f2a5c1e4b7d0a3f6c9e250  (unknown)                  
 `FROM` is the pin as the lockfile recorded it, `TO` the candidate the run
 considered, and `STATUS` what became of the pin. A `TO` equal to its
 `FROM` prints `-`, because two identical forty-character hashes read as a
-change until you compare them. The two blanks are worded apart on
-purpose: `(unpinned)` means no pin was recorded, `(unknown)` that the run
-never learned a candidate. The table prints a row for a remote that
+change until you compare them. `(unpinned)` means no pin was recorded;
+`(unknown)` means the run never learned a candidate. The table prints a row for a remote that
 failed or was refused too, accounting for the whole run; the reason stays
 on stderr with the warning. The rows come after the run because `remote
 update` interleaves warnings and confirmation prompts as it goes. Color
@@ -478,8 +477,7 @@ naming the leaf and the directory target it came from.
 
 The leaves are read from the source tree as it stands, so a file
 appearing upstream under a tree source can fail a plan that passed
-yesterday. That failure lands before any write, the correct outcome when
-a tree grows an unexpected file.
+yesterday. That failure lands before any write.
 
 Both comparisons ignore case and Unicode normal form, on every platform.
 Windows and macOS resolve two targets differing only in case to one file,
