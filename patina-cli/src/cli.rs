@@ -359,6 +359,12 @@ pub struct AddArgs {
     /// Proceed without prompting. `add` is a mutating command.
     #[arg(long)]
     pub yes: bool,
+
+    /// Add the path even when a tree-mode entry's `ignore` list already
+    /// excludes it. Separate from `--yes`, which only skips prompts: this
+    /// overrides a validation refusal.
+    #[arg(long)]
+    pub force: bool,
 }
 
 /// Flags for `patina remove`.

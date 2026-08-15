@@ -41,6 +41,7 @@ use patina_core::Builtins;
 use patina_core::FileMode;
 use patina_core::Resolver;
 use patina_core::TemplateEngine;
+use patina_core::ignore_rules;
 use patina_core::materialize;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -153,6 +154,7 @@ fn non_windows_write_failure_surfaces_without_retry_event() {
             std::slice::from_ref(&target),
             &TemplateEngine::new(),
             &resolver(),
+            &ignore_rules::none(),
         )
     });
 
@@ -222,6 +224,7 @@ fn non_windows_symlink_failure_surfaces_without_retry_event() {
             std::slice::from_ref(&target),
             &TemplateEngine::new(),
             &resolver(),
+            &ignore_rules::none(),
         )
     });
 

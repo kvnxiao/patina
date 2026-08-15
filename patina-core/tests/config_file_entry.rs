@@ -482,3 +482,106 @@ target = "~/.zshrc"
         "kevin@example.com"
     );
 }
+
+#[test]
+fn tree_modes_accept_an_ignore_list_in_declaration_order() {
+    let toml = r#"
+[[directory]]
+source = "scripts"
+target = "~/bin"
+mode = "symlink-tree"
+ignore = ["__pycache__/", "*.pyc"]
+
+[[directory]]
+source = "fonts"
+target = "~/.fonts"
+mode = "copy"
+ignore = [".DS_Store"]
+"#;
+    let config = parse_module_config_str(toml).expect("parse succeeds");
+    assert_eq!(config.directories.len(), 2);
+    assert_eq!(config.directories[0].mode, FileMode::SymlinkTree);
+    assert_eq!(config.directories[0].ignore, ["__pycache__/", "*.pyc"]);
+    assert_eq!(config.directories[1].mode, FileMode::CopyTree);
+    assert_eq!(config.directories[1].ignore, [".DS_Store"]);
+}
+
+#[test]
+fn a_file_entry_declaring_ignore_is_refused() {
+    let toml = r#"
+[[file]]
+source = "zshrc"
+target = "~/.zshrc"
+ignore = ["*.pyc"]
+"#;
+    let err = parse_module_config_str(toml).expect_err("a [[file]] has no tree to filter");
+    assert!(
+        matches!(
+            err,
+            ConfigParseError::FileEntry(FileEntryError::FileIgnoreDeclared { .. })
+        ),
+        "got {err:?}"
+    );
+}
+
+#[test]
+fn a_whole_directory_symlink_declaring_ignore_is_refused() {
+    // The refusal matters more here than for a [[file]]: accepting it would
+    // leave the author believing the listed paths are filtered while the
+    // single link keeps exposing the whole directory.
+    let toml = r#"
+[[directory]]
+source = "mpv"
+target = "~/.config/mpv"
+ignore = ["*.log"]
+"#;
+    let err = parse_module_config_str(toml).expect_err("one atomic link filters nothing");
+    assert!(
+        matches!(
+            err,
+            ConfigParseError::FileEntry(FileEntryError::DirectorySymlinkIgnoreDeclared { .. })
+        ),
+        "got {err:?}"
+    );
+    assert!(
+        err.to_string().contains("symlink-tree"),
+        "the message must route the author to the mode that does filter, got: {err}"
+    );
+}
+
+#[test]
+fn a_module_level_patina_ignore_is_refused() {
+    // Only the root manifest's `[patina]` table is read, so accepting this
+    // would compile no matcher and filter nothing.
+    let toml = r#"
+[patina]
+ignore = ["*.pyc"]
+
+[[directory]]
+source = "scripts"
+target = "~/bin"
+mode = "symlink-tree"
+"#;
+    let err = parse_module_config_str(toml).expect_err("ignore is root-only");
+    assert!(
+        matches!(err, ConfigParseError::ModuleIgnoreList),
+        "got {err:?}"
+    );
+}
+
+#[test]
+fn a_module_manifest_without_an_ignore_key_still_parses() {
+    // The root marker lives in the same table; rejecting `ignore` must not
+    // reject the table wholesale.
+    let toml = r#"
+[patina]
+root = true
+
+[[directory]]
+source = "scripts"
+target = "~/bin"
+mode = "symlink-tree"
+"#;
+    let config = parse_module_config_str(toml).expect("a [patina] table without ignore is fine");
+    assert_eq!(config.directories.len(), 1);
+}

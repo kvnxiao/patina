@@ -233,6 +233,11 @@ pub enum ExecutorError {
 /// **once** against `resolver` and the same bytes are written to each
 /// target; `resolver`/`engine` are unused by the non-template modes.
 ///
+/// `rules` filters the modes that walk a source tree.
+/// [`SymlinkDir`](FileMode::SymlinkDir), [`Copy`](FileMode::Copy), and
+/// [`TemplateRender`](FileMode::TemplateRender) enumerate nothing and ignore
+/// it. Pass [`crate::ignore_rules::none`] to filter nothing.
+///
 /// Returns one [`CompletionRecord`] per materialized filesystem object,
 /// in target order (and, for the directory-source symlink walk, in
 /// walk order within each target).
@@ -250,13 +255,14 @@ pub fn materialize(
     targets: &[Utf8PathBuf],
     engine: &Engine,
     resolver: &Resolver,
+    rules: &ignore::gitignore::Gitignore,
 ) -> Result<Vec<CompletionRecord>, ExecutorError> {
     match mode {
-        FileMode::Symlink => symlink::per_file_symlink(source, targets),
+        FileMode::Symlink => symlink::per_file_symlink(source, targets, rules),
         FileMode::SymlinkDir => symlink::dir_symlink(source, targets),
-        FileMode::SymlinkTree => symlink::tree_symlink(source, targets, LeafWrite::All),
+        FileMode::SymlinkTree => symlink::tree_symlink(source, targets, LeafWrite::All, rules),
         FileMode::Copy => copy::copy_file(source, targets),
-        FileMode::CopyTree => copy::copy_tree(source, targets, LeafWrite::All),
+        FileMode::CopyTree => copy::copy_tree(source, targets, LeafWrite::All, rules),
         FileMode::TemplateRender => template::render(source, targets, engine, resolver),
     }
 }
@@ -280,11 +286,12 @@ pub(crate) fn materialize_tree(
     source: &Utf8Path,
     target: &Utf8Path,
     write: LeafWrite<'_>,
+    rules: &ignore::gitignore::Gitignore,
 ) -> Result<Vec<CompletionRecord>, ExecutorError> {
     let targets = [target.to_path_buf()];
     match mode {
-        FileMode::CopyTree => copy::copy_tree(source, &targets, write),
-        FileMode::SymlinkTree => symlink::tree_symlink(source, &targets, write),
+        FileMode::CopyTree => copy::copy_tree(source, &targets, write, rules),
+        FileMode::SymlinkTree => symlink::tree_symlink(source, &targets, write, rules),
         FileMode::Symlink | FileMode::SymlinkDir | FileMode::Copy | FileMode::TemplateRender => {
             Err(ExecutorError::NotADirectory {
                 path: source.to_path_buf(),
@@ -311,27 +318,41 @@ fn ensure_parent(target: &Utf8Path) -> Result<(), ExecutorError> {
     Ok(())
 }
 
-/// Walk `root` and collect every regular file as a path relative to `root`, in
-/// deterministic sorted order. The same source tree therefore produces the
-/// same record sequence across runs and platforms.
+/// Walk `root` and collect every regular file `rules` does not ignore, as a
+/// path relative to `root`, in deterministic sorted order. The same source tree
+/// therefore produces the same record sequence across runs and platforms.
 ///
-/// Shared by the directory-source symlink walk ([`symlink`]), the recursive
-/// copy ([`copy`]), and the status managed-set's `symlink-tree` leaf
-/// expansion ([`engine::current_managed_targets`]): all mirror a source tree
-/// to each target one file at a time, so all need the same relative-file
-/// enumeration in the same deterministic order.
-pub(crate) fn walk_files(root: &Utf8Path) -> Result<Vec<Utf8PathBuf>, ExecutorError> {
+/// Every phase of a tree-mode entry shares this one enumeration: both
+/// executors, plan-time classification, target-collision claims, the committed
+/// journal record, and the status managed set. Because two of them disagreeing
+/// would desynchronize the journal record from what was materialized, no
+/// unfiltered variant exists; a caller with no list to apply passes
+/// [`crate::ignore_rules::none`]. The one caller that must walk unfiltered asks
+/// [`crate::ignore_rules::prunes`] which leaves this walk would have skipped.
+///
+/// An ignored directory is never descended, so a `__pycache__/` pattern costs
+/// one match rather than a walk of everything inside it.
+///
+/// # Errors
+///
+/// Returns [`ExecutorError::Io`] when a directory under `root` cannot be read,
+/// or when it holds a non-UTF-8 path.
+pub fn walk_files(
+    root: &Utf8Path,
+    rules: &ignore::gitignore::Gitignore,
+) -> Result<Vec<Utf8PathBuf>, ExecutorError> {
     let mut out = Vec::new();
-    walk_into(root, root, &mut out)?;
+    walk_into(root, root, rules, &mut out)?;
     out.sort();
     Ok(out)
 }
 
 /// Recursive helper for [`walk_files`]: descend `dir`, pushing each
-/// regular file's path relative to `base` into `out`.
+/// regular file's path relative to `base` into `out` unless `rules` ignores it.
 fn walk_into(
     base: &Utf8Path,
     dir: &Utf8Path,
+    rules: &ignore::gitignore::Gitignore,
     out: &mut Vec<Utf8PathBuf>,
 ) -> Result<(), ExecutorError> {
     let entries = fs_err::read_dir(dir.as_std_path()).map_err(|source| ExecutorError::Io {
@@ -354,16 +375,20 @@ fn walk_into(
             path: path.clone(),
             source,
         })?;
-        if file_type.is_dir() {
-            walk_into(base, &path, out)?;
+        // `path` was built by descending from `base` and always carries it as
+        // a prefix; the full-path fallback only keeps the helper total. The
+        // rules anchor at `base` and match this relative form.
+        let rel = match path.strip_prefix(base) {
+            Ok(rel) => rel.to_path_buf(),
+            Err(_) => path.clone(),
+        };
+        let is_dir = file_type.is_dir();
+        if rules.matched(&rel, is_dir).is_ignore() {
+            continue;
+        }
+        if is_dir {
+            walk_into(base, &path, rules, out)?;
         } else {
-            // `path` was built by descending from `base`, so it always
-            // carries `base` as a prefix; fall back to the full path only
-            // to keep the helper total.
-            let rel = match path.strip_prefix(base) {
-                Ok(rel) => rel.to_path_buf(),
-                Err(_) => path.clone(),
-            };
             out.push(rel);
         }
     }
@@ -401,6 +426,7 @@ mod tests {
             std::slice::from_ref(&target),
             &Engine::new(),
             &resolver(),
+            &crate::ignore_rules::none(),
         )
         .expect("copy materializes");
 
@@ -426,7 +452,7 @@ mod tests {
         fs_err::create_dir_all(root.join("z")).expect("mkdir z");
         fs_err::write(root.join("z").join("zz.txt"), b"1").expect("write zz");
         fs_err::write(root.join("a.txt"), b"2").expect("write a");
-        let files = walk_files(&root).expect("walk");
+        let files = walk_files(&root, &crate::ignore_rules::none()).expect("walk");
         // Compare on component sequences so the assertion is independent
         // of the platform path separator.
         let as_components: Vec<Vec<&str>> = files
@@ -434,5 +460,68 @@ mod tests {
             .map(|p| p.components().map(|c| c.as_str()).collect())
             .collect();
         assert_eq!(as_components, vec![vec!["a.txt"], vec!["z", "zz.txt"]]);
+    }
+
+    #[test]
+    fn walk_files_prunes_an_ignored_directory_instead_of_descending_it() {
+        // A flat filter over the result list would keep the nested `mod.pyc`: a
+        // `__pycache__/` pattern does not match `__pycache__/mod.pyc`.
+        let (_td, dir) = utf8_tempdir();
+        let root = dir.join("scripts");
+        fs_err::create_dir_all(root.join("__pycache__")).expect("mkdir cache");
+        fs_err::write(root.join("__pycache__").join("mod.pyc"), b"x").expect("write pyc");
+        fs_err::write(root.join("run.py"), b"y").expect("write script");
+
+        let rules = crate::ignore_rules::build(&[], &["__pycache__/".to_owned()], &root)
+            .expect("rules build");
+        let files = walk_files(&root, &rules).expect("walk");
+
+        assert_eq!(files, vec![Utf8PathBuf::from("run.py")]);
+    }
+
+    #[test]
+    fn prunes_predicts_this_walk_on_every_path_in_a_tree() {
+        // The reap walks unfiltered and asks `prunes` which leaves this walk
+        // dropped; a disagreement strands a deployed target (see
+        // `ignore_rules::prunes`). The pattern set mixes both levels, a
+        // negation the walk can reach (`keep.pyc`) and one it cannot
+        // (`build/keep.txt`).
+        let (_td, dir) = utf8_tempdir();
+        let root = dir.join("scripts");
+        fs_err::create_dir_all(root.join("__pycache__")).expect("mkdir cache");
+        fs_err::create_dir_all(root.join("build")).expect("mkdir build");
+        fs_err::create_dir_all(root.join("pkg").join("__pycache__")).expect("mkdir nested cache");
+        fs_err::write(root.join("run.py"), b"a").expect("write script");
+        fs_err::write(root.join("a.pyc"), b"b").expect("write loose pyc");
+        fs_err::write(root.join("keep.pyc"), b"c").expect("write keep");
+        fs_err::write(root.join("__pycache__").join("mod.pyc"), b"d").expect("write cached");
+        fs_err::write(root.join("build").join("keep.txt"), b"e").expect("write built keep");
+        fs_err::write(root.join("pkg").join("__pycache__").join("m.pyc"), b"f")
+            .expect("write nested cached");
+
+        let rules = crate::ignore_rules::build(
+            &["*.pyc".to_owned(), "__pycache__/".to_owned()],
+            &[
+                "!keep.pyc".to_owned(),
+                "build/".to_owned(),
+                "!build/keep.txt".to_owned(),
+            ],
+            &root,
+        )
+        .expect("rules build");
+
+        let kept = walk_files(&root, &rules).expect("filtered walk");
+        let predicted: Vec<Utf8PathBuf> = walk_files(&root, &crate::ignore_rules::none())
+            .expect("unfiltered walk")
+            .into_iter()
+            .filter(|rel| !crate::ignore_rules::prunes(&rules, rel))
+            .collect();
+
+        assert_eq!(kept, predicted);
+        assert_eq!(
+            kept,
+            vec![Utf8PathBuf::from("keep.pyc"), Utf8PathBuf::from("run.py")],
+            "agreement proves nothing unless the filter dropped something"
+        );
     }
 }

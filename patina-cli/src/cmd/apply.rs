@@ -33,6 +33,7 @@ use patina_core::ForceDeploy;
 use patina_core::GateDecision;
 use patina_core::HostDevModeProbe;
 use patina_core::LockPolicy;
+use patina_core::Orphan;
 use patina_core::ResolvedPlan;
 use patina_core::current_timestamp;
 use patina_core::decide_symlink_gate;
@@ -449,12 +450,16 @@ async fn run_json(
 /// function of the disposition, so it inherits the deterministic-stdout
 /// contract.
 ///
-/// `reaped` lists the target paths this run would remove: orphans of a prior
-/// apply the current plan no longer manages. They are not plan operations, so
-/// they are reported in their own array rather than as `plan` rows; the human
-/// diff renders the same set as `remove` blocks. `plan_orphans` sorted them,
-/// so the array is a stable function of the reap set.
-fn json_envelope(resolved: &ResolvedPlan, reaped: &[camino::Utf8PathBuf], result: &str) -> String {
+/// `reaped` lists what this run would remove: orphans of a prior apply the
+/// current plan no longer manages. They are not plan operations, so they are
+/// reported in their own array rather than as `plan` rows; the human diff
+/// renders the same set as `remove` blocks. Each row is an object carrying the
+/// `target` and the `reason` it fell out of the managed set
+/// ([`OrphanReason::label`](patina_core::OrphanReason::label)), so a consumer
+/// can tell a deletion caused by a new `ignore` pattern from one caused by a
+/// dropped entry. `plan_orphans` sorted them by target, so the array is a
+/// stable function of the reap set.
+fn json_envelope(resolved: &ResolvedPlan, reaped: &[Orphan], result: &str) -> String {
     let plan: Vec<serde_json::Value> = resolved
         .operations
         .iter()
@@ -465,7 +470,15 @@ fn json_envelope(resolved: &ResolvedPlan, reaped: &[camino::Utf8PathBuf], result
                 .flat_map(move |(target, disposition)| plan_rows(op, target, disposition))
         })
         .collect();
-    let reaped: Vec<&str> = reaped.iter().map(|p| p.as_str()).collect();
+    let reaped: Vec<serde_json::Value> = reaped
+        .iter()
+        .map(|orphan| {
+            serde_json::json!({
+                "target": orphan.target.as_str(),
+                "reason": orphan.reason.label(),
+            })
+        })
+        .collect();
     let envelope = serde_json::json!({
         "repo_root": resolved.repo_root.as_str(),
         "profile": resolved.profile,
@@ -529,7 +542,7 @@ fn mode_label(mode: patina_core::FileMode) -> &'static str {
 /// Render the diff, honouring `--pager` with a PATH-resolution fallback.
 fn render_diff(
     resolved: &ResolvedPlan,
-    orphans: &[camino::Utf8PathBuf],
+    orphans: &[Orphan],
     pager: Option<Pager>,
     reporter: &mut impl Reporter,
 ) -> Result<String> {

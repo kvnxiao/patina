@@ -13,6 +13,7 @@ use super::ensure_parent;
 use super::with_sharing_violation_retry;
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
+use ignore::gitignore::Gitignore;
 
 /// Single-file [`Copy`](crate::config::FileMode::Copy) executor: copy the
 /// source bytes to each target.
@@ -54,10 +55,14 @@ pub(super) fn copy_file(
 /// produces no [`CompletionRecord`]: only the leaves this executor actually
 /// wrote are returned, so the orchestrator's progress cursor and hook-failure
 /// reversal act solely on real writes.
+///
+/// `rules` filters the leaf enumeration: an ignored leaf is never copied and
+/// never produces a record, and an ignored directory is not descended.
 pub(super) fn copy_tree(
     source: &Utf8Path,
     targets: &[Utf8PathBuf],
     write: LeafWrite<'_>,
+    rules: &Gitignore,
 ) -> Result<Vec<CompletionRecord>, ExecutorError> {
     let metadata = fs_err::symlink_metadata(source).map_err(|err| {
         if err.kind() == std::io::ErrorKind::NotFound {
@@ -77,7 +82,7 @@ pub(super) fn copy_tree(
         });
     }
 
-    let relative_files = super::walk_files(source)?;
+    let relative_files = super::walk_files(source, rules)?;
     let mut records = Vec::new();
     for target in targets {
         for rel in &relative_files {
@@ -150,8 +155,13 @@ mod tests {
         fs_err::write(src.join("nested").join("deep.txt"), b"deep").expect("write deep");
         let target = dir.join("dest");
 
-        let records =
-            copy_tree(&src, std::slice::from_ref(&target), LeafWrite::All).expect("copy tree");
+        let records = copy_tree(
+            &src,
+            std::slice::from_ref(&target),
+            LeafWrite::All,
+            &crate::ignore_rules::none(),
+        )
+        .expect("copy tree");
 
         assert_eq!(records.len(), 2);
         assert_eq!(
@@ -178,8 +188,13 @@ mod tests {
 
         let only: std::collections::BTreeSet<Utf8PathBuf> =
             std::iter::once(Utf8PathBuf::from("a.txt")).collect();
-        let records = copy_tree(&src, std::slice::from_ref(&target), LeafWrite::Only(&only))
-            .expect("partial copy tree");
+        let records = copy_tree(
+            &src,
+            std::slice::from_ref(&target),
+            LeafWrite::Only(&only),
+            &crate::ignore_rules::none(),
+        )
+        .expect("partial copy tree");
 
         assert_eq!(records.len(), 1, "only the selected leaf is recorded");
         assert_eq!(
@@ -198,8 +213,13 @@ mod tests {
         let (_td, dir) = utf8_tempdir();
         let source = dir.join("file");
         fs_err::write(&source, b"x").expect("write file");
-        let err =
-            copy_tree(&source, &[dir.join("t")], LeafWrite::All).expect_err("file source rejected");
+        let err = copy_tree(
+            &source,
+            &[dir.join("t")],
+            LeafWrite::All,
+            &crate::ignore_rules::none(),
+        )
+        .expect_err("file source rejected");
         assert!(matches!(err, ExecutorError::NotADirectory { .. }));
     }
 }

@@ -60,9 +60,12 @@ use patina_core::canonicalize_path;
 use patina_core::discover_modules;
 use patina_core::exclusive_timeout;
 use patina_core::expand_tilde;
+use patina_core::ignore_rules;
 use patina_core::parse_module_config;
+use patina_core::parse_root_config;
 use patina_core::resolve_repository_root;
 use patina_core::resolve_state_dir;
+use patina_core::walk_files;
 
 /// The mode flag the user selected (or resolved through a prompt), before
 /// it is checked against the source's on-disk kind.
@@ -284,6 +287,17 @@ pub async fn run(
         .with_context(|| format!("failed to create module directory {module_dir}"))?;
     let dest = module_dir.join(&source);
 
+    // The ignore checks run before `stage_into_repo`, so a refusal leaves the
+    // user's file where it was.
+    if let Some(exit) = refuse_ignored_conflict(args, &repo_root, &dest, reporter)? {
+        return Ok(exit);
+    }
+    // Tree modes only. A whole-directory `symlink` deploys through one link, so
+    // no pattern drops a leaf and the warning would be false.
+    if matches!(mode, AddMode::DirectorySymlinkTree | AddMode::DirectoryCopy) {
+        warn_on_ignored_leaves(&repo_root, &target, reporter)?;
+    }
+
     stage_into_repo(&target, &dest, kind)?;
 
     // Append the entry to the module manifest, creating it if absent,
@@ -322,6 +336,122 @@ pub async fn run(
         ));
     }
     Ok(ExitCode::Success.code())
+}
+
+/// Refuse the add when a tree-mode entry already excludes `dest`, returning the
+/// exit code to propagate. `None` means the add may proceed.
+///
+/// `--force` skips the check.
+///
+/// # Errors
+///
+/// Returns an error when the manifests cannot be read or a pattern does not
+/// compile.
+fn refuse_ignored_conflict(
+    args: &AddArgs,
+    repo_root: &Utf8Path,
+    dest: &Utf8Path,
+    reporter: &mut impl Reporter,
+) -> Result<Option<i32>> {
+    if args.force {
+        return Ok(None);
+    }
+    let Some((module, entry_source)) = ignoring_tree_entry(repo_root, dest)? else {
+        return Ok(None);
+    };
+    let message = format!(
+        "{} would be deployed by a new entry, but module `{module}` already excludes it from its \
+         `{entry_source}` tree via an `ignore` pattern; pass --force to declare it anyway, or drop \
+         the pattern",
+        args.path
+    );
+    if args.json {
+        reporter.json(&error_envelope(
+            "ignored_conflict",
+            args.path.as_str(),
+            &message,
+        ));
+    } else {
+        reporter.warn(&message);
+    }
+    Ok(Some(ExitCode::Generic.code()))
+}
+
+/// Find a tree-mode entry that would exclude `dest`, the repository path the
+/// added file is about to occupy. Returns the declaring module's name and that
+/// entry's source.
+///
+/// Declaring a `[[file]]` for a path a `symlink-tree` already excludes is a
+/// contradiction in one manifest: the new entry deploys exactly what the tree
+/// entry was told to skip. Only an entry whose source directory contains `dest`
+/// can contradict it that way. A `[[file]]` deploys its declared source with no
+/// enumeration, so a repo-wide pattern matching it elsewhere is not a conflict.
+///
+/// # Errors
+///
+/// Returns an error when the root manifest, module enumeration, or a module
+/// manifest cannot be read.
+fn ignoring_tree_entry(
+    repo_root: &Utf8Path,
+    dest: &Utf8Path,
+) -> Result<Option<(String, Utf8PathBuf)>> {
+    let root_config =
+        parse_root_config(&repo_root.join(MANIFEST_FILENAME)).map_err(EngineError::from)?;
+    for module in discover_modules(repo_root).map_err(EngineError::from)? {
+        let manifest = module.path.join(MANIFEST_FILENAME);
+        let config = parse_module_config(&manifest).map_err(EngineError::from)?;
+        for entry in &config.directories {
+            if !matches!(entry.mode, FileMode::SymlinkTree | FileMode::CopyTree) {
+                continue;
+            }
+            let entry_source = module.path.join(&entry.source);
+            let Ok(relative) = dest.strip_prefix(&entry_source) else {
+                continue;
+            };
+            let rules = ignore_rules::build(&root_config.ignore, &entry.ignore, &entry_source)
+                .map_err(EngineError::from)?;
+            if ignore_rules::prunes(&rules, relative) {
+                return Ok(Some((module.name.clone(), entry.source.clone())));
+            }
+        }
+    }
+    Ok(None)
+}
+
+/// Warn when the directory being added contains leaves the repo-wide ignore
+/// list would drop, naming how many.
+///
+/// Informational only. The new entry has no `ignore` of its own yet, so only
+/// the root manifest's patterns can apply.
+///
+/// # Errors
+///
+/// Returns an error when the root manifest cannot be read or its patterns do
+/// not compile.
+fn warn_on_ignored_leaves(
+    repo_root: &Utf8Path,
+    source: &Utf8Path,
+    reporter: &mut impl Reporter,
+) -> Result<()> {
+    let root_config =
+        parse_root_config(&repo_root.join(MANIFEST_FILENAME)).map_err(EngineError::from)?;
+    if root_config.ignore.is_empty() {
+        return Ok(());
+    }
+    let rules = ignore_rules::build(&root_config.ignore, &[], source).map_err(EngineError::from)?;
+    let dropped = walk_files(source, &ignore_rules::none())
+        .map_err(EngineError::from)?
+        .iter()
+        .filter(|rel| ignore_rules::prunes(&rules, rel))
+        .count();
+    if dropped > 0 {
+        let noun = if dropped == 1 { "path" } else { "paths" };
+        reporter.warn(&format!(
+            "the repo-wide `ignore` list excludes {dropped} {noun} under {source}; they will not \
+             be deployed"
+        ));
+    }
+    Ok(())
 }
 
 /// Scan every module manifest for a `[[file]]` or `[[directory]]` entry
@@ -583,6 +713,7 @@ mod tests {
             symlink_tree: false,
             json: false,
             yes: false,
+            force: false,
         }
     }
 

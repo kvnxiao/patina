@@ -106,6 +106,16 @@ pub enum ConfigParseError {
     /// declared only in the root manifest.
     #[error(transparent)]
     Remote(#[from] remote::RemoteConfigError),
+
+    /// The manifest carries a module-level `[patina] ignore` list. Only the
+    /// root manifest's is read, so accepting this one would leave the author
+    /// believing a filter is in force that never runs.
+    #[error(
+        "module manifest declares `[patina] ignore`; a repo-wide ignore list is read only from \
+         the root patina.toml. Move the patterns there, or declare `ignore` on the \
+         `[[directory]]` entry they apply to"
+    )]
+    ModuleIgnoreList,
 }
 
 /// Read and parse a module manifest at `path`, returning a fully
@@ -149,6 +159,18 @@ pub fn parse_module_config_str(text: &str) -> Result<ModuleConfig, ConfigParseEr
         return Err(remote::RemoteConfigError::ModuleRemoteTable.into());
     }
 
+    // Only the root manifest's `[patina]` table is read. A module-level
+    // `ignore` would parse clean and filter nothing, the same trap the
+    // `[remote]` rejection closes.
+    if raw
+        .patina
+        .as_ref()
+        .and_then(toml::Value::as_table)
+        .is_some_and(|table| table.contains_key("ignore"))
+    {
+        return Err(ConfigParseError::ModuleIgnoreList);
+    }
+
     let mut files = Vec::with_capacity(raw.file.len());
     for raw_file in raw.file {
         files.push(ManagedEntry::from_raw_file(raw_file)?);
@@ -182,11 +204,11 @@ pub fn parse_module_config_str(text: &str) -> Result<ModuleConfig, ConfigParseEr
 /// [`HookEntry`] apply the validation rules.
 #[derive(Debug, Default, Deserialize)]
 struct RawModule {
-    /// Repository-root marker; preserved so the de-serializer accepts
-    /// (and ignores) the root manifest's `[patina]` table without
-    /// erroring on the unknown key.
-    #[serde(default, rename = "patina")]
-    _patina: Option<toml::Value>,
+    /// The `[patina]` table. Capturing it lets the de-serializer accept the
+    /// root manifest's marker without erroring on an unknown key, and lets a
+    /// module-level `ignore` list inside it be rejected by name.
+    #[serde(default)]
+    patina: Option<toml::Value>,
 
     /// Per-module `[variables]` table, preserved verbatim for the resolver.
     #[serde(default)]

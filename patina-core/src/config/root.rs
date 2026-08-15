@@ -60,6 +60,10 @@ pub struct RootConfig {
     /// `None` when the key is absent, in which case the gate falls back to
     /// [`crate::config::DEFAULT_MIN_AGE`].
     pub remotes_min_age: Option<std::time::Duration>,
+    /// Repo-wide ignore patterns from `[patina] ignore`, in declaration order.
+    /// Every tree-mode entry filters through these before its own list; see
+    /// [`crate::ignore_rules`]. Empty when the key is absent.
+    pub ignore: Vec<String>,
 }
 
 /// Failure modes returned by [`parse_root_config`].
@@ -159,13 +163,13 @@ pub fn parse_root_config_str(text: &str) -> Result<RootConfig, RootConfigError> 
         per_profile.insert(name, table);
     }
 
-    let remotes_min_age = raw
-        .patina
-        .unwrap_or_default()
+    let patina = raw.patina.unwrap_or_default();
+    let remotes_min_age = patina
         .remote_min_age
         .as_deref()
         .map(|value| super::remote::parse_duration("remote_min_age", value))
         .transpose()?;
+    let ignore = patina.ignore;
 
     let mut remotes = Vec::with_capacity(raw.remote.len());
     let mut claimed: BTreeSet<super::remote::RemoteName> = BTreeSet::new();
@@ -185,6 +189,7 @@ pub fn parse_root_config_str(text: &str) -> Result<RootConfig, RootConfigError> 
         per_profile,
         remotes,
         remotes_min_age,
+        ignore,
     })
 }
 
@@ -211,13 +216,17 @@ struct RawRoot {
     remote: Vec<super::remote::RawRemote>,
 }
 
-/// Raw projection of the `[patina]` table's remote key.
+/// Raw projection of the `[patina]` table's remote and ignore keys.
 #[derive(Debug, Default, Deserialize)]
 struct RawPatina {
     /// Repository-wide update-gate floor, in the
     /// [`parse_duration`](super::remote::parse_duration) shorthand.
     #[serde(default)]
     remote_min_age: Option<String>,
+
+    /// Repo-wide ignore patterns, in declaration order.
+    #[serde(default)]
+    ignore: Vec<String>,
 }
 
 /// Raw projection of a single `[profiles.<name>]` section. Only its

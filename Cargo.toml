@@ -32,6 +32,13 @@ clap = { version = "4.5", features = ["derive"] }
 dunce = "1.0"
 fs-err = "3.0"
 fs2 = "0.4"
+# Gitignore-syntax matching for tree-mode entry `ignore` lists. Only the
+# `gitignore::Gitignore` matcher is used, built from in-memory pattern lines;
+# the crate's parallel directory walker stays unused, because `walk_files` is
+# the enumeration contract every phase already agrees on. Chosen over
+# `globset` (which `ignore` wraps) for last-match-wins ordering and `!`
+# negation, so a per-entry pattern can override a repo-wide one.
+ignore = "0.4"
 # Snapshot testing (dev-only). The diff renderer's golden-output test
 # (unchanged targets omit their per-entry block and a single
 # summary count line is printed) asserts against a committed snapshot so a

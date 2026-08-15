@@ -19,6 +19,7 @@ use patina_core::Builtins;
 use patina_core::FileMode;
 use patina_core::Resolver;
 use patina_core::TemplateEngine;
+use patina_core::ignore_rules;
 use patina_core::materialize;
 use tempfile::TempDir;
 
@@ -63,6 +64,7 @@ fn symlink_fans_out_to_every_target() {
         &[t1.clone(), t2.clone()],
         &TemplateEngine::new(),
         &resolver(),
+        &ignore_rules::none(),
     )
     .expect("fan-out symlinks");
 
@@ -90,6 +92,7 @@ fn copy_fans_out_to_every_target() {
         &[t1.clone(), t2.clone()],
         &TemplateEngine::new(),
         &resolver(),
+        &ignore_rules::none(),
     )
     .expect("fan-out copies");
 
@@ -130,6 +133,7 @@ fn template_renders_once_and_writes_each_target() {
         &[t1.clone(), t2.clone()],
         &TemplateEngine::new(),
         &resolver,
+        &ignore_rules::none(),
     )
     .expect("render fan-out");
 

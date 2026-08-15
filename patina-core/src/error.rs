@@ -37,6 +37,10 @@ pub enum EngineError {
     #[error(transparent)]
     ConfigWrite(#[from] crate::config::ConfigWriteError),
 
+    /// A declared `ignore` pattern could not be compiled into a matcher.
+    #[error(transparent)]
+    IgnoreRules(#[from] crate::ignore_rules::IgnoreRulesError),
+
     /// Parsing the root manifest's repo-shared `[variables]` or
     /// `[profiles.<name>.variables]` tables failed.
     #[error(transparent)]

@@ -1,0 +1,17 @@
+# Codecov defaults both statuses to `target: auto`, which sets the bar to the
+# base commit's coverage. A patch below the repository average then fails even
+# when the project number rises. A fixed floor is the intended contract.
+#
+# These statuses report a number; neither blocks a merge. `main` carries no
+# branch protection, and CI's own gate is `--fail-under-lines` in
+# .github/workflows/ci.yml.
+coverage:
+  status:
+    project:
+      default:
+        target: 90%
+        # No slippage below the floor. Raise to tolerate a small drop.
+        threshold: 0%
+    patch:
+      default:
+        target: 90%

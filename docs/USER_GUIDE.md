@@ -86,6 +86,80 @@ tab-separated columns. A tab would open a column the row never closes,
 and a newline would split one row into two, which would let a filename
 forge a row that reads as Patina's own output.
 
+### Excluding generated files with `ignore`
+
+A `symlink-tree` or `copy` `[[directory]]` walks its source tree on every
+apply, so anything a tool drops beside your files becomes another leaf to
+deploy. Run a Python script from a deployed tree and `__pycache__/*.pyc`
+appears in the repository; macOS leaves `.DS_Store`, Windows leaves
+`Thumbs.db`. Declare an `ignore` list and those paths stop being enumerated:
+
+```toml
+# Root patina.toml: patterns every tree-mode entry starts from.
+[patina]
+root = true
+ignore = [".DS_Store", "Thumbs.db", "desktop.ini"]
+```
+
+```toml
+# Any module: patterns for this entry, appended after the repo-wide list.
+[[directory]]
+source = "scripts"
+target = "~/bin"
+mode = "symlink-tree"
+ignore = ["__pycache__/", "*.pyc"]
+```
+
+Patterns use gitignore syntax: `*` and `?` wildcards, `**` for any depth,
+`{a,b}` alternates, a trailing `/` for directories only, a leading `/` to
+anchor, and a leading `!` to bring back a path an earlier pattern excluded.
+Matching is last-match-wins, which lets a per-entry `!keep.pyc` override a
+repo-wide `*.pyc`. Git's exception to that carries over: a `!` cannot
+bring back a path inside an excluded directory. `["build/", "!build/keep.txt"]`
+still drops `keep.txt`, because the walk stops at `build` and never looks
+inside. Exclude the files rather than the directory when you need one back.
+
+Where this departs from git, deliberately:
+
+- **Patterns anchor at the entry's source directory**, both levels. A
+  repo-wide `/build` means "`build` at the top of each entry's source", not
+  one directory at the repository root.
+- **Matching ignores case on every platform.** One `Thumbs.db` pattern also
+  covers `thumbs.db`. Git decides this per clone, which would make one
+  manifest behave three ways across macOS, Linux, and Windows.
+- **There are no `.gitignore` or `.patinaignore` files.** Every pattern is
+  authored in a manifest, and a `.gitignore` inside a remote checkout is
+  third-party content Patina never reads.
+- **Patina ships no built-in patterns.** What a repository deploys stays a
+  function of its own manifest. `patina init` scaffolds the root block
+  above commented out, ready to uncomment.
+
+`ignore` is accepted only on the `[[directory]]` modes that enumerate a
+tree, `symlink-tree` and `copy`. A whole-directory `mode = "symlink"`
+creates one link and exposes the directory through it, beyond the reach of
+any list. Declaring `ignore` there is a parse error that points you at
+`symlink-tree`. Declaring it on a `[[file]]`, or putting
+`[patina] ignore` in a module manifest rather than the root, is refused for
+the same reason: silently accepting it would leave you believing a filter is
+running that never is.
+
+If a pattern you add excludes a path a previous apply already deployed, the
+next `patina apply` removes it. The diff labels that removal `ignored` so
+the deletion is traceable to the pattern you just wrote, and `patina doctor`
+warns while the removal is still pending:
+
+```text
+remove /home/kevin/bin/stale.pyc (ignored)
+  - /home/kevin/dotfiles/py/scripts/stale.pyc
+```
+
+An entry whose every leaf is ignored deploys nothing and leaves its target
+directory absent. `apply` reports it as unchanged rather than as pending work.
+
+`patina add` refuses a path that a tree entry's `ignore` list already
+excludes, because the new `[[file]]` entry would deploy exactly what the
+tree entry was told to skip. Pass `--force` to declare it anyway.
+
 ### Conditional entries with `when`
 
 Any entry may carry a `when` expression, a MiniJinja predicate gating
@@ -220,13 +294,17 @@ common flags:
   missing inputs. Once mode and module are supplied it writes without
   prompting.
 
+`add` also accepts `--force`, which overrides its ignore-conflict refusal
+(see [Excluding generated files](#excluding-generated-files-with-ignore)).
+That is a separate axis from `--yes`, which only skips prompts.
+
 | Command   | Purpose                                                                                       |
 | --------- | --------------------------------------------------------------------------------------------- |
 | `init`    | Scaffold a root `patina.toml` and persist the default-repository pointer.                     |
 | `add`     | Bring an existing dotfile under management: copy it into a module and write a `[[file]]` entry for a file source or a `[[directory]]` entry for a directory source.|
 | `remove`  | Unmanage a target: drop its entry and replace the target with a regular file holding the last-applied content. |
 | `promote` | Copy a drifted copy-mode target's current bytes back into its repository source, then re-apply. |
-| `doctor`  | Inspect the environment for known problems (UNC repository paths, missing Windows Developer Mode, OS-too-old, missing default repo, missing `git`). |
+| `doctor`  | Inspect the environment for known problems (UNC repository paths, missing Windows Developer Mode, OS-too-old, missing default repo, missing `git`, targets a new `ignore` pattern stranded). |
 | `remote`  | Manage remote git sources: `list` the pins, `check` upstream tips, `update` a pin through the update gate, `prune` cached checkouts. See [Remote sources](#remote-sources). |
 
 `patina remove` has a `--purge` flag: instead of leaving a regular file

@@ -23,15 +23,25 @@ use super::ensure_parent;
 use super::with_sharing_violation_retry;
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
+use ignore::gitignore::Gitignore;
 
 /// Per-file [`Symlink`](crate::config::FileMode::Symlink) executor.
 ///
-/// A regular-file source links once per target. A directory source walks
-/// the tree and links every file at the mirrored target path, so a target
-/// gains one symlink per source file.
+/// A regular-file source links once per target. A directory source walks the
+/// tree, filtered through `rules`, and links every remaining file at the
+/// mirrored target path.
+///
+/// The engine never reaches the directory branch: `validate_source_kind`
+/// rejects a directory source under `[[file]]`, and a `[[directory]]` entry in
+/// `symlink` mode resolves to
+/// [`SymlinkDir`](crate::config::FileMode::SymlinkDir) instead. The filter runs
+/// anyway, because [`materialize`](super::materialize) is public. A `[[file]]`
+/// declares no `ignore` list of its own, but the repo-wide patterns still reach
+/// it, so `rules` can be non-empty.
 pub(super) fn per_file_symlink(
     source: &Utf8Path,
     targets: &[Utf8PathBuf],
+    rules: &Gitignore,
 ) -> Result<Vec<CompletionRecord>, ExecutorError> {
     let metadata = fs_err::symlink_metadata(source).map_err(|err| {
         if err.kind() == std::io::ErrorKind::NotFound {
@@ -50,7 +60,7 @@ pub(super) fn per_file_symlink(
     if metadata.is_dir() {
         // Collect the source files once (deterministic order), then mirror
         // them under every target.
-        let relative_files = super::walk_files(source)?;
+        let relative_files = super::walk_files(source, rules)?;
         for target in targets {
             for rel in &relative_files {
                 let file_source = source.join(rel);
@@ -73,11 +83,12 @@ pub(super) fn per_file_symlink(
 /// The source must be a directory; a non-directory source is rejected with
 /// [`ExecutorError::NotADirectory`], the same way [`dir_symlink`] rejects a
 /// file source. Leaf enumeration uses the shared [`walk_files`] walk, which
-/// collects only regular files in deterministic sorted order. An empty source
-/// subdirectory therefore yields no entry, and so neither a target directory
-/// nor a link. Each leaf is linked through [`link_file`]. That helper creates
-/// intermediate target directories on demand as real directories, and clears
-/// any pre-existing entry first (the engine has already backed
+/// collects only regular files `rules` does not ignore, in deterministic
+/// sorted order. An empty source subdirectory therefore yields no entry, and
+/// so neither a target directory nor a link; a subdirectory `rules` excludes
+/// yields none either. Each leaf is linked through [`link_file`]. That helper
+/// creates intermediate target directories on demand as real directories, and
+/// clears any pre-existing entry first (the engine has already backed
 /// up a foreign regular file via `backup_before_overwrite`). One
 /// [`CompletionRecord`] is returned per materialized leaf, in walk order
 /// within each target.
@@ -94,6 +105,7 @@ pub(super) fn tree_symlink(
     source: &Utf8Path,
     targets: &[Utf8PathBuf],
     write: LeafWrite<'_>,
+    rules: &Gitignore,
 ) -> Result<Vec<CompletionRecord>, ExecutorError> {
     let metadata = fs_err::symlink_metadata(source).map_err(|err| {
         if err.kind() == std::io::ErrorKind::NotFound {
@@ -115,7 +127,7 @@ pub(super) fn tree_symlink(
 
     // Collect the source leaves once (deterministic order), then mirror them
     // under every target as per-leaf links.
-    let relative_files = super::walk_files(source)?;
+    let relative_files = super::walk_files(source, rules)?;
     let mut records = Vec::with_capacity(targets.len() * relative_files.len());
     for target in targets {
         for rel in &relative_files {
@@ -300,8 +312,12 @@ mod tests {
         let t1 = dir.join("home1").join(".zshrc");
         let t2 = dir.join("home2").join(".zshrc");
 
-        let records =
-            per_file_symlink(&source, &[t1.clone(), t2.clone()]).expect("symlinks created");
+        let records = per_file_symlink(
+            &source,
+            &[t1.clone(), t2.clone()],
+            &crate::ignore_rules::none(),
+        )
+        .expect("symlinks created");
 
         assert_eq!(records.len(), 2);
         assert_eq!(read_link_canonical(&t1), canonical(&source));
@@ -317,8 +333,12 @@ mod tests {
         fs_err::write(src_dir.join("nested").join("b.conf"), b"b").expect("write b");
         let target = dir.join("dest");
 
-        let records =
-            per_file_symlink(&src_dir, std::slice::from_ref(&target)).expect("walked links");
+        let records = per_file_symlink(
+            &src_dir,
+            std::slice::from_ref(&target),
+            &crate::ignore_rules::none(),
+        )
+        .expect("walked links");
 
         // One symlink per source file, mirrored under the target.
         assert_eq!(records.len(), 2);
@@ -370,8 +390,12 @@ mod tests {
         fs_err::create_dir_all(target.parent().expect("target parent")).expect("mkdir home");
         fs_err::write(&target, b"original").expect("write pre-existing target");
 
-        let records =
-            per_file_symlink(&source, std::slice::from_ref(&target)).expect("link replaces file");
+        let records = per_file_symlink(
+            &source,
+            std::slice::from_ref(&target),
+            &crate::ignore_rules::none(),
+        )
+        .expect("link replaces file");
 
         assert_eq!(records.len(), 1);
         assert!(
@@ -387,8 +411,12 @@ mod tests {
     #[test]
     fn missing_source_is_typed() {
         let (_td, dir) = utf8_tempdir();
-        let err = per_file_symlink(&dir.join("absent"), &[dir.join("t")])
-            .expect_err("missing source rejected");
+        let err = per_file_symlink(
+            &dir.join("absent"),
+            &[dir.join("t")],
+            &crate::ignore_rules::none(),
+        )
+        .expect_err("missing source rejected");
         assert!(matches!(err, ExecutorError::SourceMissing { .. }));
     }
 
@@ -404,8 +432,13 @@ mod tests {
         fs_err::write(src_dir.join("sub").join("b.conf"), b"b").expect("write b");
         let target = dir.join("dest");
 
-        let records = tree_symlink(&src_dir, std::slice::from_ref(&target), LeafWrite::All)
-            .expect("tree links");
+        let records = tree_symlink(
+            &src_dir,
+            std::slice::from_ref(&target),
+            LeafWrite::All,
+            &crate::ignore_rules::none(),
+        )
+        .expect("tree links");
 
         assert_eq!(records.len(), 2, "one record per leaf");
         let a = target.join("a.conf");
@@ -444,6 +477,7 @@ mod tests {
             &src_dir,
             std::slice::from_ref(&target),
             LeafWrite::Only(&only),
+            &crate::ignore_rules::none(),
         )
         .expect("partial tree links");
 
@@ -469,8 +503,13 @@ mod tests {
         fs_err::write(src_dir.join("a.conf"), b"a").expect("write a");
         let target = dir.join("dest");
 
-        let records = tree_symlink(&src_dir, std::slice::from_ref(&target), LeafWrite::All)
-            .expect("tree links");
+        let records = tree_symlink(
+            &src_dir,
+            std::slice::from_ref(&target),
+            LeafWrite::All,
+            &crate::ignore_rules::none(),
+        )
+        .expect("tree links");
 
         assert_eq!(records.len(), 1, "only the one real leaf is linked");
         assert!(
@@ -493,8 +532,13 @@ mod tests {
         fs_err::create_dir_all(&target).expect("mkdir target");
         fs_err::write(target.join("a.conf"), b"original").expect("write pre-existing leaf");
 
-        let records = tree_symlink(&src_dir, std::slice::from_ref(&target), LeafWrite::All)
-            .expect("tree links");
+        let records = tree_symlink(
+            &src_dir,
+            std::slice::from_ref(&target),
+            LeafWrite::All,
+            &crate::ignore_rules::none(),
+        )
+        .expect("tree links");
 
         assert_eq!(records.len(), 1);
         let leaf = target.join("a.conf");
@@ -516,16 +560,26 @@ mod tests {
         let (_td, dir) = utf8_tempdir();
         let source = dir.join("not-a-dir");
         fs_err::write(&source, b"x").expect("write file");
-        let err = tree_symlink(&source, &[dir.join("t")], LeafWrite::All)
-            .expect_err("file source rejected");
+        let err = tree_symlink(
+            &source,
+            &[dir.join("t")],
+            LeafWrite::All,
+            &crate::ignore_rules::none(),
+        )
+        .expect_err("file source rejected");
         assert!(matches!(err, ExecutorError::NotADirectory { .. }));
     }
 
     #[test]
     fn tree_symlink_missing_source_is_typed() {
         let (_td, dir) = utf8_tempdir();
-        let err = tree_symlink(&dir.join("absent"), &[dir.join("t")], LeafWrite::All)
-            .expect_err("missing source typed");
+        let err = tree_symlink(
+            &dir.join("absent"),
+            &[dir.join("t")],
+            LeafWrite::All,
+            &crate::ignore_rules::none(),
+        )
+        .expect_err("missing source typed");
         assert!(matches!(err, ExecutorError::SourceMissing { .. }));
     }
 
@@ -541,10 +595,20 @@ mod tests {
         fs_err::write(src_dir.join("sub").join("b.conf"), b"b").expect("write b");
         let target = dir.join("dest");
 
-        let first = tree_symlink(&src_dir, std::slice::from_ref(&target), LeafWrite::All)
-            .expect("first apply");
-        let second = tree_symlink(&src_dir, std::slice::from_ref(&target), LeafWrite::All)
-            .expect("second apply");
+        let first = tree_symlink(
+            &src_dir,
+            std::slice::from_ref(&target),
+            LeafWrite::All,
+            &crate::ignore_rules::none(),
+        )
+        .expect("first apply");
+        let second = tree_symlink(
+            &src_dir,
+            std::slice::from_ref(&target),
+            LeafWrite::All,
+            &crate::ignore_rules::none(),
+        )
+        .expect("second apply");
 
         assert_eq!(first.len(), second.len());
         let a = target.join("a.conf");

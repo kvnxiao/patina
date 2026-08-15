@@ -30,9 +30,9 @@
 use crate::output::style::Styles;
 use anstyle::Style;
 use camino::Utf8Path;
-use camino::Utf8PathBuf;
 use patina_core::Disposition;
 use patina_core::FileMode;
+use patina_core::Orphan;
 use patina_core::ResolvedPlan;
 use patina_core::Resolver;
 use patina_core::TemplateEngine;
@@ -44,15 +44,16 @@ use std::fmt::Write as _;
 ///
 /// `orphans` is the reap set the engine would delete this run
 /// ([`patina_core::plan_orphans`]): targets a prior apply materialized that
-/// the current plan no longer manages. They are not [`ResolvedPlan`]
-/// operations, so the caller passes them in; each renders as a `remove` block
-/// after the create/update blocks and before the unchanged summary.
+/// the current plan no longer manages, each paired with why. They are not
+/// [`ResolvedPlan`] operations, so the caller passes them in; each renders as a
+/// `remove` block after the create/update blocks and before the unchanged
+/// summary.
 ///
 /// # Errors
 ///
 /// Returns an error string when a template source cannot be rendered for
 /// preview (the same strict-undefined failure the apply would hit).
-pub fn render(resolved: &ResolvedPlan, orphans: &[Utf8PathBuf]) -> Result<String, String> {
+pub fn render(resolved: &ResolvedPlan, orphans: &[Orphan]) -> Result<String, String> {
     let mut out = String::new();
     if resolved.operations.is_empty() && orphans.is_empty() {
         out.push_str("No changes: the plan is empty.\n");
@@ -156,7 +157,7 @@ fn render_leaf(
             // placeholder rather than a misleading empty/full-insert diff.
             let new = read_for_diff(source);
             let current = read_for_diff(target);
-            content_diff(out, "copy", target, &current, &new, styles);
+            content_diff(out, &format!("copy {target}"), &current, &new, styles);
         }
         FileMode::TemplateRender => {
             let body = fs_err::read_to_string(source)
@@ -167,8 +168,7 @@ fn render_leaf(
             let current = read_for_diff(target);
             content_diff(
                 out,
-                "render",
-                target,
+                &format!("render {target}"),
                 &current,
                 &DiffContent::Text(rendered),
                 styles,
@@ -178,27 +178,26 @@ fn render_leaf(
     Ok(())
 }
 
-/// Render one `remove <target>` block for an orphan the reap phase will back
-/// up and delete. A symlink shows the link it pointed at (reading *through*
-/// it would show the linked file's bytes, not the link being removed); any
-/// other target shows its current content as a full deletion, falling back to
-/// the compact placeholder for binary / unreadable bytes, the same
-/// never-imply-empty rule [`content_diff`] uses.
-fn render_removal(out: &mut String, target: &Utf8Path, styles: &Styles) {
+/// Render one `remove <target> (<reason>)` block for an orphan the reap phase
+/// will back up and delete. A symlink shows the link it pointed at (reading
+/// *through* it would show the linked file's bytes, not the link being
+/// removed); any other target shows its current content as a full deletion,
+/// falling back to the compact placeholder for binary / unreadable bytes, the
+/// same never-imply-empty rule [`content_diff`] uses.
+///
+/// The header carries the reason because a reap is the only block that deletes
+/// something the user did not ask for in this run. Without it, a leaf dropped
+/// by a pattern the author wrote minutes ago reads as an unexplained removal.
+fn render_removal(out: &mut String, orphan: &Orphan, styles: &Styles) {
+    let target = orphan.target.as_path();
+    let header = format!("remove {target} ({})", orphan.reason.label());
     if let Some(link) = current_link_target(target) {
-        paint_line(out, styles.header, "", &format!("remove {target}"));
+        paint_line(out, styles.header, "", &header);
         paint_line(out, styles.delete, "  - ", &link);
         return;
     }
     let current = read_for_diff(target);
-    content_diff(
-        out,
-        "remove",
-        target,
-        &current,
-        &DiffContent::Absent,
-        styles,
-    );
+    content_diff(out, &header, &current, &DiffContent::Absent, styles);
 }
 
 /// A file's content as it should appear on one side of a content diff.
@@ -255,18 +254,20 @@ fn read_for_diff(path: &Utf8Path) -> DiffContent {
 }
 
 /// Append a line-level content diff between the target's current content and
-/// the content the apply would write, under the action label. When either side
+/// the content the apply would write, under `header`. When either side
 /// cannot be line-diffed (binary / unreadable), render a compact placeholder
 /// pair instead of a misleading empty/full-insert diff.
+///
+/// `header` arrives fully formed rather than as an action plus a path, because
+/// a reap header carries a trailing reason tag no other caller wants.
 fn content_diff(
     out: &mut String,
-    action: &str,
-    target: &Utf8Path,
+    header: &str,
     current: &DiffContent,
     new: &DiffContent,
     styles: &Styles,
 ) {
-    paint_line(out, styles.header, "", &format!("{action} {target}"));
+    paint_line(out, styles.header, "", header);
     // Both sides line-diffable → a line-level diff; otherwise (binary /
     // unreadable on either side) a compact placeholder pair.
     if let (Some(current), Some(new)) = (current.as_text(), new.as_text()) {
@@ -326,6 +327,7 @@ fn discard(_result: std::fmt::Result) {}
 mod tests {
     use super::*;
     use camino::Utf8PathBuf;
+    use patina_core::OrphanReason;
     use tempfile::TempDir;
 
     fn tempdir() -> (TempDir, Utf8PathBuf) {
@@ -384,7 +386,13 @@ mod tests {
         let mut out = String::new();
         let current = read_for_diff(&target);
         let new = DiffContent::Text("new text\n".to_owned());
-        content_diff(&mut out, "copy", &target, &current, &new, &Styles::plain());
+        content_diff(
+            &mut out,
+            &format!("copy {target}"),
+            &current,
+            &new,
+            &Styles::plain(),
+        );
 
         // The placeholder pair must appear, and the new text must NOT be
         // rendered as a full-insert line diff against an assumed-empty target.
@@ -410,14 +418,7 @@ mod tests {
         let mut out = String::new();
         let current = DiffContent::Text("same\nold\ntail".to_owned());
         let new = DiffContent::Text("same\nnew\ntail".to_owned());
-        content_diff(
-            &mut out,
-            "copy",
-            Utf8Path::new("/t"),
-            &current,
-            &new,
-            &Styles::plain(),
-        );
+        content_diff(&mut out, "copy /t", &current, &new, &Styles::plain());
 
         assert!(
             out.contains("    same\n"),
@@ -445,11 +446,12 @@ mod tests {
         fs_err::write(&target, "one\ntwo\n").expect("write target");
 
         let mut out = String::new();
-        render_removal(&mut out, &target, &Styles::plain());
+        let orphan = Orphan::new(target.clone(), OrphanReason::Unmanaged);
+        render_removal(&mut out, &orphan, &Styles::plain());
 
         assert!(
-            out.contains(&format!("remove {target}")),
-            "the block header must name the removed target, got:\n{out}"
+            out.contains(&format!("remove {target} (unmanaged)")),
+            "the block header must name the removed target and why, got:\n{out}"
         );
         assert!(out.contains("  - one\n"), "first line deleted, got:\n{out}");
         assert!(
@@ -475,11 +477,12 @@ mod tests {
             .expect("create symlink");
 
         let mut out = String::new();
-        render_removal(&mut out, &target, &Styles::plain());
+        let orphan = Orphan::new(target.clone(), OrphanReason::Unmanaged);
+        render_removal(&mut out, &orphan, &Styles::plain());
 
         assert!(
-            out.contains(&format!("remove {target}")),
-            "the block header must name the removed symlink, got:\n{out}"
+            out.contains(&format!("remove {target} (unmanaged)")),
+            "the block header must name the removed symlink and why, got:\n{out}"
         );
         assert!(
             out.contains(&format!("  - {linked}")),
@@ -500,7 +503,13 @@ mod tests {
         let mut out = String::new();
         let current = read_for_diff(&target);
         let new = DiffContent::Text("line1\nline2\n".to_owned());
-        content_diff(&mut out, "copy", &target, &current, &new, &Styles::plain());
+        content_diff(
+            &mut out,
+            &format!("copy {target}"),
+            &current,
+            &new,
+            &Styles::plain(),
+        );
 
         assert!(
             out.contains("  + line1"),
@@ -524,14 +533,7 @@ mod tests {
         let new = DiffContent::Text("keep\nadd\n".to_owned());
 
         let mut plain = String::new();
-        content_diff(
-            &mut plain,
-            "copy",
-            Utf8Path::new("/t"),
-            &current,
-            &new,
-            &Styles::plain(),
-        );
+        content_diff(&mut plain, "copy /t", &current, &new, &Styles::plain());
         assert!(
             !plain.contains('\u{1b}'),
             "plain output must carry no escapes: {plain:?}"
@@ -546,14 +548,7 @@ mod tests {
         );
 
         let mut colored = String::new();
-        content_diff(
-            &mut colored,
-            "copy",
-            Utf8Path::new("/t"),
-            &current,
-            &new,
-            &Styles::colored(),
-        );
+        content_diff(&mut colored, "copy /t", &current, &new, &Styles::colored());
         assert!(
             colored.contains('\u{1b}'),
             "colored output must carry escapes: {colored:?}"
