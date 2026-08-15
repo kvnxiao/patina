@@ -24,6 +24,7 @@ use patina_core::FileMode;
 use patina_core::Materialization;
 use patina_core::Resolver;
 use patina_core::TemplateEngine;
+use patina_core::ignore_rules;
 use patina_core::materialize;
 use tempfile::TempDir;
 
@@ -70,6 +71,7 @@ fn symlink_mode_links_to_canonical_source() {
         &[target.clone()],
         &TemplateEngine::new(),
         &resolver(),
+        &ignore_rules::none(),
     )
     .expect("symlink materializes");
 
@@ -98,6 +100,7 @@ fn symlink_mode_directory_source_walks_per_file() {
         &[target.clone()],
         &TemplateEngine::new(),
         &resolver(),
+        &ignore_rules::none(),
     )
     .expect("walked symlinks");
 
@@ -135,6 +138,7 @@ fn symlink_dir_mode_creates_single_atomic_link() {
         &[target.clone()],
         &TemplateEngine::new(),
         &resolver(),
+        &ignore_rules::none(),
     )
     .expect("dir symlink");
 
@@ -163,6 +167,7 @@ fn copy_mode_writes_byte_identical_file() {
         &[target.clone()],
         &TemplateEngine::new(),
         &resolver(),
+        &ignore_rules::none(),
     )
     .expect("copy");
 
@@ -194,6 +199,7 @@ fn copy_tree_mode_mirrors_directory() {
         &[target.clone()],
         &TemplateEngine::new(),
         &resolver(),
+        &ignore_rules::none(),
     )
     .expect("copy tree");
 
@@ -226,6 +232,7 @@ fn template_render_mode_renders_to_declared_target() {
         &[target.clone()],
         &TemplateEngine::new(),
         &resolver,
+        &ignore_rules::none(),
     )
     .expect("render");
 

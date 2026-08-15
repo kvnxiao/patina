@@ -97,6 +97,12 @@ pub struct ManagedEntry {
     /// `None` for a source relative to the module's own directory. The name is
     /// resolved against the registry at plan time; this module only carries it.
     pub remote: Option<String>,
+    /// Gitignore-syntax patterns filtering this entry's source walk, in
+    /// declaration order. Always empty except on the two tree modes; the
+    /// constructors reject the key elsewhere. Compiled into a matcher by
+    /// [`crate::ignore_rules::build`], which appends these after the
+    /// repo-wide list so a pattern here wins a conflict.
+    pub ignore: Vec<String>,
 }
 
 /// Backwards-compatible alias retained while downstream consumers still
@@ -209,6 +215,35 @@ pub enum FileEntryError {
         source_path: String,
     },
 
+    /// A `[[file]]` entry declared `ignore`. Only the two tree modes walk a
+    /// source tree, so there is nothing for a single file's list to filter.
+    #[error(
+        "[[file]] entry source `{source_path}` declares `ignore`; the key is accepted only on a \
+         [[directory]] with `mode = \"symlink-tree\"` or `mode = \"copy\"`, the two modes that \
+         enumerate a source tree one leaf at a time"
+    )]
+    FileIgnoreDeclared {
+        /// The source path of the entry that declared it.
+        source_path: String,
+    },
+
+    /// A whole-directory `symlink` `[[directory]]` entry declared `ignore`.
+    ///
+    /// Accepting it silently would be worse than refusing: the author would
+    /// believe the listed paths are filtered while the single link keeps
+    /// exposing the whole directory. The message names the mode that does
+    /// filter, because reaching for `ignore` here means wanting per-leaf links.
+    #[error(
+        "[[directory]] entry source `{source_path}` declares `ignore` with the whole-directory \
+         `symlink` mode; that mode creates one link and exposes the directory through it, so no \
+         ignore list can change what appears at the target. Use `mode = \"symlink-tree\"` to \
+         materialize one link per leaf and filter them"
+    )]
+    DirectorySymlinkIgnoreDeclared {
+        /// The source path of the entry that declared it.
+        source_path: String,
+    },
+
     /// An entry declared `remote = ""`. Omitting the key is how an entry
     /// stays local; a blank one is a typo whose silent fallback would resolve
     /// the source against the wrong tree.
@@ -265,9 +300,15 @@ impl ManagedEntry {
             mode,
             when,
             remote,
+            ignore,
         } = raw;
 
         reject_source_control_characters(&source)?;
+        if !ignore.is_empty() {
+            return Err(FileEntryError::FileIgnoreDeclared {
+                source_path: source.to_string(),
+            });
+        }
         let remote = resolve_remote(remote, &source)?;
         let policy = TemplatePolicy::for_source(remote.as_deref());
         let resolved_targets = resolve_targets(target, targets)?;
@@ -305,6 +346,7 @@ impl ManagedEntry {
             targets: resolved_targets,
             when,
             remote,
+            ignore: Vec::new(),
         })
     }
 
@@ -319,6 +361,7 @@ impl ManagedEntry {
             mode,
             when,
             remote,
+            ignore,
         } = raw;
 
         reject_source_control_characters(&source)?;
@@ -346,6 +389,17 @@ impl ManagedEntry {
             }
         };
 
+        // Only the tree modes walk the source, so only they have leaves to
+        // filter. Checked after the mode resolves so an unsupported mode plus
+        // an `ignore` key reports the mode, the more basic error.
+        if !ignore.is_empty()
+            && !matches!(resolved_mode, FileMode::SymlinkTree | FileMode::CopyTree)
+        {
+            return Err(FileEntryError::DirectorySymlinkIgnoreDeclared {
+                source_path: source.to_string(),
+            });
+        }
+
         Ok(Self {
             kind: EntryKind::Directory,
             mode: resolved_mode,
@@ -353,6 +407,7 @@ impl ManagedEntry {
             targets: resolved_targets,
             when,
             remote,
+            ignore,
         })
     }
 }
@@ -449,4 +504,6 @@ pub(super) struct RawEntry {
     pub(super) when: Option<String>,
     #[serde(default)]
     pub(super) remote: Option<String>,
+    #[serde(default)]
+    pub(super) ignore: Vec<String>,
 }

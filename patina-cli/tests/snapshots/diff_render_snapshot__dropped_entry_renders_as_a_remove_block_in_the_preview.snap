@@ -2,6 +2,6 @@
 source: patina-cli/tests/diff_render_snapshot.rs
 expression: redact_home(&stdout, &f.home)
 ---
-remove [HOME]/drop_out
+remove [HOME]/drop_out (unmanaged)
   - drop-bytes
 1 unchanged entry.

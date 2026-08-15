@@ -97,6 +97,18 @@ pub fn scaffold_root_manifest(created_at: &str) -> String {
     let mut patina = Table::new();
     patina.insert("root", value(true));
     patina.insert("created_at", value(created_at));
+    // Commented, not live. Patina ships no built-in ignore patterns, which
+    // keeps what a repository deploys a function of its own manifest rather
+    // than of the binary's version. The text puts the common answer one
+    // uncomment away without choosing for the author.
+    if let Some(value) = patina.get_mut("created_at").and_then(Item::as_value_mut) {
+        value.decor_mut().set_suffix(concat!(
+            "\n\n",
+            "# Repo-wide ignore patterns for `symlink-tree` and directory `copy` entries.\n",
+            "# Gitignore syntax, case-insensitive, matched against each entry's source.\n",
+            "# ignore = [\".DS_Store\", \"Thumbs.db\", \"desktop.ini\"]",
+        ));
+    }
     doc.insert("patina", Item::Table(patina));
     doc.to_string()
 }
@@ -320,6 +332,7 @@ fn mode_manifest_str(mode: FileMode) -> Option<&'static str> {
 mod tests {
     use super::*;
     use crate::config::parse_module_config_str;
+    use crate::config::parse_root_config_str;
 
     #[test]
     fn remove_file_entry_preserves_siblings_hook_variables_and_comments() {
@@ -393,6 +406,18 @@ editor = \"vim\"
         assert_eq!(
             patina.get("created_at").and_then(toml::Value::as_str),
             Some("2026-05-30T12:00:00Z")
+        );
+    }
+
+    #[test]
+    fn scaffold_root_manifest_leaves_the_ignore_example_commented_out() {
+        let text = scaffold_root_manifest("2026-05-30T12:00:00Z");
+
+        let parsed = parse_root_config_str(&text).expect("scaffold parses as a root manifest");
+        assert!(
+            parsed.ignore.is_empty(),
+            "a fresh repository must deploy exactly what its manifest says, with no \
+             patterns active that the author did not uncomment"
         );
     }
 
