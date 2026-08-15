@@ -242,6 +242,10 @@ where
             "watch_started"
         );
 
+        // When the most recent re-apply began, for dropping the events it
+        // already consumed. `None` until the first one runs.
+        let mut reapply_started: Option<std::time::Instant> = None;
+
         let mut shutdown = std::pin::pin!(shutdown);
         loop {
             tokio::select! {
@@ -251,10 +255,30 @@ where
                 }
                 batch = debouncer.events.recv() => {
                     match batch {
-                        Some(batch) => {
+                        Some(mut batch) => {
+                            // Drop writes the last re-apply already consumed.
+                            // Nothing drains the `notify` stream while a
+                            // re-apply is awaited inline, so events from
+                            // before it started queue behind it and arrive
+                            // afterwards as a fresh batch.
+                            let dropped = reapply_started.map_or(0, |started| {
+                                let kept = batch.observed_since(started);
+                                let dropped = batch.paths.len() - kept.paths.len();
+                                batch = kept;
+                                dropped
+                            });
+                            if batch.is_empty() {
+                                tracing::debug!(
+                                    target: "patina_core",
+                                    stale = dropped,
+                                    "watch_event_stale"
+                                );
+                                continue;
+                            }
                             tracing::info!(
                                 target: "patina_core",
                                 paths = batch.paths.len(),
+                                stale = dropped,
                                 "watch_event"
                             );
                             // Classify the coalesced batch. Check the
@@ -288,6 +312,7 @@ where
                                     journal_ts = rebuilt_ts;
                                 }
                             } else if source_event(&batch, &watch_set.sources) {
+                                reapply_started = Some(std::time::Instant::now());
                                 let _outcome = reapply::run_reapply().await;
                             } else {
                                 // A content-target-only batch: re-hash the
@@ -479,9 +504,7 @@ mod tests {
     }
 
     fn batch(paths: &[&str]) -> debounce::EventBatch {
-        debounce::EventBatch {
-            paths: paths.iter().map(Utf8PathBuf::from).collect(),
-        }
+        debounce::EventBatch::from_paths(paths.iter().map(Utf8PathBuf::from).collect())
     }
 
     #[test]

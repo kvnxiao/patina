@@ -31,6 +31,7 @@ use notify_debouncer_full::RecommendedCache;
 use notify_debouncer_full::new_debouncer;
 use notify_debouncer_full::notify::RecommendedWatcher;
 use std::time::Duration;
+use std::time::Instant;
 use thiserror::Error;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::mpsc::UnboundedSender;
@@ -45,10 +46,59 @@ pub const DEBOUNCE: Duration = Duration::from_millis(500);
 /// de-duplicated set of paths the batch touched, in first-occurrence order, so
 /// the select-loop can classify them (source edit, content-target edit, or
 /// journal-directory event) without re-deriving the path set.
+///
+/// Each path also carries the time of the most recent event that touched it,
+/// which [`EventBatch::observed_since`] uses to drop writes a re-apply already
+/// consumed. See that method for why a batch outlives the burst that made it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EventBatch {
     /// The distinct paths this batch touched, first-occurrence order.
     pub paths: Vec<Utf8PathBuf>,
+    /// Latest event time per entry of `paths`, index-aligned. Private so the
+    /// two vectors are only ever built and filtered together.
+    observed: Vec<Instant>,
+}
+
+impl EventBatch {
+    /// Build a batch from `paths` alone, stamping every entry with the current
+    /// instant. For constructing a batch outside the debouncer callback.
+    #[must_use]
+    pub fn from_paths(paths: Vec<Utf8PathBuf>) -> Self {
+        let observed = vec![Instant::now(); paths.len()];
+        Self { paths, observed }
+    }
+
+    /// The batch with every path whose latest event predates `cutoff` removed.
+    ///
+    /// The watcher's select-loop awaits a re-apply inline, so nothing drains
+    /// the `notify` stream while one runs. Events that arrived before the
+    /// re-apply started are queued behind it and surface afterwards as a fresh
+    /// batch, even though the re-apply already read that state and applied it.
+    /// Left in, such a straggler re-classifies the batch as a source edit and
+    /// drives a redundant second re-apply, which writes another journal
+    /// record. Passing the re-apply's start instant here drops exactly those.
+    ///
+    /// A write landing *during* a re-apply is kept: the apply may have read
+    /// the source before that write, so it still needs applying. The
+    /// comparison is therefore `>=`, keeping an event stamped at the cutoff.
+    #[must_use]
+    pub fn observed_since(&self, cutoff: Instant) -> Self {
+        let mut paths = Vec::new();
+        let mut observed = Vec::new();
+        for (path, at) in self.paths.iter().zip(&self.observed) {
+            if *at >= cutoff {
+                paths.push(path.clone());
+                observed.push(*at);
+            }
+        }
+        Self { paths, observed }
+    }
+
+    /// Whether the batch touches no paths.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.paths.is_empty()
+    }
 }
 
 /// Errors returned when building or arming the watcher's debouncer.
@@ -121,16 +171,28 @@ pub fn spawn(subscriptions: &[Utf8PathBuf]) -> Result<Debouncer, DebounceError> 
     let mut debouncer = new_debouncer(DEBOUNCE, None, move |result: DebounceEventResult| {
         if let Ok(events) = result {
             let mut paths: Vec<Utf8PathBuf> = Vec::new();
+            let mut observed: Vec<Instant> = Vec::new();
             for event in events {
                 for path in &event.event.paths {
-                    if let Ok(utf8) = Utf8PathBuf::try_from(path.clone())
-                        && !paths.contains(&utf8)
-                    {
-                        paths.push(utf8);
+                    if let Ok(utf8) = Utf8PathBuf::try_from(path.clone()) {
+                        // A path written twice inside one window keeps the
+                        // later stamp, so a write during a re-apply survives
+                        // `observed_since` even when an earlier write to the
+                        // same path does not.
+                        if let Some(at) = paths
+                            .iter()
+                            .position(|seen| *seen == utf8)
+                            .and_then(|index| observed.get_mut(index))
+                        {
+                            *at = (*at).max(event.time);
+                        } else {
+                            paths.push(utf8);
+                            observed.push(event.time);
+                        }
                     }
                 }
             }
-            if !paths.is_empty() && tx.send(EventBatch { paths }).is_err() {
+            if !paths.is_empty() && tx.send(EventBatch { paths, observed }).is_err() {
                 // The receiver was dropped (the watcher is shutting down);
                 // there is nothing to forward to, so the batch is discarded.
             }
@@ -242,6 +304,97 @@ mod tests {
         assert!(
             matches!(&err, DebounceError::Watch { path, .. } if path == &missing),
             "expected a Watch error naming `{missing}`, got: {err:?}"
+        );
+    }
+
+    /// A batch whose paths carry the given stamps, index-aligned.
+    fn stamped(entries: &[(&str, Instant)]) -> EventBatch {
+        EventBatch {
+            paths: entries.iter().map(|(p, _)| Utf8PathBuf::from(*p)).collect(),
+            observed: entries.iter().map(|(_, at)| *at).collect(),
+        }
+    }
+
+    #[test]
+    fn observed_since_drops_writes_the_reapply_already_consumed() {
+        // The flake this guards: five writes land, a re-apply starts and runs
+        // long enough that their queued events surface afterwards alongside
+        // the target the re-apply itself rewrote. Keeping the stale source
+        // path re-classifies the batch as a source edit and drives a second,
+        // redundant re-apply.
+        let started = Instant::now();
+        let before = started
+            .checked_sub(Duration::from_millis(50))
+            .expect("the test clock is well past 50ms");
+        let during = started
+            .checked_add(Duration::from_millis(50))
+            .expect("no Instant overflow");
+
+        let kept = stamped(&[
+            ("/repo/git/gitconfig", before),
+            ("/home/.gitconfig", during),
+        ])
+        .observed_since(started);
+
+        assert_eq!(
+            kept.paths,
+            vec![Utf8PathBuf::from("/home/.gitconfig")],
+            "the pre-apply source write is consumed; only the target rewrite survives"
+        );
+    }
+
+    #[test]
+    fn observed_since_keeps_a_write_landing_during_the_reapply() {
+        // The apply may have read the source before this write, so it still
+        // needs applying. An event stamped exactly at the cutoff is kept.
+        let started = Instant::now();
+        let kept = stamped(&[
+            ("/repo/a", started),
+            (
+                "/repo/b",
+                started
+                    .checked_add(Duration::from_millis(1))
+                    .expect("no Instant overflow"),
+            ),
+        ])
+        .observed_since(started);
+
+        assert_eq!(kept.paths.len(), 2, "neither write predates the re-apply");
+    }
+
+    #[test]
+    fn observed_since_empties_a_wholly_stale_batch() {
+        let started = Instant::now();
+        let stale = started
+            .checked_sub(Duration::from_millis(1))
+            .expect("the test clock is well past 1ms");
+
+        assert!(
+            stamped(&[("/repo/a", stale)])
+                .observed_since(started)
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_repeat_write_keeps_the_later_stamp() {
+        // The debouncer callback folds a repeat write into the existing entry
+        // by taking the later stamp. A path written both before and during a
+        // re-apply must therefore survive the filter.
+        let started = Instant::now();
+        let before = started
+            .checked_sub(Duration::from_millis(50))
+            .expect("the test clock is well past 50ms");
+        let during = started
+            .checked_add(Duration::from_millis(50))
+            .expect("no Instant overflow");
+
+        let folded = stamped(&[("/repo/a", before.max(during))]).observed_since(started);
+
+        assert_eq!(
+            folded.paths.len(),
+            1,
+            "the later write outranks the earlier"
         );
     }
 }
