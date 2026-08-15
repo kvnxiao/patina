@@ -136,8 +136,8 @@ subsystem lives under `patina-core/src/remote/`:
 
 The sweep reads every journal commit sentinel on disk and keeps any
 checkout one of them still names, because rollback walks back through
-older records. A sentinel it cannot decode suspends the sweep rather than
-stranding a rollback.
+older records. Where the sweep cannot decode a sentinel, it suspends
+rather than stranding a rollback.
 
 `docs/REMOTE_SOURCES.md` is the normative behavioural spec.
 

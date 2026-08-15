@@ -229,10 +229,9 @@ plan, no writes, and byte-identical stdout. Patina never overwrites a
 file it does not own without taking a backup first.
 
 On a terminal the diff is colorized: green additions, red removals, bold
-entry headers, styled warnings and errors. A distinct color marks the
-confirmation prompt, and its `[y/N]` keys are painted apart from the
-prose and from each other, a green affirmative `y` against a red default
-`N`. Piped
+entry headers, styled warnings and errors. The confirmation prompt is
+colorized too: a green affirmative `y` and a red default `N`, each set
+apart from the prose and from the other. Piped
 or redirected output is always plain. Stdout therefore stays
 byte-identical between runs. The `--color` flag (global, before or after any
 subcommand) forces the choice: `auto` (the default) colors a terminal and
@@ -257,9 +256,9 @@ clean: 1  drifted: 1  missing: 1  orphaned: 1
 ```
 
 On a terminal the state word is green (clean), yellow (drifted), red
-(missing), or magenta (orphaned). Magenta sits off the green-yellow-red
-scale on purpose: an orphan is a leftover awaiting a reap, not a
-severity. The summary paints only
+(missing), or magenta (orphaned). An orphan is a leftover awaiting a
+reap, not a severity, so it sits off the green-yellow-red scale. The
+summary paints only
 a non-zero counter, so a clean repository reads at a glance. Every state
 is in the text as well, and a stripped run loses the color alone.
 
