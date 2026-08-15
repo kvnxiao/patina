@@ -1,6 +1,6 @@
 # Operating environment
 
-Where Patina keeps its per-machine state, and the two environment
+Where Patina stores its per-machine state, and the two environment
 problems it leaves to you in v1.0: a state directory or repository
 sitting on a cloud-sync mount, and a `systemd --user` watcher that dies
 with your login session. Read them here rather than meeting them through

@@ -35,8 +35,8 @@ min_age = "0s"           # optional; overrides remote_min_age for this remote
 
 Entries refer to a remote by its **name**, which also keys the remote's
 pin in the lockfile, its directory in the cache, and every `patina
-remote` verb. Write `name` outright, or let Patina take the last path
-segment of the URL with any trailing `.git` removed. That gives
+remote` verb. Write `name` outright, or let Patina derive it from the
+last path segment of the URL, with any trailing `.git` removed. That gives
 `humanizer` for all of `https://github.com/blader/humanizer.git`,
 `git@github.com:blader/humanizer`, and `/srv/mirrors/humanizer.git`. A
 URL with no legal last segment is refused with a message telling you to
@@ -83,7 +83,7 @@ remote's pinned rev, so its module directory contributes only the
 manifest line. The two sit side by side in one manifest, and one manifest
 may draw on several remotes.
 
-To take a subset of a remote, declare entries for exactly the files and
+To deploy a subset of a remote, declare entries for exactly the files and
 directories you want; the rest of the repository never leaves the cache.
 Every entry key works as it does locally: `mode`, `when`, `target` /
 `targets`, module `[variables]`, and `[[hook]]` entries you author
@@ -99,7 +99,7 @@ module directory.
 
 ## Trust boundaries
 
-Remote content is third-party input. Patina holds these lines against it:
+Remote content is third-party input. Patina enforces these limits on it:
 
 - Patina never reads configuration out of a checkout. A `patina.toml`
   inside the remote repository is inert bytes. Mappings, hooks, and
@@ -166,8 +166,8 @@ new ones.
 The lockfile is a statement about the root manifest's declarations, not
 about what this machine happens to use. `patina remote update` with no
 argument covers **every** declaration, including one no entry currently
-names, which keeps the committed lock complete for machines whose active
-entries differ from yours. A pin whose `[[remote]]` you deleted is stale
+names. The committed lock therefore stays complete for machines whose
+active entries differ from yours. A pin whose `[[remote]]` you deleted is stale
 by definition: an apply that may write drops it and says so, while a
 preview reports it and leaves the file alone. A preview here means a
 non-interactive apply without `--yes`, or any `--json` run; neither
@@ -205,7 +205,7 @@ that may write.
 
 The directory under `<state>/remotes/` is named by the remote's folded
 name (one case, one Unicode normal form), not by the spelling in the
-manifest. Respelling a declaration therefore keeps addressing the
+manifest. Respelling a declaration therefore still addresses the
 checkouts already on disk instead of starting a second tree.
 
 Git runs as a subprocess (`git` on `PATH`, verified by
@@ -228,8 +228,8 @@ post-1.0 item.
 Each successful apply sweeps the cache. It removes every checkout no
 journal record on disk references, and a remote the root manifest no
 longer declares loses its whole cache directory, bare repository
-included. Rollback keeps what it needs, and disk stays bounded at roughly
-the current and previous rev per remote. The checkout of each declared
+included. Rollback still finds every checkout it names, and disk stays
+bounded at roughly the current and previous rev per remote. The checkout of each declared
 remote's currently pinned rev survives whether or not a record names it,
 because a pin bumped but not yet applied is the warm cache an offline
 apply depends on. `patina remote prune` runs the same sweep by hand.
@@ -476,11 +476,10 @@ does not fill. Use that to add one upstream file to a directory your
 repository also populates. Two entries writing one leaf is still refused,
 naming the leaf and the directory target it came from.
 
-The leaves are read from the source tree as it stands, so the verdict
-follows what the source currently holds: a file appearing upstream under
-a tree source can fail a plan that passed yesterday. That failure lands
-before any write, the correct outcome when a tree grows an unexpected
-file.
+The leaves are read from the source tree as it stands, so a file
+appearing upstream under a tree source can fail a plan that passed
+yesterday. That failure lands before any write, the correct outcome when
+a tree grows an unexpected file.
 
 Both comparisons ignore case and Unicode normal form, on every platform.
 Windows and macOS resolve two targets differing only in case to one file,

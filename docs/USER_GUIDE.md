@@ -232,8 +232,8 @@ On a terminal the diff is colorized: green additions, red removals, bold
 entry headers, styled warnings and errors. The confirmation prompt gets
 its own color, and its `[y/N]` keys are painted apart from the prose and
 from each other, a green affirmative `y` against a red default `N`. Piped
-or redirected output is always plain, which keeps stdout byte-identical
-between runs. The `--color` flag (global, accepted before or after any
+or redirected output is always plain. Stdout therefore stays
+byte-identical between runs. The `--color` flag (global, before or after any
 subcommand) forces the choice: `auto` (the default) colors a terminal and
 strips otherwise, `always` colors even when piped, `never` disables
 color. `NO_COLOR` in the environment is honoured under `auto`.
@@ -324,8 +324,8 @@ Creating symbolic links on Windows requires either Developer Mode or an
 elevated session. When Patina needs the privilege and Developer Mode is
 off, it offers a one-time elevation. A single UAC prompt appears, and
 accepting it turns Developer Mode on through the bundled
-`patina-elevate.exe` helper, which settles the question for every later
-run. Declining the prompt exits `5` and points you at
+`patina-elevate.exe` helper. Later runs need no prompt. Declining exits
+`5` and points you at
 `patina doctor --fix`, which offers the same remediation.
 
 ## Windows Defender exclusions
@@ -356,7 +356,7 @@ and exits successfully, leaving nothing to compare against.
 Patina then reports state from its own ledger and labels it as such:
 `recorded` and `not recorded` in place of `present` and `missing`, under
 a note saying where the state came from. `--json` marks the same
-distinction as `current_readable: false`. One thing slips through: an
+distinction as `current_readable: false`. Patina misses one case: an
 exclusion you delete by hand in the Defender UI. Run `patina defender
 status` from an elevated shell to catch it. That run reads the live list
 and reports `present` or `missing` against it.
@@ -428,10 +428,6 @@ outcomes exit `1`, and each says something different:
 | Defender rejected the change           | The write returned success and changed nothing. Usually Tamper Protection or a Defender managed by policy (Intune, GPO). Check `Get-MpComputerStatus`. |
 | The helper could not apply the request | It never reached Defender: a path it refused, or a request file it could not read.     |
 | The helper reported no result          | Nobody observed the outcome. The exclusions may have been applied without being recorded, so re-run `apply`, which is idempotent. |
-
-Patina keeps the three apart because each takes a different fix. It
-claims a success only after confirming it, and names Defender only for an
-outcome it saw.
 
 Patina records only the exclusions it added, in a per-machine ledger.
 `apply` therefore reaps a stale patina-owned exclusion and **never
