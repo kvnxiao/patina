@@ -1,7 +1,7 @@
 # patina local git hooks
 
 Git hooks for patina contributors. They mirror the fast gate CI runs on every
-PR, so a clean commit means a clean PR check.
+PR, so a clean commit means a clean PR check for that gate.
 
 ## What runs
 
@@ -10,9 +10,9 @@ PR, so a clean commit means a clean PR check.
 | `pre-commit` | Fast inner-loop gate: `cargo +nightly fmt --all --check` and `cargo clippy --workspace --all-targets --all-features -- -D warnings` |
 | `pre-push` | Full local gate: `just check` (= `just lint`, which is fmt + clippy + **docs** (`cargo doc -D warnings`) + `cargo deny`, then `just test`, which is `cargo test --workspace --locked`) |
 
-`pre-commit` keeps the per-commit loop fast (format + lint only); `pre-push` runs the heavier, comprehensive gate once before code leaves your machine, including the `docs` and `cargo deny` checks a fast commit gate skips. `pre-push` needs [`just`](https://github.com/casey/just) on `PATH`.
+`pre-commit` keeps the per-commit loop fast: format and lint only. `pre-push` runs the heavier gate once before code leaves your machine, adding the `docs` and `cargo deny` checks the commit gate skips. It needs [`just`](https://github.com/casey/just) on `PATH`.
 
-CI still runs gates neither hook can reproduce on one box: the Windows/macOS/Linux test matrix, the MSRV (Rust 1.95) build, and coverage. A green `pre-push` is therefore necessary, not sufficient. Watch the PR checks after pushing.
+CI still runs gates neither hook can reproduce on one box: the Windows/macOS/Linux test matrix, the MSRV (Rust 1.95) build, and coverage. Watch the PR checks after pushing.
 
 Both hooks are a no-op when no `Cargo.toml` exists yet.
 
@@ -24,7 +24,7 @@ Both hooks are a no-op when no `Cargo.toml` exists yet.
 git config core.hooksPath .githooks
 ```
 
-That sets your local `.git/config` to point at this directory, and all hooks here run on relevant git events.
+That points your local `.git/config` at this directory, and every hook here runs on its git event.
 
 You also need the nightly Rust toolchain (the `pre-commit` hook uses `cargo +nightly fmt`):
 
@@ -46,7 +46,7 @@ rustup toolchain list             # should include 'nightly-...'
 
 ## Git 2.54 `hook.*` namespace (optional)
 
-Git 2.54 introduced a config-based `hook.*` namespace that lets you declare hooks in `.git/config` rather than via filenames. Patina's hook setup is simple enough that the file-based `core.hooksPath` approach above is fine, but if you prefer the new mechanism:
+Git 2.54 introduced a config-based `hook.*` namespace that declares hooks in `.git/config` instead of by filename. The `core.hooksPath` approach above covers Patina's setup, but if you prefer the new mechanism:
 
 ```sh
 git config hook.patina-fmt-clippy.event   pre-commit
@@ -54,7 +54,7 @@ git config hook.patina-fmt-clippy.command "$(pwd)/.githooks/pre-commit"
 git hook list                              # inspect what runs
 ```
 
-Either approach is **local-only and not committed**: both write to `.git/config`, which lives outside the worktree. There is no git mechanism (yet) to ship hook config inside the repo and have it auto-apply on clone.
+Either approach is **local-only and not committed**: both write to `.git/config`, outside the worktree. Git still offers no way to ship hook config inside the repo and have it auto-apply on clone.
 
 ## On Linux/macOS: executable bit
 
@@ -64,4 +64,4 @@ Each hook needs the executable bit set. After committing the file, mark it execu
 git update-index --chmod=+x .githooks/pre-commit .githooks/pre-push
 ```
 
-On Windows this is a no-op but recording the bit ensures Linux/macOS contributors don't have to chmod after pulling.
+The command does nothing on Windows, and recording the bit saves Linux/macOS contributors a `chmod` after pulling.

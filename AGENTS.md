@@ -6,7 +6,7 @@ Patina is a cross-platform dotfile manager written in Rust. This file orients LL
 
 ## Product north star
 
-Its source of truth is a user's centralized git repository. A user runs `patina apply` and the configurations declared in `patina.toml` files materialize at the right targets: symbolic links pointing back into the repo, rendered template output, or byte copies where a link is not appropriate. The engine guarantees that an apply interrupted by process termination (`kill -9`) leaves the filesystem in either the pre-apply or the post-apply state. Power-loss durability is a post-1.0 hardening item (see Known unknowns).
+Patina's source of truth is a user's centralized git repository. A user runs `patina apply` and the configurations declared in `patina.toml` files materialize at the right targets: symbolic links pointing back into the repo, rendered template output, or byte copies where a link is not appropriate. An apply interrupted by process termination (`kill -9`) leaves the filesystem in either the pre-apply or the post-apply state. Power-loss durability is a post-1.0 hardening item (see Known unknowns).
 
 ### Users
 
@@ -18,7 +18,7 @@ Its source of truth is a user's centralized git repository. A user runs `patina 
 
 ### V1.0 outcome
 
-V1.0 is considered complete when a user can:
+V1.0 is complete when a user can:
 
 - **Declare and apply.** `patina apply` materializes `patina.toml` as symlinks / rendered templates / byte copies at the right targets.
 - **Preview safely.** Diff-and-prompt by default; non-interactive shells fall through to plan-only.
@@ -31,7 +31,7 @@ V1.0 is considered complete when a user can:
 
 - **Crash safety.** Single-fsync postcard journal + per-operation progress cursor; `kill -9` mid-apply converges deterministically on the next run. Scope: process termination, where the page cache survives; power-loss / kernel-panic durability is out of scope for v1.0 (see Known unknowns).
 - **Idempotency.** Re-applying against unchanged source is a no-op: same plan, no writes, byte-identical stdout.
-- **Never overwrite without consent.** Patina never touches a file it doesn't own until the user approves the change, and it backs up every overwrite so `patina rollback` can restore it.
+- **Never overwrite without consent.** Patina never touches a file it doesn't own until the user approves the change. Every overwrite is backed up first, so `patina rollback` can restore it.
 - **Rollback fidelity.** After `patina rollback`, the filesystem matches pre-apply state in content and entry kind (file / symlink / directory). Mode and timestamp bits are excluded, as are files the user touched outside Patina.
 - **Deterministic stdout.** Two consecutive `apply`s against unchanged source produce byte-identical output. No timestamps, PIDs, or random IDs (`--json` included).
 - **Cross-platform parity.** macOS, Linux, Windows are first-class. Two-of-three is not done.
@@ -63,11 +63,11 @@ If the user asks for one of these, the answer is "not in v1.0". Surface it as a 
 - **`fs2` advisory lock semantics.** Patina papers over POSIX `flock(2)` against Windows `LockFileEx` for single-CLI and watcher↔CLI coordination.
 - **`tokio` file I/O remains `spawn_blocking`-backed** in v1.0; we accept the cost.
 - **MiniJinja strict-undefined** (including the Jinja2 `{% else %}` empty-string rule) is acceptable.
-- **Power-loss / kernel-panic durability.** Backups are not fsync'd before an overwrite, so crash safety holds under process termination (`kill -9`, page cache intact) but not a power cut. Full never-intermediate durability under power loss (atomic temp+rename target writes plus fsync of backups and parent dirs) is a post-1.0 hardening item.
+- **Power-loss / kernel-panic durability.** Backups are not fsync'd before an overwrite. Process termination (`kill -9`, page cache intact) therefore converges on the next run; a power cut can leave the overwrite durable and its backup not. Full never-intermediate durability under power loss (atomic temp+rename target writes plus fsync of backups and parent dirs) is a post-1.0 hardening item.
 - **Per-machine state directory must not live on cloud-sync paths** (iCloud / OneDrive / Dropbox / Box / Google Drive / Syncthing). Patina does not detect cloud-sync paths in v1.0; the constraint is documented only.
-- **Committer timestamps are self-reported.** The update gate's future / backdating / age checks stop untargeted, fast-moving compromises. A patient attacker who backdates commits deliberately can still get past these checks. Plain git offers no unforgeable time source; the diff-and-prompt loop is the hard boundary.
+- **Committer timestamps are self-reported.** The update gate's future / backdating / age checks stop untargeted, fast-moving compromises. A patient attacker who backdates commits deliberately can still get past these checks. The diff-and-prompt loop is the hard boundary.
 - **Fetching a bare SHA needs server cooperation.** A server with `uploadpack.allowReachableSHA1InWant` off refuses the specced shallow fetch by exact SHA. `remote::git::fetch_commit` then falls back to a shallow fetch of the tracked ref, and re-checks that the pin arrived.
-- **Journal timestamps have one-second resolution.** Two applies inside one second share a `<ts>.COMMIT`, collapsing the older record. This limit predates the remote cache, and the remote cache's reachability sweep now depends on it.
+- **Journal timestamps have one-second resolution.** Two applies inside one second share a `<ts>.COMMIT`, collapsing the older record. The remote cache's reachability sweep depends on those records.
 
 ---
 
@@ -78,13 +78,13 @@ The full engineering rulebook ships as Skills in this repository.
 - **Use the `rust-rules` Skill** before writing or reviewing **any** Rust code.
 - **Use the `github-actions-rules` Skill** before authoring or editing anything under `.github/workflows/`.
 
-Each Skill's body lists the reference docs to read for the task at hand, so using it pulls in the right rules.
+Each Skill's body lists the reference docs for the task at hand.
 
 ---
 
 ## Hard rules: never
 
-These are hard rules. Violating any of them is grounds for the next reviewer turn to reject the work outright.
+Violating any of these is grounds for the next reviewer turn to reject the work outright.
 
 - **Never `unwrap()`, ever.** Use `?` with proper error types in production; use `.expect("descriptive message")` in tests.
 - **Never `expect()` in production code.** Allowed only in tests (`clippy.toml` sets `allow-expect-in-tests = true`). See the `rust-rules` Skill's error-handling reference.
@@ -98,7 +98,7 @@ These are hard rules. Violating any of them is grounds for the next reviewer tur
 
 ## Code conventions
 
-Patina-specific additions and crate choices layered on the `rust-rules` Skill. Where these conflict with a Skill rule, the Skill wins and this file should be updated.
+Patina-specific additions and crate choices layered on the `rust-rules` Skill. Where these conflict with a Skill rule, the Skill wins; update this file.
 
 - **On-disk format version (pre-release no-bump policy):** the `postcard` binary formats (journal plan, committed apply record, watch drift cache) share one major-version envelope, `FILE_MAJOR_VERSION` in `patina-core/src/journal/plan.rs`. **Hold the major at `1` until v1.0.** Pre-release has no shipped state to preserve, so breaking layout changes keep major `1` with no migration; an older binary then refuses a newer file (`decode_envelope` rejects `found > supported`). Bump the major once, at the v1.0 boundary, where it becomes a real compatibility contract.
 - **CLI output:** human-readable by default with color where appropriate, JSON when `--json` is set. Use the `output::Reporter` abstraction, not direct prints.
@@ -127,7 +127,7 @@ A test must gate a real invariant of the system under test. It must not gate edi
 4. **Mocking the function under test and asserting the mock was called.** The mock replaces the very behavior the test claims to verify. The assertion proves only that the test plumbing works.
 5. **Loose-outcome assertions any input passes.** Assertions so permissive that any input satisfies them gate nothing. Two examples: a check that a function returned without error, when the function is infallible; and a check that an output is non-empty, when the function always returns non-empty. Pick an assertion that would fail for at least one realistic regression.
 
-When a test you wrote is flaky, investigate the flake. Do not retry it until green; intermittent failures point at real races, ordering assumptions, or shared state that will bite again later.
+When a test you wrote is flaky, investigate the flake. Do not retry it until green; intermittent failures point at real races, ordering assumptions, or shared state.
 
 ### Commit hygiene
 

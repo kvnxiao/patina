@@ -8,13 +8,12 @@ assignees: []
 
 ## Problem
 
-<!-- What problem are you proposing to solve? What's the current state, and
-     why isn't it sufficient? Include real-world scenarios if possible. -->
+<!-- What problem are you proposing to solve? What does Patina do today, and
+     where does that fall short? Name a scenario you have hit. -->
 
 ## Proposed scope
 
-<!-- Bulleted list of what would be in scope for this proposal, and what would
-     explicitly be out of scope. -->
+<!-- What this proposal covers, and what it deliberately leaves out. -->
 
 **In scope:**
 
@@ -26,8 +25,8 @@ assignees: []
 
 ## Why now
 
-<!-- What's prompting this proposal? Existing user pain? Technical debt?
-     Dependency on a recently shipped feature? -->
+<!-- What prompts this proposal now: user pain, technical debt, or a
+     feature that just shipped and unblocked it. -->
 
 ## Dependencies
 
@@ -36,7 +35,7 @@ assignees: []
 
 ## Alternatives considered
 
-<!-- Approaches you've thought about and (provisionally) rejected. -->
+<!-- Approaches you weighed and provisionally rejected, with the reason. -->
 
 ## Open questions
 
@@ -46,8 +45,8 @@ assignees: []
 
 ## Next steps
 
-If this proposal gains traction:
+Once this proposal is accepted:
 
 1. Draft the design.
-2. Open a PR. Discuss in review.
-3. On acceptance, begin implementation.
+2. Open a PR and discuss it in review.
+3. Implement.

@@ -1,11 +1,10 @@
 # Operating environment
 
-This page covers two operational footguns Patina deliberately does
-**not** detect at runtime in v1.0. They live here so you can avoid
-them rather than rediscover them through degraded apply behaviour.
-
-Both topics are tracked as v1.1 candidates; detection may be added in a
-future release if real users surface the failure modes.
+Where Patina stores its per-machine state, and the two environment
+problems it leaves to you in v1.0: a state directory or repository
+sitting on a cloud-sync mount, and a `systemd --user` watcher that dies
+with your login session. Read them here rather than meeting them through
+degraded apply behaviour.
 
 ---
 
@@ -38,12 +37,11 @@ patina/
 
 ## Don't put state or your repo on a cloud-sync mount
 
-**Patina does not detect cloud-sync directories in v1.0.** No
-warning, no refusal, no doctor check. Patina carries no such check
-because every detection strategy is either incomplete or intrusive. A
-hardcoded list of provider names rots. Process inspection and filesystem
-xattr probing reach further into your machine than a dotfile manager
-should.
+**Patina does not detect cloud-sync directories in v1.0.** Nothing warns
+you, nothing refuses, and `patina doctor` says nothing either. Every
+detection strategy is incomplete or intrusive: a hardcoded list of
+provider names rots, while process inspection and filesystem xattr
+probing reach further into your machine than a dotfile manager should.
 
 You are responsible for keeping the **per-machine state directory**
 and your **dotfiles repository** off the following kinds of mounts:
@@ -64,17 +62,17 @@ writes through their own queueing layer. Your local `fsync` returns
 before the provider finishes uploading, and the provider may rename,
 version, or delay files in ways Patina cannot observe:
 
-- **Backups can be silently versioned**, which makes "restore the
-  last-applied bytes" non-deterministic.
+- **Backups can be silently versioned.** Restoring the last-applied
+  bytes then has no deterministic answer.
 - **Journal files can appear out of order** during recovery if the
   provider reorders uploads, breaking the per-operation cursor.
 - **The advisory file lock** (`fs2` over `flock(2)` /
   `LockFileEx`) is not well-defined on cloud-mounted filesystems;
   two `patina apply` invocations could interleave.
 
-For the repository, the failure mode is subtler. A long-running upload
-holds the source file open with exclusive sharing semantics on Windows,
-racing with `patina apply`'s reads.
+The repository fails a different way. On Windows a long-running upload
+holds the source file open with exclusive sharing semantics, racing
+`patina apply`'s reads.
 
 ### What to do instead
 
@@ -104,26 +102,17 @@ login session ends. If you SSH into a server, run
 `patina watch install`, then SSH out, the watcher dies with your
 session.
 
-**Patina does not invoke `loginctl enable-linger` for you in v1.0.**
-Every other Patina command runs as the unprivileged user, and the main
-`patina` process never prompts for sudo. Patina does not break that
-invariant for the minority of users who need survive-logout behavior.
-A `--linger` flag is a v1.1 candidate.
+**Patina does not invoke `loginctl enable-linger` for you in v1.0.** The
+main `patina` process runs unprivileged and never prompts for sudo, and
+survive-logout behaviour is not worth breaking that invariant for the
+minority who need it. A `--linger` flag is a v1.1 candidate.
 
 ### When you need lingering
 
-You probably want lingering if:
-
-- You run Patina on a server you SSH into intermittently and want
-  drift detection / re-applies to continue between sessions.
-- You want the watcher to keep running across reboots without
-  needing to log in via the console.
-
-You probably do **not** need lingering if:
-
-- You're on a desktop / laptop where you stay logged in.
-- You only use Patina for deterministic apply runs and don't care
-  about the watcher between sessions.
+Enable it on a machine you SSH into intermittently, or on one that should
+run the watcher across reboots without a console login. Skip it on a
+desktop or laptop where you stay logged in, and on any machine where you
+only ever run `patina apply` by hand.
 
 ### How to enable it
 
@@ -151,9 +140,8 @@ commands need sudo, and Patina commands run unprivileged.
 
 ### Without systemd
 
-You might be on a non-systemd Linux, such as Void, Devuan
-(sysvinit-style), or Alpine (without OpenRC-systemd parity). Patina has
-no preinstalled service template for these init systems. Run the
-watcher inline with `patina watch --foreground` inside your own
-supervisor instead (runit, s6, OpenRC). Templates for other init
-systems remain a v1.1 candidate.
+`patina watch install` writes a `systemd --user` unit. A non-systemd
+Linux (Void, Devuan with sysvinit, Alpine without OpenRC-systemd parity)
+cannot run one. Run the watcher inline with `patina watch --foreground`
+under your own supervisor instead: runit, s6, or OpenRC. Templates for
+other init systems are a v1.1 candidate.
