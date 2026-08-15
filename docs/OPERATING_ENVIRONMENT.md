@@ -140,8 +140,8 @@ commands need sudo, and Patina commands run unprivileged.
 
 ### Without systemd
 
-On a non-systemd Linux (Void, Devuan with sysvinit, Alpine without
-OpenRC-systemd parity), `patina watch install` has no service template to
-write. Run the watcher inline with `patina watch --foreground` under your
-own supervisor: runit, s6, or OpenRC. Templates for other init systems
-are a v1.1 candidate.
+`patina watch install` writes a `systemd --user` unit. A non-systemd
+Linux (Void, Devuan with sysvinit, Alpine without OpenRC-systemd parity)
+cannot run one. Run the watcher inline with `patina watch --foreground`
+under your own supervisor instead: runit, s6, or OpenRC. Templates for
+other init systems are a v1.1 candidate.

@@ -229,9 +229,10 @@ plan, no writes, and byte-identical stdout. Patina never overwrites a
 file it does not own without taking a backup first.
 
 On a terminal the diff is colorized: green additions, red removals, bold
-entry headers, styled warnings and errors. The confirmation prompt gets
-its own color, and its `[y/N]` keys are painted apart from the prose and
-from each other, a green affirmative `y` against a red default `N`. Piped
+entry headers, styled warnings and errors. A distinct color marks the
+confirmation prompt, and its `[y/N]` keys are painted apart from the
+prose and from each other, a green affirmative `y` against a red default
+`N`. Piped
 or redirected output is always plain. Stdout therefore stays
 byte-identical between runs. The `--color` flag (global, before or after any
 subcommand) forces the choice: `auto` (the default) colors a terminal and
@@ -256,8 +257,9 @@ clean: 1  drifted: 1  missing: 1  orphaned: 1
 ```
 
 On a terminal the state word is green (clean), yellow (drifted), red
-(missing), or magenta (orphaned). An orphan sits off that severity scale,
-a leftover awaiting a reap, and gets its own hue. The summary paints only
+(missing), or magenta (orphaned). Magenta sits off the green-yellow-red
+scale on purpose: an orphan is a leftover awaiting a reap, not a
+severity. The summary paints only
 a non-zero counter, so a clean repository reads at a glance. Every state
 is in the text as well, and a stripped run loses the color alone.
 
@@ -480,11 +482,11 @@ server you SSH in and out of, enable lingering for your user once:
 sudo loginctl enable-linger $USER
 ```
 
-`patina watch install` targets `systemd --user`, so a distribution
-without it (Void, Devuan with a non-systemd init, Alpine) gets no service
-descriptor; run `patina watch --foreground` under runit, s6, or OpenRC
-instead. [`OPERATING_ENVIRONMENT.md`](OPERATING_ENVIRONMENT.md) covers
-both cases, including why Patina runs `enable-linger` for nobody.
+`patina watch install` writes a `systemd --user` unit. On Void, Devuan
+with a non-systemd init, or Alpine, run `patina watch --foreground` under
+runit, s6, or OpenRC instead.
+[`OPERATING_ENVIRONMENT.md`](OPERATING_ENVIRONMENT.md) covers both cases,
+including why Patina runs `enable-linger` for nobody.
 
 ### Drift notifications
 

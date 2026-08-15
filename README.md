@@ -75,9 +75,9 @@ accept `--yes` to skip the prompt.
 
 ## Design
 
-`patina` is built spec-first. Every slice gets written requirements and
-acceptance scenarios before anyone implements it, and review checks the
-code against them. See [`AGENTS.md`](AGENTS.md) for the product north star
+`patina` is built spec-first. We write requirements and acceptance
+scenarios for every slice before implementing it, then review the code
+against them. See [`AGENTS.md`](AGENTS.md) for the product north star
 and the contributor workflow.
 
 ## Contributing

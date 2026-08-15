@@ -105,8 +105,8 @@ Remote content is third-party input. Patina enforces these limits on it:
   inside the remote repository is inert bytes. Mappings, hooks, and
   variables come only from manifests in your own repository.
 - Remote sources are never templates. A `.tmpl` suffix on an entry that
-  names a remote gets no implicit render; the file is plain bytes under
-  the declared mode. Third-party files full of `{{ }}` would otherwise
+  names a remote is inert, and the file deploys as plain bytes under the
+  declared mode. Third-party files full of `{{ }}` would otherwise
   fail strict-undefined rendering, or worse, succeed at it. The rule is
   per entry, so a local `.tmpl` still renders in the same manifest.
 - A remote source may supply only bytes from within its own checkout.
@@ -287,9 +287,9 @@ considered, and `STATUS` what became of the pin. A `TO` equal to its
 `FROM` prints `-`, because two identical forty-character hashes read as a
 change until you compare them. The two blanks are worded apart on
 purpose: `(unpinned)` means no pin was recorded, `(unknown)` that the run
-never learned a candidate. A remote that failed or was refused still gets
-a row, so the table accounts for the whole run; the reason stays on
-stderr with the warning. The rows come after the run because `remote
+never learned a candidate. The table prints a row for a remote that
+failed or was refused too, accounting for the whole run; the reason stays
+on stderr with the warning. The rows come after the run because `remote
 update` interleaves warnings and confirmation prompts as it goes. Color
 follows `remote list`, with cyan names, green revs, and yellow for either
 blank.
