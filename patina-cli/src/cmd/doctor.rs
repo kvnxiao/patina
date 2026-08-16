@@ -183,8 +183,8 @@ pub struct Inputs {
 /// Returns an error (exit 1) when the per-machine state directory cannot be
 /// resolved, or when a `--fix` remediation fails: the persisted-default
 /// write, or the Windows helper running but leaving the flag off. On the
-/// `--fix` path an exclusive-lock timeout maps to exit 4 via the engine-error
-/// chain.
+/// `--fix` path an exclusive-lock timeout maps to exit 4 through the
+/// engine-error chain.
 ///
 /// Repository-discovery and manifest-parse failures are never fatal, and a
 /// shared-lock timeout is downgraded to a stderr warning.
@@ -257,15 +257,14 @@ fn run_fix(
         return Ok(ExitCode::Generic.code());
     }
 
-    // A contention timeout reaches the exit-4 mapping through the
-    // engine-error chain.
+    // A contention timeout maps to exit 4 through the engine-error chain.
     let lock_path = state.join("lock");
     let _guard = acquire_lock(&lock_path, LockKind::Exclusive, exclusive_timeout())
         .map_err(EngineError::from)
         .context("failed to acquire the exclusive lock")?;
 
-    // Recompute findings under the lock so the remediation acts on the state
-    // no concurrent mutator can be racing.
+    // Recompute findings under the lock, so the remediation acts on state no
+    // concurrent mutator can change.
     let inputs = gather_inputs(state);
     let findings = compute_findings(&inputs);
 
@@ -342,8 +341,8 @@ fn fix_default_repo(
 }
 
 /// Remediate the `DOC-WIN-DEVMODE` finding by driving the one-time UAC
-/// elevation flow. `launch_elevate_helper` re-reads the registry flag and
-/// reports `RanButStillDisabled` when it did not change.
+/// elevation flow. `launch_elevate_helper` re-reads the registry flag. When
+/// the flag did not change, it reports `RanButStillDisabled`.
 #[cfg(windows)]
 fn fix_dev_mode(
     args: &DoctorArgs,
@@ -488,8 +487,8 @@ fn repository_declares_remote(repo_root: &Utf8Path) -> bool {
 }
 
 /// Whether `repo_root`'s modules declare any `symlink` / `symlink-dir`
-/// `[[file]]` entry. A module whose manifest fails to parse is skipped, since
-/// nothing in it confirms a symlink declaration; a discovery failure yields
+/// `[[file]]` entry. Nothing in an unparseable module manifest confirms a
+/// symlink declaration, so such a module is skipped. A discovery failure yields
 /// `false`.
 fn repository_declares_symlink(repo_root: &Utf8Path) -> bool {
     let Ok(modules) = discover_modules(repo_root) else {
@@ -617,8 +616,8 @@ pub fn compute_findings(inputs: &Inputs) -> Vec<Finding> {
 }
 
 /// 1 when any finding is error-level, otherwise 0. No v1.0 finding is
-/// error-level, so the error branch never fires today; it reserves the exit-1
-/// path for a future addition.
+/// error-level, so the error branch never fires. It reserves the exit-1 path
+/// for a future addition.
 fn exit_code(findings: &[Finding]) -> ExitCode {
     if findings.iter().any(|f| f.level == Level::Error) {
         ExitCode::Generic
@@ -651,10 +650,10 @@ fn json_envelope(findings: &[Finding]) -> String {
 
 /// Render the findings to stderr as one aligned row each, so stdout stays
 /// clean for piping. A clean environment prints a single "no findings" line to
-/// stdout, so the user gets explicit confirmation. (`--json` writes its entire
-/// document to stdout instead.)
+/// stdout, so a clean run is explicitly confirmed rather than silent. (`--json`
+/// writes its entire document to stdout instead.)
 ///
-/// The block goes out through [`Reporter::err_block`]. One
+/// The block is written through [`Reporter::err_block`]. One
 /// [`Reporter::warn`] per line would paint every level the same yellow,
 /// because `warn` forces a single style over a whole line. The bracketed level
 /// stays in the first cell, so a stripped report still tells an advisory note
@@ -776,7 +775,7 @@ mod tests {
     #[test]
     fn fix_in_non_tty_without_yes_refuses_exit_one() {
         // The refusal returns before the lock and before any mutation, so the
-        // nonexistent state path passed here is safe.
+        // nonexistent state path in this call is safe.
         let mut reader = ScriptedReader::new(&[]);
         let mut reporter = BufferReporter::new();
         let code = run_fix(
@@ -868,7 +867,7 @@ mod tests {
         assert_eq!(note.level, Level::Info);
         // A repository resolved (base_inputs has repo_root set), so `patina
         // init` would refuse on the existing manifest; the advice must point
-        // at `doctor --fix`, name the resolved root, and say what breaks
+        // at `doctor --fix`, include the resolved root, and say what breaks
         // without the pointer (the cwd-less background watch service).
         assert!(
             note.message.contains("patina doctor --fix")
@@ -911,7 +910,7 @@ mod tests {
     #[test]
     fn windows_findings_never_fire_off_windows() {
         // Even with every Windows trigger condition met, an off-Windows host
-        // raises none of the DOC-WIN-* findings.
+        // does not raise any DOC-WIN-* finding.
         let inputs = Inputs {
             is_windows: false,
             dev_mode: DevModeStatus::Disabled,
@@ -1133,7 +1132,7 @@ mod tests {
     }
 
     /// A reader has to tell an advisory note from an error at a glance, and a
-    /// strip removes the color. The bracketed word must survive it.
+    /// strip removes the color. The bracketed word must be preserved.
     #[test]
     fn each_level_keeps_its_bracketed_word_and_paints_apart() {
         let findings = [Level::Info, Level::Warning, Level::Error].map(|level| Finding {

@@ -14,9 +14,9 @@
 //! | File decoded and rendered                 | 0    |
 //! | Missing / unreadable path, version mismatch, corrupt body | 1 |
 //!
-//! On decode failure, the reporter prints the path. If a version mismatch
-//! caused it, the message also includes both major versions: the file's,
-//! written by a newer binary, and the one this binary supports.
+//! On decode failure, the reporter prints the path. A version-mismatch failure
+//! also includes both major versions: the file's, written by a newer binary,
+//! and the one this binary supports.
 
 use crate::cli::DebugCommand;
 use crate::cli::DebugDriftCacheArgs;
@@ -30,9 +30,9 @@ use patina_core::render_plan;
 
 /// Dispatch a `patina debug` subcommand, returning the process exit code.
 ///
-/// A failed decode reaches the user through the reporter and maps to exit
-/// code 1: the `debug` group expresses its terminal states as exit codes,
-/// like the rest of the CLI.
+/// A failed decode is printed through the reporter and maps to exit code 1:
+/// the `debug` group expresses its terminal states as exit codes, like the
+/// rest of the CLI.
 #[must_use = "the returned exit code is the process's terminal status"]
 pub fn run(command: &DebugCommand, reporter: &mut impl Reporter) -> i32 {
     match command {
@@ -50,10 +50,10 @@ fn run_journal(args: &DebugJournalArgs, reporter: &mut impl Reporter) -> i32 {
             ExitCode::Success.code()
         }
         Err(err) => {
-            // `PlanRenderError`'s `Display` formats the message, and both
-            // variants include the path. `Decode` also interpolates its
-            // `JournalError`, whose version-mismatch arm includes both major
-            // versions.
+            // `PlanRenderError`'s `Display` formats the message, and its
+            // `Read` and `Decode` variants each include the path. `Decode`
+            // also interpolates its `JournalError`, whose version-mismatch arm
+            // includes both major versions.
             reporter.warn(&err.to_string());
             ExitCode::Generic.code()
         }
@@ -172,8 +172,9 @@ mod tests {
 
     #[test]
     fn renders_a_valid_drift_cache_to_stdout_and_exits_zero() {
-        // A populated drift cache renders with the version, the
-        // bound journal timestamp, the target path, and both hashes; exit 0.
+        // A populated drift cache renders with the version, the bound journal
+        // timestamp, the target path, and the expected and actual hashes;
+        // exit 0.
         let dir = tempfile::tempdir().expect("tempdir");
         let dir = Utf8Path::from_path(dir.path()).expect("utf8 tempdir");
         let path = dir.join("drift.cache");
@@ -199,7 +200,7 @@ mod tests {
             "stdout must include the target path: {}",
             r.out
         );
-        // Both 32-byte hashes render as their lower-case hex repeats.
+        // Each 32-byte hash renders as its lower-case hex repeat.
         assert!(
             r.out.contains(&"11".repeat(32)),
             "stdout must include the expected hash: {}",

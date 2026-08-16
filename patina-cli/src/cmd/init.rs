@@ -5,8 +5,8 @@
 //! directory when omitted. `init` then persists that directory's absolute
 //! canonical path to the per-machine state directory's `default_repo` file,
 //! and prints a next-step hint pointing at `patina add`. A `patina.toml`
-//! already at the target is a refusal: exit 1, with neither that file nor the
-//! state directory touched.
+//! already at the target is a refusal (exit 1). Neither that file nor the state
+//! directory is touched.
 //!
 //! `init` is a mutating command: it acquires the engine's exclusive advisory
 //! lock at `<state>/lock` before any filesystem mutation. The manifest write
@@ -63,14 +63,14 @@ pub async fn run(args: &InitArgs, reporter: &mut impl Reporter) -> Result<i32> {
     let target = resolve_target_path(args.path.as_deref())?;
     let manifest_path = target.join(MANIFEST_FILENAME);
 
-    // Refuse before the lock and before any mutation: the existing manifest
-    // stays byte-identical and the state directory untouched.
+    // Refuse before the lock and before any mutation. The existing manifest
+    // stays byte-identical, and the state directory is untouched.
     if manifest_path.exists() {
         return Ok(refuse_existing(&manifest_path, args.json, reporter));
     }
 
-    // Map the lock error through `EngineError` so a contention timeout
-    // reaches the exit-code-4 mapping in `ExitCode::from_error_chain`.
+    // Map the lock error through `EngineError` so a contention timeout maps to
+    // exit 4 in `ExitCode::from_error_chain`.
     let state = resolve_state_dir().map_err(EngineError::from)?;
     let lock_path = state.join("lock");
     let _guard = acquire_lock(&lock_path, LockKind::Exclusive, exclusive_timeout())
@@ -110,8 +110,8 @@ pub async fn run(args: &InitArgs, reporter: &mut impl Reporter) -> Result<i32> {
 }
 
 /// Report the already-initialized refusal and return exit code 1. Under
-/// `--json` the typed error document goes to stdout; otherwise the message
-/// goes to stderr as a warning.
+/// `--json` the typed error document is written to stdout. Otherwise the
+/// message is written to stderr as a warning.
 fn refuse_existing(manifest_path: &Utf8Path, json: bool, reporter: &mut impl Reporter) -> i32 {
     let message = format!("{manifest_path} already exists");
     if json {
@@ -122,8 +122,8 @@ fn refuse_existing(manifest_path: &Utf8Path, json: bool, reporter: &mut impl Rep
     ExitCode::Generic.code()
 }
 
-/// Resolve the target directory path. A positional path is used verbatim;
-/// with none, the current working directory.
+/// Resolve the target directory path. A positional path is used verbatim. With
+/// no positional path, the current working directory is used.
 ///
 /// The caller creates the directory under the exclusive lock, so no
 /// filesystem mutation precedes the lock.
@@ -167,7 +167,7 @@ fn error_envelope(manifest_path: &Utf8Path, message: &str) -> String {
 }
 
 /// The manifest's `created_at` RFC 3339 timestamp. The only wall-clock value
-/// `init` emits, and it lands in the configuration file rather than on
+/// `init` emits, and it is written to the configuration file rather than to
 /// stdout.
 fn rfc3339_now() -> String {
     jiff::Timestamp::now().to_string()

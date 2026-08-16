@@ -16,20 +16,20 @@
 //!
 //! ## Mode and module resolution
 //!
-//! The module name comes from `--module`, else an interactive prompt. In a
+//! The module name is read from `--module`, or from an interactive prompt. In a
 //! non-TTY shell without `--module`, the command warns, identifies the missing
-//! flag, and exits 1. The mode comes from exactly one of the `--symlink` /
-//! `--copy` / `--template` / `--symlink-tree` flags (clap enforces
-//! at-most-one, exit 2 when more than one is given), else an interactive
-//! prompt. In a non-TTY shell without a mode flag, the command exits 1 the
-//! same way.
+//! flag, and exits 1. The mode is read from exactly one of the `--symlink` /
+//! `--copy` / `--template` / `--symlink-tree` flags, or from an interactive
+//! prompt. clap enforces at-most-one and exits 2 when more than one is given.
+//! In a non-TTY shell without a mode flag, the command exits 1 the same way.
 //!
 //! The mode flags are kind-checked against the source's on-disk kind:
 //! `--symlink` and `--copy` are valid for either kind, while
 //! `--template` is file-only and `--symlink-tree` is directory-only. An
 //! incompatible flag/kind pair is rejected with a typed error that includes
 //! the offending flag and the source kind, before any mutation. A directory
-//! source therefore never emits a `[[file]]` entry and vice versa.
+//! source therefore never emits a `[[file]]` entry, and a file source never
+//! emits a `[[directory]]` entry.
 //!
 //! Manifest editing, repo discovery, tilde expansion, and canonicalization
 //! all live in `patina_core`; this module is presentation and control flow.
@@ -196,7 +196,7 @@ impl AddMode {
 ///
 /// # Errors
 ///
-/// Returns an error (exit 1, or exit 4 on a lock-acquisition timeout via
+/// Returns an error (exit 1, or exit 4 on a lock-acquisition timeout through
 /// the engine-error chain) when: the repository root cannot be resolved;
 /// the module is missing in a non-TTY shell; the mode is missing in a
 /// non-TTY shell; the target path is already managed; the target file does
@@ -224,8 +224,8 @@ pub async fn run(
     let home = resolve_home()?;
     let target = expand_tilde(&args.path, &home);
 
-    // Kind-check before the lock, so an incompatible flag/kind pair refuses
-    // without ever taking it.
+    // The kind check runs before the lock, so an incompatible flag/kind pair
+    // refuses before the lock is acquired.
     let kind = detect_source_kind(&target)?;
     let mode = AddMode::resolve(mode_flag, kind)?;
 
@@ -257,7 +257,7 @@ pub async fn run(
         .ok_or_else(|| anyhow!("the path `{}` has no file name", args.path))?;
     let basename = repo_source_name(file_name);
     // A `--template` source records the `.tmpl` suffix so the engine derives
-    // the implicit template mode; the copied file on disk ends in it too.
+    // the implicit template mode. The copied file on disk ends in `.tmpl` too.
     let source = if mode.is_template() {
         format!("{basename}.tmpl")
     } else {
@@ -318,7 +318,7 @@ pub async fn run(
 }
 
 /// Refuse the add when a tree-mode entry already excludes `dest`. Returns the
-/// exit code to propagate; `None` means the add may proceed.
+/// exit code to propagate. `None` allows the add to proceed.
 ///
 /// `--force` skips the check.
 ///
@@ -363,7 +363,7 @@ fn refuse_ignored_conflict(
 /// Declaring a `[[file]]` for a path a `symlink-tree` already excludes is a
 /// contradiction in one manifest: the new entry deploys exactly what the tree
 /// entry was told to skip. Only an entry whose source directory contains `dest`
-/// can contradict it that way. A `[[file]]` deploys its declared source with no
+/// can create that contradiction. A `[[file]]` deploys its declared source with no
 /// enumeration, so a repo-wide pattern matching it elsewhere is not a conflict.
 ///
 /// # Errors
@@ -437,9 +437,9 @@ fn warn_on_ignored_leaves(
 /// whose target resolves to the same absolute path as `target`. Returns the
 /// owning module's name on a match.
 ///
-/// Targets are compared by tilde-expanded form (the manifest may store a
-/// `~`-relative target while the input is absolute, or vice versa), without
-/// touching the filesystem.
+/// Targets are compared by tilde-expanded form, without touching the
+/// filesystem. The manifest may store a `~`-relative target against an absolute
+/// input, or an absolute target against a `~`-relative input.
 fn find_managed(
     repo_root: &Utf8Path,
     target: &Utf8Path,
@@ -532,7 +532,7 @@ fn read_manifest_text(manifest_path: &Utf8Path) -> Result<String> {
 /// Resolve the selected mode flag. With no flag set, a TTY prompts for one.
 /// Returns `Ok(None)` for the non-TTY-without-mode refusal (exit 1).
 /// [`AddMode::resolve`] validates the returned [`ModeFlag`] against the source
-/// kind later.
+/// kind.
 fn resolve_mode_flag(
     args: &AddArgs,
     tty: Tty,
@@ -634,8 +634,8 @@ pub(crate) fn resolve_home() -> Result<Utf8PathBuf> {
 /// Build the `--json` success envelope. Deterministic for a given input
 /// (no timestamps / PIDs).
 fn success_envelope(target: &Utf8Path, dest: &Utf8Path, module: &str, mode: AddMode) -> String {
-    // `canonicalize_path` is best-effort here purely for display stability;
-    // the stored manifest target is the verbatim user input.
+    // `canonicalize_path` is best-effort in this envelope, for display
+    // stability only. The stored manifest target is the verbatim user input.
     let canonical_dest = canonicalize_path(dest).unwrap_or_else(|_| dest.to_path_buf());
     let envelope = serde_json::json!({
         "added": target.as_str(),
@@ -699,7 +699,7 @@ mod tests {
     fn repo_source_name_strips_one_leading_dot() {
         assert_eq!(repo_source_name(".zshrc"), "zshrc");
         assert_eq!(repo_source_name("config"), "config");
-        // At most one dot comes off, and the result is never empty.
+        // At most one leading dot is stripped, and the result is never empty.
         assert_eq!(repo_source_name("."), ".");
         assert_eq!(repo_source_name(".."), ".");
     }

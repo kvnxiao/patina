@@ -1,8 +1,9 @@
 //! `patina remove <path>` command logic.
 //!
 //! `patina remove <path>` unmanages a target. It replaces the target on disk
-//! with a regular file containing the last-applied content, so the user's
-//! system keeps working. It then removes the target's `[[file]]` entry from
+//! with a regular file containing the last-applied content, so an application
+//! reading the target still finds valid content. It then removes the target's
+//! `[[file]]` entry from
 //! its module's `patina.toml` and re-journals the new managed set. `patina
 //! status` therefore treats the path as deliberately unmanaged and leaves it
 //! out of the report, rather than reporting an ORPHANED leftover. With
@@ -21,8 +22,8 @@
 //! target has a journaled source ending in `.tmpl`. The content is therefore
 //! reconstructed by re-rendering the source through `MiniJinja`, against the
 //! variable context resolved at remove time. Re-rendering is deliberate: the
-//! replacement carries the source's current intent, not the bytes the last
-//! apply wrote.
+//! replacement matches the template source as it stands now, not the bytes the
+//! last apply wrote.
 //!
 //! Planning, journaling, manifest editing, repo discovery, and template
 //! rendering live in `patina_core`; this module is presentation and control
@@ -60,8 +61,8 @@ use patina_core::remove_file_entry;
 ///
 /// # Errors
 ///
-/// Returns an error (exit 1, or exit 4 on a lock-acquisition timeout via the
-/// engine-error chain) when: the state directory or repository cannot be
+/// Returns an error (exit 1, or exit 4 on a lock-acquisition timeout through
+/// the engine-error chain) when: the state directory or repository cannot be
 /// resolved; the path is not currently managed; the journaled source cannot
 /// be read or re-rendered; the target replacement fails; the manifest edit
 /// fails; or the re-apply fails.
@@ -106,7 +107,7 @@ pub async fn run(
         Some(reconstruct_content(expected, &resolved)?)
     };
 
-    // The target path comes from the journal: the canonical path of the
+    // The target path is read from the journal: the canonical path of the
     // materialized object, not the user's spelling of it.
     let target_path = Utf8PathBuf::from(expected.target());
     replace_target(&target_path, content.as_deref())?;
@@ -150,7 +151,7 @@ fn reconstruct_content(expected: &ExpectedTarget, resolved: &ResolvedPlan) -> Re
 /// without it (`--purge`), delete the target entirely.
 ///
 /// The existing target is removed first so a symlink is replaced by a real
-/// file (writing through a symlink would clobber the repository source).
+/// file (writing through a symlink would overwrite the repository source).
 fn replace_target(target: &Utf8Path, content: Option<&[u8]>) -> Result<()> {
     remove_if_present(target)?;
     if let Some(bytes) = content {
@@ -447,11 +448,11 @@ mod tests {
         );
         assert!(
             body.contains("~/.vimrc"),
-            "the sibling entry must survive, got: {body}"
+            "the sibling entry must be preserved, got: {body}"
         );
         assert!(
             body.contains("# keep me"),
-            "the sibling's comment must survive, got: {body}"
+            "the sibling's comment must be preserved, got: {body}"
         );
     }
 

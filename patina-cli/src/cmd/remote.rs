@@ -10,9 +10,10 @@
 //! is control flow, lock acquisition, prompting, and output.
 //!
 //! Locking follows the read/write split the rest of the CLI uses. `update` and
-//! `prune` mutate (the working-tree lockfile, the cache) and take the exclusive
-//! lock; `list` and `check` take the shared lock with the read-only escape
-//! hatch, since `check` writes only the per-machine notice files it alone owns.
+//! `prune` mutate the working-tree lockfile and the cache, so both take the
+//! exclusive lock. `list` and `check` take the shared lock with the read-only
+//! escape hatch: `list` does not write, and `check` writes only the per-machine
+//! notice files it alone owns.
 //!
 //! A shell hook must never contend with a running apply, and the shared lock is
 //! therefore held across the inventory read alone, never across the network. A
@@ -267,8 +268,8 @@ fn run_check(
     }
 
     // A repository behind its own origin may already have pins another machine
-    // gated and committed. Pulling them is the right move, so the repo-behind
-    // message wins over the pending-updates one.
+    // gated and committed. Pulling those is the first step, so the repo-behind
+    // message replaces the pending-updates one.
     let repo_behind = patina_core::remote::git::repo_differs_from_origin(&inventory.repo_root);
     let message = if repo_behind {
         Some(notice::repo_behind_message())
@@ -440,21 +441,21 @@ fn run_update(
 /// How many remotes are fetched at once.
 ///
 /// A cap keeps a repository declaring dozens of remotes from opening dozens of
-/// connections at once. It sits above the core count because each fetch is a
-/// `git` subprocess waiting on a server.
+/// connections at once. Each fetch is a `git` subprocess waiting on a server,
+/// so the cap sits above the core count.
 const FETCH_BATCH: usize = 8;
 
 /// Fetch and gate every selected remote, [`FETCH_BATCH`] at a time.
 ///
 /// Each call blocks on `git` talking to a different server, so a batch costs
-/// about one fetch of wall time. Results come back in `views` order whatever
+/// about one fetch of wall time. Results are returned in `views` order whatever
 /// order the servers answer in, and that order drives the prompts, the table,
 /// and the `--json` rows.
 ///
 /// A worker that dies without returning a result yields an error string, and
-/// the run continues. Its panic message has already reached stderr through the
-/// default hook, and one dead worker must not abort a run that an unreachable
-/// server would not.
+/// the run continues. The default hook has already written its panic message to
+/// stderr, and one dead worker must not abort a run that an unreachable server
+/// would not.
 fn propose_all(
     views: &[&RemoteView],
     propose: impl Fn(&RemoteView) -> Result<Proposal, String> + Sync,
@@ -481,7 +482,7 @@ fn propose_all(
 /// Render one aligned row per remote the run touched. A row reports where the
 /// pin was, the candidate the run considered, and what became of the pin.
 ///
-/// Every remote gets a row, including one that could not be reached, so the
+/// Every remote has a row, including one that could not be reached, so the
 /// table accounts for the whole run. The reason a remote failed or was refused
 /// stays on stderr, beside the warning that already reported it.
 fn render_outcomes(outcomes: &[Outcome], reporter: &mut impl Reporter) {
@@ -511,10 +512,10 @@ fn update_row(outcome: &Outcome, styles: &Styles) -> String {
     ])
 }
 
-/// A rev cell shows the rev itself, or `absent` in the attention color when
-/// there is none. The absences differ and must not be worded alike.
-/// `(unpinned)` means no pin was recorded. `(unknown)` means the run never
-/// learned a candidate.
+/// A rev cell shows the rev itself, or the caller's `absent` text in the
+/// attention color. The absences differ and must not be worded alike:
+/// `(unpinned)` marks a remote with no recorded pin, and `(unknown)` marks a run
+/// that never learned a candidate.
 fn rev_cell(rev: Option<&str>, absent: &str, styles: &Styles) -> String {
     match rev {
         Some(rev) => paint(styles.remote.rev, rev),
@@ -540,7 +541,7 @@ fn status_for(action: Action) -> String {
     }
 }
 
-/// What one remote's update pass amounted to, for the human table, the JSON
+/// The result of one remote's update pass, for the human table, the JSON
 /// envelope, the exit code, and the notice reconciliation.
 struct Outcome {
     name: patina_core::RemoteName,
@@ -591,9 +592,9 @@ fn reconcile_notice(
 
 /// The exit code for a whole `remote update` run.
 ///
-/// A failure outranks a decline: a run that both failed to reach one remote and
-/// was told no about another reports the failure, the more actionable outcome.
-/// A pin the gate held on its own is a success: the run did what the gate said,
+/// A failure outranks a decline: a run that failed to reach one remote and was
+/// declined on another reports the failure, the more actionable outcome. A pin
+/// the gate held on its own is a success: the run followed the gate's verdict,
 /// and a script that treated a cooldown as an error would fail daily.
 fn exit_for(outcomes: &[Outcome]) -> ExitCode {
     if outcomes
@@ -619,14 +620,15 @@ enum Action {
     /// The pin moved.
     Updated,
     /// The gate held it back on its own: a cooldown, or a verdict this binary
-    /// does not recognize. Nobody was asked, so nothing was refused.
+    /// does not recognize. The user was never prompted, so this is not a
+    /// refusal.
     ///
     /// `eligible_at` is the cooldown's expiry, the one datum the human row
     /// needs that the action alone cannot supply. It is `None` for every hold
     /// with no window to report.
     Held { eligible_at: Option<i64> },
-    /// The user was asked and said no. Distinct from [`Action::Held`] because
-    /// exit code 5 means a declined prompt across every command.
+    /// The user was asked and answered no. Exit code 5 is the declined-prompt
+    /// code across every command, so this is distinct from [`Action::Held`].
     Declined,
     /// A hard reject.
     Rejected,
@@ -761,16 +763,16 @@ enum Confirmed {
     Yes,
     /// The user was asked and said no.
     No,
-    /// There was no way to ask. Distinct from [`Confirmed::No`] because a
-    /// non-interactive run that could not raise the prompt refused nothing, and
-    /// exit code 5 means a prompt was declined.
+    /// The run could not raise a prompt. Exit code 5 is the declined-prompt
+    /// code, and a run that never raised the prompt is not a refusal, so this is
+    /// distinct from [`Confirmed::No`].
     Unasked,
 }
 
 /// Sweep the cache on demand: whole trees for remotes the root manifest no
 /// longer declares, then unreferenced checkouts of the ones it does.
 ///
-/// A currently pinned checkout survives even when no journal record reaches
+/// A currently pinned checkout is kept even when no journal record references
 /// it. A pin bumped but not yet applied is the warm cache an offline apply
 /// depends on.
 fn run_prune(inventory: &RemoteInventory, json: bool, reporter: &mut impl Reporter) -> Result<i32> {
@@ -1039,7 +1041,7 @@ mod tests {
     }
 
     /// Color must be purely additive over the plain table. The colored render
-    /// has to contain escapes, and stripping them has to give back the plain
+    /// has to contain escapes, and stripping them has to reproduce the plain
     /// render byte for byte. Padding painted along with its cell would break
     /// that equality, and with it the alignment of piped and `--color never`
     /// output.
@@ -1199,7 +1201,7 @@ mod tests {
         );
     }
 
-    /// Every remote the run touched must get a row, including one that failed,
+    /// Every remote the run touched must have a row, including one that failed,
     /// so the table accounts for the whole run and not only its successes.
     #[test]
     fn the_table_carries_one_row_per_remote_under_a_header() {

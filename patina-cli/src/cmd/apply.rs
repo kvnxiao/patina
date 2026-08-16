@@ -3,7 +3,7 @@
 //! Owns the decision tree (TTY prompt vs non-TTY preview, `--yes`, `--json`)
 //! and maps the engine's [`ApplyResult`] onto the process exit code. Planning,
 //! journaling, the executors, the hooks, and rollback live in `patina_core`;
-//! presentation and control flow live here.
+//! this module is presentation and control flow.
 //!
 //! ## Exit codes
 //!
@@ -77,9 +77,9 @@ impl PromptReader for StdinReader {
 /// # Errors
 ///
 /// Returns an error when planning or execution fails at the engine level
-/// (a real IO / discovery / parse failure). A failed `must_succeed` hook
-/// or a declined prompt is *not* an error: it maps to a non-zero exit
-/// code via the returned `i32`.
+/// (a real IO / discovery / parse failure). A failed `must_succeed` hook or a
+/// declined prompt is not an error. Either maps to a non-zero exit code through
+/// the returned `i32`.
 pub async fn run(
     args: &ApplyArgs,
     tty: Tty,
@@ -145,15 +145,16 @@ pub async fn run(
 /// Whether this invocation may rewrite the working-tree `patina.lock`.
 ///
 /// Both the `--update` producer pass and the stale-pin sweep write that file.
-/// A read-only run skips both. A non-interactive apply without `--yes` is a
-/// preview, and a `--json` run owns stdout as one machine-readable document.
+/// A `--json` run owns stdout as one machine-readable document, and a
+/// non-interactive apply without `--yes` is a preview. Neither rewrites the
+/// lockfile.
 fn rewrites_the_lockfile(args: &ApplyArgs, tty: Tty) -> bool {
     !args.json && (args.yes || tty == Tty::Interactive)
 }
 
 /// Drop `patina.lock` pins the root manifest no longer declares.
 ///
-/// Like `--update`, the rewrite lands before the consent prompt: it edits the
+/// Like `--update`, the rewrite happens before the consent prompt: it edits the
 /// repository, not a managed target, and a declined diff leaves the lockfile
 /// correctly pruned either way. A preview does not write; it lists the stale
 /// pins instead.
@@ -239,8 +240,8 @@ fn names_of(remotes: &[patina_core::RemoteName]) -> Vec<String> {
 /// Run `patina remote update` over every remote before the apply proper.
 ///
 /// A failure in this pass never fails the apply: an unreachable remote
-/// degrades to a plain apply against the committed pins, with a warning. Every
-/// bumped pin is already written to disk when the apply starts.
+/// degrades to a plain apply against the committed pins, with a warning. By the
+/// time the apply starts, every bumped pin is already written to disk.
 ///
 /// The gate is not auto-accepted: `yes` is `false` regardless of the apply's
 /// own `--yes`. A rewritten-history or backdated bump is held, or prompted on
@@ -263,8 +264,8 @@ fn run_remote_updates(tty: Tty, reader: &mut impl PromptReader, reporter: &mut i
 /// The confirmation decision for the human apply path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Confirmation {
-    /// Mutate: `--yes`, an interactive `y`, or a full no-op (which does not
-    /// write either way).
+    /// Mutate: `--yes`, an interactive `y`, or a full no-op. A full no-op does
+    /// not write either way.
     Proceed,
     /// Non-TTY without `--yes`: the diff was previewed; exit 0 with no writes.
     PreviewOnly,
@@ -342,8 +343,8 @@ fn drive_elevation(reporter: &mut impl Reporter) -> Result<Option<i32>> {
     match patina_core::launch_elevate_helper().context("failed to launch the elevation helper")? {
         patina_core::ElevationOutcome::EnabledNow => Ok(None),
         patina_core::ElevationOutcome::Declined => {
-            // A refusal alone leaves the user stuck, so the warning includes the
-            // remedy too. The ignored
+            // A refusal alone gives the user no next step, so the warning
+            // includes the remedy. The ignored
             // `windows_declined_uac_exits_5_and_creates_no_symlink` test pins
             // both `Developer Mode` and `patina doctor --fix`.
             reporter.warn(
@@ -422,7 +423,7 @@ async fn run_json(
 /// current plan no longer manages. They are not plan operations, so they are
 /// reported in their own array rather than as `plan` rows; the human diff
 /// renders the same set as `remove` blocks. Each row is an object carrying the
-/// `target` and the `reason` it fell out of the managed set
+/// `target` and the `reason` it is no longer managed
 /// ([`OrphanReason::label`](patina_core::OrphanReason::label)), so a consumer
 /// can tell a deletion caused by a new `ignore` pattern from one caused by a
 /// dropped entry. `plan_orphans` sorted them by target, so the array is a
@@ -463,7 +464,7 @@ fn json_envelope(resolved: &ResolvedPlan, reaped: &[Orphan], result: &str) -> St
 /// A single-target mode (empty `leaves`) yields one row carrying the target's
 /// own disposition label. A tree mode yields one row per materialized leaf.
 /// Each row sets that leaf's path, under the declared target, and its
-/// per-leaf disposition label. That is the same per-leaf routing the human
+/// per-leaf disposition label. That is the same per-leaf expansion the human
 /// diff renderer uses, so the two surfaces agree on what an entry expands to.
 fn plan_rows(
     op: &patina_core::ResolvedOperation,
@@ -649,7 +650,7 @@ mod tests {
     fn non_noop_interactive_does_prompt_and_reads_the_answer() {
         // Counterpart to `full_noop_interactive_skips_prompt_and_reads_no_stdin`:
         // a `confirm_apply` that skipped the prompt unconditionally would pass
-        // there and fail here.
+        // that test and fail this one.
         let mut reader = ScriptedReader {
             lines: std::collections::VecDeque::from(["n\n".to_owned()]),
         };

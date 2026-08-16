@@ -8,12 +8,13 @@
 //! [`patina_core::watch::service`] backend.
 //!
 //! All lifecycle subcommands except `status` acquire the exclusive advisory
-//! lock; `status` acquires the shared lock. State-dir resolution, the service
+//! lock. `status` takes the shared lock and proceeds without it on a timeout.
+//! State-dir resolution, the service
 //! backend, and log-counter recovery live in `patina_core`; this module is
 //! control flow, lock acquisition, and output formatting.
 //!
 //! Before either mode runs, the command reads the root manifest. A declared
-//! `[watcher] debounce_ms` key draws a warning: the manifest accepts the key
+//! `[watcher] debounce_ms` key raises a warning: the manifest accepts the key
 //! and the watcher ignores it.
 
 use crate::cli::WatchArgs;
@@ -36,7 +37,7 @@ use patina_core::exclusive_timeout;
 
 /// Run `patina watch`. Returns the process exit code.
 ///
-/// Dispatches on the chosen mode: a lifecycle subcommand routes to
+/// Dispatches on the chosen mode: a lifecycle subcommand is dispatched to
 /// [`run_lifecycle`]; `--foreground` runs the watcher inline and returns `0`
 /// on a clean exit; with neither, the command reports the usage hint and
 /// returns a non-zero code.
@@ -87,7 +88,7 @@ fn run_lifecycle(command: &WatchCommand, json: bool, reporter: &mut impl Reporte
     // timeout, warns and proceeds without it (the read-only escape hatch,
     // matching `patina status`). Every other lifecycle action mutates the
     // service registration, so it acquires the exclusive lock. A timeout on
-    // the exclusive lock reaches exit code 4 through the error chain.
+    // the exclusive lock maps to exit code 4 through the error chain.
     if let WatchCommand::Status = command {
         let _guard = crate::cmd::shared_lock(&lock_path, false, reporter);
         return Ok(render_status(backend.status(), json, reporter));
@@ -108,10 +109,10 @@ fn run_lifecycle(command: &WatchCommand, json: bool, reporter: &mut impl Reporte
 /// the outcome, returning the process exit code.
 ///
 /// State-directory resolution and lock acquisition stay in [`run_lifecycle`],
-/// so the command→method routing is unit-testable against a fake
+/// so the command→method dispatch is unit-testable against a fake
 /// [`ServiceBackend`] with no real supervisor or lock. [`run_lifecycle`] takes
-/// the shared lock for `status` and returns early, so the `Status` arm below
-/// is defensive and maps to a no-op.
+/// the shared lock for `status` and returns early, so this function's `Status`
+/// arm is defensive and maps to a no-op.
 fn dispatch_lifecycle(
     backend: &dyn ServiceBackend,
     command: &WatchCommand,
@@ -134,9 +135,9 @@ fn dispatch_lifecycle(
 /// On success it emits the `result` word (a JSON envelope under `--json`, a
 /// human line otherwise) and returns `0`. A [`LifecycleResult::NotInstalled`]
 /// is a no-op (no supervisor action, no mutation) that writes the
-/// "service not installed" message to stderr and exits `1`. An error goes to
-/// the reporter and returns `1`, so an already-installed `install` exits 1
-/// with its typed message.
+/// "service not installed" message to stderr and exits `1`. An error is written
+/// to the reporter, and the function returns `1`, so an already-installed
+/// `install` exits 1 with its typed message.
 fn render_lifecycle(
     result: std::result::Result<LifecycleResult, ServiceError>,
     json: bool,
@@ -175,7 +176,8 @@ fn render_lifecycle(
 /// Emits the structured object under `--json` (`installed`, `running`,
 /// `last_fired_at`, `last_exit_code`, `subscriptions_count`,
 /// `re_applies_since_start`) or a human summary otherwise, and returns `0`. A
-/// supervisor query failure goes to the reporter and returns `1`.
+/// supervisor query failure is written to the reporter, and the function
+/// returns `1`.
 fn render_status(
     status: std::result::Result<ServiceStatus, ServiceError>,
     json: bool,
@@ -252,14 +254,14 @@ fn render_status_human(status: &ServiceStatus, reporter: &mut impl Reporter) {
 }
 
 /// A recovered field's value, or the literal `unknown` when it could not be
-/// read. `unknown` takes the hint color, because a missing reading must not
-/// compete with the values around it.
+/// read. A missing reading must not compete with the values around it, so
+/// `unknown` takes the hint color.
 fn recovered<T: std::fmt::Display>(value: Option<T>, styles: &Styles) -> String {
     value.map_or_else(|| paint(styles.hint, "unknown"), |value| value.to_string())
 }
 
-/// Read the root manifest and, if it declares the ignored `[watcher]
-/// debounce_ms` key, surface the typed warning.
+/// Read the root manifest. If it declares the ignored `[watcher] debounce_ms`
+/// key, print the typed warning.
 ///
 /// Best-effort. A repository that cannot be discovered, or a manifest that
 /// cannot be read, is not this warning's concern; the foreground start path
@@ -315,7 +317,7 @@ mod tests {
 
     /// An in-memory [`ServiceBackend`] fake that records which method the
     /// dispatch called and returns a configured [`LifecycleResult`] from every
-    /// mutating action. Recording the call proves routing without depending on
+    /// mutating action. Recording the call proves the dispatch without depending on
     /// the rendered label; the configured result drives the not-installed path.
     /// It does not touch the supervisor or the filesystem, so it runs on every
     /// CI OS where the real per-OS backends cannot.
@@ -370,7 +372,7 @@ mod tests {
     #[test]
     fn dispatch_routes_each_subcommand_to_its_backend_method() {
         // The recorded call proves which backend method the dispatch invoked, so
-        // a miswired match arm (e.g. Restart calling stop) fails here. `status`
+        // a miswired match arm (e.g. `Restart` calling `stop`) fails this test. `status`
         // dispatches separately (it takes the shared lock), so it is not part of
         // this mutating path.
         let cases = [
