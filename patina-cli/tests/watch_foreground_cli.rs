@@ -54,10 +54,10 @@ fn debounce_ms_key_in_root_manifest_warns() {
         stderr.contains("debounce_ms"),
         "stderr must warn about the ignored debounce_ms key, got: {stderr}"
     );
-    // The 500ms window is hardcoded; the warning must name it.
+    // The 500ms window is hardcoded; the warning must include it.
     assert!(
         stderr.contains("500"),
-        "the warning must name the fixed 500ms window, got: {stderr}"
+        "the warning must include the fixed 500ms window, got: {stderr}"
     );
 }
 
@@ -269,7 +269,7 @@ mod foreground {
 
     #[test]
     fn logs_its_subscription_set_on_startup() {
-        // The subscription log names the watched source path, so a harness
+        // The subscription log includes the watched source path, so a harness
         // can inspect it from stderr.
         let f = applied_fixture();
         let watcher = Watcher::spawn(&f);
@@ -284,7 +284,7 @@ mod foreground {
         // must appear in the logged subscription set.
         assert!(
             stderr.contains("rc"),
-            "the logged subscription set must name the watched source `rc`; got: {stderr}"
+            "the logged subscription set must include the watched source `rc`; got: {stderr}"
         );
 
         // Clean up the long-running child.
@@ -449,10 +449,10 @@ mod foreground {
         let _exit = watcher.wait_exit(Duration::from_secs(2));
     }
 
-    /// Count drift-cache entries naming `needle`, or 0 when the cache is
-    /// absent / undecodable. Reads the on-disk cache through the engine's own
-    /// decoder so the assertion sees exactly what `patina debug drift-cache`
-    /// would.
+    /// Count drift-cache entries whose target matches `needle`, or 0 when the
+    /// cache is absent / undecodable. Reads the on-disk cache through the
+    /// engine's own decoder so the assertion sees exactly what `patina
+    /// debug drift-cache` would.
     fn drift_entries_for(f: &Fixture, needle: &str) -> usize {
         let path = f.state_root().join("drift.cache");
         match patina_core::load_drift_cache_file(&path) {
@@ -547,7 +547,7 @@ mod foreground {
         let stdout = String::from_utf8_lossy(&status.stdout);
         let doc: serde_json::Value =
             serde_json::from_str(stdout.trim()).expect("status --json emits one JSON document");
-        // The `files` array contains an entry whose path names `.gitconfig`
+        // The `files` array contains an entry whose path ends with `.gitconfig`
         // with `state = "drifted"`.
         let drifted_gitconfig = doc
             .get("files")

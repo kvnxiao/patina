@@ -181,7 +181,7 @@ fn confirm(
 
 /// Report the unmanaged-target refusal (exit 1) and return the exit code.
 ///
-/// The message names the target and every discovery source: `$PATINA_REPO`,
+/// The message includes the target and every discovery source: `$PATINA_REPO`,
 /// the walk-up from the current directory, and the persisted default. It
 /// repeats the established discovery-error wording, so `remove` and `promote`
 /// explain an unmanaged path the same way.
@@ -325,7 +325,7 @@ mod tests {
         assert_eq!(code, Some(ExitCode::Generic.code()));
         assert!(
             reporter.err.contains("gitconfig.tmpl") && reporter.err.contains("template"),
-            "the refusal must name the .tmpl source and the word template, got: {}",
+            "the refusal must include the .tmpl source and the word template, got: {}",
             reporter.err
         );
     }
@@ -370,7 +370,7 @@ mod tests {
         assert!(!proceed, "a non-TTY shell without --yes must decline");
         assert!(
             reporter.err.contains("--yes"),
-            "the refusal must name --yes, got: {}",
+            "the refusal must include --yes, got: {}",
             reporter.err
         );
     }

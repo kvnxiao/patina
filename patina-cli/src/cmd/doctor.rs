@@ -12,8 +12,8 @@
 //! The `--fix` path is mutating. It acquires the exclusive lock, then prompts
 //! per fixable finding (Developer Mode missing on Windows, a missing
 //! `default_repo` pointer) and remediates on accept. Every remediation emits
-//! a structured `tracing` event naming the finding code, the remediation, and
-//! the outcome.
+//! a structured `tracing` event with the finding code, the remediation,
+//! and the outcome as fields.
 //!
 //! Exit codes on the read-only path: 0 when only warning/info findings were
 //! raised, 1 on an error-level finding. The `--fix` path exits 0 once it has
@@ -606,7 +606,7 @@ pub fn compute_findings(inputs: &Inputs) -> Vec<Finding> {
             level: Level::Warning,
             message: format!(
                 "a prior apply materialized {count} {noun} that an `ignore` list now \
-                 excludes; the next `patina apply` reaps them and names `ignored` \
+                 excludes; the next `patina apply` reaps them and reports `ignored` \
                  as the reason."
             ),
             path: Some(first.clone()),
@@ -790,7 +790,7 @@ mod tests {
         assert_eq!(code, ExitCode::Generic.code());
         assert!(
             reporter.err.contains("--yes"),
-            "the refusal must name --yes, got: {}",
+            "the refusal must include --yes, got: {}",
             reporter.err
         );
     }
@@ -931,7 +931,7 @@ mod tests {
     }
 
     #[test]
-    fn windows_unc_repo_warns_naming_the_path() {
+    fn windows_unc_repo_warns_and_includes_the_path() {
         let repo = Utf8PathBuf::from(r"\\fileserver\share\dotfiles");
         let inputs = Inputs {
             is_windows: true,
@@ -948,7 +948,7 @@ mod tests {
         assert_eq!(unc.level, Level::Warning);
         assert!(
             unc.message.contains("UNC") && unc.message.contains(repo.as_str()),
-            "the UNC warning must name UNC and the path, got: {}",
+            "the UNC warning must include UNC and the path, got: {}",
             unc.message
         );
         assert_eq!(unc.path.as_deref(), Some(repo.as_path()));
@@ -972,7 +972,7 @@ mod tests {
         assert!(
             devmode.message.contains("Developer Mode")
                 && devmode.message.contains(DEV_MODE_REGISTRY_PATH),
-            "the warning must name Developer Mode and the registry path, got: {}",
+            "the warning must include Developer Mode and the registry path, got: {}",
             devmode.message
         );
     }
@@ -1027,7 +1027,7 @@ mod tests {
         assert_eq!(osold.level, Level::Warning);
         assert!(
             osold.message.contains("1703"),
-            "the warning must name the 1703 build floor, got: {}",
+            "the warning must include the 1703 build floor, got: {}",
             osold.message
         );
     }

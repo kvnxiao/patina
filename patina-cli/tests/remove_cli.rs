@@ -147,7 +147,7 @@ fn remove_purge_deletes_target_and_drops_entry() {
     );
 }
 
-/// Removing a path that is not currently managed exits 1, names the path and
+/// Removing a path that is not currently managed exits 1, includes the path and
 /// every discovery source, and does not mutate anything.
 #[test]
 fn remove_unmanaged_path_exits_1() {
@@ -165,7 +165,7 @@ fn remove_unmanaged_path_exits_1() {
     let stderr = stderr(&out);
     assert!(
         stderr.contains("~/.bashrc") && stderr.contains("not managed"),
-        "stderr must name the path and say it is not managed, got: {stderr}"
+        "stderr must include the path and say it is not managed, got: {stderr}"
     );
 
     assert_eq!(
@@ -182,7 +182,7 @@ fn remove_unmanaged_path_exits_1() {
 }
 
 /// `remove --json --yes` emits a single deterministic JSON document
-/// on stdout naming the removed target and the purge flag.
+/// on stdout with the removed target and the purge flag.
 #[test]
 fn remove_json_emits_document() {
     let fx = applied_symlink_fixture();

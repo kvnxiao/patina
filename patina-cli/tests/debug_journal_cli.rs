@@ -60,29 +60,29 @@ fn decodes_a_plan_and_prints_its_modes_and_targets() {
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
         stdout.contains("symlink") || stdout.contains("copy"),
-        "stdout names a declared mode; got: {stdout}"
+        "stdout must include a declared mode; got: {stdout}"
     );
     assert!(
         stdout.contains("/home/u/.zshrc") || stdout.contains("/home/u/.gitconfig"),
-        "stdout names an absolute target; got: {stdout}"
+        "stdout must include an absolute target; got: {stdout}"
     );
 }
 
 #[test]
-fn missing_path_exits_one_and_names_the_path_on_stderr() {
+fn missing_path_exits_one_and_includes_the_path_on_stderr() {
     let out = invoke(&["debug", "journal", "/nonexistent/path.plan"]);
     assert_eq!(code(&out), 1, "missing path must exit 1");
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         stderr.contains("/nonexistent/path.plan"),
-        "stderr names the missing path; got: {stderr}"
+        "stderr must include the missing path; got: {stderr}"
     );
 }
 
 #[test]
-fn newer_version_envelope_exits_one_and_names_both_versions() {
+fn newer_version_envelope_exits_one_and_includes_both_versions() {
     // A plan whose envelope major is `u16::MAX` is refused by a binary that
-    // supports a lower major. It exits 1, and stderr names both versions
+    // supports a lower major. It exits 1, and stderr includes both versions
     // plus the word "version".
     let temp = TempDir::new().expect("tempdir");
     let dir = Utf8Path::from_path(temp.path()).expect("utf8 tempdir");
@@ -101,19 +101,22 @@ fn newer_version_envelope_exits_one_and_names_both_versions() {
     let out = invoke(&["debug", "journal", path.as_str()]);
     assert_eq!(code(&out), 1, "newer-major plan must exit 1");
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("65535"), "names u16::MAX; got: {stderr}");
+    assert!(
+        stderr.contains("65535"),
+        "stderr must include u16::MAX; got: {stderr}"
+    );
     assert!(
         stderr.contains(&FILE_MAJOR_VERSION.to_string()),
-        "names the supported major; got: {stderr}"
+        "stderr must include the supported major; got: {stderr}"
     );
     assert!(
         stderr.to_lowercase().contains("version"),
-        "names the version dimension; got: {stderr}"
+        "stderr must include the word version; got: {stderr}"
     );
 }
 
 #[test]
-fn debug_help_names_journal_subcommand() {
+fn debug_help_lists_journal_subcommand() {
     let out = invoke(&["debug", "--help"]);
     assert_eq!(
         code(&out),
@@ -124,6 +127,6 @@ fn debug_help_names_journal_subcommand() {
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
         stdout.contains("journal"),
-        "debug --help names the journal subcommand; got: {stdout}"
+        "debug --help must list the journal subcommand; got: {stdout}"
     );
 }

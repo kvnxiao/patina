@@ -191,7 +191,7 @@ fn status_reports_applied_leaves_clean_when_the_pin_moved_but_its_checkout_is_ab
 }
 
 #[test]
-fn an_entry_naming_the_remote_in_another_case_still_resolves() {
+fn an_entry_selecting_the_remote_in_another_case_still_resolves() {
     // Names are one identity ignoring case (the registry rejects case-only
     // duplicates on that basis), so a reference spelled differently must find
     // the declaration rather than fail as undeclared.
@@ -266,7 +266,7 @@ fn one_module_mixes_its_own_files_with_a_remotes() {
 }
 
 #[test]
-fn an_entry_naming_an_undeclared_remote_fails_planning() {
+fn an_entry_selecting_an_undeclared_remote_fails_planning() {
     let f = Fixture::new();
     f.module(
         "agents",
@@ -279,17 +279,17 @@ fn an_entry_naming_an_undeclared_remote_fails_planning() {
     assert_eq!(
         code(&out),
         1,
-        "an entry naming nothing declared must fail; stderr: {stderr}"
+        "an entry that selects an undeclared remote must fail; stderr: {stderr}"
     );
     assert!(
         stderr.contains("humanizer") && stderr.contains("[[remote]]"),
-        "the message must name the remote and where to declare it; stderr: {stderr}"
+        "the message must include the remote and where to declare it; stderr: {stderr}"
     );
     assert!(!f.home.join(".skill.md").exists(), "nothing may be applied");
 }
 
 #[test]
-fn a_remote_only_a_when_false_entry_names_is_never_fetched() {
+fn a_remote_only_a_when_false_entry_selects_is_never_fetched() {
     // Materializing a checkout is a consequence of an entry actually selecting
     // the remote here. This one is switched off on every host, so the run must
     // not read the (absent) pin, must not reach the (deleted) origin, and must
@@ -322,7 +322,7 @@ fn a_remote_only_a_when_false_entry_names_is_never_fetched() {
     );
     assert!(
         !patina_core::remote::cache::module_dir(&f.state_root(), &remote_name("unused")).exists(),
-        "no cache directory may be created for a remote nothing active names"
+        "no cache directory may be created for a remote no active entry selects"
     );
 }
 
@@ -422,7 +422,7 @@ fn a_remote_source_that_escapes_its_checkout_is_refused() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         stderr.contains("resolves outside its checkout"),
-        "the failure must name the escape, got: {stderr}"
+        "the failure must include the escape, got: {stderr}"
     );
     assert!(
         !f.home.join(".escaped").exists(),
@@ -533,7 +533,7 @@ fn a_patina_toml_inside_the_checkout_contributes_nothing() {
 }
 
 #[test]
-fn an_entry_naming_an_unpinned_remote_fails_planning_and_names_the_command() {
+fn an_entry_selecting_an_unpinned_remote_fails_planning_and_includes_the_command() {
     let f = Fixture::new();
     let origin = Origin::new(&f, "humanizer", EPOCH);
     origin.commit_files(&[("a.md", "a\n")], EPOCH);
@@ -554,13 +554,13 @@ fn an_entry_naming_an_unpinned_remote_fails_planning_and_names_the_command() {
     );
     assert!(
         stderr.contains("patina remote update humanizer"),
-        "the message must name the command that creates the first pin; stderr: {stderr}"
+        "the message must include the command that creates the first pin; stderr: {stderr}"
     );
     assert!(!f.home.join(".a.md").exists(), "nothing may be applied");
 }
 
 #[test]
-fn a_cold_cache_with_an_unreachable_remote_fails_naming_the_rev() {
+fn a_cold_cache_with_an_unreachable_remote_fails_and_includes_the_rev() {
     let f = Fixture::new();
     let origin = Origin::new(&f, "gone", EPOCH);
     let rev = origin.commit_files(&[("a.md", "a\n")], EPOCH);
@@ -583,7 +583,7 @@ fn a_cold_cache_with_an_unreachable_remote_fails_naming_the_rev() {
     );
     assert!(
         stderr.contains(&rev) && stderr.contains("gone"),
-        "the error must name the remote and the missing rev; stderr: {stderr}"
+        "the error must include the remote and the missing rev; stderr: {stderr}"
     );
     assert!(!f.home.join(".a.md").exists(), "nothing may be applied");
 }
@@ -759,6 +759,6 @@ fn apply_prunes_a_checkout_no_journal_record_references() {
     assert!(!orphan.exists(), "the unreferenced checkout must be swept");
     assert!(
         checkout(&f, "sweep", &rev).is_dir(),
-        "the checkout the committed record names must survive"
+        "the checkout the committed record references must survive"
     );
 }

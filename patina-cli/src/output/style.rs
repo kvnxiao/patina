@@ -28,7 +28,7 @@ use anstyle::Style;
 /// render alike, or one reads as the other. Across groups, identical styling is
 /// deliberate and marks one shared visual meaning.
 /// [`header`](Styles::header) and [`path`](Styles::path) are both bold, because
-/// each names the subject of its line. [`hint`](Styles::hint),
+/// each marks the subject of its line. [`hint`](Styles::hint),
 /// [`FindingStyles::info`], and [`RemoteStyles::implicit_ref`] are all dimmed,
 /// because each is subordinate to the fact beside it. Separating those roles
 /// would spend scarce terminal hues on a distinction the reader does not need.
@@ -40,7 +40,7 @@ pub struct Styles {
     pub delete: Style,
     /// Unchanged diff context lines. Left plain.
     pub context: Style,
-    /// The per-entry header naming the action and target path.
+    /// The per-entry header line: the action and the target path.
     pub header: Style,
     /// Warnings.
     pub warn: Style,

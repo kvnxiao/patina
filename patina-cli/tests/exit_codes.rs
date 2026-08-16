@@ -85,7 +85,7 @@ fn post_apply_hook_failure_exits_3() {
 }
 
 #[test]
-fn toml_syntax_error_exits_1_and_names_the_failure() {
+fn toml_syntax_error_exits_1_and_includes_the_failure() {
     let f = Fixture::new();
     // `=` with no value is a TOML syntax error the parser rejects.
     f.module("broken", "[[file]]\nsource =\n");

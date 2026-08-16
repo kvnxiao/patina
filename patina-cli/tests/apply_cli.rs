@@ -28,7 +28,7 @@ fn non_tty_apply_previews_without_mutating() {
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
         stdout.contains(".rc"),
-        "stdout must contain the rendered diff naming the target, got: {stdout}"
+        "stdout must contain the rendered diff including the target, got: {stdout}"
     );
 }
 
@@ -86,7 +86,7 @@ fn force_deploy_downgrades_hook_failure_and_exits_0() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         stderr.contains("exit 1"),
-        "stderr must warn naming the failed hook, got: {stderr}"
+        "stderr must warn and include the failed hook, got: {stderr}"
     );
 }
 
@@ -220,7 +220,7 @@ fn non_windows_symlink_apply_skips_dev_mode_flow() {
 
 // On a Windows host with Developer Mode off and a symlink `[[file]]`, a
 // `patina apply --yes` whose UAC consent is declined does not create a
-// symbolic link. It names `Developer Mode` and `patina doctor --fix` on
+// symbolic link. It includes `Developer Mode` and `patina doctor --fix` on
 // stderr, and exits 5. This is gated `#[ignore]` because it needs a real
 // Windows host and a human, or harness, to decline the UAC dialog; CI is not
 // Windows.
@@ -246,7 +246,7 @@ fn windows_declined_uac_exits_5_and_creates_no_symlink() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         stderr.contains("Developer Mode") && stderr.contains("patina doctor --fix"),
-        "stderr must name Developer Mode and `patina doctor --fix`, got: {stderr}"
+        "stderr must include Developer Mode and `patina doctor --fix`, got: {stderr}"
     );
 }
 

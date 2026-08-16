@@ -35,7 +35,7 @@ fn watch_with_no_mode_reports_the_usage_hint() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         stderr.contains("--foreground") && stderr.contains("install"),
-        "the hint must name both modes, got: {stderr}"
+        "the hint must include both modes, got: {stderr}"
     );
 }
 
@@ -153,7 +153,7 @@ fn status_json_on_a_not_installed_service_reports_a_clean_object() {
 }
 
 /// `patina watch status` (human mode) on a not-installed service prints the
-/// summary and exits 0, naming the installed / running state.
+/// summary and exits 0 with the installed / running state.
 #[test]
 fn status_human_on_a_not_installed_service_prints_a_summary() {
     let f = Fixture::new();
@@ -167,6 +167,6 @@ fn status_human_on_a_not_installed_service_prints_a_summary() {
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
         stdout.contains("installed:") && stdout.contains("running:"),
-        "the human summary must name the installed / running state, got: {stdout}"
+        "the human summary must include the installed / running state, got: {stdout}"
     );
 }

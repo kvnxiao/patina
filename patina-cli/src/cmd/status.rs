@@ -314,7 +314,7 @@ mod tests {
         render_human(&report, &mut r);
         assert!(
             r.out.contains("humanizer") && r.out.contains("prompts"),
-            "the human render must name every pending remote: {}",
+            "the human render must include every pending remote: {}",
             r.out
         );
 

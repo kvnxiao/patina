@@ -290,7 +290,7 @@ fn rollback_deletes_a_freshly_created_target() {
 }
 
 #[test]
-fn rollback_with_no_prior_apply_exits_one_and_names_no_prior_apply() {
+fn rollback_with_no_prior_apply_exits_one_and_includes_no_prior_apply() {
     let f = Fixture::new();
     f.module(
         "shell",
@@ -302,7 +302,7 @@ fn rollback_with_no_prior_apply_exits_one_and_names_no_prior_apply() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         stderr.contains("no prior apply found"),
-        "stderr must name the failure, got: {stderr}"
+        "stderr must include the failure, got: {stderr}"
     );
 }
 

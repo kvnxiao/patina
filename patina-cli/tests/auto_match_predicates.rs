@@ -14,10 +14,10 @@
 //! - A `[[file]]` `when` using an operator other than `==`, here `!=`,
 //!   evaluates true and materializes its target.
 //! - A `[[file]]` `when` misspelling a built-in (`patina.oss`) fails the apply
-//!   with a typed error naming the variable.
+//!   with a typed error that includes the variable.
 //! - An `[[auto_match]]` `when` referencing `patina.profile` (unresolved during
-//!   profile resolution) fails with a typed undefined-variable error naming it,
-//!   rather than silently failing to match.
+//!   profile resolution) fails with a typed undefined-variable error that
+//!   includes it, rather than silently failing to match.
 
 mod common;
 
@@ -98,7 +98,7 @@ fn file_inequality_predicate_materializes_target() {
 }
 
 #[test]
-fn file_misspelled_builtin_fails_and_names_the_variable() {
+fn file_misspelled_builtin_fails_and_includes_the_variable() {
     // A `[[file]]` `when` misspelling `patina.os` as `patina.oss` accesses
     // an undefined variable.
     let f = Fixture::new();
@@ -118,7 +118,7 @@ fn file_misspelled_builtin_fails_and_names_the_variable() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         stderr.contains("patina.oss"),
-        "stderr must name the undefined variable `patina.oss`, got: {stderr}"
+        "stderr must include the undefined variable `patina.oss`, got: {stderr}"
     );
     assert!(
         !f.home.join(".zshrc").exists(),
@@ -127,7 +127,7 @@ fn file_misspelled_builtin_fails_and_names_the_variable() {
 }
 
 #[test]
-fn auto_match_referencing_patina_profile_fails_and_names_it() {
+fn auto_match_referencing_patina_profile_fails_and_includes_it() {
     // An `[[auto_match]]` `when` referencing `patina.profile` accesses a
     // variable that profile resolution itself computes and has not yet
     // resolved, rather than the rule silently failing to match.
@@ -146,6 +146,6 @@ fn auto_match_referencing_patina_profile_fails_and_names_it() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         stderr.contains("patina.profile"),
-        "stderr must name the undefined variable `patina.profile`, got: {stderr}"
+        "stderr must include the undefined variable `patina.profile`, got: {stderr}"
     );
 }

@@ -62,7 +62,7 @@ use std::collections::BTreeSet;
 /// rather than read from Defender. A reader cannot then mistake the one for
 /// the other.
 ///
-/// It names the remedy, not only the constraint. Neither `status` nor a
+/// It states the remedy, not only the constraint. Neither `status` nor a
 /// preview raises a UAC prompt, because both are read-only by contract. A
 /// reader told only that administrator is required would wait for a prompt
 /// that never comes. Elevating is the user's move, and the note has to say so.

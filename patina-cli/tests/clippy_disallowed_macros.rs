@@ -10,8 +10,8 @@
 //! are denied everywhere else via the workspace `clippy.toml`'s
 //! `disallowed-macros` list. A fresh
 //! `println!("hi")` in a non-`output` file makes clippy fail with a
-//! `clippy::disallowed_macros` diagnostic that names the offending file, while
-//! the `tracing`-style macros and a module-scoped
+//! `clippy::disallowed_macros` diagnostic that includes the offending file,
+//! while the `tracing`-style macros and a module-scoped
 //! `#[expect(clippy::disallowed_macros, ...)]` carve-out stay clean.
 //!
 //! Mutating the checked-in source tree would race with other parallel tests
@@ -53,7 +53,8 @@ fn scratch_crate(temp: &TempDir, body: &str) -> Utf8PathBuf {
     )
     .expect("write Cargo.toml");
     // Name the file `plan.rs` to mirror a realistic
-    // `patina-core/src/plan.rs`; the assertion checks the diagnostic names it.
+    // `patina-core/src/plan.rs`; the assertion checks that the diagnostic includes
+    // it.
     fs_err::write(root.join("src/plan.rs"), body).expect("write plan.rs");
     // `pub mod` makes the fixture's `pub fn`s reachable as crate API. A
     // private `mod` would make them dead code, so `-D warnings` would fail
@@ -84,7 +85,7 @@ fn run_clippy(crate_root: &Utf8Path) -> (bool, Vec<String>) {
             continue;
         };
         // Compiler messages carry `reason == "compiler-message"` and a nested
-        // `message.code.code` naming the lint that fired.
+        // `message.code.code` giving the lint that fired.
         if value.get("reason").and_then(Value::as_str) != Some("compiler-message") {
             continue;
         }
@@ -109,7 +110,7 @@ fn run_clippy(crate_root: &Utf8Path) -> (bool, Vec<String>) {
 }
 
 #[test]
-fn each_raw_print_macro_outside_output_module_fails_clippy_naming_the_file() {
+fn each_raw_print_macro_outside_output_module_fails_clippy_for_the_file() {
     // One use of each denied macro in a non-`output` file (here `plan.rs`,
     // mirroring `patina-core/src/plan.rs`) makes clippy exit non-zero with
     // one `disallowed_macros` diagnostic per use. A macro missing from the
@@ -134,7 +135,7 @@ fn each_raw_print_macro_outside_output_module_fails_clippy_naming_the_file() {
     assert_eq!(
         in_plan, 4,
         "each of println!, eprintln!, print!, and eprint! must raise its own \
-         disallowed_macros diagnostic naming plan.rs; named {files:?}"
+         disallowed_macros diagnostic for plan.rs; got {files:?}"
     );
 }
 

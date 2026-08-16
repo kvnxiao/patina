@@ -174,7 +174,7 @@ fn render_leaf(
 /// the compact placeholder, under the same never-imply-empty rule
 /// [`content_diff`] uses.
 ///
-/// The header names the reason because a reap is the only block that deletes
+/// The header includes the reason because a reap is the only block that deletes
 /// something the user did not ask for in this run. Without the reason, a leaf
 /// dropped by a pattern the author wrote minutes ago reads as an unexplained
 /// removal.
@@ -435,7 +435,7 @@ mod tests {
 
         assert!(
             out.contains(&format!("remove {target} (unmanaged)")),
-            "the block header must name the removed target and why, got:\n{out}"
+            "the block header must include the removed target and why, got:\n{out}"
         );
         assert!(out.contains("  - one\n"), "first line deleted, got:\n{out}");
         assert!(
@@ -466,7 +466,7 @@ mod tests {
 
         assert!(
             out.contains(&format!("remove {target} (unmanaged)")),
-            "the block header must name the removed symlink and why, got:\n{out}"
+            "the block header must include the removed symlink and why, got:\n{out}"
         );
         assert!(
             out.contains(&format!("  - {linked}")),

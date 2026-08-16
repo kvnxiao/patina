@@ -83,7 +83,7 @@ pub async fn run(
     }
 }
 
-/// Build the `--json` envelope: a single `result` field naming the outcome.
+/// Build the `--json` envelope: a single `result` field set to the outcome.
 fn json_envelope(result: &str) -> String {
     let envelope = serde_json::json!({ "result": result });
     serde_json::to_string_pretty(&envelope).unwrap_or_else(|_| "{}".to_owned())

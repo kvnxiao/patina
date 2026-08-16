@@ -56,41 +56,41 @@ fn decodes_a_drift_cache_and_prints_version_timestamp_path_and_hashes() {
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
         stdout.contains("version:"),
-        "names the version; got: {stdout}"
+        "stdout must include the version line; got: {stdout}"
     );
     assert!(
         stdout.contains("20260528T120000Z"),
-        "names the bound journal timestamp; got: {stdout}"
+        "stdout must include the bound journal timestamp; got: {stdout}"
     );
     assert!(
         stdout.contains(".gitconfig"),
-        "names the target path; got: {stdout}"
+        "stdout must include the target path; got: {stdout}"
     );
     assert!(
         stdout.contains(&"ab".repeat(32)),
-        "names the expected hash; got: {stdout}"
+        "stdout must include the expected hash; got: {stdout}"
     );
     assert!(
         stdout.contains(&"cd".repeat(32)),
-        "names the actual hash; got: {stdout}"
+        "stdout must include the actual hash; got: {stdout}"
     );
 }
 
 #[test]
-fn missing_path_exits_one_and_names_the_path_on_stderr() {
+fn missing_path_exits_one_and_includes_the_path_on_stderr() {
     let out = invoke(&["debug", "drift-cache", "/nonexistent/drift.cache"]);
     assert_eq!(code(&out), 1, "missing path must exit 1");
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         stderr.contains("/nonexistent/drift.cache"),
-        "stderr names the missing path; got: {stderr}"
+        "stderr must include the missing path; got: {stderr}"
     );
 }
 
 #[test]
-fn newer_version_envelope_exits_one_and_names_both_versions() {
+fn newer_version_envelope_exits_one_and_includes_both_versions() {
     // A cache whose envelope major is `u16::MAX` is refused by a binary
-    // that supports a lower major. It exits 1, and stderr names both
+    // that supports a lower major. It exits 1, and stderr includes both
     // versions plus the word "version".
     let temp = TempDir::new().expect("tempdir");
     let dir = Utf8Path::from_path(temp.path()).expect("utf8 tempdir");
@@ -105,19 +105,22 @@ fn newer_version_envelope_exits_one_and_names_both_versions() {
     let out = invoke(&["debug", "drift-cache", path.as_str()]);
     assert_eq!(code(&out), 1, "newer-major cache must exit 1");
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("65535"), "names u16::MAX; got: {stderr}");
+    assert!(
+        stderr.contains("65535"),
+        "stderr must include u16::MAX; got: {stderr}"
+    );
     assert!(
         stderr.contains(&DRIFT_CACHE_MAJOR_VERSION.to_string()),
-        "names the supported major; got: {stderr}"
+        "stderr must include the supported major; got: {stderr}"
     );
     assert!(
         stderr.to_lowercase().contains("version"),
-        "names the version dimension; got: {stderr}"
+        "stderr must include the word version; got: {stderr}"
     );
 }
 
 #[test]
-fn debug_help_names_drift_cache_subcommand() {
+fn debug_help_lists_drift_cache_subcommand() {
     let out = invoke(&["debug", "--help"]);
     assert_eq!(
         code(&out),
@@ -128,6 +131,6 @@ fn debug_help_names_drift_cache_subcommand() {
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
         stdout.contains("drift-cache"),
-        "debug --help names the drift-cache subcommand; got: {stdout}"
+        "debug --help must list the drift-cache subcommand; got: {stdout}"
     );
 }

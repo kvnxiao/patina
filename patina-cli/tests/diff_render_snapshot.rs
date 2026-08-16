@@ -10,7 +10,7 @@
 //! The snapshot pins that captured stdout as the rendered diff body.
 //!
 //! The per-run tempdir home prefix is redacted to `[HOME]` so the snapshot is
-//! stable across runs and machines while still proving the path-naming shape
+//! stable across runs and machines while still proving the path shape
 //! (one `copy [HOME]/...` line for the single Update block).
 
 mod common;
@@ -141,7 +141,7 @@ mode = "copy"
 
 /// Redact the per-run tempdir home prefix to a stable `[HOME]` token so the
 /// snapshot is reproducible across runs and machines while still proving each
-/// block names its target path.
+/// block includes its target path.
 ///
 /// The renderer prints the target resolved through `resolve_location`. That
 /// function canonicalizes the parent (this home dir) and strips the Windows

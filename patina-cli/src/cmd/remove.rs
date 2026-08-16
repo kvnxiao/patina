@@ -238,10 +238,10 @@ fn confirm(
 
 /// Report the unmanaged-path refusal (exit 1) and return the exit code.
 ///
-/// The message names the path and every discovery source: `$PATINA_REPO`, the
-/// walk-up from the current directory, and the persisted default. It repeats
-/// the established discovery-error wording, so `remove` and `promote` explain
-/// an unmanaged path the same way.
+/// The message includes the path and every discovery source: `$PATINA_REPO`,
+/// the walk-up from the current directory, and the persisted default. It
+/// repeats the established discovery-error wording, so `remove` and `promote`
+/// explain an unmanaged path the same way.
 fn report_unmanaged(args: &RemoveArgs, reporter: &mut impl Reporter) -> i32 {
     let message = format!(
         "{} is not managed by patina (no journaled apply lists it). \
@@ -354,7 +354,7 @@ mod tests {
         assert!(!proceed, "a non-TTY shell without --yes must decline");
         assert!(
             reporter.err.contains("--yes"),
-            "the refusal must name --yes, got: {}",
+            "the refusal must include --yes, got: {}",
             reporter.err
         );
     }

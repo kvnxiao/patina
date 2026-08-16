@@ -127,7 +127,7 @@ fn add_then_apply_materializes_target_as_symlink() {
 }
 
 /// Two mode flags produce a clap usage error (exit 2)
-/// and stderr names the conflicting flags.
+/// and stderr includes the conflicting flags.
 #[test]
 fn add_two_mode_flags_is_a_usage_error() {
     let fx = Fixture::new();
@@ -143,11 +143,11 @@ fn add_two_mode_flags_is_a_usage_error() {
     let stderr = stderr(&out);
     assert!(
         stderr.contains("--symlink") && stderr.contains("--copy"),
-        "stderr must name the conflicting flags, got: {stderr}"
+        "stderr must include the conflicting flags, got: {stderr}"
     );
 }
 
-/// In a non-TTY shell without `--module`, `add` exits 1 and names
+/// In a non-TTY shell without `--module`, `add` exits 1 and identifies
 /// the missing `--module` flag.
 #[test]
 fn add_non_tty_without_module_exits_1() {
@@ -159,7 +159,7 @@ fn add_non_tty_without_module_exits_1() {
     assert_eq!(code(&out), 1, "non-TTY add without --module must exit 1");
     assert!(
         stderr(&out).contains("--module"),
-        "stderr must name the missing --module flag, got: {}",
+        "stderr must include the missing --module flag, got: {}",
         stderr(&out)
     );
 
@@ -170,7 +170,7 @@ fn add_non_tty_without_module_exits_1() {
     );
 }
 
-/// A path that is already managed exits 1 and names the owning
+/// A path that is already managed exits 1 and identifies the owning
 /// module.
 #[test]
 fn add_already_managed_path_exits_1() {
@@ -197,7 +197,7 @@ fn add_already_managed_path_exits_1() {
 }
 
 /// `add --json --yes` emits a single deterministic JSON document
-/// on stdout naming the added target, module, and mode; stderr carries no
+/// on stdout with the added target, module, and mode; stderr carries no
 /// prose.
 #[test]
 fn add_json_emits_deterministic_document() {

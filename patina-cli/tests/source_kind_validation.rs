@@ -8,8 +8,8 @@
 //! repo whose module declares a `[[file]]` or `[[directory]]` entry, and
 //! asserts that:
 //!
-//! - a `[[file]]` pointing at a directory source exits 1, names the source and
-//!   `[[directory]]`, and does not write a journal artifact;
+//! - a `[[file]]` pointing at a directory source exits 1, includes the source
+//!   and `[[directory]]`, and does not write a journal artifact;
 //! - a `[[directory]]` pointing at a file source directs the author to
 //!   `[[file]]`;
 //! - a `when`-true entry whose source is absent exits 1 with a missing-source
@@ -62,7 +62,7 @@ fn assert_no_journal_artifacts(f: &Fixture) {
 
 #[test]
 fn file_entry_with_directory_source_fails_and_directs_to_directory_table() {
-    // A `[[file]]` whose source is a directory exits 1, stderr names
+    // A `[[file]]` whose source is a directory exits 1, stderr includes
     // the source (`confdir`) and the `[[directory]]` table, and no journal
     // plan/COMMIT is written.
     let f = Fixture::new();
@@ -83,7 +83,7 @@ fn file_entry_with_directory_source_fails_and_directs_to_directory_table() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         stderr.contains("confdir"),
-        "stderr must name the offending source `confdir`, got: {stderr}"
+        "stderr must include the offending source `confdir`, got: {stderr}"
     );
     assert!(
         stderr.contains("[[directory]]"),
@@ -126,7 +126,7 @@ fn directory_entry_with_file_source_fails_and_directs_to_file_table() {
 #[test]
 fn when_true_entry_with_absent_source_fails_as_source_not_found() {
     // A `[[file]]` with `source = "ghost"` and no `when` (so it is
-    // not gated off) whose source is absent exits 1, stderr names `ghost` as
+    // not gated off) whose source is absent exits 1, stderr includes `ghost` as
     // a missing source, and no journal plan/COMMIT is written.
     let f = Fixture::new();
     f.module(
@@ -146,7 +146,7 @@ fn when_true_entry_with_absent_source_fails_as_source_not_found() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         stderr.contains("ghost"),
-        "stderr must name `ghost` as the missing source, got: {stderr}"
+        "stderr must include `ghost` as the missing source, got: {stderr}"
     );
     assert!(
         !f.home.join(".ghostrc").exists(),

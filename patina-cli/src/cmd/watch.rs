@@ -437,7 +437,7 @@ mod tests {
         assert_eq!(code, ExitCode::Success.code());
         assert!(
             human.out.contains("installed:") && human.out.contains("true"),
-            "human status must name the installed field, got: {}",
+            "human status must include the installed field, got: {}",
             human.out
         );
 

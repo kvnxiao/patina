@@ -149,7 +149,8 @@ fn add_directory_then_apply_materializes_leaf_symlinks() {
 }
 
 /// `--symlink-tree` on a regular file source is rejected with a typed error
-/// naming the flag and the file source kind. The manifest is left unwritten.
+/// that includes the flag and the file source kind. The manifest is left
+/// unwritten.
 #[test]
 fn add_symlink_tree_on_a_file_is_rejected() {
     let fx = Fixture::new();
@@ -171,7 +172,7 @@ fn add_symlink_tree_on_a_file_is_rejected() {
     let stderr = stderr(&out);
     assert!(
         stderr.contains("--symlink-tree") && stderr.contains("file"),
-        "stderr must name --symlink-tree and the file kind, got: {stderr}"
+        "stderr must include --symlink-tree and the file kind, got: {stderr}"
     );
     // The kind check runs before staging, so the module manifest is never
     // written.
@@ -182,7 +183,7 @@ fn add_symlink_tree_on_a_file_is_rejected() {
 }
 
 /// `--template` on a directory source is rejected with a typed
-/// error naming the flag and the directory source kind.
+/// error that includes the flag and the directory source kind.
 #[test]
 fn add_template_on_a_directory_is_rejected() {
     let fx = Fixture::new();
@@ -197,7 +198,7 @@ fn add_template_on_a_directory_is_rejected() {
     let stderr = stderr(&out);
     assert!(
         stderr.contains("--template") && stderr.contains("directory"),
-        "stderr must name --template and the directory kind, got: {stderr}"
+        "stderr must include --template and the directory kind, got: {stderr}"
     );
 }
 

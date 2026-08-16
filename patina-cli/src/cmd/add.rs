@@ -17,7 +17,7 @@
 //! ## Mode and module resolution
 //!
 //! The module name comes from `--module`, else an interactive prompt. In a
-//! non-TTY shell without `--module`, the command warns, names the missing
+//! non-TTY shell without `--module`, the command warns, identifies the missing
 //! flag, and exits 1. The mode comes from exactly one of the `--symlink` /
 //! `--copy` / `--template` / `--symlink-tree` flags (clap enforces
 //! at-most-one, exit 2 when more than one is given), else an interactive
@@ -27,8 +27,8 @@
 //! The mode flags are kind-checked against the source's on-disk kind:
 //! `--symlink` and `--copy` are valid for either kind, while
 //! `--template` is file-only and `--symlink-tree` is directory-only. An
-//! incompatible flag/kind pair is rejected with a typed error naming the
-//! offending flag and the source kind, before any mutation. A directory
+//! incompatible flag/kind pair is rejected with a typed error that includes
+//! the offending flag and the source kind, before any mutation. A directory
 //! source therefore never emits a `[[file]]` entry and vice versa.
 //!
 //! Manifest editing, repo discovery, tilde expansion, and canonicalization
@@ -103,7 +103,7 @@ enum SourceKind {
 }
 
 impl SourceKind {
-    /// The lowercase word naming the kind in the kind-mismatch error.
+    /// The lowercase word for the kind in the kind-mismatch error.
     fn label(self) -> &'static str {
         match self {
             SourceKind::File => "file",
@@ -137,8 +137,8 @@ enum AddMode {
 
 impl AddMode {
     /// Validate a user-selected [`ModeFlag`] against the detected
-    /// [`SourceKind`]. Returns the kind-checked mode, or a typed error naming
-    /// the incompatible flag and the source kind.
+    /// [`SourceKind`]. Returns the kind-checked mode, or a typed error that
+    /// includes the incompatible flag and the source kind.
     fn resolve(flag: ModeFlag, kind: SourceKind) -> Result<Self> {
         match (kind, flag) {
             (SourceKind::File, ModeFlag::Symlink) => Ok(AddMode::FileSymlink),
@@ -398,7 +398,7 @@ fn ignoring_tree_entry(
 }
 
 /// Warn when the directory being added contains leaves the repo-wide ignore
-/// list would drop. The warning names how many.
+/// list would drop. The warning reports how many.
 ///
 /// Informational only. The new entry has no `ignore` of its own yet, so only
 /// the root manifest's patterns can apply.
@@ -770,24 +770,24 @@ mod tests {
     }
 
     #[test]
-    fn add_mode_rejects_symlink_tree_on_a_file_naming_flag_and_kind() {
+    fn add_mode_rejects_symlink_tree_on_a_file_with_flag_and_kind() {
         let err = AddMode::resolve(ModeFlag::SymlinkTree, SourceKind::File)
             .expect_err("--symlink-tree on a file must be rejected");
         let message = err.to_string();
         assert!(
             message.contains("--symlink-tree") && message.contains("file"),
-            "error must name the flag and the file kind, got: {message}"
+            "error must include the flag and the file kind, got: {message}"
         );
     }
 
     #[test]
-    fn add_mode_rejects_template_on_a_directory_naming_flag_and_kind() {
+    fn add_mode_rejects_template_on_a_directory_with_flag_and_kind() {
         let err = AddMode::resolve(ModeFlag::Template, SourceKind::Directory)
             .expect_err("--template on a directory must be rejected");
         let message = err.to_string();
         assert!(
             message.contains("--template") && message.contains("directory"),
-            "error must name the flag and the directory kind, got: {message}"
+            "error must include the flag and the directory kind, got: {message}"
         );
     }
 
@@ -827,7 +827,7 @@ mod tests {
         );
         assert!(
             reporter.err.contains("--symlink") && reporter.err.contains("--symlink-tree"),
-            "the refusal must name the mode flags, got: {}",
+            "the refusal must include the mode flags, got: {}",
             reporter.err
         );
     }
@@ -853,7 +853,7 @@ mod tests {
         assert!(module.is_none(), "a non-TTY shell without --module refuses");
         assert!(
             reporter.err.contains("--module"),
-            "the refusal must name the missing --module flag, got: {}",
+            "the refusal must include the missing --module flag, got: {}",
             reporter.err
         );
     }
@@ -870,7 +870,7 @@ mod tests {
     }
 
     #[test]
-    fn success_envelope_is_deterministic_and_names_fields() {
+    fn success_envelope_is_deterministic_and_sets_its_fields() {
         let target = Utf8Path::new("~/.zshrc");
         let dest = Utf8Path::new("/repo/zsh/zshrc");
         let first = success_envelope(target, dest, "zsh", AddMode::FileSymlink);

@@ -478,7 +478,7 @@ fn propose_all(
     proposals
 }
 
-/// Render one aligned row per remote the run touched. A row names where the
+/// Render one aligned row per remote the run touched. A row reports where the
 /// pin was, the candidate the run considered, and what became of the pin.
 ///
 /// Every remote gets a row, including one that could not be reached, so the
@@ -1133,7 +1133,7 @@ mod tests {
     /// The status cell is the only place a human learns why a pin did not
     /// move, so each action has to produce its own wording. The integration
     /// suite pins the `already at`, `holding`, and `min_age` phrasings, and a
-    /// cooldown must name the instant it becomes eligible.
+    /// cooldown must include the instant it becomes eligible.
     #[test]
     fn each_action_reports_its_own_status() {
         for (action, expected) in [
@@ -1224,7 +1224,7 @@ mod tests {
         assert_eq!(lines.len(), 3, "a header and two rows: {:?}", reporter.out);
         let header = lines.first().expect("the header row");
         for label in ["NAME", "FROM", "TO", "STATUS"] {
-            assert!(header.contains(label), "the header must name {label}");
+            assert!(header.contains(label), "the header must include {label}");
         }
         let column = header.find("STATUS").expect("the STATUS header");
         for row in lines.iter().skip(1) {
@@ -1398,7 +1398,7 @@ mod tests {
         );
         assert!(
             reporter.err.contains("--yes"),
-            "the message must name the flag that would accept it: {}",
+            "the message must include the flag that would accept it: {}",
             reporter.err
         );
     }

@@ -37,7 +37,7 @@ fn two_active_entries_on_one_target_fail_planning() {
     );
     assert!(
         stderr.contains("same target") && stderr.contains("git") && stderr.contains("work"),
-        "the error must name both colliding modules; stderr: {stderr}"
+        "the error must include both colliding modules; stderr: {stderr}"
     );
     assert!(
         !f.home.join(".gitconfig").exists(),
@@ -112,7 +112,7 @@ fn a_target_inside_a_whole_directory_symlink_target_fails_planning() {
 }
 
 #[test]
-fn a_tree_leaf_colliding_with_another_entry_names_the_leaf() {
+fn a_tree_leaf_colliding_with_another_entry_includes_the_leaf() {
     // The tree deploys `humanizer/SKILL.md` under `~/.claude/skills`, and the
     // other entry claims exactly that path. Only the expanded leaves make
     // this visible, since the two declared targets are a directory and a
@@ -145,7 +145,7 @@ fn a_tree_leaf_colliding_with_another_entry_names_the_leaf() {
     );
     assert!(
         stderr.contains("same target") && stderr.contains("SKILL.md"),
-        "the error must name the colliding leaf; stderr: {stderr}"
+        "the error must include the colliding leaf; stderr: {stderr}"
     );
     assert!(
         !f.home.join(".claude").join("skills").exists(),
@@ -210,7 +210,7 @@ fn a_multi_target_fan_out_element_collides() {
     );
     assert!(
         stderr.contains(".rc-b"),
-        "the error must name the colliding fan-out element; stderr: {stderr}"
+        "the error must include the colliding fan-out element; stderr: {stderr}"
     );
     assert!(
         !f.home.join(".rc-a").exists(),

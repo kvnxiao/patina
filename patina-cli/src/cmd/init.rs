@@ -18,8 +18,8 @@
 //! ## Determinism
 //!
 //! Both the success and the already-initialized failure paths produce
-//! byte-stable stdout: the success JSON names only the created path and the
-//! persisted pointer, and the failure error names only the existing file
+//! byte-stable stdout: the success JSON includes only the created path and the
+//! persisted pointer, and the failure error includes only the existing file
 //! path. Neither includes the manifest's `created_at` timestamp, so two runs
 //! against the same target produce identical stdout.
 
@@ -178,7 +178,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn next_step_hint_names_target_and_add() {
+    fn next_step_hint_includes_target_and_add() {
         let hint = next_step_hint(Utf8Path::new("/tmp/dot"));
         assert_eq!(
             hint,
@@ -187,7 +187,7 @@ mod tests {
     }
 
     #[test]
-    fn json_envelope_is_deterministic_and_names_both_paths() {
+    fn json_envelope_is_deterministic_and_includes_both_paths() {
         let canonical = Utf8Path::new("/repo/dot");
         let state = Utf8Path::new("/state/patina");
         let first = json_envelope(canonical, state);

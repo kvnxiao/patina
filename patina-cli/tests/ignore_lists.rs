@@ -45,7 +45,7 @@ fn assert_applied(out: &std::process::Output) {
 
 #[test]
 fn an_ignored_directory_contributes_no_leaves_including_nested_ones() {
-    // `__pycache__/` names a directory. The nested `mod.pyc` is the real
+    // `__pycache__/` matches a directory. The nested `mod.pyc` is the real
     // check: a pattern matched only against leaf names would still deploy it.
     let f = Fixture::new();
     let module = f.module(
@@ -169,7 +169,7 @@ fn fixture_with_a_newly_ignored_deployed_leaf() -> Fixture {
 }
 
 #[test]
-fn a_newly_ignored_deployed_leaf_is_reaped_and_the_diff_names_the_reason() {
+fn a_newly_ignored_deployed_leaf_is_reaped_and_the_diff_includes_the_reason() {
     let f = fixture_with_a_newly_ignored_deployed_leaf();
 
     // No `--yes`: a non-interactive apply is preview-only, so this is the
@@ -178,7 +178,7 @@ fn a_newly_ignored_deployed_leaf_is_reaped_and_the_diff_names_the_reason() {
     let body = stdout_of(&preview);
     assert!(
         body.contains("(ignored)"),
-        "the removal must name its reason so a just-added pattern explains the deletion, \
+        "the removal must include its reason so a just-added pattern explains the deletion, \
          got:\n{body}"
     );
     assert!(
@@ -219,7 +219,7 @@ fn the_json_reaped_array_carries_the_target_and_the_reason() {
     let target = row
         .get("target")
         .and_then(serde_json::Value::as_str)
-        .expect("each reaped row names its target");
+        .expect("each reaped row carries a target");
     assert!(
         Utf8Path::new(target).ends_with("stale.pyc"),
         "the reaped target must be the now-ignored leaf, got {target}"
@@ -298,7 +298,7 @@ fn add_refuses_a_file_the_tree_it_lands_in_already_excludes() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         stderr.contains("--force"),
-        "the refusal must name the override, got:\n{stderr}"
+        "the refusal must include the override, got:\n{stderr}"
     );
     assert!(
         source.exists(),

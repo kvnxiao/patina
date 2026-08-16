@@ -158,11 +158,11 @@ fn fix_yes_from_non_repo_cwd_exits_one_and_writes_no_pointer() {
 }
 
 /// A non-TTY `patina doctor --fix` without `--yes`
-/// exits 1 and names the missing `--yes` flag on stderr (no per-finding prompt
-/// is possible without a TTY). The subprocess stdin is not a TTY, so this is
-/// the real non-interactive path.
+/// exits 1 and identifies the missing `--yes` flag on stderr (no per-finding
+/// prompt is possible without a TTY). The subprocess stdin is not a TTY, so
+/// this is the real non-interactive path.
 #[test]
-fn fix_without_yes_in_non_tty_exits_one_naming_yes() {
+fn fix_without_yes_in_non_tty_exits_one_identifying_yes() {
     let fx = Fixture::new();
     let out = fx.run(&["doctor", "--fix"], &[]);
     assert_eq!(
@@ -174,7 +174,7 @@ fn fix_without_yes_in_non_tty_exits_one_naming_yes() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         stderr.contains("--yes"),
-        "the refusal must name the missing --yes flag, got stderr: {stderr}"
+        "the refusal must include the missing --yes flag, got stderr: {stderr}"
     );
 
     // The refusal must not have written the default_repo pointer (it returns
@@ -242,7 +242,7 @@ fn unc_predicate_distinguishes_unc_from_posix_repo_paths() {
 
 /// On a Windows test host with Developer Mode OFF and a
 /// repository declaring at least one `mode = "symlink"` entry, `doctor --json`
-/// emits a `DOC-WIN-DEVMODE` warning whose message names Developer Mode and
+/// emits a `DOC-WIN-DEVMODE` warning whose message includes Developer Mode and
 /// the registry path. Gated to Windows and `#[ignore]` because it depends on
 /// the host's real Developer Mode registry state.
 #[test]
@@ -281,6 +281,6 @@ fn windows_devmode_off_with_symlink_repo_warns() {
         .expect("message field present");
     assert!(
         message.contains("Developer Mode") && message.contains(patina_core::DEV_MODE_REGISTRY_PATH),
-        "the DOC-WIN-DEVMODE message must name Developer Mode and the registry path, got: {message}"
+        "the DOC-WIN-DEVMODE message must include Developer Mode and the registry path, got: {message}"
     );
 }

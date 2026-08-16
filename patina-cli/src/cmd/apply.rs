@@ -155,7 +155,7 @@ fn rewrites_the_lockfile(args: &ApplyArgs, tty: Tty) -> bool {
 ///
 /// Like `--update`, the rewrite lands before the consent prompt: it edits the
 /// repository, not a managed target, and a declined diff leaves the lockfile
-/// correctly pruned either way. A preview does not write; it names the stale
+/// correctly pruned either way. A preview does not write; it lists the stale
 /// pins instead.
 ///
 /// The common case, nothing stale, is decided from an unlocked read and does
@@ -342,7 +342,7 @@ fn drive_elevation(reporter: &mut impl Reporter) -> Result<Option<i32>> {
     match patina_core::launch_elevate_helper().context("failed to launch the elevation helper")? {
         patina_core::ElevationOutcome::EnabledNow => Ok(None),
         patina_core::ElevationOutcome::Declined => {
-            // A refusal alone leaves the user stuck, so the warning names the
+            // A refusal alone leaves the user stuck, so the warning includes the
             // remedy too. The ignored
             // `windows_declined_uac_exits_5_and_creates_no_symlink` test pins
             // both `Developer Mode` and `patina doctor --fix`.
@@ -462,7 +462,7 @@ fn json_envelope(resolved: &ResolvedPlan, reaped: &[Orphan], result: &str) -> St
 ///
 /// A single-target mode (empty `leaves`) yields one row carrying the target's
 /// own disposition label. A tree mode yields one row per materialized leaf.
-/// Each row names that leaf's path, under the declared target, and its
+/// Each row sets that leaf's path, under the declared target, and its
 /// per-leaf disposition label. That is the same per-leaf routing the human
 /// diff renderer uses, so the two surfaces agree on what an entry expands to.
 fn plan_rows(
