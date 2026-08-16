@@ -380,8 +380,9 @@ async fn run_json(
     yes: bool,
     reporter: &mut impl Reporter,
 ) -> Result<i32> {
-    // Before any mutation, so the envelope reports what this run would
-    // remove. The engine re-derives the same set under the lock.
+    // The reap set is computed before any mutation, so the envelope reports
+    // what this run would remove. The engine re-derives the same set under the
+    // lock.
     let reaped = plan_orphans(resolved).context("failed to determine the reap set")?;
 
     if !yes {

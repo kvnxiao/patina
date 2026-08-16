@@ -211,7 +211,8 @@ pub async fn run(
     reader: &mut impl PromptReader,
     reporter: &mut impl Reporter,
 ) -> Result<i32> {
-    // Before any lock or mutation, so a missing-input refusal costs nothing.
+    // Mode and module resolve before the lock and before any mutation, so a
+    // missing-input refusal costs nothing.
     let Some(mode_flag) = resolve_mode_flag(args, tty, reader, reporter)? else {
         return Ok(ExitCode::Generic.code());
     };
