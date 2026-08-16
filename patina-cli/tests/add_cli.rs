@@ -86,9 +86,9 @@ fn add_moves_file_writes_entry_and_leaves_target() {
 /// The prior add left the file staged in the repo, wrote the `[[file]]`
 /// entry, and left the target a regular file. Running `patina apply --yes`
 /// materializes the target as a symbolic link whose readlink destination is
-/// the canonical path of `<repo>/zsh/zshrc`. This proves `add` wrote a
-/// correct, applyable entry, which the manifest text and not-yet-a-symlink
-/// check alone cannot prove.
+/// the canonical path of `<repo>/zsh/zshrc`. Only that second apply shows the
+/// entry `add` wrote is one the engine can actually deploy; the manifest text
+/// and the not-yet-a-symlink check say nothing about it.
 #[test]
 fn add_then_apply_materializes_target_as_symlink() {
     let fx = Fixture::new();

@@ -11,7 +11,7 @@
 //!
 //! `remove` holds one exclusive advisory lock for the whole command and
 //! re-journals under [`LockPolicy::Held`](patina_core::LockPolicy) through
-//! the shared [`crate::cmd::managed`] scaffolding.
+//! the shared helpers in [`crate::cmd::managed`].
 //!
 //! ## Reconstructing the last-applied content
 //!
@@ -236,9 +236,11 @@ fn confirm(
     }
 }
 
-/// Report the unmanaged-path refusal (exit 1) and return the exit code. The
-/// message names the path and the three discovery sources, matching the
-/// established discovery-error wording.
+/// Report the unmanaged-path refusal (exit 1) and return the exit code.
+///
+/// The message names the path and the three discovery sources. It repeats the
+/// established discovery-error wording, so `remove` and `promote` explain an
+/// unmanaged path the same way.
 fn report_unmanaged(args: &RemoveArgs, reporter: &mut impl Reporter) -> i32 {
     let message = format!(
         "{} is not managed by patina (no journaled apply lists it). \
@@ -281,7 +283,8 @@ fn success_envelope(target: &Utf8Path, resolved_target: &Utf8Path, purged: bool)
     serde_json::to_string_pretty(&envelope).unwrap_or_else(|_| "{}".to_owned())
 }
 
-/// Build a `--json` typed-error envelope mirroring `add`'s shape.
+/// Build the `--json` typed-error envelope: `error`, `path`, `message`. `init`
+/// and `add` emit the same three keys.
 fn error_envelope(error: &str, path: &str, message: &str) -> String {
     let envelope = serde_json::json!({
         "error": error,

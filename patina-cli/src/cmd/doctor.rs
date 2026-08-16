@@ -58,9 +58,7 @@ use patina_core::validate_repo_root;
 use patina_core::windows_build_supports_dev_mode;
 use patina_core::write_persisted_default;
 
-/// A single doctor finding. Carries a stable [`FindingCode`], a
-/// [`Level`], a human message, and the path the finding concerns when one
-/// applies.
+/// A single doctor finding.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Finding {
     /// The stable code identifying the kind of finding.
@@ -651,9 +649,10 @@ fn json_envelope(findings: &[Finding]) -> String {
     serde_json::to_string_pretty(&envelope).unwrap_or_else(|_| "{}".to_owned())
 }
 
-/// Render the findings to stderr as one aligned row each (all findings go to
-/// stderr regardless of format). A clean environment prints a single "no
-/// findings" line so the user gets explicit confirmation.
+/// Render the findings to stderr as one aligned row each, so stdout stays
+/// clean for piping. A clean environment prints a single "no findings" line so
+/// the user gets explicit confirmation. (`--json` takes the other branch and
+/// puts its whole document on stdout.)
 ///
 /// The block goes out through [`Reporter::err_block`]. One
 /// [`Reporter::warn`] per line would paint every level the same yellow,
@@ -726,7 +725,6 @@ mod tests {
 
     #[test]
     fn confirm_yes_proceeds_without_reading() {
-        // --yes accepts unconditionally and never consults the reader.
         let mut reader = ScriptedReader::new(&[]);
         let mut reporter = BufferReporter::new();
         assert!(confirm(
@@ -777,9 +775,8 @@ mod tests {
 
     #[test]
     fn fix_in_non_tty_without_yes_refuses_exit_one() {
-        // A non-TTY --fix without --yes cannot prompt, so it refuses with
-        // exit 1 naming the missing --yes flag, before any lock or mutation.
-        // The refusal returns first, so the state path is never touched.
+        // The refusal returns before the lock and before any mutation, which
+        // is why a nonexistent state path below is safe.
         let mut reader = ScriptedReader::new(&[]);
         let mut reporter = BufferReporter::new();
         let code = run_fix(
@@ -959,8 +956,6 @@ mod tests {
 
     #[test]
     fn windows_devmode_finding_requires_symlink_and_disabled() {
-        // Symlink declared + Developer Mode disabled ⇒ the warning fires and
-        // names Developer Mode and the registry path.
         let inputs = Inputs {
             is_windows: true,
             dev_mode: DevModeStatus::Disabled,

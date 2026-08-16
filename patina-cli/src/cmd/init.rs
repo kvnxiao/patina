@@ -150,10 +150,9 @@ fn json_envelope(canonical: &Utf8Path, state: &Utf8Path) -> String {
     serde_json::to_string_pretty(&envelope).unwrap_or_else(|_| "{}".to_owned())
 }
 
-/// Build the `--json` already-exists error envelope: the typed error tag, the
-/// existing manifest path, and the human message. Deterministic for a given
-/// path, so the failing `--json` stdout is byte-stable across reruns.
-/// Mirrors [`json_envelope`] for the success path.
+/// Build the `--json` already-exists error envelope: `error`, `path`,
+/// `message`. `add` and `remove` emit the same three keys. Deterministic for a
+/// given path, so the failing `--json` stdout is byte-stable across reruns.
 fn error_envelope(manifest_path: &Utf8Path, message: &str) -> String {
     let envelope = serde_json::json!({
         "error": "already_exists",

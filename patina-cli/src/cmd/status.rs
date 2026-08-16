@@ -36,8 +36,8 @@ pub async fn run(args: &StatusArgs, reporter: &mut impl Reporter) -> Result<i32>
         .await
         .context("failed to compute status")?;
 
-    // Lock-timeout (and any other) warnings go to stderr regardless of the
-    // output format so they never pollute the JSON document on stdout.
+    // Every warning, lock timeout included, goes to stderr in both output
+    // formats, so none of them pollutes the JSON document on stdout.
     for warning in &report.warnings {
         reporter.warn(warning);
     }
@@ -349,8 +349,8 @@ mod tests {
     #[test]
     fn an_empty_pending_set_adds_no_line() {
         // Counting lines rather than matching the notice wording: the wording
-        // belongs to the notice subsystem and may change, but an empty set must
-        // print nothing extra whatever it says.
+        // belongs to the notice subsystem and may change, while the
+        // one-line-or-nothing shape is this renderer's own.
         let mut quiet = BufferReporter::new();
         render_human(&report_with_entries(), &mut quiet);
 

@@ -1,11 +1,11 @@
 //! The `output::Reporter` abstraction: the only sanctioned site for
 //! user-facing output in `patina-cli`.
 //!
-//! Every byte the CLI prints for the user funnels through a [`Reporter`]:
-//! the rendered diff, the JSON envelope, prompt text, and warnings.
-//! Logs (via `tracing`) are a separate channel and never go here. One trait
-//! for all output means a test can assert the deterministic-stdout property
-//! over a single seam, and can capture a command's output without spawning a
+//! Every byte the CLI prints for the user goes through a [`Reporter`]: the
+//! rendered diff, the JSON envelope, prompt text, and warnings. Logs (via
+//! `tracing`) are a separate channel and never come here. One trait for all
+//! output leaves a test one seam to assert the deterministic-stdout property
+//! over, and that same seam captures a command's output without spawning a
 //! subprocess.
 //!
 //! Two implementations ship:
@@ -315,9 +315,9 @@ mod tests {
         r.warn("W");
         r.error("E");
         r.err_block("B1\nB2\n");
-        // The out stream carries the block, line, and json (json + trailing
-        // newline); the err stream carries prompt (no newline), warn, and
-        // error (each newline-terminated), then the block verbatim.
+        // `out_block` and `err_block` add no newline of their own; `line`,
+        // `json`, `warn`, and `error` each terminate theirs, and `prompt`
+        // does not, so the answer is typed on the same line.
         assert_eq!(r.out, "DL\n{\"k\":1}\n");
         assert_eq!(r.err, "PW\nE\nB1\nB2\n");
     }
@@ -352,19 +352,17 @@ mod tests {
 
     #[test]
     fn confirm_plain_is_exactly_the_question_and_bracketed_keys() {
-        // Under the plain palette the composed confirm prompt is the bare
-        // `<question> [y/N] `, with no escapes and the trailing space intact.
-        // `--color never` and the buffer reporter both emit these bytes.
+        // These are the bytes `--color never` and the buffer reporter both
+        // emit, trailing space included.
         let plain = compose_confirm(&Styles::plain(), "Apply?");
         assert_eq!(plain, "Apply? [y/N] ");
     }
 
     #[test]
     fn confirm_colored_highlights_y_and_n_distinctly_but_strips_to_plain() {
-        // The colored composition must carry escapes and wrap the `y` and `N`
-        // in styles distinct from the prose and from each other. Stripping
-        // every escape must still reduce it to the plain form, proving color
-        // is purely additive over the stable bytes.
+        // Color must stay purely additive over the stable bytes: the `y` and
+        // `N` wear styles distinct from the prose and from each other, and
+        // stripping every escape still reduces the whole to the plain form.
         let colored = compose_confirm(&Styles::colored(), "Apply?");
         assert!(
             colored.contains('\u{1b}'),
@@ -380,7 +378,6 @@ mod tests {
             colored.contains(&format!("{default}N")),
             "the default `N` must be wrapped in its own style: {colored:?}"
         );
-        // Stripping every ANSI escape must leave exactly the plain prompt.
         let stripped = anstream::adapter::strip_str(&colored).to_string();
         assert_eq!(stripped, "Apply? [y/N] ");
     }

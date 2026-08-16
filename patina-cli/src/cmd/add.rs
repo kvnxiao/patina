@@ -116,10 +116,10 @@ impl SourceKind {
 
 /// A mode flag that has been validated against the source's on-disk kind.
 ///
-/// Each variant carries the [`FileMode`] the manifest writer records, and
-/// the variant chosen also selects which table-array (`[[file]]` vs
-/// `[[directory]]`) the entry is written to. Constructed only via
-/// [`AddMode::resolve`], which rejects an incompatible flag/kind pair.
+/// Each variant fixes two things: the [`FileMode`] the manifest writer
+/// records, and which table-array (`[[file]]` vs `[[directory]]`) the entry is
+/// written to. [`AddMode::resolve`] is the only constructor, and it rejects an
+/// incompatible flag/kind pair.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AddMode {
     /// A `[[file]]` `symlink` entry.
@@ -463,8 +463,8 @@ fn find_managed(
     Ok(None)
 }
 
-/// Stage the target into the repository at `to`, leaving the original `from`
-/// in place. Until the next `patina apply` runs, `~/.zshrc` is still a
+/// Stage the target into the repository at `to`. The original `from` stays
+/// where it is: until the next `patina apply` runs, `~/.zshrc` is still a
 /// regular file with its original bytes.
 ///
 /// A directory source is copied recursively; a file source is a single byte
@@ -608,8 +608,12 @@ fn resolve_module(
 
 /// Derive the repository source name from a target's file name, stripping a
 /// single leading dot so a dotfile lands as `zsh/zshrc` rather than
-/// `zsh/.zshrc`. A name that is exactly `.` (or empty
-/// after stripping) is returned verbatim so the result is never empty.
+/// `zsh/.zshrc`.
+///
+/// Stripping only one dot leaves `..` as `.`, and a name that is exactly `.`
+/// comes back unchanged. Both fall out of the rule that the result is never
+/// empty; neither is a path `add` can reach, because a target with no file
+/// name is rejected before this runs.
 fn repo_source_name(file_name: &str) -> String {
     match file_name.strip_prefix('.') {
         Some(rest) if !rest.is_empty() => rest.to_owned(),
@@ -647,7 +651,8 @@ fn success_envelope(target: &Utf8Path, dest: &Utf8Path, module: &str, mode: AddM
     serde_json::to_string_pretty(&envelope).unwrap_or_else(|_| "{}".to_owned())
 }
 
-/// Build a `--json` typed-error envelope mirroring `init`'s shape.
+/// Build the `--json` typed-error envelope: `error`, `path`, `message`. `init`
+/// and `remove` emit the same three keys.
 fn error_envelope(error: &str, path: &str, message: &str) -> String {
     let envelope = serde_json::json!({
         "error": error,
@@ -699,8 +704,8 @@ mod tests {
     fn repo_source_name_strips_one_leading_dot() {
         assert_eq!(repo_source_name(".zshrc"), "zshrc");
         assert_eq!(repo_source_name("config"), "config");
-        // A name that is only a dot, or `..`, is preserved (stripping would
-        // leave an empty or surprising name).
+        // One dot comes off at most, and the result is never empty: `.` is
+        // returned unchanged, and `..` loses its first dot only.
         assert_eq!(repo_source_name("."), ".");
         assert_eq!(repo_source_name(".."), ".");
     }

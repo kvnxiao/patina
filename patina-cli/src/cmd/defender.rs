@@ -58,7 +58,7 @@ use patina_core::resolve_state_dir;
 use patina_core::serialize_request;
 use std::collections::BTreeSet;
 
-/// Told to the user whenever a rendered state was inferred from the ledger
+/// The caveat printed whenever a rendered state was inferred from the ledger
 /// rather than read from Defender, so no reader mistakes the one for the other.
 ///
 /// It names the remedy, not only the constraint. Nothing on this path ever
@@ -97,7 +97,7 @@ fn state_token(state: ExclusionState) -> &'static str {
     }
 }
 
-/// Which reconcile a run performs. They differ only in the desired set.
+/// Which reconcile a run performs. The two differ only in the desired set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Action {
     /// Reconcile to the plan's exclusion set (add missing, reap stale).
@@ -365,9 +365,9 @@ fn run_status(json: bool, reporter: &mut impl Reporter) -> Result<i32> {
             Ok(ExitCode::Success.code())
         }
         Err(err) => {
-            // Graceful degrade, mirroring `doctor`'s shared-lock downgrade: the
-            // read is a best effort, so a restricted read warns and reports the
-            // desired set rather than hard-failing.
+            // The live read is best-effort, so a restricted one warns and
+            // reports the desired set rather than hard-failing. Same downgrade
+            // `doctor` takes on a shared-lock timeout.
             reporter.warn(&format!(
                 "could not read current Defender exclusions: {err}; showing the desired set only"
             ));
@@ -480,8 +480,8 @@ fn render_preview(reconcile: &Reconcile<'_>, reporter: &mut impl Reporter) {
     }
 }
 
-/// One listing row holds the add / remove / unchanged marker and the path in
-/// its first cell, then the state tag in the next.
+/// One listing row: the add / remove / unchanged marker and the path in the
+/// first cell, then the state tag in the next.
 ///
 /// The marker shares the path's cell so it cannot widen the column.
 fn listing_row(marker: &str, exclusion: &Exclusion, tag: Option<&str>, styles: &Styles) -> String {

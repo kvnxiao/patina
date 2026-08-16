@@ -1,7 +1,8 @@
 //! The clap-derived command-line surface for `patina`.
 //!
 //! The derive surface parses and nothing more. The command logic lives in
-//! [`crate::cmd`], where a unit test reaches it without going through clap.
+//! [`crate::cmd`]. A unit test calls it there directly, with no clap in the
+//! loop.
 
 use crate::exit_code::ExitCode;
 use crate::output::reporter::Reporter;
@@ -13,23 +14,22 @@ use clap::ValueEnum;
 
 /// Resolve a command's outcome to a process exit code.
 ///
-/// Every subcommand terminates through this funnel, so the exit-code
-/// contract lives in one place. A subcommand returns
-/// `Ok(code)` when it reached a terminal state under its own control (a
-/// successful apply, an aborted-by-hook apply, a declined prompt); the
-/// code is returned verbatim. An `Err` is an engine-level failure: its
-/// error chain is rendered to the reporter's err stream and mapped to an
-/// [`ExitCode`] via [`ExitCode::from_error_chain`]: the lock timeout
-/// becomes `4`, every other failure `1`.
+/// Every subcommand terminates here, so the exit-code contract lives in one
+/// place. A subcommand that reaches a terminal state under its own control (a
+/// successful apply, an aborted-by-hook apply, a declined prompt) returns
+/// `Ok(code)`, and that code is returned verbatim. An `Err` is an
+/// engine-level failure. Its error chain goes to the reporter's err stream,
+/// and [`ExitCode::from_error_chain`] maps it: the lock timeout becomes `4`,
+/// every other failure `1`.
 ///
 /// [`crate::main`] hands the returned `i32` to [`std::process::exit`].
-#[must_use = "the returned code is the process's terminal exit status"]
+#[must_use = "the returned exit code is the process's terminal status"]
 pub fn resolve_exit_code(outcome: anyhow::Result<i32>, reporter: &mut impl Reporter) -> i32 {
     match outcome {
         Ok(code) => code,
         Err(error) => {
-            // Every cause in the chain, so the underlying one (the
-            // offending TOML line, say) reaches the user.
+            // Report every cause, so the root one (the offending TOML line,
+            // say) reaches the user.
             for cause in error.chain() {
                 reporter.error(&cause.to_string());
             }
@@ -52,10 +52,11 @@ pub struct Cli {
     pub color: ColorChoiceArg,
 }
 
-/// The `--color` flag: when to emit ANSI styling. Resolved to an
-/// [`anstream::ColorChoice`] via [`ColorChoiceArg::choice`], which the
-/// reporter's auto-stream consumes to decide whether styling survives to the
-/// destination stream.
+/// The `--color` flag: when to emit ANSI styling.
+///
+/// [`ColorChoiceArg::choice`] resolves it to an [`anstream::ColorChoice`].
+/// The reporter's auto-stream reads that policy to decide whether styling
+/// survives to the destination stream.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum ColorChoiceArg {
     /// Color when the stream is a terminal; strip to plain text when piped,
@@ -204,9 +205,10 @@ pub enum WatchCommand {
 
 /// Flags for `patina remote`.
 ///
-/// The verbs split along a producer/consumer line: `update` is the producer
-/// (it fetches upstream, runs the update gate, and rewrites `patina.lock` for
-/// review), while `list`, `check`, and `prune` are safe to run anywhere.
+/// The verbs split by what they write. `update` and `prune` mutate (the
+/// working-tree lockfile, the per-machine cache) and take the exclusive lock.
+/// `list` and `check` take the shared lock: `list` writes nothing, and `check`
+/// writes only the per-machine notice files it alone owns.
 #[derive(Debug, Args)]
 #[command(disable_help_subcommand = true)]
 pub struct RemoteArgs {
@@ -519,8 +521,8 @@ pub enum DefenderCommand {
         json: bool,
     },
 
-    /// Remove every patina-owned Defender exclusion, leaving user-added
-    /// exclusions untouched. Previewed and consented; launches the elevated
+    /// Remove every patina-owned Defender exclusion. An exclusion the user
+    /// added is left untouched. Previewed and consented; launches the elevated
     /// helper behind one UAC prompt.
     Clear {
         /// Proceed without prompting. Required to clear in a non-interactive

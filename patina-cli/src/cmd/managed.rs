@@ -1,5 +1,5 @@
-//! Shared scaffolding for the commands that edit a single managed target
-//! under one held exclusive lock and re-journal by re-applying.
+//! Shared helpers for the commands that edit a single managed target under
+//! one held exclusive lock and re-journal by re-applying.
 //!
 //! `remove` and `promote` follow the same shape. Each takes one exclusive
 //! advisory lock for the whole command, then locates the journaled

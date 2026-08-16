@@ -118,8 +118,8 @@ fn add_directory_symlink_tree_writes_directory_table_with_mode() {
 }
 
 /// A `[[directory]]` entry written by `add` is applyable. A follow-up
-/// `patina apply` materializes the symlink-tree leaves, proving `add` wrote
-/// a correct directory entry, beyond correct manifest text alone.
+/// `patina apply` materializes the symlink-tree leaves. Only that second apply
+/// shows the entry can be deployed; correct manifest text alone does not.
 #[test]
 fn add_directory_then_apply_materializes_leaf_symlinks() {
     let fx = Fixture::new();

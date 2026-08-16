@@ -14,8 +14,9 @@
 //! | File decoded and rendered                 | 0    |
 //! | Missing / unreadable path, version mismatch, corrupt body | 1 |
 //!
-//! Whichever way a decode fails, the reporter names the path, and adds both
-//! majors on a version mismatch (a file written by a newer binary).
+//! On decode failure, the reporter names the path. If a version mismatch
+//! caused it, the message also names both major versions: the file's, written
+//! by a newer binary, and the one this binary supports.
 
 use crate::cli::DebugCommand;
 use crate::cli::DebugDriftCacheArgs;
@@ -50,9 +51,9 @@ fn run_journal(args: &DebugJournalArgs, reporter: &mut impl Reporter) -> i32 {
         }
         Err(err) => {
             // The typed error's own `Display` is the single source of truth
-            // for the human-readable line: `Read` carries its IO cause and
-            // `Decode` carries its `JournalError` (a version mismatch names
-            // both majors).
+            // for the human-readable line: `Read` includes its IO cause, and
+            // `Decode` includes its `JournalError`, whose version-mismatch arm
+            // names both major versions.
             reporter.warn(&err.to_string());
             ExitCode::Generic.code()
         }
@@ -70,7 +71,7 @@ fn run_drift_cache(args: &DebugDriftCacheArgs, reporter: &mut impl Reporter) -> 
         Err(err) => {
             // `DriftCacheError`'s `Display` is the source of truth for the
             // failure reason; its `VersionMismatch` arm names both the found
-            // and supported majors. Its `Filesystem` arm is a
+            // and the supported major version. Its `Filesystem` arm is a
             // `#[from] std::io::Error` and drops the path, so this layer
             // prefixes `args.path`: a debug failure has to name the file it
             // was pointed at.

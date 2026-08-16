@@ -12,8 +12,9 @@
 //! backend, and log-counter recovery live in `patina_core`; this module is
 //! control flow, lock acquisition, and output formatting.
 //!
-//! Either mode starts by warning about a `[watcher] debounce_ms` key, which
-//! the manifest accepts and the watcher ignores.
+//! Before either mode runs, the command reads the root manifest. A declared
+//! `[watcher] debounce_ms` key draws a warning: the manifest accepts the key
+//! and the watcher ignores it.
 
 use crate::cli::WatchArgs;
 use crate::cli::WatchCommand;
@@ -87,8 +88,8 @@ fn run_lifecycle(command: &WatchCommand, json: bool, reporter: &mut impl Reporte
     // `status` is read-only: it acquires the shared lock and, on a shared-lock
     // timeout, warns and proceeds without it (the read-only escape hatch,
     // matching `patina status`). Every other lifecycle action mutates the
-    // service registration and acquires the exclusive lock, mapping a timeout
-    // to exit code 4 via the error-chain funnel.
+    // service registration, so it acquires the exclusive lock. A timeout there
+    // reaches exit code 4 through the error chain.
     if let WatchCommand::Status = command {
         let _guard = crate::cmd::shared_lock(&lock_path, false, reporter);
         return Ok(render_status(backend.status(), json, reporter));
@@ -253,8 +254,8 @@ fn render_status_human(status: &ServiceStatus, reporter: &mut impl Reporter) {
 }
 
 /// A recovered field's value, or the literal `unknown` when it could not be
-/// read. `unknown` takes the hint color. It marks a missing reading, which
-/// must not compete with the values around it.
+/// read. `unknown` takes the hint color, because a missing reading must not
+/// compete with the values around it.
 fn recovered<T: std::fmt::Display>(value: Option<T>, styles: &Styles) -> String {
     value.map_or_else(|| paint(styles.hint, "unknown"), |value| value.to_string())
 }
@@ -431,9 +432,6 @@ mod tests {
 
     #[test]
     fn render_status_emits_the_backend_status_in_both_modes() {
-        // Exercises `render_status` (and the backend's `status`) directly: the
-        // human path names each field, the JSON path emits the structured
-        // object. Both exit 0.
         let backend = RecordingBackend::new(LifecycleResult::Installed);
 
         let mut human = BufferReporter::new();
@@ -477,9 +475,8 @@ mod tests {
 
     #[test]
     fn status_envelope_carries_the_six_fields_with_null_for_absent_counters() {
-        // The JSON object names all six fields, and an
-        // absent recovered counter renders as JSON null rather than being
-        // dropped.
+        // An absent counter renders as JSON null rather than being dropped, so
+        // a consumer always finds the key.
         let status = ServiceStatus {
             installed: true,
             running: false,
@@ -519,8 +516,6 @@ mod tests {
 
     #[test]
     fn render_lifecycle_already_installed_error_exits_one() {
-        // Install on an already-installed service exits 1 with the
-        // typed message surfaced to stderr.
         let mut reporter = BufferReporter::new();
         let code = render_lifecycle(Err(ServiceError::AlreadyInstalled), true, &mut reporter);
         assert_eq!(code, ExitCode::Generic.code());

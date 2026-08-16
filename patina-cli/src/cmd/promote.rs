@@ -21,8 +21,8 @@
 //!
 //! Like `remove`, `promote` holds one exclusive advisory lock for the whole
 //! command and re-journals under
-//! [`LockPolicy::Held`](patina_core::LockPolicy) through the shared
-//! [`crate::cmd::managed`] scaffolding.
+//! [`LockPolicy::Held`](patina_core::LockPolicy) through the shared helpers in
+//! [`crate::cmd::managed`].
 //!
 //! Planning, journaling, and repo discovery live in `patina_core`; this
 //! module is presentation and control flow.
@@ -180,9 +180,11 @@ fn confirm(
     }
 }
 
-/// Report the unmanaged-target refusal (exit 1) and return the exit code. The
-/// message names the target and the three discovery sources, matching the
-/// established discovery-error wording.
+/// Report the unmanaged-target refusal (exit 1) and return the exit code.
+///
+/// The message names the target and the three discovery sources. It repeats
+/// the established discovery-error wording, so `remove` and `promote` explain
+/// an unmanaged path the same way.
 fn report_unmanaged(args: &PromoteArgs, reporter: &mut impl Reporter) -> i32 {
     let message = format!(
         "{} is not managed by patina (no journaled apply lists it). \
@@ -230,7 +232,9 @@ fn success_envelope(target: &Utf8Path, resolved_target: &Utf8Path, source: &Utf8
     serde_json::to_string_pretty(&envelope).unwrap_or_else(|_| "{}".to_owned())
 }
 
-/// Build a `--json` typed-error envelope mirroring `remove`'s shape.
+/// Build the `--json` typed-error envelope: `error`, `target`, `message`.
+/// `promote` keys the subject `target` rather than `path`, after its own
+/// positional argument.
 fn error_envelope(error: &str, target: &str, message: &str) -> String {
     let envelope = serde_json::json!({
         "error": error,

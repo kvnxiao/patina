@@ -1,8 +1,9 @@
 //! Terminal styles for user-facing output.
 //!
 //! A [`Styles`] bundles the `anstyle` styles the diff renderer and the
-//! [`Reporter`](super::reporter::Reporter) paint with, separating whether
-//! styled bytes are generated from whether they reach the user:
+//! [`Reporter`](super::reporter::Reporter) paint with. Two decisions are kept
+//! apart: whether styled bytes are generated at all, and whether they reach
+//! the user.
 //!
 //! - **Whether styled bytes are generated** is [`Styles`]. `Styles::plain`
 //!   (test-only) holds empty styles that render to zero bytes, so a plain
@@ -23,9 +24,9 @@ use anstyle::Style;
 
 /// The palette the diff renderer and reporter paint with.
 ///
-/// Roles are grouped by the surface that prints them, and one group shares one
-/// row. Two roles in one group must never render alike, or one reads as the
-/// other on a single line. Across groups, identical styling is
+/// Roles are grouped by the surface that prints them, and the roles in one
+/// group can land on a single row. Two roles in one group must therefore never
+/// render alike, or one reads as the other. Across groups, identical styling is
 /// deliberate and marks one shared visual meaning.
 /// [`header`](Styles::header) and [`path`](Styles::path) are both bold, because
 /// each names the subject of its line. [`hint`](Styles::hint),
@@ -53,8 +54,8 @@ pub struct Styles {
     pub prompt_affirm: Style,
     /// The default key in a `[y/N]` confirmation (the capitalized `N`).
     pub prompt_default: Style,
-    /// A completed action that changed nothing for the worse, such as an apply
-    /// that landed or a watch service already running.
+    /// An action that reached the state the user asked for: an apply that
+    /// landed, or a watch service already running.
     pub success: Style,
     /// A path embedded in a one-line result sentence, so the path the command
     /// acted on stands out from the prose around it.

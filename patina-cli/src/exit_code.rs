@@ -8,7 +8,7 @@
 //! | Code | Meaning                                                       |
 //! |------|---------------------------------------------------------------|
 //! | 0    | Success.                                                      |
-//! | 1    | Generic error (config parse, IO, undefined variable, version mismatch, missing prior apply, unresolved shell, …). |
+//! | 1    | Generic error (config parse, IO, undefined variable, journal version mismatch, missing prior apply, unresolved shell). |
 //! | 2    | A `must_succeed` `pre_apply` hook failed; apply aborted before any file operation. |
 //! | 3    | A `must_succeed` `post_apply` hook failed; file operations rolled back. |
 //! | 4    | Exclusive-lock acquisition timed out (`apply` / `rollback`).  |
@@ -17,10 +17,10 @@
 //! These overlaps are deliberate:
 //!
 //! - **Code 2 is also clap's usage-error code.** A malformed command line
-//!   (unknown subcommand, bad flag) exits 2 at parse time, inside [`clap`] and
-//!   before any subcommand runs. It therefore never collides in practice with a
-//!   run-time `pre_apply` abort, which is also 2. The two are distinguishable
-//!   by phase, and 2 for usage errors is the conventional Unix code.
+//!   (unknown subcommand, bad flag) exits 2 at parse time, inside [`clap`],
+//!   before any subcommand runs. A `pre_apply` abort is also 2, but it can only
+//!   arise after parsing succeeded, so the phase tells the two apart. 2 for
+//!   usage errors is the conventional Unix code.
 //! - **`EngineError::DevModeRequired` maps to 1, not 5.** When the Windows
 //!   engine backstop fires because symlink creation needs elevation, that is an
 //!   environment error → generic 1. A user who is *prompted* for elevation and
@@ -37,9 +37,8 @@ use patina_core::LockError;
 
 /// A terminal CLI outcome and its required process exit code.
 ///
-/// The `#[repr(i32)]` and pinned discriminants make the numeric contract
-/// part of the type: [`ExitCode::code`] returns the discriminant, and the
-/// process terminates with exactly that integer.
+/// [`ExitCode::code`] returns the discriminant, and the process terminates
+/// with exactly that integer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(i32)]
 pub enum ExitCode {
@@ -64,7 +63,7 @@ pub enum ExitCode {
 
 impl ExitCode {
     /// The numeric process exit code this outcome maps to.
-    #[must_use = "the returned integer is the process's terminal status"]
+    #[must_use = "the returned exit code is the process's terminal status"]
     pub fn code(self) -> i32 {
         self as i32
     }
@@ -134,9 +133,8 @@ mod tests {
 
     #[test]
     fn other_engine_errors_map_to_generic() {
-        // Any non-lock-timeout EngineError falls through to the generic
-        // bucket; a state-directory failure stands in for "some other
-        // subsystem error".
+        // A state-directory failure stands for anything the wildcard arm
+        // catches: one variant is enough, because the arm reads none of it.
         let err = EngineError::StateDir(patina_core::StateDirError::MissingEnv { name: "HOME" });
         assert_eq!(ExitCode::from_engine_error(&err), ExitCode::Generic);
     }

@@ -97,9 +97,11 @@ pub fn run(
 }
 
 /// Run `patina remote update` over every declared remote, with the default
-/// flags and the exclusive lock. The producer pass `patina apply --update`
-/// drives, so the two spell one operation rather than the apply synthesizing a
-/// command line.
+/// flags and the exclusive lock.
+///
+/// This is the entry point `patina apply --update` calls, so the producer pass
+/// and the standalone command run the same code rather than the apply
+/// synthesizing a command line.
 ///
 /// # Errors
 ///
@@ -510,7 +512,7 @@ fn update_row(outcome: &Outcome, styles: &Styles) -> String {
     ])
 }
 
-/// A rev cell holds the rev itself, or `absent` in the attention color when
+/// A rev cell shows the rev itself, or `absent` in the attention color when
 /// there is none. The two absences differ and must not be worded alike.
 /// `(unpinned)` means no pin was recorded. `(unknown)` means the run never
 /// learned a candidate.
@@ -766,11 +768,12 @@ enum Confirmed {
     Unasked,
 }
 
-/// Run the cache sweep by hand: whole trees for remotes the root manifest no
-/// longer declares, then unreferenced checkouts of the ones it does. The
-/// currently pinned checkouts are kept regardless of journal reachability: a
-/// pin bumped but not yet applied is the warm cache an offline apply depends
-/// on.
+/// Sweep the cache on demand: whole trees for remotes the root manifest no
+/// longer declares, then unreferenced checkouts of the ones it does.
+///
+/// A currently pinned checkout survives even when no journal record reaches
+/// it. A pin bumped but not yet applied is the warm cache an offline apply
+/// depends on.
 fn run_prune(inventory: &RemoteInventory, json: bool, reporter: &mut impl Reporter) -> Result<i32> {
     let declared = inventory
         .remotes

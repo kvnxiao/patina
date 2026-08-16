@@ -12,19 +12,19 @@
 //! declared). The byte-identical-stdout property is built on this.
 //!
 //! Some content cannot be line-diffed: a present-but-non-UTF-8 (binary)
-//! source or target, or an unreadable file. It renders as a compact
+//! source or target, or an unreadable file. Such a side renders as a compact
 //! deterministic placeholder (`(binary content, N bytes)`) instead. A binary
 //! copy source is legitimate, so the placeholder covers it without raising an
 //! error. The user consents from this diff, so an empty or full-insert render
 //! of a binary target would mislead them.
 //!
-//! Removals render as well. On the next apply the engine reaps a target a
-//! prior apply materialized but the current plan no longer manages, which
-//! covers an entry dropped from a `patina.toml` and a `when` flipped false.
-//! Those orphan targets are not [`ResolvedPlan`] operations, so the CLI passes
-//! them in alongside. Each renders as a `remove <target>` block whose deleted
-//! body is the link it pointed at or its current content, so no reap is
-//! invisible in the consent diff.
+//! Removals render as well. An apply reaps every target a prior apply
+//! materialized that the current plan no longer manages: an entry dropped from
+//! a `patina.toml`, a `when` flipped false, a leaf a new `ignore` pattern now
+//! excludes. Those orphan targets are not [`ResolvedPlan`] operations, so the
+//! CLI passes them in alongside. Each renders as a `remove <target>` block
+//! whose deleted body is the link it pointed at or its current content, so
+//! every reap appears in the consent diff.
 
 use crate::output::style::Styles;
 use anstyle::Style;
@@ -111,9 +111,9 @@ pub fn render(resolved: &ResolvedPlan, orphans: &[Orphan]) -> Result<String, Str
         render_removal(&mut out, orphan, &styles);
     }
 
-    // Exactly one deterministic summary line reports the unchanged count.
-    // It is omitted when the count is zero, so a fully-changing plan's body
-    // carries no zero-count line.
+    // One deterministic summary line reports the unchanged count. At zero the
+    // line is omitted, so a fully-changing plan's body ends with its last
+    // block.
     if unchanged > 0 {
         let noun = if unchanged == 1 { "entry" } else { "entries" };
         emit(&mut out, format_args!("{unchanged} unchanged {noun}.\n"));
@@ -174,11 +174,13 @@ fn render_leaf(
 }
 
 /// Render one `remove <target> (<reason>)` block for an orphan the reap phase
-/// will back up and delete. A symlink shows the link it pointed at (reading
-/// *through* it would show the linked file's bytes, not the link being
-/// removed); any other target shows its current content as a full deletion,
-/// falling back to the compact placeholder for binary / unreadable bytes, the
-/// same never-imply-empty rule [`content_diff`] uses.
+/// will back up and delete.
+///
+/// A symlink shows the link it pointed at. Reading *through* it would show the
+/// linked file's bytes, not the link being removed. Any other target shows its
+/// current content as a full deletion. Binary or unreadable bytes fall back to
+/// the compact placeholder, under the same never-imply-empty rule
+/// [`content_diff`] uses.
 ///
 /// The header carries the reason because a reap is the only block that deletes
 /// something the user did not ask for in this run. Without it, a leaf dropped
@@ -341,7 +343,6 @@ mod tests {
     fn read_for_diff_reports_a_missing_file_as_absent() {
         let (_td, dir) = tempdir();
         let absent = read_for_diff(&dir.join("nope"));
-        // Absent diffs as empty (a create), and describes itself distinctly.
         assert_eq!(absent.as_text(), Some(""));
         assert_eq!(absent.describe(), "(absent)");
     }
@@ -387,8 +388,6 @@ mod tests {
             &Styles::plain(),
         );
 
-        // The placeholder pair must appear, and the new text must not render
-        // as a full-insert line diff against an assumed-empty target.
         assert!(
             out.contains("  - (binary content, 3 bytes)"),
             "the binary current side must render as a placeholder, got:\n{out}"
@@ -425,7 +424,6 @@ mod tests {
             out.contains("  + new\n"),
             "added line marked Insert, got:\n{out}"
         );
-        // The unterminated "tail" line is emitted with an appended newline.
         assert!(
             out.ends_with("    tail\n"),
             "unterminated line gets a newline, got:\n{out}"

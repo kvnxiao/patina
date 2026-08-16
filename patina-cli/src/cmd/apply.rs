@@ -146,9 +146,9 @@ pub async fn run(
 /// Whether this invocation may rewrite the working-tree `patina.lock`.
 ///
 /// Both the `--update` producer pass and the stale-pin sweep write that file,
-/// so both are held back on a run that owes the caller zero writes: a
-/// non-interactive apply without `--yes` is a preview, and a `--json` run owns
-/// stdout as one machine-readable document.
+/// so a run that must not write holds both back. A non-interactive apply
+/// without `--yes` is a preview, and a `--json` run owns stdout as one
+/// machine-readable document.
 fn rewrites_the_lockfile(args: &ApplyArgs, tty: Tty) -> bool {
     !args.json && (args.yes || tty == Tty::Interactive)
 }
@@ -277,9 +277,7 @@ enum Confirmation {
 /// Decide whether to proceed with the apply, prompting only on the
 /// interactive review path.
 ///
-/// A full no-op (`is_full_noop`) short-circuits ahead of the diff-and-prompt
-/// branch, so a fully-satisfied repo neither sees the prompt nor has a line
-/// read from `reader`.
+/// A full no-op returns `Proceed` without reading a line from `reader`.
 fn confirm_apply(
     is_full_noop: bool,
     yes: bool,
@@ -288,7 +286,7 @@ fn confirm_apply(
     reporter: &mut impl Reporter,
 ) -> Confirmation {
     if is_full_noop {
-        // Safe either way: a no-op writes nothing whatever the user answers.
+        // A no-op writes nothing, so the answer could not change the outcome.
         return Confirmation::Proceed;
     }
     match (yes, tty) {
@@ -348,7 +346,10 @@ fn drive_elevation(reporter: &mut impl Reporter) -> Result<Option<i32>> {
     match patina_core::launch_elevate_helper().context("failed to launch the elevation helper")? {
         patina_core::ElevationOutcome::EnabledNow => Ok(None),
         patina_core::ElevationOutcome::Declined => {
-            // stderr must name `Developer Mode` and `patina doctor --fix`.
+            // A declined dialog leaves no other route to Developer Mode, so
+            // the warning names the remedy as well as the refusal. The
+            // ignored `windows_declined_uac_exits_5_and_creates_no_symlink`
+            // test pins both `Developer Mode` and `patina doctor --fix`.
             reporter.warn(
                 "Developer Mode was not enabled (elevation declined). \
                  Run `patina doctor --fix` to enable it, then re-run \
@@ -635,8 +636,6 @@ mod tests {
 
     #[test]
     fn full_noop_interactive_skips_prompt_and_reads_no_stdin() {
-        // A fully-satisfied plan on an interactive TTY must not prompt, and
-        // must read no stdin.
         let mut reader = RecordingReader::default();
         let mut reporter = BufferReporter::new();
         let decision = confirm_apply(
@@ -667,9 +666,8 @@ mod tests {
 
     #[test]
     fn non_noop_interactive_does_prompt_and_reads_the_answer() {
-        // Counterpart to the no-op test: a plan that is not a no-op must
-        // prompt on an interactive TTY and read the answer. A `confirm_apply`
-        // that skipped the prompt unconditionally fails here.
+        // Counterpart to the no-op test: a `confirm_apply` that skipped the
+        // prompt unconditionally would pass that one and fail here.
         let mut reader = ScriptedReader {
             lines: std::collections::VecDeque::from(["n\n".to_owned()]),
         };
@@ -697,7 +695,6 @@ mod tests {
 
     #[test]
     fn yes_proceeds_without_prompting_on_any_tty() {
-        // `--yes` proceeds without consulting the reader on either TTY kind.
         for tty in [Tty::Interactive, Tty::NonInteractive] {
             let mut reader = RecordingReader::default();
             let mut reporter = BufferReporter::new();
