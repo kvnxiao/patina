@@ -25,12 +25,11 @@ use std::sync::Once;
 use std::time::Duration;
 use std::time::Instant;
 
-/// `patina add ~/.zshrc --module zsh --symlink --yes` moves the
-/// dotfile into `<repo>/zsh/zshrc` and writes a `[[file]]` entry. The
-/// original target stays a regular file with the original bytes, because
-/// apply has not run yet.
+/// `patina add ~/.zshrc --module zsh --symlink --yes` copies the dotfile into
+/// `<repo>/zsh/zshrc` and writes a `[[file]]` entry. `apply` has not run, so
+/// the original target stays a regular file with the original bytes.
 #[test]
-fn add_moves_file_writes_entry_and_leaves_target() {
+fn add_copies_file_writes_entry_and_leaves_target() {
     let fx = Fixture::new();
     let zshrc = fx.home.join(".zshrc");
     fs_err::write(zshrc.as_std_path(), "foo").expect("seed ~/.zshrc");
@@ -41,14 +40,14 @@ fn add_moves_file_writes_entry_and_leaves_target() {
     );
     assert_eq!(code(&out), 0, "add must exit 0; stderr: {}", stderr(&out));
 
-    let moved = fx.root.join("zsh").join("zshrc");
-    assert!(moved.is_file(), "<repo>/zsh/zshrc must be a regular file");
+    let staged = fx.root.join("zsh").join("zshrc");
+    assert!(staged.is_file(), "<repo>/zsh/zshrc must be a regular file");
     assert!(
-        !is_symlink(&moved),
+        !is_symlink(&staged),
         "<repo>/zsh/zshrc must not be a symlink"
     );
     assert_eq!(
-        fs_err::read_to_string(moved.as_std_path()).expect("read moved file"),
+        fs_err::read_to_string(staged.as_std_path()).expect("read staged file"),
         "foo"
     );
 
@@ -74,7 +73,7 @@ fn add_moves_file_writes_entry_and_leaves_target() {
         Some("symlink")
     );
 
-    // Add does not materialize the target, so apply has not run yet.
+    // `apply` has not run, and `add` on its own never materializes a target.
     assert!(zshrc.is_file(), "~/.zshrc must remain a regular file");
     assert!(!is_symlink(&zshrc), "~/.zshrc must not be a symlink yet");
     assert_eq!(
@@ -83,12 +82,12 @@ fn add_moves_file_writes_entry_and_leaves_target() {
     );
 }
 
-/// The prior add left the file staged in the repo, wrote the `[[file]]`
-/// entry, and left the target a regular file. Running `patina apply --yes`
-/// materializes the target as a symbolic link whose readlink destination is
-/// the canonical path of `<repo>/zsh/zshrc`. Only that second apply shows the
-/// entry `add` wrote is one the engine can actually deploy; the manifest text
-/// and the not-yet-a-symlink check say nothing about it.
+/// `add` leaves the file staged in the repo, the `[[file]]` entry written, and
+/// the target a regular file. `patina apply --yes` then materializes the target
+/// as a symbolic link whose readlink destination is the canonical path of
+/// `<repo>/zsh/zshrc`. Only that apply shows the entry `add` wrote is one the
+/// engine can actually deploy; the manifest text and the not-yet-a-symlink
+/// check say nothing about it.
 #[test]
 fn add_then_apply_materializes_target_as_symlink() {
     let fx = Fixture::new();
@@ -379,9 +378,9 @@ fn spawn_holder(helper: &Utf8Path, state: &Utf8Path, hold: Duration) -> Child {
         .expect("spawn lock_helper holder")
 }
 
-/// Block until the holder prints its `ACQUIRED` marker, proving it holds the
-/// lock. Then drain the rest of its stdout in the background so it never
-/// blocks on a later write.
+/// Block until the holder prints its `ACQUIRED` marker. That marker proves it
+/// holds the lock. Then drain the rest of its stdout in the background so it
+/// never blocks on a later write.
 fn wait_for_acquired(child: &mut Child) {
     let stdout = child.stdout.take().expect("holder stdout piped");
     let mut reader = BufReader::new(stdout);

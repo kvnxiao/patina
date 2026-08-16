@@ -15,8 +15,9 @@
 //! a structured `tracing` event naming the finding code, the remediation, and
 //! the outcome.
 //!
-//! Exit codes: 0 when only warning/info findings were raised; 1 on an
-//! error-level finding.
+//! Exit codes on the read-only path: 0 when only warning/info findings were
+//! raised, 1 on an error-level finding. The `--fix` path exits 0 once it has
+//! walked every finding.
 //!
 //! Output: human findings to stderr, `--json` emits a single
 //! deterministic document on stdout (no timestamps / PIDs / random ids), so
@@ -145,7 +146,7 @@ impl Level {
 #[derive(Debug, Clone)]
 #[expect(
     clippy::struct_excessive_bools,
-    reason = "each bool is an independent host-state fact gathered from a distinct source (the platform, the repository's declared modes, the OS-build query, the state-directory pointer), not a state machine that would be better modelled as an enum."
+    reason = "each bool is an independent host-state fact gathered from a distinct source (the platform, the repository's declared modes, the OS-build query, the state-directory pointer, the PATH lookup for git), not a state machine that would be better modelled as an enum."
 )]
 pub struct Inputs {
     /// Whether the running host is Windows. Off Windows, no `DOC-WIN-*`
@@ -238,8 +239,8 @@ fn run_report(args: &DoctorArgs, state: &Utf8Path, reporter: &mut impl Reporter)
 /// with exit 1 before taking any lock or mutating anything. With a
 /// TTY (or `--yes`) it acquires the exclusive lock, recomputes the
 /// findings under the lock, then walks each fixable finding: prompt (or
-/// auto-accept under `--yes`) and remediate on accept. Non-fixable findings
-/// still surface as warnings. Each remediation that runs emits a structured
+/// auto-accept under `--yes`) and remediate on accept. A non-fixable finding
+/// is reported as a warning. Each remediation that runs emits a structured
 /// `tracing` event.
 fn run_fix(
     args: &DoctorArgs,
@@ -276,8 +277,6 @@ fn run_fix(
             FindingCode::WinDevMode => {
                 fix_dev_mode(args, tty, reader, reporter)?;
             }
-            // Non-fixable findings: surface the warning, name why Patina
-            // cannot remedy them, and move on.
             FindingCode::WinUnc
             | FindingCode::WinOsOld
             | FindingCode::NoGit
@@ -343,7 +342,8 @@ fn fix_default_repo(
 }
 
 /// Remediate the `DOC-WIN-DEVMODE` finding by driving the one-time UAC
-/// elevation flow and re-checking the registry afterward.
+/// elevation flow. `launch_elevate_helper` re-reads the registry flag and
+/// reports `RanButStillDisabled` when it did not change.
 #[cfg(windows)]
 fn fix_dev_mode(
     args: &DoctorArgs,
@@ -411,9 +411,9 @@ fn fix_dev_mode(
 }
 
 /// Decide whether a fixable finding's remediation should run: `--yes` accepts
-/// unconditionally; a TTY prompts and reads the answer; a non-TTY without
-/// `--yes` never reaches here (`run_fix` refuses up front), so the
-/// `NonInteractive` arm conservatively declines.
+/// unconditionally, and a TTY prompts and reads the answer. A non-TTY without
+/// `--yes` never reaches this function (`run_fix` refuses up front), so the
+/// `NonInteractive` arm declines conservatively.
 fn confirm(
     args: &DoctorArgs,
     tty: Tty,
@@ -510,7 +510,7 @@ fn repository_declares_symlink(repo_root: &Utf8Path) -> bool {
 /// filesystem, registry, or environment access, so the whole v1.0 finding set
 /// is unit-testable on any platform.
 ///
-/// The push order below is fixed, so the rendered output is deterministic.
+/// The push order is fixed, so the rendered output is deterministic.
 #[must_use = "the computed findings drive the output and exit code"]
 pub fn compute_findings(inputs: &Inputs) -> Vec<Finding> {
     let mut findings = Vec::new();
@@ -558,14 +558,14 @@ pub fn compute_findings(inputs: &Inputs) -> Vec<Finding> {
     }
 
     if !inputs.default_repo_present {
-        // The advice must be actionable for the state it fires in: when a
+        // The advice has to be actionable for the state it fires in. When a
         // repository already resolves (env var or walk-up), `patina init`
-        // refuses on the existing manifest, so point at `doctor --fix`, which
-        // records the pointer for an existing repository. The message also
-        // says why the pointer matters: this invocation found the repository
-        // through its own working directory or PATINA_REPO, and invocations
-        // with neither (the background watch service in particular) fall back
-        // to the recorded default.
+        // refuses on the existing manifest, so the message points at `doctor
+        // --fix` instead: that verb records the pointer for an existing
+        // repository. The message also says why the pointer matters. This
+        // invocation found the repository through its own working directory
+        // or PATINA_REPO, and an invocation with neither, the background
+        // watch service in particular, falls back to the recorded default.
         let message = match inputs.repo_root.as_deref() {
             Some(repo_root) => format!(
                 "no default repository is recorded in the state directory; \
@@ -650,9 +650,9 @@ fn json_envelope(findings: &[Finding]) -> String {
 }
 
 /// Render the findings to stderr as one aligned row each, so stdout stays
-/// clean for piping. A clean environment prints a single "no findings" line so
-/// the user gets explicit confirmation. (`--json` takes the other branch and
-/// puts its whole document on stdout.)
+/// clean for piping. A clean environment prints a single "no findings" line to
+/// stdout, so the user gets explicit confirmation. (`--json` writes its entire
+/// document to stdout instead.)
 ///
 /// The block goes out through [`Reporter::err_block`]. One
 /// [`Reporter::warn`] per line would paint every level the same yellow,
@@ -738,8 +738,8 @@ mod tests {
 
     #[test]
     fn confirm_non_tty_without_yes_declines() {
-        // The NonInteractive arm declines. `run_fix` refuses before this
-        // point, so the conservative default never auto-remediates.
+        // The NonInteractive arm declines. `run_fix` refuses before `confirm`
+        // runs, so the conservative default never auto-remediates.
         let mut reader = ScriptedReader::new(&[]);
         let mut reporter = BufferReporter::new();
         assert!(!confirm(
@@ -775,8 +775,8 @@ mod tests {
 
     #[test]
     fn fix_in_non_tty_without_yes_refuses_exit_one() {
-        // The refusal returns before the lock and before any mutation, which
-        // is why a nonexistent state path below is safe.
+        // The refusal returns before the lock and before any mutation, so the
+        // nonexistent state path passed here is safe.
         let mut reader = ScriptedReader::new(&[]);
         let mut reporter = BufferReporter::new();
         let code = run_fix(
@@ -1132,8 +1132,8 @@ mod tests {
         );
     }
 
-    /// A reader has to tell an advisory note from an error at a glance, and
-    /// color alone cannot carry that. The bracketed word must survive a strip.
+    /// A reader has to tell an advisory note from an error at a glance, and a
+    /// strip removes the color. The bracketed word must survive it.
     #[test]
     fn each_level_keeps_its_bracketed_word_and_paints_apart() {
         let findings = [Level::Info, Level::Warning, Level::Error].map(|level| Finding {

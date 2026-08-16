@@ -1,20 +1,22 @@
-//! A managed entry's declared kind is
-//! validated against its source's on-disk kind at plan time, before the
-//! advisory lock, the journal flush, or any mutation.
+//! Source-kind validation at plan time.
 //!
-//! Each test drives `PATINA_REPO=<tempdir> patina apply --yes` over a
-//! fixture repo whose module declares a `[[file]]` or `[[directory]]` entry,
-//! and asserts that:
+//! A managed entry's declared kind is validated against its source's on-disk
+//! kind at plan time, before the advisory lock, the journal flush, or any
+//! mutation.
+//!
+//! Each test drives `PATINA_REPO=<tempdir> patina apply --yes` over a fixture
+//! repo whose module declares a `[[file]]` or `[[directory]]` entry, and
+//! asserts that:
 //!
 //! - a `[[file]]` pointing at a directory source exits 1, names the source and
-//!   `[[directory]]`, and writes no journal artifact;
+//!   `[[directory]]`, and does not write a journal artifact;
 //! - a `[[directory]]` pointing at a file source directs the author to
 //!   `[[file]]`;
 //! - a `when`-true entry whose source is absent exits 1 with a missing-source
 //!   error and no journal artifact;
 //! - a `when`-false entry whose source is absent and wrong-shaped on this OS
-//!   exits 0 with no kind / missing-source error, because step (3) never runs
-//!   on a gated-off entry.
+//!   exits 0 with no kind / missing-source error, because source-kind
+//!   validation never runs on a gated-off entry.
 
 mod common;
 
@@ -30,10 +32,10 @@ fn current_os_family() -> &'static str {
     std::env::consts::OS
 }
 
-/// Assert that the apply wrote no `*.plan` or `*.COMMIT` journal file for the
-/// run. This is the plan-time-failure guarantee that a mismatched entry
-/// mutates nothing. The journal directory is `<state>/patina/journal`; it
-/// may not exist at all on a plan-phase failure, which is itself proof that
+/// Assert that the apply did not write a `*.plan` or `*.COMMIT` journal file.
+/// That is the plan-time-failure guarantee: a mismatched entry mutates
+/// nothing. The journal directory is `<state>/patina/journal`. A plan-phase
+/// failure may leave it absent entirely, and that absence is itself proof that
 /// nothing was flushed.
 fn assert_no_journal_artifacts(f: &Fixture) {
     let journal = f.state_root().join("journal");

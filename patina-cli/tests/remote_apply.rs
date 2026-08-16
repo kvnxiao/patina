@@ -8,8 +8,8 @@
 //! Each test declares the remote in the root manifest, builds a throwaway
 //! origin repository with the real `git` binary inside the fixture tempdir,
 //! hand-writes the `patina.lock` a producer machine would have committed, and
-//! drives the CLI as a subprocess. Nothing touches the network: the "remote" is
-//! a local filesystem path.
+//! drives the CLI as a subprocess. The "remote" is a local filesystem path, so
+//! the network is never involved.
 //!
 //! See `docs/REMOTE_SOURCES.md` "The remote registry", "The remote cache", and
 //! "Trust boundaries".
@@ -293,7 +293,7 @@ fn a_remote_only_a_when_false_entry_names_is_never_fetched() {
     // Materializing a checkout is a consequence of an entry actually selecting
     // the remote here. This one is switched off on every host, so the run must
     // not read the (absent) pin, must not reach the (deleted) origin, and must
-    // leave no cache directory behind.
+    // not leave a cache directory behind.
     let f = Fixture::new();
     let origin = Origin::new(&f, "unused", EPOCH);
     origin.commit_files(&[("a.md", "a\n")], EPOCH);
@@ -305,7 +305,8 @@ fn a_remote_only_a_when_false_entry_names_is_never_fetched() {
          when = \"false\"\n",
     );
     fs_err::write(module.join("local.md").as_std_path(), "local\n").expect("write local source");
-    // No pin is written at all: resolving this remote would fail outright.
+    // The lockfile is left without a pin, so resolving this remote would fail
+    // outright.
     fs_err::remove_dir_all(origin.dir.as_std_path()).expect("delete the origin");
 
     let out = f.apply(&["--yes"]);
@@ -457,9 +458,10 @@ fn a_remote_symlink_entry_points_into_the_pinned_checkout() {
     let link = fs_err::read_link(deployed.as_std_path()).expect("the target is a symbolic link");
     let link = Utf8PathBuf::from_path_buf(link).expect("utf8 link target");
     // The engine records canonical paths, while `checkout` spells the cache
-    // directory the way the environment gives the state dir. Canonicalize both
-    // or this compares `/var/...` against `/private/var/...` on macOS and a
-    // long path against an 8.3 short one on Windows.
+    // directory the way the environment gives the state dir. Canonicalizing
+    // both keeps the comparison honest: otherwise it pits `/var/...` against
+    // `/private/var/...` on macOS, and a long path against an 8.3 short one on
+    // Windows.
     let expected = patina_core::canonicalize_path(&checkout(&f, "prompts", &rev))
         .expect("canonicalize the checkout directory");
     let link = patina_core::canonicalize_path(&link).expect("canonicalize the link target");
@@ -620,7 +622,7 @@ fn a_warm_cache_applies_fully_with_the_remote_unreachable() {
 fn a_checkout_holds_the_commit_bytes_even_under_autocrlf() {
     // `core.autocrlf = true` is a common Windows setting. If it reached the
     // checkout, the same pinned commit would deploy CRLF on one machine and LF
-    // on another and hash differently in the journal, so a checkout must hold
+    // on another, and hash differently in the journal. A checkout must contain
     // the commit's bytes verbatim.
     let f = Fixture::new();
     let origin = Origin::new(&f, "crlf", EPOCH);
@@ -696,8 +698,9 @@ fn bumping_the_pin_re_points_the_link_and_rollback_restores_the_prior_checkout()
     write_lock(&f, "moving", &origin, &first_rev);
     assert_eq!(code(&f.apply(&["--yes"])), 0, "apply the first pin");
 
-    // Two applies inside one second would share a `<ts>.COMMIT`, leaving the
-    // prior checkout unreferenced and swept, and rollback with a dangling link.
+    // Two applies inside one second would share a `<ts>.COMMIT`. The prior
+    // checkout would then be unreferenced and swept, and rollback would find a
+    // dangling link.
     wait_for_next_second();
 
     let second_rev = origin.commit_files(&[("a.md", "second\n")], EPOCH);
@@ -743,8 +746,8 @@ fn apply_prunes_a_checkout_no_journal_record_references() {
     write_lock(&f, "sweep", &origin, &rev);
     assert_eq!(code(&f.apply(&["--yes"])), 0, "priming apply");
 
-    // A checkout of a rev nothing was ever applied from: no journal record can
-    // name it, so the post-apply sweep must remove it.
+    // A checkout of a rev nothing was ever applied from is unreferenced by
+    // every journal record, so the post-apply sweep must remove it.
     let orphan = checkout(&f, "sweep", "cccccccccccccccccccccccccccccccccccccccc");
     fs_err::create_dir_all(orphan.as_std_path()).expect("mkdir orphan checkout");
     fs_err::write(orphan.join("a.md").as_std_path(), b"stale").expect("write orphan leaf");

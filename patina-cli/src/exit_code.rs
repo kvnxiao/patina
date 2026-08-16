@@ -18,19 +18,19 @@
 //!
 //! - **Code 2 is also clap's usage-error code.** A malformed command line
 //!   (unknown subcommand, bad flag) exits 2 at parse time, inside [`clap`],
-//!   before any subcommand runs. A `pre_apply` abort is also 2, but it can only
-//!   arise after parsing succeeded, so the phase tells the two apart. 2 for
-//!   usage errors is the conventional Unix code.
-//! - **`EngineError::DevModeRequired` maps to 1, not 5.** When the Windows
-//!   engine backstop fires because symlink creation needs elevation, that is an
-//!   environment error → generic 1. A user who is *prompted* for elevation and
-//!   declines is a command-layer control-flow decision → 5. Same subject
-//!   (elevation), deliberately different codes: "cannot proceed" vs "you said
-//!   no".
+//!   before any subcommand runs. A `pre_apply` abort is also 2, and parsing has
+//!   already succeeded by the time one can arise. The phase separates a usage
+//!   error from a hook abort. 2 for usage errors is the conventional Unix code.
+//! - **`EngineError::DevModeRequired` maps to 1, not 5.** The Windows engine
+//!   backstop fires when symlink creation needs elevation, and an environment
+//!   that cannot create symbolic links is a generic 1. A user who is *prompted*
+//!   for elevation and declines has made a command-layer control-flow decision,
+//!   so that is 5. Same subject (elevation), deliberately different codes:
+//!   "cannot proceed" against "you said no".
 //!
-//! Downstream tooling and the integration suite assert on the numeric
-//! values, so the discriminants are pinned explicitly rather than left to
-//! declaration order.
+//! Downstream tooling and the integration suite assert on the numeric values.
+//! To hold those values steady, the discriminants are pinned explicitly rather
+//! than left to declaration order.
 
 use patina_core::EngineError;
 use patina_core::LockError;
@@ -87,9 +87,9 @@ impl ExitCode {
     /// Map the error chain of an `anyhow::Error` to an exit code.
     ///
     /// The command layer wraps engine failures with `anyhow` context, so the
-    /// `EngineError` is rarely the outermost error. A chain carrying none at
-    /// all (a pure presentation-layer failure) falls through to
-    /// [`ExitCode::Generic`].
+    /// `EngineError` is rarely the outermost error. A chain with no
+    /// `EngineError` in it (a pure presentation-layer failure) falls through
+    /// to [`ExitCode::Generic`].
     #[must_use = "the returned exit code is the process's terminal status"]
     pub fn from_error_chain(error: &anyhow::Error) -> Self {
         error
@@ -134,7 +134,8 @@ mod tests {
     #[test]
     fn other_engine_errors_map_to_generic() {
         // A state-directory failure stands for anything the wildcard arm
-        // catches: one variant is enough, because the arm reads none of it.
+        // catches: one variant is enough, because the arm does not read the
+        // error.
         let err = EngineError::StateDir(patina_core::StateDirError::MissingEnv { name: "HOME" });
         assert_eq!(ExitCode::from_engine_error(&err), ExitCode::Generic);
     }

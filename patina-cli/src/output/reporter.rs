@@ -4,26 +4,26 @@
 //! Every byte the CLI prints for the user goes through a [`Reporter`]: the
 //! rendered diff, the JSON envelope, prompt text, and warnings. Logs (via
 //! `tracing`) are a separate channel and never come here. One trait for all
-//! output leaves a test one seam to assert the deterministic-stdout property
-//! over, and that same seam captures a command's output without spawning a
-//! subprocess.
+//! output gives a test a single seam. A test asserts the deterministic-stdout
+//! property against that seam, and captures a command's output without
+//! spawning a subprocess.
 //!
 //! Two implementations ship:
 //!
-//! - [`StreamReporter`] writes rendered blocks / JSON to stdout and prompts /
-//!   warnings / errors to stderr. That is the production wiring, through an
-//!   `anstream` auto-stream that strips ANSI styling whenever the stream is not
-//!   a terminal, or `--color never` / `NO_COLOR` is in effect. The styling
-//!   comes from the palette the reporter supplies and from the warn / error /
-//!   prompt / confirm paths, and the [`anstream::ColorChoice`] passed at
-//!   construction decides whether it survives.
-//! - `BufferReporter` captures both streams into in-memory buffers so a test
+//! - [`StreamReporter`] is the production wiring. It writes rendered blocks /
+//!   JSON to stdout and prompts / warnings / errors to stderr, through an
+//!   `anstream` auto-stream. The auto-stream strips ANSI styling whenever the
+//!   destination is not a terminal, or `--color never` / `NO_COLOR` is in
+//!   effect. Styling enters from the palette the reporter supplies and from the
+//!   warn / error / prompt / confirm paths. The [`anstream::ColorChoice`]
+//!   passed at construction decides whether that styling survives.
+//! - `BufferReporter` captures both streams into in-memory buffers, so a test
 //!   can assert on exactly what would have been printed. It paints wherever the
 //!   stream reporter paints, from a palette fixed at construction.
 //!   `BufferReporter::new` is plain, so a test asserting on bytes sees no
-//!   escapes; `BufferReporter::colored` carries the production palette.
-//!   `assert_color_is_additive` drives a renderer through both and compares the
-//!   two.
+//!   escapes; `BufferReporter::colored` uses the production palette.
+//!   `assert_color_is_additive` drives a renderer through both palettes and
+//!   compares the renders.
 
 use crate::output::style::Styles;
 use crate::output::style::paint;
@@ -68,8 +68,8 @@ pub trait Reporter {
     /// failures differently from advisory warnings.
     fn error(&mut self, message: &str);
     /// Emit an already-painted block to the err stream verbatim, newlines and
-    /// all. The caller owns every style inside it, so an aligned table can
-    /// carry one color per cell. [`Reporter::warn`] forces a single style over
+    /// all. The caller owns every style inside it, so an aligned table can use
+    /// one color per cell. [`Reporter::warn`] forces a single style over
     /// a whole line. Add the trailing newline yourself.
     fn err_block(&mut self, painted: &str);
 }
@@ -99,17 +99,18 @@ impl StreamReporter {
     }
 }
 
-/// Discard an IO result. A print sink cannot recover from a broken
-/// stdout/stderr pipe, and a broken pipe must not abort the apply. Named
-/// rather than written as a bare `let _` so the `must_use` lint stays
-/// satisfied.
+/// Discard an IO result.
+///
+/// A print sink cannot recover from a broken stdout/stderr pipe, and a broken
+/// pipe must not abort the apply. `clippy::let_underscore_must_use` denies a
+/// bare `let _ = write!(…)`, so the discard is a named function.
 fn ignore_io<T>(_result: std::io::Result<T>) {}
 
 /// Compose the styled `<question> [y/N] ` confirmation prompt: the prose and
 /// brackets in the prompt style, the affirmative `y` and default `N` in their
 /// own styles so the two answers read distinctly. Under the plain palette
 /// every segment renders to zero bytes, leaving `"<question> [y/N] "`. Both
-/// reporters call this, so that plain shape cannot drift between them.
+/// reporters call this, so the plain shape cannot drift between them.
 fn compose_confirm(styles: &Styles, question: &str) -> String {
     [
         paint(styles.prompt, &format!("{question} [")),
@@ -122,10 +123,11 @@ fn compose_confirm(styles: &Styles, question: &str) -> String {
 }
 
 impl StreamReporter {
-    /// Write a message styled with `style` to stderr, one line, through the
-    /// auto-stream. An empty style renders to nothing, so this is safe for
-    /// the plain palette too. `newline` controls whether a trailing `\n` is
-    /// appended; prompts omit it so the answer is typed on the same line.
+    /// Write `message` to stderr through the auto-stream, wrapped in `style`.
+    ///
+    /// An empty style renders to zero bytes, so the plain palette is safe here
+    /// too. `newline` appends a trailing `\n`; a prompt omits it so the answer
+    /// is typed on the same line.
     fn styled_err(&self, style: Style, message: &str, newline: bool) {
         let mut err = AutoStream::new(std::io::stderr().lock(), self.choice);
         let nl = if newline { "\n" } else { "" };
@@ -167,8 +169,9 @@ impl Reporter for StreamReporter {
     }
 
     fn confirm(&mut self, question: &str) {
-        // Pre-composed with per-segment styles; write it verbatim (empty
-        // outer style) so the auto-stream still strips color when not wanted.
+        // Per-segment styles are already applied. An empty outer style writes
+        // them verbatim, and the auto-stream still strips color when it is not
+        // wanted.
         let composed = compose_confirm(&self.styles, question);
         self.styled_err(Style::new(), &composed, false);
     }
@@ -227,12 +230,12 @@ impl BufferReporter {
 
 /// Assert that color is purely additive over whatever `render` prints.
 ///
-/// This is the output layer's own contract, so it lives here and no surface
-/// that paints restates it. Painting a cell's padding along with the cell
-/// would misalign piped and `--color never` output, and anything a line
+/// The contract belongs to the output layer, so it is stated here once rather
+/// than in every painting surface. Painting a cell's padding along with the
+/// cell would misalign piped and `--color never` output. Anything a line
 /// reports through color alone disappears wherever ANSI is stripped. Both
-/// streams are checked, so a renderer cannot pass by writing its painted
-/// bytes to the one nobody looked at.
+/// streams are checked, so a renderer cannot pass by writing its painted bytes
+/// to the one nobody looked at.
 #[cfg(test)]
 pub fn assert_color_is_additive(render: impl Fn(&mut BufferReporter)) {
     let mut plain = BufferReporter::new();
@@ -315,9 +318,9 @@ mod tests {
         r.warn("W");
         r.error("E");
         r.err_block("B1\nB2\n");
-        // `out_block` and `err_block` add no newline of their own; `line`,
-        // `json`, `warn`, and `error` each terminate theirs, and `prompt`
-        // does not, so the answer is typed on the same line.
+        // `out_block` and `err_block` do not append a newline. `line`, `json`,
+        // `warn`, and `error` each terminate their own. `prompt` does not, so
+        // the answer is typed on the same line.
         assert_eq!(r.out, "DL\n{\"k\":1}\n");
         assert_eq!(r.err, "PW\nE\nB1\nB2\n");
     }
@@ -360,9 +363,9 @@ mod tests {
 
     #[test]
     fn confirm_colored_highlights_y_and_n_distinctly_but_strips_to_plain() {
-        // Color must stay purely additive over the stable bytes: the `y` and
-        // `N` wear styles distinct from the prose and from each other, and
-        // stripping every escape still reduces the whole to the plain form.
+        // Color must stay purely additive over the stable bytes. The `y` and
+        // `N` wear styles distinct from the prose and from each other.
+        // Stripping every escape still reduces the whole to the plain form.
         let colored = compose_confirm(&Styles::colored(), "Apply?");
         assert!(
             colored.contains('\u{1b}'),

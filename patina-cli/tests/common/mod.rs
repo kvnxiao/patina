@@ -11,9 +11,9 @@
 //!
 //! Each test builds a self-contained tempdir dotfiles repository and points
 //! `PATINA_REPO` at it. The per-machine state directory and the home
-//! directory are isolated under the same tempdir, so no run touches the
-//! developer's real `$HOME`. The binary runs as a subprocess, so its stdin
-//! is never a TTY and every suite exercises the non-interactive path.
+//! directory are isolated under the same tempdir, so a run never touches the
+//! developer's real `$HOME`. The binary runs as a subprocess, so its stdin is
+//! never a TTY and every suite exercises the non-interactive path.
 
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
@@ -54,8 +54,8 @@ impl Fixture {
         }
     }
 
-    /// Append a `[[remote]]` declaration to the root manifest, which is the
-    /// only place a remote is declared.
+    /// Append a `[[remote]]` declaration to the root manifest. The root
+    /// manifest is the only place a remote is declared.
     pub fn declare_remote(&self, name: &str, url: &str, git_ref: Option<&str>) {
         let manifest = self.root.join("patina.toml");
         let existing = fs_err::read_to_string(&manifest).expect("read root manifest");
@@ -85,8 +85,8 @@ impl Fixture {
         .expect("resolve fixture state dir")
     }
 
-    /// Invoke `patina` with an arbitrary `args` vector, isolating repo,
-    /// state, and home the same way every subcommand requires. The caller
+    /// Invoke `patina` with an arbitrary `args` vector. Repo, state, and home
+    /// are isolated the same way every subcommand requires. The caller
     /// supplies the subcommand and its flags as the leading elements of
     /// `args`; extra environment pairs are layered on last.
     pub fn run(&self, args: &[&str], extra: &[(&str, &str)]) -> Output {
@@ -110,8 +110,8 @@ impl Fixture {
         cmd.output().expect("spawn patina")
     }
 
-    /// Invoke `patina` with `args` and a working directory of `cwd`,
-    /// isolating repo, state, and home the same way [`Fixture::run`] does.
+    /// Invoke `patina` with `args` and a working directory of `cwd`. Repo,
+    /// state, and home are isolated the same way [`Fixture::run`] does.
     /// Commands whose behaviour depends on the process CWD use this (e.g.
     /// `doctor --fix` records the CWD as the default repository).
     pub fn run_in(&self, cwd: &Utf8Path, args: &[&str], extra: &[(&str, &str)]) -> Output {
@@ -131,8 +131,8 @@ impl Fixture {
         cmd.output().expect("spawn patina")
     }
 
-    /// Invoke `patina apply` with `args`, isolating repo, state, and home.
-    /// Extra environment pairs are layered on last. Delegates to
+    /// Invoke `patina apply` with `args`. Repo, state, and home are isolated,
+    /// and extra environment pairs are layered on last. Delegates to
     /// [`Fixture::run`] with `apply` prepended.
     pub fn apply_with_env(&self, args: &[&str], extra: &[(&str, &str)]) -> Output {
         let mut full = Vec::with_capacity(args.len() + 1);
@@ -147,7 +147,7 @@ impl Fixture {
     }
 }
 
-/// The numeric exit code, or a panic if the process was signalled.
+/// The numeric exit code. A signalled process has none, and the expect panics.
 pub fn code(output: &Output) -> i32 {
     output.status.code().expect("process exited with a code")
 }
@@ -212,7 +212,7 @@ impl Origin {
         self.dir.as_str().replace('\\', "/")
     }
 
-    /// Write `files` into the origin and commit them at `epoch`, returning the
+    /// Write `files` into the origin and commit them at `epoch`. Returns the
     /// commit SHA.
     pub fn commit_files(&self, files: &[(&str, &str)], epoch: i64) -> String {
         for (path, body) in files {

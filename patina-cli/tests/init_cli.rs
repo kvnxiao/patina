@@ -91,7 +91,7 @@ fn init_refuses_when_manifest_exists() {
         "stderr must name the existing manifest path, got: {stderr:?}"
     );
 
-    // The state directory was never touched: no pointer was written.
+    // The state directory was never touched, and the pointer was not written.
     let pointer = fx.state_root().join("default_repo");
     assert!(
         !pointer.exists(),

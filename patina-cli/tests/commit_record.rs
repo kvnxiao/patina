@@ -158,8 +158,8 @@ fn entry_for<'r>(record: &'r ApplyRecord, suffix: &str) -> &'r ExpectedTarget {
         .unwrap_or_else(|| panic!("no recorded target ending in `{suffix}`"))
 }
 
-/// The recorded blake3 hash of a content target, panicking if the entry is
-/// not a `Content` variant. `ExpectedTarget` is `#[non_exhaustive]`, so the
+/// The recorded blake3 hash of a content target. An entry that is not a
+/// `Content` variant panics. `ExpectedTarget` is `#[non_exhaustive]`, so the
 /// match needs a wildcard arm in this downstream crate.
 fn content_hash_of(entry: &ExpectedTarget) -> [u8; 32] {
     match entry {
@@ -266,8 +266,8 @@ fn two_applies_record_byte_identical_hash() {
     );
 }
 
-// The COMMIT file's first two bytes are the little-endian u16
-// major version, matching the journal's supported FILE_MAJOR_VERSION.
+// The COMMIT file's first two bytes are the little-endian u16 major version.
+// It matches the journal's supported FILE_MAJOR_VERSION.
 #[test]
 fn commit_envelope_major_matches_supported() {
     let f = Fixture::new();
@@ -318,11 +318,10 @@ fn status_uses_recorded_blake3_for_drift() {
 }
 
 // A committed apply over both `[[file]]` and `[[directory]]` table-arrays
-// uses one monotonic entry-index space. Every declared entry gets a
-// distinct index. No `[[file]]` entry collides with a `[[directory]]`
-// entry. Targets sharing one declared entry share its index. The COMMIT
-// version envelope major stays the journal's supported major, with no
-// version bump.
+// uses one monotonic entry-index space. Every declared entry gets a distinct
+// index, so a `[[file]]` entry never collides with a `[[directory]]` entry.
+// Targets sharing one declared entry share its index. The COMMIT version
+// envelope major stays the journal's supported major, with no version bump.
 #[test]
 fn directory_and_file_entries_get_distinct_indices_and_envelope_major_is_unchanged() {
     let f = Fixture::new();

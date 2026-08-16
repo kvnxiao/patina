@@ -17,9 +17,10 @@
 //! | exclusive lock held past the timeout cap   | 4             |
 //! | apply succeeds end-to-end                  | 0             |
 //!
-//! The declined-prompt case (exit 5) needs an interactive TTY, which a
-//! subprocess pipe cannot simulate; it is covered by the in-process unit
-//! tests on the injected `PromptReader` in `cmd::apply` and `cmd::rollback`.
+//! The declined-prompt case (exit 5) needs an interactive TTY, and a
+//! subprocess pipe cannot simulate one. The in-process unit tests on the
+//! injected `PromptReader` in `cmd::apply` and `cmd::rollback` cover it
+//! instead.
 
 mod common;
 

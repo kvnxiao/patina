@@ -50,9 +50,9 @@ fn run_journal(args: &DebugJournalArgs, reporter: &mut impl Reporter) -> i32 {
             ExitCode::Success.code()
         }
         Err(err) => {
-            // The typed error's own `Display` is the single source of truth
-            // for the human-readable line: `Read` includes its IO cause, and
-            // `Decode` includes its `JournalError`, whose version-mismatch arm
+            // `PlanRenderError`'s `Display` is the source of truth for the
+            // human-readable line, and both its arms name the path. `Decode`
+            // also carries its `JournalError`, whose version-mismatch arm
             // names both major versions.
             reporter.warn(&err.to_string());
             ExitCode::Generic.code()

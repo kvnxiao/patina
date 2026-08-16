@@ -47,10 +47,10 @@ fn applied_symlink_fixture() -> Fixture {
     fx
 }
 
-/// `patina remove ~/.zshrc --yes` replaces the symlink with a
-/// regular file holding the last-applied content, removes the `[[file]]`
-/// entry, leaves the repository source unchanged, and a subsequent
-/// `patina status --json` no longer lists the target.
+/// `patina remove ~/.zshrc --yes` replaces the symlink with a regular file
+/// containing the last-applied content, removes the `[[file]]` entry, and
+/// leaves the repository source unchanged. A subsequent `patina status --json`
+/// no longer lists the target.
 #[test]
 fn remove_replaces_target_drops_entry_and_status_omits_it() {
     let fx = applied_symlink_fixture();
@@ -147,8 +147,8 @@ fn remove_purge_deletes_target_and_drops_entry() {
     );
 }
 
-/// Removing a path that is not currently managed exits 1, names the
-/// path and the three discovery sources, and mutates nothing.
+/// Removing a path that is not currently managed exits 1, names the path and
+/// every discovery source, and does not mutate anything.
 #[test]
 fn remove_unmanaged_path_exits_1() {
     let fx = applied_symlink_fixture();

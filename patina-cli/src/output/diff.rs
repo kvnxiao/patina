@@ -6,16 +6,16 @@
 //! template-render modes produce a line-level content diff; symlink modes
 //! produce an `old link target -> new link target` line.
 //!
-//! Output is deterministic: operations render in plan order, and the
-//! rendered string carries no timestamps, PIDs, or absolute state-dir
-//! paths (only the repo-relative-ish source and the target the user
-//! declared). The byte-identical-stdout property is built on this.
+//! Output is deterministic: operations render in plan order, and the rendered
+//! string contains no timestamps, PIDs, or absolute state-dir paths (only the
+//! plan's source path and the target the user declared). The
+//! byte-identical-stdout property rests on that determinism.
 //!
-//! Some content cannot be line-diffed: a present-but-non-UTF-8 (binary)
-//! source or target, or an unreadable file. Such a side renders as a compact
-//! deterministic placeholder (`(binary content, N bytes)`) instead. A binary
-//! copy source is legitimate, so the placeholder covers it without raising an
-//! error. The user consents from this diff, so an empty or full-insert render
+//! Some content cannot be line-diffed: a present-but-non-UTF-8 (binary) source
+//! or target, or an unreadable file. Each renders as a compact, deterministic
+//! placeholder, `(binary content, N bytes)` or `(unreadable)`. A binary copy
+//! source is legitimate, so the placeholder covers it without raising an
+//! error. The user consents from this diff, and an empty or full-insert render
 //! of a binary target would mislead them.
 //!
 //! Removals render as well. An apply reaps every target a prior apply
@@ -50,8 +50,9 @@ use std::fmt::Write as _;
 ///
 /// # Errors
 ///
-/// Returns an error string when a template source cannot be rendered for
-/// preview (the same strict-undefined failure the apply would hit).
+/// Returns an error string when a template source cannot be read, or cannot be
+/// rendered for preview (the same strict-undefined failure the apply would
+/// hit).
 pub fn render(resolved: &ResolvedPlan, orphans: &[Orphan]) -> Result<String, String> {
     let mut out = String::new();
     if resolved.operations.is_empty() && orphans.is_empty() {
@@ -63,11 +64,9 @@ pub fn render(resolved: &ResolvedPlan, orphans: &[Orphan]) -> Result<String, Str
     let vars = &resolved.resolver;
     let styles = Styles::colored();
 
-    // Only `Create` and `Update` targets render a
-    // per-entry block; `Unchanged` targets are summarized by a single count
-    // line below. For tree modes the count is over materialized leaves:
-    // a drifted tree renders blocks for its drifted leaves and
-    // contributes its clean leaves to `unchanged`.
+    // `Unchanged` targets reach the reader as one count rather than a block.
+    // A tree mode counts materialized leaves, so a drifted tree renders blocks
+    // for its drifted leaves and adds its clean leaves to `unchanged`.
     let mut unchanged = 0usize;
     for op in &resolved.operations {
         for (target, disposition) in op.targets.iter().zip(&op.dispositions) {
@@ -103,17 +102,13 @@ pub fn render(resolved: &ResolvedPlan, orphans: &[Orphan]) -> Result<String, Str
         }
     }
 
-    // Reaps: each orphan the engine would back up and remove this run renders
-    // as a `remove` block, so a removed entry is never silently deleted on
-    // confirm. `plan_orphans` already sorted these, so the block order is a
-    // stable function of the reap set.
+    // Every orphan the engine would back up and remove renders as a `remove`
+    // block, so confirming never silently deletes one. `plan_orphans` sorted
+    // the orphans, so the block order is a stable function of the reap set.
     for orphan in orphans {
         render_removal(&mut out, orphan, &styles);
     }
 
-    // One deterministic summary line reports the unchanged count. At zero the
-    // line is omitted, so a fully-changing plan's body ends with its last
-    // block.
     if unchanged > 0 {
         let noun = if unchanged == 1 { "entry" } else { "entries" };
         emit(&mut out, format_args!("{unchanged} unchanged {noun}.\n"));
@@ -147,9 +142,6 @@ fn render_leaf(
             paint_line(out, styles.insert, "  + ", source.as_str());
         }
         FileMode::Copy | FileMode::CopyTree => {
-            // A copy source may legitimately be a binary file (fonts, images,
-            // compiled config); `read_for_diff` renders each side as an opaque
-            // placeholder rather than a misleading empty/full-insert diff.
             let new = read_for_diff(source);
             let current = read_for_diff(target);
             content_diff(out, &format!("copy {target}"), &current, &new, styles);
@@ -182,9 +174,10 @@ fn render_leaf(
 /// the compact placeholder, under the same never-imply-empty rule
 /// [`content_diff`] uses.
 ///
-/// The header carries the reason because a reap is the only block that deletes
-/// something the user did not ask for in this run. Without it, a leaf dropped
-/// by a pattern the author wrote minutes ago reads as an unexplained removal.
+/// The header names the reason because a reap is the only block that deletes
+/// something the user did not ask for in this run. Without the reason, a leaf
+/// dropped by a pattern the author wrote minutes ago reads as an unexplained
+/// removal.
 fn render_removal(out: &mut String, orphan: &Orphan, styles: &Styles) {
     let target = orphan.target.as_path();
     let header = format!("remove {target} ({})", orphan.reason.label());
@@ -212,8 +205,8 @@ enum DiffContent {
 }
 
 impl DiffContent {
-    /// The diffable text, treating an absent file as empty. `None` for
-    /// content that cannot be line-diffed (binary / unreadable).
+    /// The diffable text. An absent file reads as empty. `None` for content
+    /// that cannot be line-diffed (binary / unreadable).
     fn as_text(&self) -> Option<&str> {
         match self {
             DiffContent::Absent => Some(""),
@@ -223,8 +216,8 @@ impl DiffContent {
     }
 
     /// A compact, deterministic one-line descriptor for the opaque-diff
-    /// fallback. Carries only byte counts and fixed words, so byte-identical
-    /// stdout is preserved.
+    /// fallback. It contains only byte counts and fixed words, so stdout stays
+    /// byte-identical.
     fn describe(&self) -> String {
         match self {
             DiffContent::Absent => "(absent)".to_owned(),
@@ -256,7 +249,7 @@ fn read_for_diff(path: &Utf8Path) -> DiffContent {
 /// pair instead of a misleading empty/full-insert diff.
 ///
 /// `header` arrives fully formed rather than as an action plus a path, because
-/// a reap header carries a trailing reason tag no other caller wants.
+/// a reap header ends with a reason tag no other caller wants.
 fn content_diff(
     out: &mut String,
     header: &str,
@@ -265,8 +258,6 @@ fn content_diff(
     styles: &Styles,
 ) {
     paint_line(out, styles.header, "", header);
-    // Both sides line-diffable → a line-level diff; otherwise (binary /
-    // unreadable on either side) a compact placeholder pair.
     if let (Some(current), Some(new)) = (current.as_text(), new.as_text()) {
         let diff = TextDiff::from_lines(current, new);
         for change in diff.iter_all_changes() {
@@ -275,10 +266,10 @@ fn content_diff(
                 ChangeTag::Insert => (styles.insert, "  + "),
                 ChangeTag::Equal => (styles.context, "    "),
             };
-            // `similar` yields one line per change, with its own trailing
-            // newline if any. Strip it so the style reset lands before the
-            // newline. Then re-append exactly one newline, so every line ends
-            // with exactly one even when the final line arrives unterminated.
+            // `similar` yields one line per change. That value keeps the
+            // trailing newline when the source line had one. Stripping it puts
+            // the style reset before the newline. `paint_line` then re-appends
+            // exactly one, so an unterminated final line still ends with one.
             let value = change.value();
             let line = value.strip_suffix('\n').unwrap_or(value);
             paint_line(out, style, sign, line);
@@ -302,7 +293,8 @@ fn paint_line(out: &mut String, style: Style, prefix: &str, text: &str) {
     ));
 }
 
-/// Read the link target at `target` if it is a symlink, as a UTF-8 string.
+/// If `target` is a symbolic link, read its link target as a UTF-8 string.
+/// `None` for anything else, and for a link whose target is not UTF-8.
 fn current_link_target(target: &Utf8Path) -> Option<String> {
     let raw = fs_err::read_link(target.as_std_path()).ok()?;
     raw.into_os_string().into_string().ok()
@@ -314,8 +306,9 @@ fn emit(out: &mut String, args: std::fmt::Arguments<'_>) {
     discard(out.write_fmt(args));
 }
 
-/// Consume an infallible `fmt::Result` without binding it, so neither the
-/// must-use nor the unused-variable lint fires.
+/// Consume an infallible `fmt::Result`. `clippy::let_underscore_must_use`
+/// denies a bare `let _`, and the leading underscore keeps the
+/// unused-variable lint quiet.
 fn discard(_result: std::fmt::Result) {}
 
 #[cfg(test)]
@@ -404,9 +397,9 @@ mod tests {
 
     #[test]
     fn content_diff_marks_deletions_equals_and_unterminated_lines() {
-        // Exercise all three change tags plus the no-trailing-newline branch:
-        // "same" is Equal, "old" is Delete, "new" is Insert, and the final
-        // "tail" (no trailing newline) forces the appended newline.
+        // Every change tag plus the no-trailing-newline branch: "same" is
+        // Equal, "old" is Delete, "new" is Insert, and the final "tail" (no
+        // trailing newline) forces the appended newline.
         let mut out = String::new();
         let current = DiffContent::Text("same\nold\ntail".to_owned());
         let new = DiffContent::Text("same\nnew\ntail".to_owned());

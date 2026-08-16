@@ -1,9 +1,9 @@
 //! `patina watch` command logic.
 //!
-//! The command has two modes. `--foreground` runs the watcher loop inline
-//! ([`patina_core::run_foreground`]), attached to the invoking shell, until
-//! Ctrl-C (SIGINT) or, on POSIX, SIGTERM shuts it down. The
-//! lifecycle subcommands (`install` / `uninstall` / `start` / `stop` /
+//! The command has a foreground mode and a lifecycle mode. `--foreground` runs
+//! the watcher loop inline ([`patina_core::run_foreground`]), attached to the
+//! invoking shell, until Ctrl-C (SIGINT) or, on POSIX, SIGTERM shuts it down.
+//! The lifecycle subcommands (`install` / `uninstall` / `start` / `stop` /
 //! `restart` / `status`) manage the per-OS background service through the
 //! [`patina_core::watch::service`] backend.
 //!
@@ -43,10 +43,10 @@ use patina_core::exclusive_timeout;
 ///
 /// # Errors
 ///
-/// Returns an error when the foreground watcher fails to start or run, which
-/// covers state-directory resolution, the log appender, the journal read, and
-/// watcher arming. Also returns an error when a lifecycle action fails, which
-/// covers lock acquisition, the platform supervisor, and descriptor I/O.
+/// Returns an error when the foreground watcher fails to start or run:
+/// state-directory resolution, the log appender, the journal read, or watcher
+/// arming. Also returns an error when a lifecycle action fails: lock
+/// acquisition, the platform supervisor, or descriptor I/O.
 pub async fn run(args: &WatchArgs, reporter: &mut impl Reporter) -> Result<i32> {
     emit_debounce_warning(reporter);
 
@@ -61,8 +61,6 @@ pub async fn run(args: &WatchArgs, reporter: &mut impl Reporter) -> Result<i32> 
         return Ok(ExitCode::Success.code());
     }
 
-    // Neither a lifecycle subcommand nor `--foreground`: there is no default
-    // action. Point the user at both modes.
     reporter.warn(
         "patina watch needs a mode: run `patina watch --foreground` to watch \
          inline, or `patina watch install` to register the background service",
@@ -74,11 +72,11 @@ pub async fn run(args: &WatchArgs, reporter: &mut impl Reporter) -> Result<i32> 
 ///
 /// Resolves the per-machine state directory, then acquires the advisory lock
 /// the subcommand requires. That lock is exclusive for every mutating action,
-/// and shared for the read-only `status`. It then drives the matching
-/// [`patina_core::ServiceBackend`] method and renders the outcome. A
+/// and shared for the read-only `status`. The subcommand then drives the
+/// matching [`patina_core::ServiceBackend`] method and renders the outcome. A
 /// not-installed service is a no-op with a clear stderr message rather than a
-/// supervisor error; an already-installed `install` exits 1 with a
-/// typed error.
+/// supervisor error; an already-installed `install` exits 1 with a typed
+/// error.
 fn run_lifecycle(command: &WatchCommand, json: bool, reporter: &mut impl Reporter) -> Result<i32> {
     let state =
         patina_core::resolve_state_dir().context("failed to resolve the state directory")?;
@@ -88,8 +86,8 @@ fn run_lifecycle(command: &WatchCommand, json: bool, reporter: &mut impl Reporte
     // `status` is read-only: it acquires the shared lock and, on a shared-lock
     // timeout, warns and proceeds without it (the read-only escape hatch,
     // matching `patina status`). Every other lifecycle action mutates the
-    // service registration, so it acquires the exclusive lock. A timeout there
-    // reaches exit code 4 through the error chain.
+    // service registration, so it acquires the exclusive lock. A timeout on
+    // the exclusive lock reaches exit code 4 through the error chain.
     if let WatchCommand::Status = command {
         let _guard = crate::cmd::shared_lock(&lock_path, false, reporter);
         return Ok(render_status(backend.status(), json, reporter));
@@ -109,11 +107,11 @@ fn run_lifecycle(command: &WatchCommand, json: bool, reporter: &mut impl Reporte
 /// Dispatch a mutating lifecycle subcommand to its backend method and render
 /// the outcome, returning the process exit code.
 ///
-/// Split from [`run_lifecycle`], which owns state-directory resolution and
-/// lock acquisition, so the command→method routing is unit-testable against a
-/// fake [`ServiceBackend`] with no real supervisor or lock. `status` is handled
-/// by [`run_lifecycle`] before this is reached (it takes the shared lock and
-/// returns early); the defensive `Status` arm here maps to a no-op.
+/// State-directory resolution and lock acquisition stay in [`run_lifecycle`],
+/// so the command→method routing is unit-testable against a fake
+/// [`ServiceBackend`] with no real supervisor or lock. [`run_lifecycle`] takes
+/// the shared lock for `status` and returns early, so the `Status` arm below
+/// is defensive and maps to a no-op.
 fn dispatch_lifecycle(
     backend: &dyn ServiceBackend,
     command: &WatchCommand,
@@ -135,10 +133,10 @@ fn dispatch_lifecycle(
 ///
 /// On success it emits the `result` word (a JSON envelope under `--json`, a
 /// human line otherwise) and returns `0`. A [`LifecycleResult::NotInstalled`]
-/// is a no-op (no supervisor action, no mutation) that names the
-/// "service not installed" message on stderr and exits `1`. An error is
-/// surfaced through the reporter and returns `1`; an already-installed
-/// `install` therefore exits 1 with its typed message.
+/// is a no-op (no supervisor action, no mutation) that writes the
+/// "service not installed" message to stderr and exits `1`. An error goes to
+/// the reporter and returns `1`, so an already-installed `install` exits 1
+/// with its typed message.
 fn render_lifecycle(
     result: std::result::Result<LifecycleResult, ServiceError>,
     json: bool,
@@ -146,8 +144,8 @@ fn render_lifecycle(
 ) -> i32 {
     match result {
         Ok(LifecycleResult::NotInstalled) => {
-            // A no-op rather than a supervisor error, and still exit 1 with
-            // this exact stderr message.
+            // A no-op rather than a supervisor error, and still exit 1. The
+            // integration suite pins this message verbatim.
             reporter.warn("service not installed; run `patina watch install` first");
             if json {
                 reporter.json(
@@ -177,7 +175,7 @@ fn render_lifecycle(
 /// Emits the structured object under `--json` (`installed`, `running`,
 /// `last_fired_at`, `last_exit_code`, `subscriptions_count`,
 /// `re_applies_since_start`) or a human summary otherwise, and returns `0`. A
-/// supervisor query failure is surfaced through the reporter and returns `1`.
+/// supervisor query failure goes to the reporter and returns `1`.
 fn render_status(
     status: std::result::Result<ServiceStatus, ServiceError>,
     json: bool,
@@ -199,8 +197,8 @@ fn render_status(
     }
 }
 
-/// Build the `status --json` envelope: the six fields,
-/// with the recovered counters rendered as JSON `null` when absent.
+/// Build the `status --json` envelope. An absent recovered counter renders as
+/// JSON `null` rather than being dropped, so a consumer always finds the key.
 fn status_envelope(status: &ServiceStatus) -> String {
     let envelope = serde_json::json!({
         "installed": status.installed,
@@ -216,13 +214,13 @@ fn status_envelope(status: &ServiceStatus) -> String {
 /// Render the human-readable `status` summary as one aligned row per field,
 /// with `unknown` standing in for an absent recovered value.
 ///
-/// The key keeps its trailing colon inside its own cell, so `installed:` and
-/// `running:` stay single literal tokens for a script that greps them.
+/// The trailing colon sits inside the key's own cell, so `installed:` and
+/// `running:` are single literal tokens for a script that greps them.
 fn render_status_human(status: &ServiceStatus, reporter: &mut impl Reporter) {
     let styles = &reporter.styles();
     // Only `true` is painted. A machine that never installed the service reads
-    // `false` on both fields, and the warn color would call that intended state
-    // a fault.
+    // `false` on installed and running, and the warn color would call that
+    // intended state a fault.
     let liveness = |state: bool| {
         if state {
             paint(styles.success, "true")
@@ -265,8 +263,8 @@ fn recovered<T: std::fmt::Display>(value: Option<T>, styles: &Styles) -> String 
 ///
 /// Best-effort. A repository that cannot be discovered, or a manifest that
 /// cannot be read, is not this warning's concern; the foreground start path
-/// surfaces real discovery errors. A lookup miss is therefore silently
-/// skipped.
+/// raises real discovery errors. A lookup miss is therefore skipped in
+/// silence.
 fn emit_debounce_warning(reporter: &mut impl Reporter) {
     let Ok(repo_root) = patina_core::resolve_repository_root() else {
         return;
@@ -319,8 +317,8 @@ mod tests {
     /// dispatch called and returns a configured [`LifecycleResult`] from every
     /// mutating action. Recording the call proves routing without depending on
     /// the rendered label; the configured result drives the not-installed path.
-    /// It performs no supervisor or filesystem I/O, so it runs on every CI OS
-    /// where the real per-OS backends cannot.
+    /// It does not touch the supervisor or the filesystem, so it runs on every
+    /// CI OS where the real per-OS backends cannot.
     struct RecordingBackend {
         calls: RefCell<Vec<&'static str>>,
         result: LifecycleResult,
@@ -403,7 +401,7 @@ mod tests {
         assert_eq!(code, ExitCode::Generic.code());
         assert!(
             reporter.err.contains("service not installed"),
-            "the defensive Status arm must surface the not-installed message, got: {}",
+            "the defensive Status arm must write the not-installed message, got: {}",
             reporter.err
         );
         assert!(
@@ -415,7 +413,7 @@ mod tests {
     #[test]
     fn dispatch_on_a_not_installed_service_warns_and_exits_one() {
         // A lifecycle action whose backend reports the service is not installed
-        // is a no-op: dispatch surfaces the "service not installed" message and
+        // is a no-op: dispatch writes the "service not installed" message and
         // exits 1 rather than reporting a spurious success.
         let backend = RecordingBackend::new(LifecycleResult::NotInstalled);
         let mut reporter = BufferReporter::new();

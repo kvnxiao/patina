@@ -126,7 +126,7 @@ fn promote_copy_target_rewrites_source_and_rejournals() {
     );
 }
 
-/// Promoting a template-rendered target mutates nothing, names the
+/// Promoting a template-rendered target does not mutate anything. It names the
 /// `.tmpl` source and the word `template` on stderr, and exits 1.
 #[test]
 fn promote_template_target_refuses() {
@@ -161,7 +161,7 @@ fn promote_template_target_refuses() {
         "stderr must name the .tmpl source and the word template, got: {stderr}"
     );
 
-    // Nothing was mutated: the template source is unchanged.
+    // The template source is unchanged.
     assert_eq!(
         fs_err::read_to_string(source.as_std_path()).expect("read template source"),
         before,
@@ -169,8 +169,8 @@ fn promote_template_target_refuses() {
     );
 }
 
-/// Promoting a symbolic-link target mutates nothing, names the target
-/// and explains symlink targets share content with their source, and exits 1.
+/// Promoting a symbolic-link target does not mutate anything. It names the
+/// target, explains that a symlink shares content with its source, and exits 1.
 #[test]
 fn promote_symlink_target_refuses() {
     let fx = Fixture::new();
@@ -208,7 +208,7 @@ fn promote_symlink_target_refuses() {
         "stderr must name the target and explain symlink targets share their source, got: {stderr}"
     );
 
-    // Nothing was mutated: the target is still a symlink, the source unchanged.
+    // The target is still a symlink, and the source is unchanged.
     assert!(
         is_symlink(&zshrc),
         "~/.zshrc must still be a symlink after a refused promote"
@@ -220,7 +220,7 @@ fn promote_symlink_target_refuses() {
     );
 }
 
-/// Promoting a path that is not managed exits 1 and mutates nothing.
+/// Promoting a path that is not managed exits 1 without mutating anything.
 #[test]
 fn promote_unmanaged_path_exits_1() {
     let fx = applied_copy_fixture();

@@ -4,9 +4,12 @@
     reason = "integration tests use .expect()/panic! on fixtures and asserted output; allow-*-in-tests covers #[cfg(test)] modules but not the helper functions in tests/*.rs integration crates."
 )]
 
-//! The status managed-set is `when`-aware and
-//! expands `symlink-tree` entries per leaf, so a dropped target is classified
-//! ORPHANED and reaped on the next apply.
+//! Orphan classification and reaping for `symlink-tree` leaves and
+//! `when`-gated entries.
+//!
+//! The status managed-set is `when`-aware and expands `symlink-tree` entries
+//! per leaf, so a dropped target is classified ORPHANED and reaped on the next
+//! apply.
 //!
 //! Each test drives `PATINA_REPO=<tempdir> patina apply --yes`, perturbs the
 //! repository (deletes a `symlink-tree` source leaf, or flips a `[[file]]`
@@ -21,8 +24,8 @@
 //!   so the reap leaves it alone rather than deleting what the respelled entry
 //!   just materialized;
 //! - a recorded leaf whose directory a whole-directory `symlink` entry has
-//!   since claimed is not reaped through that link, which would delete the
-//!   entry's source rather than a stale target.
+//!   since claimed is not reaped through that link. Reaping through it would
+//!   delete the entry's source rather than a stale target.
 
 mod common;
 
@@ -76,8 +79,8 @@ fn state_for(doc: &serde_json::Value, suffix: &str) -> String {
 /// again. Returns the fixture and the `patina status --json` taken between the
 /// two applies.
 ///
-/// The two spellings differ only in case or Unicode normal form, which a
-/// case-insensitive (or normalizing) filesystem resolves to one object.
+/// The two spellings differ only in case or Unicode normal form. A
+/// case-insensitive (or normalizing) filesystem resolves them to one object.
 /// Recording the first spelling and re-deriving the second must therefore yield
 /// one managed key, or the reap deletes what the second apply just wrote.
 ///
@@ -134,8 +137,8 @@ fn a_case_only_target_respelling_does_not_reap_the_live_target() {
 #[test]
 fn a_normalization_only_target_respelling_does_not_reap_the_live_target() {
     // `é` precomposed against `e` plus a combining acute. APFS resolves the two
-    // to one file; elsewhere they are two files and only the classification
-    // above can fail.
+    // to one file; elsewhere they are two files, and only the status
+    // classification can fail.
     let (f, doc) = respell_target("~/.caf\u{e9}", "~/.cafe\u{301}");
     assert_eq!(
         state_for(&doc, "/.caf\u{e9}"),
@@ -310,11 +313,11 @@ fn when_flipped_to_false_orphans_then_reaps_target_with_backup() {
     // target's. Searching the backup tree, rather than a specific `<ts>`
     // directory, proves the never-overwrite-without-backup guarantee held for
     // the reap without coupling the test to the timestamp layout.
-    // The backup tree lives under the *resolved* state root, which differs
-    // per platform (`XDG_STATE_HOME` / `LOCALAPPDATA` on Linux/Windows,
-    // `$HOME/Library/Application Support/patina` on macOS). The test searches
-    // `f.state_root()`, the per-platform resolver; the raw `f.state` env
-    // value only backs the state dir on Linux/Windows.
+    // The backup tree lives under the *resolved* state root. That root
+    // differs per platform (`XDG_STATE_HOME` / `LOCALAPPDATA` on
+    // Linux/Windows, `$HOME/Library/Application Support/patina` on macOS), so
+    // the test searches `f.state_root()`, the per-platform resolver. The raw
+    // `f.state` env value only backs the state dir on Linux/Windows.
     let state_root = f.state_root();
     let backup = find_backup_with_bytes(&state_root, ".gitconfig", b"[user]\n  name = me\n");
     assert!(

@@ -1,13 +1,12 @@
 //! `patina remove <path>` command logic.
 //!
-//! `patina remove <path>` unmanages a target. It removes the target's
-//! `[[file]]` entry from its module's `patina.toml`, and replaces the target
-//! on disk with a regular file holding the last-applied content, so the
-//! user's system stays functional. It then re-journals the new managed set.
-//! `patina status` therefore treats the path as deliberately unmanaged and
-//! leaves it out of the report, rather than reporting an ORPHANED leftover.
-//! With `--purge` the target is deleted from disk entirely instead of
-//! replaced.
+//! `patina remove <path>` unmanages a target. It replaces the target on disk
+//! with a regular file containing the last-applied content, so the user's
+//! system keeps working. It then removes the target's `[[file]]` entry from
+//! its module's `patina.toml` and re-journals the new managed set. `patina
+//! status` therefore treats the path as deliberately unmanaged and leaves it
+//! out of the report, rather than reporting an ORPHANED leftover. With
+//! `--purge` the target is deleted from disk entirely instead of replaced.
 //!
 //! `remove` holds one exclusive advisory lock for the whole command and
 //! re-journals under [`LockPolicy::Held`](patina_core::LockPolicy) through
@@ -15,15 +14,15 @@
 //!
 //! ## Reconstructing the last-applied content
 //!
-//! The committed apply record maps each target to its
-//! canonical journaled source path. For a symlink or copy target the
-//! last-applied content is the bytes of that source, read from the
-//! repository. For a template-rendered target the journal records only a
-//! blake3 hash of the rendered bytes; such a target has a journaled source
-//! ending in `.tmpl`. The content is therefore reconstructed by re-rendering
-//! the source through `MiniJinja`, against the variable context resolved at
-//! remove time. Those are the deliberate "reset to current source intent"
-//! semantics.
+//! The committed apply record maps each target to its canonical journaled
+//! source path. For a symlink or copy target, the last-applied content is the
+//! bytes of that source, read from the repository. For a template-rendered
+//! target the journal records only a blake3 hash of the rendered bytes; such a
+//! target has a journaled source ending in `.tmpl`. The content is therefore
+//! reconstructed by re-rendering the source through `MiniJinja`, against the
+//! variable context resolved at remove time. Re-rendering is deliberate: the
+//! replacement carries the source's current intent, not the bytes the last
+//! apply wrote.
 //!
 //! Planning, journaling, manifest editing, repo discovery, and template
 //! rendering live in `patina_core`; this module is presentation and control
@@ -78,7 +77,6 @@ pub async fn run(
 
     let (state, guard) = acquire_state_and_lock()?;
 
-    // Locate the journaled expectation for this target in the latest commit.
     let journal_dir = state.join("journal");
     let record = read_latest_commit(&journal_dir).map_err(EngineError::from)?;
     let expected = record.as_ref().and_then(|record| {
@@ -96,8 +94,8 @@ pub async fn run(
     }
 
     // Plan against the still-current managed set, before the entry is
-    // removed, so the resolver carries the variable context a template
-    // target needs for its last-applied re-render.
+    // removed, so the resolver has the variable context a template target
+    // needs for its last-applied re-render.
     let timestamp = current_timestamp();
     let resolved =
         plan_apply(&ApplyRequest::default(), &timestamp).context("failed to compute the plan")?;
@@ -108,8 +106,8 @@ pub async fn run(
         Some(reconstruct_content(expected, &resolved)?)
     };
 
-    // Replace the target on disk, before the re-apply. The target path is
-    // the journaled canonical path of the materialized object.
+    // The target path comes from the journal: the canonical path of the
+    // materialized object, not the user's spelling of it.
     let target_path = Utf8PathBuf::from(expected.target());
     replace_target(&target_path, content.as_deref())?;
 
@@ -191,9 +189,11 @@ fn owning_manifest(source: &Utf8Path) -> Result<Utf8PathBuf> {
 }
 
 /// Remove the `[[file]]` entry for `entry_target` from the module manifest at
-/// `manifest_path`, writing the edited text back. The manifest stores the
-/// target as the user wrote it (e.g. `~/.zshrc`); the writer also accepts the
-/// canonical form, so both spellings are attempted before giving up.
+/// `manifest_path`, then write the edited text back.
+///
+/// The manifest stores the target unexpanded (e.g. `~/.zshrc`), while the
+/// writer also accepts the canonical form. Both spellings are tried before the
+/// removal fails.
 fn remove_entry(
     manifest_path: &Utf8Path,
     entry_target: &str,
@@ -238,9 +238,10 @@ fn confirm(
 
 /// Report the unmanaged-path refusal (exit 1) and return the exit code.
 ///
-/// The message names the path and the three discovery sources. It repeats the
-/// established discovery-error wording, so `remove` and `promote` explain an
-/// unmanaged path the same way.
+/// The message names the path and every discovery source: `$PATINA_REPO`, the
+/// walk-up from the current directory, and the persisted default. It repeats
+/// the established discovery-error wording, so `remove` and `promote` explain
+/// an unmanaged path the same way.
 fn report_unmanaged(args: &RemoveArgs, reporter: &mut impl Reporter) -> i32 {
     let message = format!(
         "{} is not managed by patina (no journaled apply lists it). \
@@ -284,7 +285,7 @@ fn success_envelope(target: &Utf8Path, resolved_target: &Utf8Path, purged: bool)
 }
 
 /// Build the `--json` typed-error envelope: `error`, `path`, `message`. `init`
-/// and `add` emit the same three keys.
+/// and `add` emit the same error keys.
 fn error_envelope(error: &str, path: &str, message: &str) -> String {
     let envelope = serde_json::json!({
         "error": error,

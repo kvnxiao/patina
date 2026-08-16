@@ -6,7 +6,6 @@ mod common;
 
 use common::Fixture;
 use common::code;
-use std::process::Command;
 
 #[test]
 fn non_tty_apply_previews_without_mutating() {
@@ -61,7 +60,7 @@ fn post_apply_hook_failure_rolls_back_and_exits_3() {
 
 #[test]
 fn force_deploy_downgrades_hook_failure_and_exits_0() {
-    // The same hook as above, applied with `--force-deploy`.
+    // The same failing post_apply hook, applied with `--force-deploy`.
     let f = Fixture::new();
     let module = f.module(
         "shell",
@@ -171,43 +170,6 @@ fn cli_variable_override_renders_into_template() {
     );
 }
 
-#[test]
-fn missing_pager_falls_back_with_warning() {
-    let f = Fixture::new();
-    let module = f.module(
-        "shell",
-        "[[file]]\nsource = \"rc\"\ntarget = \"~/.rc\"\nmode = \"copy\"\n",
-    );
-    fs_err::write(module.join("rc"), "p\n").expect("write source");
-
-    // Force a PATH with no `delta` so the fallback path is deterministic.
-    let bin = env!("CARGO_BIN_EXE_patina");
-    let out = Command::new(bin)
-        .arg("apply")
-        .args(["--pager=delta", "--yes"])
-        .env("PATINA_REPO", f.root.as_str())
-        .env("HOME", f.home.as_str())
-        .env("USERPROFILE", f.home.as_str())
-        .env("XDG_STATE_HOME", f.state.as_str())
-        .env("LOCALAPPDATA", f.state.as_str())
-        .env("PATH", f.state.as_str())
-        .env_remove("PATINA_PROFILE")
-        .output()
-        .expect("spawn patina");
-
-    assert_eq!(
-        code(&out),
-        0,
-        "stderr: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        stderr.contains("delta") && stderr.to_lowercase().contains("fall"),
-        "stderr must warn about the missing pager, got: {stderr}"
-    );
-}
-
 #[cfg(not(windows))]
 #[test]
 fn non_windows_symlink_apply_skips_dev_mode_flow() {
@@ -231,7 +193,7 @@ fn non_windows_symlink_apply_skips_dev_mode_flow() {
         String::from_utf8_lossy(&out.stderr)
     );
 
-    // The symlink materialized, pointing back at the repo source.
+    // The symlink materialized. It points back at the repo source.
     let target = f.home.join(".rc");
     let meta = fs_err::symlink_metadata(&target).expect("symlink target must exist");
     assert!(
@@ -239,8 +201,8 @@ fn non_windows_symlink_apply_skips_dev_mode_flow() {
         "the target must be a symbolic link, proving the apply mutated"
     );
 
-    // Nothing in the output mentions the elevation helper or Developer Mode,
-    // so the Windows-only flow was not entered.
+    // The output never mentions the elevation helper or Developer Mode, so the
+    // Windows-only flow was not entered.
     let combined = format!(
         "{}{}",
         String::from_utf8_lossy(&out.stdout),
@@ -257,10 +219,11 @@ fn non_windows_symlink_apply_skips_dev_mode_flow() {
 }
 
 // On a Windows host with Developer Mode off and a symlink `[[file]]`, a
-// `patina apply --yes` whose UAC consent is declined creates no symbolic
-// link. It names `Developer Mode` and `patina doctor --fix` on stderr, and
-// exits 5. This is gated `#[ignore]` because it needs a real Windows host
-// and a human, or harness, to decline the UAC dialog; CI is not Windows.
+// `patina apply --yes` whose UAC consent is declined does not create a
+// symbolic link. It names `Developer Mode` and `patina doctor --fix` on
+// stderr, and exits 5. This is gated `#[ignore]` because it needs a real
+// Windows host and a human, or harness, to decline the UAC dialog; CI is not
+// Windows.
 #[cfg(windows)]
 #[test]
 #[ignore = "requires a Windows host with Developer Mode off and a declined UAC dialog"]

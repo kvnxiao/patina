@@ -27,8 +27,8 @@ fn manifest_value(fx: &Fixture, module: &str) -> toml::Value {
     toml::from_str(&body).expect("module manifest parses")
 }
 
-/// `patina add F --module m` on a regular file writes a `[[file]]`
-/// table-array entry and no `[[directory]]` entry.
+/// `patina add F --module m` on a regular file writes a `[[file]]` table-array
+/// entry, and does not write a `[[directory]]` entry.
 #[test]
 fn add_file_writes_file_table_and_no_directory_table() {
     let fx = Fixture::new();
@@ -148,8 +148,8 @@ fn add_directory_then_apply_materializes_leaf_symlinks() {
     );
 }
 
-/// `--symlink-tree` on a regular file source is rejected with a
-/// typed error naming the flag and the file source kind; no entry is written.
+/// `--symlink-tree` on a regular file source is rejected with a typed error
+/// naming the flag and the file source kind. The manifest is left unwritten.
 #[test]
 fn add_symlink_tree_on_a_file_is_rejected() {
     let fx = Fixture::new();
@@ -173,8 +173,8 @@ fn add_symlink_tree_on_a_file_is_rejected() {
         stderr.contains("--symlink-tree") && stderr.contains("file"),
         "stderr must name --symlink-tree and the file kind, got: {stderr}"
     );
-    // No module manifest is written, because the kind check runs before
-    // staging.
+    // The kind check runs before staging, so the module manifest is never
+    // written.
     assert!(
         !fx.root.join("m").join("patina.toml").exists(),
         "no manifest should be written on a kind-mismatch refusal"

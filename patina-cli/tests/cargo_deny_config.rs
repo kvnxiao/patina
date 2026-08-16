@@ -7,9 +7,9 @@
 //!
 //! Parses the workspace-root `deny.toml` as TOML and asserts:
 //!
-//! 1. The document carries the four top-level tables `licenses`, `advisories`,
-//!    `bans`, and `sources`.
-//! 2. No GPL-family licence appears in the `[licenses].allow` allowlist, so a
+//! 1. The document has the top-level tables `licenses`, `advisories`, `bans`,
+//!    and `sources`.
+//! 2. The `[licenses].allow` allowlist contains no GPL-family licence, so a
 //!    GPL-3.0 dependency is rejected by `cargo deny check`. Whether the binary
 //!    actually exits non-zero on such a tree is a CI-execution fact; this test
 //!    scripts the policy that makes it so.
@@ -45,8 +45,8 @@ fn parse_deny_toml() -> Table {
 
 #[test]
 fn deny_toml_has_four_top_level_tables() {
-    // deny.toml carries the four required top-level tables. A dropped
-    // or renamed section drops out of the check and fails here naming it.
+    // deny.toml has every required top-level table. A dropped or renamed
+    // section fails this assertion by name.
     let doc = parse_deny_toml();
     for table in ["licenses", "advisories", "bans", "sources"] {
         let entry = doc.get(table);

@@ -14,13 +14,14 @@ use clap::ValueEnum;
 
 /// Resolve a command's outcome to a process exit code.
 ///
-/// Every subcommand terminates here, so the exit-code contract lives in one
-/// place. A subcommand that reaches a terminal state under its own control (a
+/// The exit-code contract lives in one place: every subcommand terminates
+/// here. A subcommand that reaches a terminal state under its own control (a
 /// successful apply, an aborted-by-hook apply, a declined prompt) returns
-/// `Ok(code)`, and that code is returned verbatim. An `Err` is an
-/// engine-level failure. Its error chain goes to the reporter's err stream,
-/// and [`ExitCode::from_error_chain`] maps it: the lock timeout becomes `4`,
-/// every other failure `1`.
+/// `Ok(code)`. That code becomes the process status verbatim.
+///
+/// An `Err` is an engine-level failure. Every cause in its chain goes to the
+/// reporter's err stream. [`ExitCode::from_error_chain`] then picks the code:
+/// a lock timeout is `4`, every other failure `1`.
 ///
 /// [`crate::main`] hands the returned `i32` to [`std::process::exit`].
 #[must_use = "the returned exit code is the process's terminal status"]
@@ -28,8 +29,8 @@ pub fn resolve_exit_code(outcome: anyhow::Result<i32>, reporter: &mut impl Repor
     match outcome {
         Ok(code) => code,
         Err(error) => {
-            // Report every cause, so the root one (the offending TOML line,
-            // say) reaches the user.
+            // The outermost error is the context wrapper. Only printing the
+            // whole chain reaches the root cause, the offending TOML line.
             for cause in error.chain() {
                 reporter.error(&cause.to_string());
             }
@@ -171,10 +172,11 @@ pub struct WatchArgs {
     pub json: bool,
 }
 
-/// Background-service lifecycle subcommands under `patina watch`. Each
-/// operates on the per-OS service registration through the
-/// `patina_core::watch::service` backend; all but `status` acquire the
-/// exclusive advisory lock, `status` the shared lock.
+/// Background-service lifecycle subcommands under `patina watch`.
+///
+/// Each operates on the per-OS service registration through the
+/// `patina_core::watch::service` backend. Every subcommand but `status`
+/// acquires the exclusive advisory lock; `status` acquires the shared one.
 #[derive(Debug, Subcommand, Clone)]
 pub enum WatchCommand {
     /// Register the watcher as a per-user background service that launches at
@@ -207,7 +209,7 @@ pub enum WatchCommand {
 ///
 /// The verbs split by what they write. `update` and `prune` mutate (the
 /// working-tree lockfile, the per-machine cache) and take the exclusive lock.
-/// `list` and `check` take the shared lock: `list` writes nothing, and `check`
+/// `list` and `check` take the shared lock: `list` does not write, and `check`
 /// writes only the per-machine notice files it alone owns.
 #[derive(Debug, Args)]
 #[command(disable_help_subcommand = true)]
@@ -230,9 +232,9 @@ pub enum RemoteCommand {
     /// `patina remote check`.
     List,
 
-    /// Compare upstream tips against the lock with `git ls-remote` only and
-    /// refresh the pending-update notice. Downloads no objects and changes no
-    /// pin.
+    /// Compare upstream tips against the lock with `git ls-remote` only, and
+    /// refresh the pending-update notice. Does not download objects. Every pin
+    /// is left as recorded.
     Check {
         /// Run as a shell hook: self-throttle to at most one real check per day
         /// and stay completely silent on success.
@@ -241,8 +243,8 @@ pub enum RemoteCommand {
     },
 
     /// Fetch upstream, run the update gate, and bump `rev` / `updated_at` in
-    /// the working-tree lockfile for you to review and commit. Touches no
-    /// targets.
+    /// the working-tree lockfile for you to review and commit. Does not write
+    /// to any target.
     Update {
         /// The remote to update. Every remote when omitted.
         #[arg(value_name = "name")]
@@ -309,19 +311,18 @@ pub struct InitArgs {
 
 /// Flags for `patina add`.
 ///
-/// The four mode flags (`--symlink` / `--copy` / `--template` /
-/// `--symlink-tree`) form a mutually-exclusive clap group: declaring two
-/// produces a usage error (exit 2). Which flags are valid depends on the
-/// source kind: `--symlink` and `--copy` apply to either a file
-/// or a directory source; `--template` is file-only; `--symlink-tree` is
-/// directory-only. The kind/mode compatibility is enforced at use-site in
-/// `cmd::add` with a typed error, since clap cannot see the source's
-/// on-disk kind.
+/// The mode flags (`--symlink` / `--copy` / `--template` / `--symlink-tree`)
+/// form a mutually-exclusive clap group: declaring more than one is a usage
+/// error (exit 2). Which flags are legal depends on the source kind.
+/// `--symlink` and `--copy` apply to either a file or a directory source;
+/// `--template` is file-only; `--symlink-tree` is directory-only. `cmd::add`
+/// checks the flag against the kind at use-site and raises a typed error,
+/// because clap cannot see the source's on-disk kind.
 #[derive(Debug, Args, Default)]
 #[command(group = clap::ArgGroup::new("mode").multiple(false))]
 #[expect(
     clippy::struct_excessive_bools,
-    reason = "this is a clap-derived flag struct: each bool is an independent CLI flag (the four mode flags plus --json / --yes), not a state machine that would be better modelled as an enum. The mode flags are unified at use-site into the AddMode enum."
+    reason = "this is a clap-derived flag struct: each bool is an independent CLI flag (the mode flags, plus --json, --yes, and --force), not a state machine that would be better modelled as an enum. The mode flags are unified at use-site into the AddMode enum."
 )]
 pub struct AddArgs {
     /// The dotfile to bring under management. Absolute or HOME-relative
@@ -361,8 +362,8 @@ pub struct AddArgs {
     pub yes: bool,
 
     /// Add the path even when a tree-mode entry's `ignore` list already
-    /// excludes it. Separate from `--yes`, which only skips prompts: this
-    /// overrides a validation refusal.
+    /// excludes it. Separate from `--yes`: that flag only skips prompts, while
+    /// this one overrides a validation refusal.
     #[arg(long)]
     pub force: bool,
 }
@@ -463,9 +464,9 @@ pub struct ApplyArgs {
     #[arg(long)]
     pub force_deploy: bool,
 
-    /// Run `patina remote update` for every remote before applying, so a pin
-    /// bump and its consent diff happen in one sitting. Degrades to a plain
-    /// apply with a warning when the remotes are unreachable.
+    /// Run `patina remote update` for every remote before applying. A pin bump
+    /// and its consent diff then happen in one sitting. When a remote is
+    /// unreachable, the run degrades to a plain apply with a warning.
     #[arg(long)]
     pub update: bool,
 
@@ -473,11 +474,6 @@ pub struct ApplyArgs {
     /// is a preview (no mutation); pair with `--yes` to apply.
     #[arg(long)]
     pub json: bool,
-
-    /// Pipe the rendered diff through an external pager if it resolves on
-    /// PATH; fall back to the embedded renderer with a warning otherwise.
-    #[arg(long, value_enum)]
-    pub pager: Option<Pager>,
 
     /// CLI variable override, repeatable: `-v key=value`.
     #[arg(short = 'v', value_name = "key=value")]
@@ -534,24 +530,4 @@ pub enum DefenderCommand {
         #[arg(long)]
         json: bool,
     },
-}
-
-/// External pager tools `--pager` accepts.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub enum Pager {
-    /// `delta`, a syntax-highlighting diff pager.
-    Delta,
-    /// `difft`, the difftastic structural diff tool.
-    Difft,
-}
-
-impl Pager {
-    /// The binary name this pager resolves to on PATH.
-    #[must_use = "the binary name drives PATH resolution"]
-    pub fn binary(self) -> &'static str {
-        match self {
-            Pager::Delta => "delta",
-            Pager::Difft => "difft",
-        }
-    }
 }

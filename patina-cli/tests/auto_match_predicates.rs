@@ -7,7 +7,7 @@
 //! `[[auto_match]]` profile rules.
 //!
 //! These end-to-end tests drive `PATINA_REPO=<tempdir> patina apply` over
-//! fixture repos and assert four behaviours:
+//! fixture repos and assert these behaviours:
 //!
 //! - An `[[auto_match]]` rule matching the host's `patina.os` resolves its
 //!   profile.

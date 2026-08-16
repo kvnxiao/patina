@@ -1,10 +1,11 @@
 //! Integration tests for the `patina defender` CLI surface.
 //!
 //! Every test here stays on a **read-only** path. `apply` and `clear` mutate
-//! antivirus configuration behind a UAC prompt, which no test may raise, so the
-//! suite covers the preview and status paths that reach the same derivation,
-//! diff, and rendering without ever launching the elevated helper: a non-TTY
-//! subprocess without `--yes` previews and exits `0` by contract.
+//! antivirus configuration behind a UAC prompt, and a test may never raise
+//! one. The suite therefore covers the preview and status paths. Those paths
+//! reach the same derivation, diff, and rendering without ever launching the
+//! elevated helper: a non-TTY subprocess without `--yes` previews and exits
+//! `0` by contract.
 //!
 //! These tests cover the CLI's report on a Defender exclusion list it cannot
 //! read. Unelevated, as CI and a normal developer shell are,
@@ -144,8 +145,8 @@ fn status_reports_that_the_live_list_was_not_readable() {
         !entries.is_empty(),
         "the desired set is still reported when the live list is withheld: {envelope}"
     );
-    // With the live list withheld only the two ledger-derived states can arise;
-    // `unmanaged` needs a readable list to be detected at all.
+    // With the live list withheld, only `recorded` and `not recorded` can
+    // arise; `unmanaged` needs a readable list to be detected at all.
     for entry in entries {
         let state = entry["state"].as_str().expect("each entry carries a state");
         assert!(
@@ -205,8 +206,8 @@ fn the_preview_proposes_the_repo_root_and_each_managed_target() {
         proposed.contains(&(repo_root.as_str(), "folder")),
         "the repository root must be proposed as a folder exclusion: {proposed:?}"
     );
-    // The target does not exist yet. Canonicalize its parent and rejoin the
-    // leaf, matching the engine's own path resolution.
+    // The target does not exist yet, so its parent is canonicalized and the
+    // leaf rejoined. That mirrors the engine's own path resolution.
     let target = format!("{}\\.gitconfig", canonical(&fixture.home));
     assert!(
         proposed.contains(&(target.as_str(), "file")),
@@ -222,7 +223,8 @@ fn the_preview_proposes_the_repo_root_and_each_managed_target() {
 #[test]
 fn clear_previews_an_empty_removal_set_with_no_ledger() {
     // `clear` must stay usable as the reversibility escape hatch even with
-    // nothing recorded, and it plans no repository, hence a null `repo_root`.
+    // nothing recorded, and it does not plan a repository, hence a null
+    // `repo_root`.
     let output = fixture().run(&["defender", "clear", "--json"], &[]);
 
     assert_eq!(code(&output), 0);

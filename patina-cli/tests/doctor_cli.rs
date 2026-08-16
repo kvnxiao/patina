@@ -7,9 +7,8 @@
 //!
 //! Each test drives the real `patina` binary through [`common::Fixture`].
 //! Both the read-only path (no `--fix`) and the `--fix` remediation path are
-//! covered. With no TTY the read-only path never prompts, and `--fix` runs
-//! either with `--yes`, which auto-accepts, or without it, which exercises
-//! the non-TTY refusal.
+//! covered. With no TTY the read-only path never prompts. `--fix` runs with
+//! `--yes` to auto-accept, or without it to exercise the non-TTY refusal.
 
 mod common;
 
@@ -127,10 +126,10 @@ fn fix_yes_writes_default_repo_from_cwd_and_exits_zero() {
 }
 
 /// `patina doctor --fix --yes` run from a directory that is not a Patina
-/// repository must refuse: it exits 1 and leaves no `default_repo` pointer,
-/// rather than recording an arbitrary directory as the default repo. Guards the
-/// `validate_repo_root` check in `fix_default_repo`; without it the pointer
-/// would be written unconditionally.
+/// repository must refuse: it exits 1 and does not write a `default_repo`
+/// pointer, rather than recording an arbitrary directory as the default repo.
+/// Guards the `validate_repo_root` check in `fix_default_repo`; without that
+/// check the pointer would be written unconditionally.
 #[test]
 fn fix_yes_from_non_repo_cwd_exits_one_and_writes_no_pointer() {
     let fx = Fixture::new();
@@ -228,7 +227,7 @@ fn windows_fix_enables_dev_mode_and_exits_zero() {
 
 /// The DOC-WIN-UNC finding rests on the cross-platform [`is_unc_path`]
 /// predicate, so checking that predicate exercises the finding's trigger on
-/// macOS/Linux CI, where a real UNC mount is unavailable.
+/// macOS/Linux CI. Neither platform can mount a real UNC share.
 #[test]
 fn unc_predicate_distinguishes_unc_from_posix_repo_paths() {
     assert!(

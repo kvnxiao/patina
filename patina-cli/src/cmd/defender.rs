@@ -16,10 +16,10 @@
 //! | The helper never reported an outcome         | 1    |
 //! | User declined the prompt or UAC consent      | 5    |
 //!
-//! The three exit-1 outcomes share a code but never a message. Verification
-//! routes through the elevated helper, so a rejection message means Defender
-//! really rejected the write, and an apply whose outcome nobody observed says
-//! exactly that.
+//! The blocked, failed, and unconfirmed outcomes share exit 1 but never a
+//! message. Verification routes through the elevated helper, so a rejection
+//! message means Defender really rejected the write, and an apply whose
+//! outcome nobody observed says exactly that.
 
 use crate::cli::DefenderArgs;
 use crate::cli::DefenderCommand;
@@ -59,20 +59,21 @@ use patina_core::serialize_request;
 use std::collections::BTreeSet;
 
 /// The caveat printed whenever a rendered state was inferred from the ledger
-/// rather than read from Defender, so no reader mistakes the one for the other.
+/// rather than read from Defender. A reader cannot then mistake the one for
+/// the other.
 ///
-/// It names the remedy, not only the constraint. Nothing on this path ever
-/// raises a UAC prompt, because `status` is read-only by contract. A reader
-/// told only that administrator is required would wait for a prompt that never
-/// comes. Elevating is the user's move, and the note has to say so.
+/// It names the remedy, not only the constraint. Neither `status` nor a
+/// preview raises a UAC prompt, because both are read-only by contract. A
+/// reader told only that administrator is required would wait for a prompt
+/// that never comes. Elevating is the user's move, and the note has to say so.
 const LEDGER_SOURCE_NOTE: &str =
     "  (showing what Patina recorded; re-run elevated to compare against Defender's list)";
 
 /// The human label for an exclusion state.
 ///
-/// The three readable states each get their own wording, and the two
-/// ledger-only states are worded to sound like the inference they are:
-/// `recorded` never reads as `present`.
+/// Every state gets its own wording. `Recorded` and `Unrecorded` are inferred
+/// from the ledger, so they are worded as inferences: `recorded` never reads
+/// as `present`.
 fn state_label(state: ExclusionState) -> &'static str {
     match state {
         ExclusionState::Owned => "present",
@@ -97,7 +98,8 @@ fn state_token(state: ExclusionState) -> &'static str {
     }
 }
 
-/// Which reconcile a run performs. The two differ only in the desired set.
+/// The reconcile mode a run performs. `Apply` and `Clear` differ only in the
+/// desired set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Action {
     /// Reconcile to the plan's exclusion set (add missing, reap stale).
@@ -192,9 +194,9 @@ fn run_reconcile(
     render_preview(&reconcile, reporter);
 
     if diff.is_empty() {
-        // Nothing to enact against Defender, but converging the ledger may still
-        // claim exclusions it did not previously own, so say so rather than
-        // reporting "no changes" over a write that just happened.
+        // Nothing to enact against Defender, but converging the ledger may
+        // still claim exclusions it did not previously own. The line says so
+        // rather than reporting "no changes" over a write that just happened.
         let adopted = reconcile.adoptable();
         reconcile.record_ledger()?;
         reporter.line(&if adopted == 0 {
@@ -268,8 +270,8 @@ impl Reconcile<'_> {
 /// outcome to the ledger update and exit code.
 fn enact(reconcile: &Reconcile<'_>, reporter: &mut impl Reporter) -> Result<i32> {
     // The helper runs with its window hidden and its PowerShell work takes
-    // seconds, so the terminal would otherwise sit silent from here until the
-    // verdict, with only the UAC dialog in between to explain the pause.
+    // seconds, so the terminal would otherwise sit silent until the verdict,
+    // with only the UAC dialog to explain the pause.
     reporter.line("Elevating to apply and verify the change; this takes a few seconds.");
     match write_and_launch(reconcile.state_dir, reconcile.diff)? {
         DefenderOutcome::Applied => {
@@ -319,8 +321,8 @@ fn run_reconcile_json(
             report("declined", "");
             Ok(ExitCode::UserDeclined.code())
         }
-        // The three failing results share an exit code, so the envelope has to
-        // carry what separates them; the human path says it in prose.
+        // The failing results share an exit code, so the envelope has to name
+        // what separates them; the human path says it in prose.
         DefenderOutcome::Blocked { detail } => {
             report("blocked", &detail);
             Ok(ExitCode::Generic.code())
@@ -405,8 +407,8 @@ fn confirm(
 
 /// The exclusion's path, painted in its kind's color.
 ///
-/// The listing prints no `(file)` / `(folder)` text, so this color is the only
-/// place the kind appears in human output. See
+/// The listing does not print `(file)` / `(folder)` text, so this color is the
+/// only place the kind appears in human output. See
 /// [`ExclusionStyles`](crate::output::style::ExclusionStyles) for what that
 /// costs and where the kind is still readable as data.
 fn path_by_kind(exclusion: &Exclusion, styles: &Styles) -> String {
@@ -438,9 +440,10 @@ fn stale_tag(styles: &Styles) -> String {
     )
 }
 
-/// Render the add / remove / unchanged preview for a reconcile. `repo_root` is
-/// `None` for `clear`, which reconciles to the empty set without planning a
-/// repository.
+/// Render the add / remove / unchanged preview for a reconcile.
+///
+/// `repo_root` is `None` for `clear`: that verb reconciles to the empty set
+/// and does not plan a repository.
 fn render_preview(reconcile: &Reconcile<'_>, reporter: &mut impl Reporter) {
     let styles = &reporter.styles();
     let Reconcile {
@@ -466,7 +469,7 @@ fn render_preview(reconcile: &Reconcile<'_>, reporter: &mut impl Reporter) {
         table.push_str(&listing_row("  - ", exclusion, None, styles));
     }
     // Everything the reconcile will not add, tagged with why. An exclusion
-    // Defender already has but Patina does not own shows up here.
+    // Defender already has but Patina does not own appears in this block.
     for exclusion in desired {
         let state = classifier.classify(exclusion);
         if !state.needs_add() {
@@ -539,13 +542,13 @@ fn render_status_desired_only(
 /// The reconcile JSON envelope: `repo_root`, `current_readable`, `to_add`,
 /// `to_remove`, `result`, `detail`.
 ///
-/// `repo_root` is `null` for `clear`, which does not plan a repository.
-/// `current_readable` is `false` when Defender withheld the live list, which
-/// tells a consumer the diff was computed against the ledger. [`status_json`]
-/// carries the same field for the same reason. `detail` is the helper's own
+/// `repo_root` is `null` for `clear`: that verb does not plan a repository.
+/// When Defender withheld the live list, `current_readable` is `false`, so a
+/// consumer knows the diff was computed against the ledger. [`status_json`]
+/// emits the same field for the same reason. `detail` is the helper's own
 /// words on a `blocked` or `failed` result and empty otherwise; without it the
-/// three results that exit `1` would be indistinguishable to a script in a way
-/// they are not to a reader.
+/// results that exit `1` would be indistinguishable to a script in a way they
+/// are not to a reader.
 fn reconcile_json(reconcile: &Reconcile<'_>, result: &str, detail: &str) -> String {
     let envelope = serde_json::json!({
         "repo_root": reconcile.repo_root.map(Utf8Path::as_str),
@@ -644,8 +647,9 @@ fn failed_error(detail: &str) -> anyhow::Error {
 
 /// The typed error for an apply whose outcome nobody observed.
 ///
-/// Deliberately claims nothing about Defender's behaviour: the helper never
-/// reported, so the exclusions may well have been applied. Re-running is safe
+/// It deliberately does not claim anything about Defender's behaviour: the
+/// helper never reported, so the exclusions may well have been applied.
+/// Re-running is safe
 /// because the reconcile is idempotent, and a re-run also writes the ledger
 /// entry this outcome withheld.
 fn unconfirmed_error() -> anyhow::Error {
@@ -699,8 +703,8 @@ mod tests {
     /// A reconcile derived from one live-list reading and one ledger, so the
     /// diff and the classifier cannot disagree the way hand-built parts could.
     ///
-    /// The state directory is inert: every assertion below renders or
-    /// serializes and touches no filesystem.
+    /// The state directory is inert: every assertion in this module renders or
+    /// serializes without reaching the filesystem.
     struct Fixture {
         desired: BTreeSet<Exclusion>,
         diff: DefenderDiff,
@@ -826,8 +830,8 @@ mod tests {
 
     #[test]
     fn adoptable_counts_only_the_exclusions_the_ledger_does_not_own() {
-        // What the "already up to date" line reports. Two of the three are
-        // excluded but unrecorded; the third is already Patina's.
+        // What the "already up to date" line reports. The repo folder is
+        // already Patina's; the two files are excluded but unrecorded.
         let fixture = Fixture::new(
             &[
                 (REPO, ExclusionKind::Folder),
@@ -891,9 +895,10 @@ mod tests {
 
     #[test]
     fn only_a_rejected_write_is_reported_as_defender_refusing_it() {
-        // The three exit-1 outcomes share a code, so the message is the only
-        // thing distinguishing them. Blaming Tamper Protection for an outcome
-        // nobody observed is the exact bug this split fixes.
+        // The blocked, failed, and unconfirmed outcomes share a code, so the
+        // message is the only thing distinguishing them. Blaming Tamper
+        // Protection for an outcome nobody observed is the bug this split
+        // fixes.
         let blocked = blocked_error("TamperProtected=True").to_string();
         assert!(blocked.contains("Defender rejected the exclusion change"));
         assert!(blocked.contains("Tamper Protection"));
@@ -950,9 +955,9 @@ mod tests {
 
     #[test]
     fn the_three_readable_states_are_colored_apart() {
-        // Under a readable live list these are the three the user has to tell
-        // apart, and color is the only thing separating the two present ones
-        // beyond their wording.
+        // Under a readable live list, Owned, Unmanaged, and Absent are what
+        // the user has to tell apart. Color is the only thing separating the
+        // two present states beyond their wording.
         let styles = Styles::colored();
         let escapes: BTreeSet<String> = [
             ExclusionState::Owned,
@@ -968,7 +973,7 @@ mod tests {
     #[test]
     fn the_plain_palette_leaves_a_path_and_tag_byte_identical_to_unstyled() {
         // What every other assertion in this module relies on: a plain render
-        // emits no escapes, so a path or label reads back verbatim.
+        // does not emit escapes, so a path or label reads back verbatim.
         let file = Exclusion::new(r"C:\a", ExclusionKind::File);
         assert_eq!(path_by_kind(&file, &Styles::plain()), r"C:\a");
         assert_eq!(

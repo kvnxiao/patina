@@ -14,11 +14,11 @@
 //! the `tracing`-style macros and a module-scoped
 //! `#[expect(clippy::disallowed_macros, ...)]` carve-out stay clean.
 //!
-//! Rather than mutate the checked-in source tree (which would race with other
-//! parallel tests and risk leaving the tree dirty on failure), each scenario
+//! Mutating the checked-in source tree would race with other parallel tests
+//! and risk leaving the tree dirty on failure. Each scenario therefore
 //! compiles a throwaway crate in a tempdir that reuses the real workspace
-//! `clippy.toml`, the artifact under test, so the assertion exercises the
-//! same config CI enforces.
+//! `clippy.toml`, the artifact under test, so the assertion exercises the same
+//! config CI enforces.
 
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
@@ -140,20 +140,19 @@ fn each_raw_print_macro_outside_output_module_fails_clippy_naming_the_file() {
 
 #[test]
 fn tracing_macro_and_scoped_expect_stay_clean() {
-    // This covers two sibling scenarios. Replacing the offending line with a
-    // non-listed macro, a `tracing`-style `info!` stubbed locally so the
-    // scratch crate needs no dependency, does not fire the lint. A
-    // module-scoped `#[expect(clippy::disallowed_macros, ...)]` carve-out,
-    // the same shape the `output` module and the lock_helper example use,
-    // suppresses it cleanly with no unfulfilled-expectation warning.
+    // Two sibling scenarios share this fixture. A non-listed macro, here a
+    // `tracing`-style `info!` stubbed locally so the scratch crate needs no
+    // dependency, does not fire the lint. A module-scoped
+    // `#[expect(clippy::disallowed_macros, ...)]` carve-out, the same shape
+    // the `output` module and the lock_helper example use, suppresses it
+    // cleanly with no unfulfilled-expectation warning.
     let temp = TempDir::new().expect("tempdir");
     let crate_root = scratch_crate(
         &temp,
         // `info!` is a local `macro_rules` stub, so a macro outside the
-        // disallowed list never fires the lint. The second fn carries the
-        // scoped expect over a genuine `println!`, fulfilling the
-        // expectation with no `unfulfilled_lint_expectations` warning under
-        // `-D warnings`.
+        // disallowed list never fires the lint. The second fn puts the scoped
+        // expect over a genuine `println!`. That fulfils the expectation, so
+        // `-D warnings` raises no `unfulfilled_lint_expectations`.
         "macro_rules! info {\n    ($($t:tt)*) => {{ let _ = format!($($t)*); }};\n}\n\
          pub fn logged() {\n    info!(\"hi\");\n}\n\n\
          #[expect(clippy::disallowed_macros, reason = \"carve-out under test\")]\n\

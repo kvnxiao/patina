@@ -2,7 +2,7 @@
 //!
 //! Every table-shaped listing buffers `\t`-separated cells into one block, runs
 //! it through [`align`], and prints it with [`emit_aligned`]. One setting
-//! decides the padding for all of them, and no command module counts spaces.
+//! decides the padding for all of them. A command module never counts spaces.
 //!
 //! The `patina debug` dumps in `patina_core` are not clients. They render a
 //! developer post-mortem, and `patina_core` cannot reach the CLI's palette.
@@ -33,8 +33,8 @@ pub fn align(table: &str) -> String {
 
 /// Join `cells` into one tab-separated, newline-terminated row.
 ///
-/// [`align`] pads a cell only when a tab follows it, so a row ends after its
-/// last cell and trails no padding.
+/// [`align`] pads a cell only when a tab follows it, so a row ends immediately
+/// after its last cell. The last cell is not padded.
 #[must_use = "the row is what gets buffered into the table"]
 pub fn row(cells: &[&str]) -> String {
     let mut row = cells.join("\t");
@@ -45,8 +45,9 @@ pub fn row(cells: &[&str]) -> String {
 /// Align a buffered block and print it to the out stream in one write.
 ///
 /// Every row a caller buffers ends in `\n`, and alignment preserves those
-/// terminators, so one write reproduces the whole listing. That keeps a long
-/// listing to a single stdout lock and flush. An empty block prints nothing.
+/// terminators, so one write reproduces the whole listing. One write also
+/// keeps a long listing to a single stdout lock and flush. An empty block does
+/// not print.
 pub fn emit_aligned(table: &str, reporter: &mut impl Reporter) {
     reporter.out_block(&align(table));
 }
@@ -73,10 +74,10 @@ mod tests {
         );
     }
 
-    /// Writing the block in one write is only safe while alignment keeps every
-    /// terminator a caller buffered. A dropped final `\n` runs a listing into
-    /// whatever the command prints next. An extra one opens a blank line no
-    /// plain-output test expects.
+    /// Writing the block in one write is only safe while alignment preserves
+    /// every terminator a caller buffered. A dropped final `\n` runs a listing
+    /// into whatever the command prints next. An extra one opens a blank line
+    /// no plain-output test expects.
     #[test]
     fn emitting_a_table_terminates_every_row_and_adds_no_blank_line() {
         let table = [row(&["a", "one"]), row(&["longer", "two"])].concat();
@@ -95,8 +96,8 @@ mod tests {
         );
     }
 
-    /// A listing with no rows must produce no output at all. A stray
-    /// terminator would leave a blank line where the table would have gone.
+    /// A listing with no rows must not print anything. A stray terminator
+    /// would leave a blank line where the table would have gone.
     #[test]
     fn emitting_an_empty_table_prints_nothing() {
         let mut reporter = BufferReporter::new();

@@ -6,7 +6,7 @@
 //! the current-plan recomputation, the classification, and the shared lock all
 //! live in `patina_core::status`; this module is presentation and control flow.
 //!
-//! `status` writes nothing and exits 0 on any successful read. A shared-lock
+//! `status` does not write, and exits 0 on any successful read. A shared-lock
 //! timeout reaches the user as a stderr warning (the read-only escape hatch)
 //! and leaves the exit code alone.
 
@@ -37,7 +37,7 @@ pub async fn run(args: &StatusArgs, reporter: &mut impl Reporter) -> Result<i32>
         .context("failed to compute status")?;
 
     // Every warning, lock timeout included, goes to stderr in both output
-    // formats, so none of them pollutes the JSON document on stdout.
+    // formats, so stdout stays a single parseable JSON document.
     for warning in &report.warnings {
         reporter.warn(warning);
     }
@@ -50,8 +50,8 @@ pub async fn run(args: &StatusArgs, reporter: &mut impl Reporter) -> Result<i32>
     Ok(ExitCode::Success.code())
 }
 
-/// Build the `--json` envelope: `last_apply`, `files`, and the four
-/// aggregate counters.
+/// Build the `--json` envelope: `last_apply`, `files`, the `clean` /
+/// `drifted` / `missing` / `orphaned` counters, and `remotes_pending`.
 fn json_envelope(report: &StatusReport) -> String {
     let last_apply = report
         .last_apply
@@ -85,8 +85,8 @@ fn json_envelope(report: &StatusReport) -> String {
     serde_json::to_string_pretty(&envelope).unwrap_or_else(|_| "{}".to_owned())
 }
 
-/// Render the human-readable table: one row per target plus a summary
-/// line of the aggregate counters.
+/// Render the human-readable table: one row per target, then a summary line of
+/// the counters, then the pending-remote reminder.
 fn render_human(report: &StatusReport, reporter: &mut impl Reporter) {
     if report.last_apply.is_none() {
         reporter.line("No apply has been recorded yet; nothing to report.");
@@ -109,8 +109,8 @@ fn render_human(report: &StatusReport, reporter: &mut impl Reporter) {
     render_remotes_pending(report, reporter);
 }
 
-/// The four aggregate counters on one line, each non-zero counter painted in
-/// its state's color.
+/// The clean / drifted / missing / orphaned counters on one line, each
+/// non-zero counter painted in its state's color.
 ///
 /// A zero counter stays plain. Painting it would spend the state's color on
 /// the absence of that state, and a clean repository has to read at a glance.
@@ -244,7 +244,7 @@ mod tests {
         assert!(r.out.contains("No apply has been recorded"));
     }
 
-    /// A report holding one target in each of the four states.
+    /// A report with one target in each state.
     fn report_of_every_state() -> StatusReport {
         let mut report = report_with_entries();
         for (path, state) in [
@@ -263,7 +263,7 @@ mod tests {
         report
     }
 
-    /// A stripped render carries the state word and nothing else, so each row
+    /// A stripped render shows the state word and nothing else, so each row
     /// must lead with its own label.
     #[test]
     fn every_state_leads_its_row_with_its_own_label() {

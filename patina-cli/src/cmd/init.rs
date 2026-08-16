@@ -2,11 +2,11 @@
 //!
 //! `patina init [path]` scaffolds a root `patina.toml` at the target
 //! directory. The target is the positional argument, or the current working
-//! directory when omitted. It then persists the absolute canonical path of
-//! that directory to the per-machine state directory's `default_repo` file,
+//! directory when omitted. `init` then persists that directory's absolute
+//! canonical path to the per-machine state directory's `default_repo` file,
 //! and prints a next-step hint pointing at `patina add`. A `patina.toml`
-//! already at the target is a refusal: a typed error, exit 1, and neither
-//! that file nor the state directory touched.
+//! already at the target is a refusal: exit 1, with neither that file nor the
+//! state directory touched.
 //!
 //! `init` is a mutating command: it acquires the engine's exclusive advisory
 //! lock at `<state>/lock` before any filesystem mutation. The manifest write
@@ -20,7 +20,7 @@
 //! Both the success and the already-initialized failure paths produce
 //! byte-stable stdout: the success JSON names only the created path and the
 //! persisted pointer, and the failure error names only the existing file
-//! path. Neither carries the manifest's `created_at` timestamp, so two runs
+//! path. Neither includes the manifest's `created_at` timestamp, so two runs
 //! against the same target produce identical stdout.
 
 use crate::cli::InitArgs;
@@ -46,11 +46,15 @@ use patina_core::write_persisted_default;
 ///
 /// # Errors
 ///
-/// Returns an error when the target `patina.toml` already exists (exit 1).
-/// Returns an error when the exclusive lock cannot be acquired within the
-/// timeout (exit 4, via the engine-error chain). Returns an error when
-/// state-directory resolution, the manifest write, canonicalization, or the
-/// persisted-pointer write fails at the engine level (exit 1).
+/// Returns an error when:
+///
+/// - the exclusive lock cannot be acquired within the timeout (exit 4, through
+///   the engine-error chain);
+/// - state-directory resolution, the target-directory creation, the manifest
+///   write, canonicalization, or the persisted-pointer write fails (exit 1).
+///
+/// An existing `patina.toml` at the target is not an error. That path reports
+/// the refusal and returns exit code 1.
 #[expect(
     clippy::unused_async,
     reason = "the subcommand dispatch in main.rs awaits every command uniformly; init's work is synchronous filesystem and lock I/O but keeps the async signature for parity."
@@ -105,7 +109,7 @@ pub async fn run(args: &InitArgs, reporter: &mut impl Reporter) -> Result<i32> {
     Ok(ExitCode::Success.code())
 }
 
-/// Handle the already-initialized refusal and return exit code 1. Under
+/// Report the already-initialized refusal and return exit code 1. Under
 /// `--json` the typed error document goes to stdout; otherwise the message
 /// goes to stderr as a warning.
 fn refuse_existing(manifest_path: &Utf8Path, json: bool, reporter: &mut impl Reporter) -> i32 {
@@ -118,7 +122,7 @@ fn refuse_existing(manifest_path: &Utf8Path, json: bool, reporter: &mut impl Rep
     ExitCode::Generic.code()
 }
 
-/// Resolve the target directory path. A positional path comes back verbatim;
+/// Resolve the target directory path. A positional path is used verbatim;
 /// with none, the current working directory.
 ///
 /// The caller creates the directory under the exclusive lock, so no
@@ -151,7 +155,7 @@ fn json_envelope(canonical: &Utf8Path, state: &Utf8Path) -> String {
 }
 
 /// Build the `--json` already-exists error envelope: `error`, `path`,
-/// `message`. `add` and `remove` emit the same three keys. Deterministic for a
+/// `message`. `add` and `remove` emit the same error keys. Deterministic for a
 /// given path, so the failing `--json` stdout is byte-stable across reruns.
 fn error_envelope(manifest_path: &Utf8Path, message: &str) -> String {
     let envelope = serde_json::json!({
@@ -195,10 +199,10 @@ mod tests {
             doc.get("initialized").and_then(serde_json::Value::as_str),
             Some("/repo/dot")
         );
-        // Derive the expectation from the same public API the envelope uses
-        // so the assertion is platform-correct: `default_repo_pointer_path`
-        // joins with the OS separator (`\` on Windows, `/` elsewhere), and a
-        // hardcoded forward-slash literal would spuriously fail on Windows.
+        // `default_repo_pointer_path` joins with the OS separator (`\` on
+        // Windows, `/` elsewhere), so a hardcoded forward-slash literal would
+        // fail on Windows. The expectation comes from the same public API the
+        // envelope uses.
         assert_eq!(
             doc.get("default_repo").and_then(serde_json::Value::as_str),
             Some(patina_core::default_repo_pointer_path(state).as_str())

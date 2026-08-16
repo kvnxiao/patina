@@ -33,9 +33,9 @@ use patina_core::RollbackOptions;
 /// # Errors
 ///
 /// Returns an error when the engine-level rollback fails for a reason other
-/// than the two typed user-facing outcomes, `NoPriorApply` and
-/// `RollbackPartial`. Those two surface as a stderr warning and exit code 1,
-/// rather than as an `Err`. A declined prompt maps to exit code 5.
+/// than `NoPriorApply` or `RollbackPartial`. Either of those reaches the user
+/// as a stderr warning and exit code 1 rather than as an `Err`. A declined
+/// prompt maps to exit code 5.
 pub async fn run(
     args: &RollbackArgs,
     tty: Tty,
@@ -45,7 +45,7 @@ pub async fn run(
     let should_proceed = match (args.yes, tty) {
         (true, _) => true,
         (false, Tty::NonInteractive) => {
-            // Non-TTY without --yes: preview only, exit 0 (mirrors apply).
+            // Mirrors apply: a non-TTY shell without --yes previews, exit 0.
             if args.json {
                 reporter.json(&json_envelope("previewed"));
             } else {

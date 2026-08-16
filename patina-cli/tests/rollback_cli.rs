@@ -137,9 +137,9 @@ fn assert_applied(out: &Output) {
 fn rollback_restores_an_unmanaged_file_overwritten_by_a_copy() {
     // The consent + always-backup guarantee for content mode: a pre-existing
     // *unmanaged* regular file overwritten by a copy-mode apply is first backed
-    // up, so `rollback --yes` restores its original bytes byte-for-byte. This is
-    // the non-tree, content-mode companion to
-    // `rollback_restores_a_regular_file_replaced_by_a_symlink` below.
+    // up, so `rollback --yes` restores its original bytes byte-for-byte. This
+    // is the non-tree, content-mode companion to
+    // `rollback_restores_a_regular_file_replaced_by_a_symlink`.
     let f = Fixture::new();
     let module = f.module(
         "shell",
@@ -183,7 +183,7 @@ fn rollback_deletes_a_symlink_target_and_writes_the_sentinel() {
     // no pre-existing file, rolled back, is removed (the link had no backup)
     // and a ROLLED_BACK sentinel is written. The pre-existing-regular-file →
     // symlink → restore-to-regular-file leg is exercised end-to-end by
-    // `rollback_restores_a_regular_file_replaced_by_a_symlink` below.
+    // `rollback_restores_a_regular_file_replaced_by_a_symlink`.
     let f = Fixture::new();
     let module = f.module(
         "zsh",

@@ -12,9 +12,8 @@
     )
 )]
 
-//! Integration tests for `patina watch --foreground`, covering signal
-//! handling and the `[watcher] debounce_ms`
-//! forward-compatible warning.
+//! Integration tests for `patina watch --foreground`. They cover signal
+//! handling and the `[watcher] debounce_ms` forward-compatible warning.
 //!
 //! The foreground watcher is a long-running process, so these tests cannot use
 //! the shared [`Fixture::run`] helper (which blocks on `Output` to completion).
@@ -33,11 +32,10 @@ use common::code;
 #[cfg(unix)]
 use std::process::Command;
 
-/// `patina watch` without `--foreground` reports the not-yet-wired service
-/// install and, when the root manifest declares the ignored `[watcher]
-/// debounce_ms` key, surfaces the forward-compatible warning. This path runs
-/// to completion, so the blocking `Fixture::run`
-/// helper is fine.
+/// `patina watch` with neither a lifecycle subcommand nor `--foreground`
+/// reports the usage hint. When the root manifest declares the ignored
+/// `[watcher] debounce_ms` key, the forward-compatible warning precedes it.
+/// That path runs to completion, so the blocking `Fixture::run` helper is fine.
 #[test]
 fn debounce_ms_key_in_root_manifest_warns() {
     let f = Fixture::new();
@@ -63,7 +61,8 @@ fn debounce_ms_key_in_root_manifest_warns() {
     );
 }
 
-/// A root manifest without the `[watcher]` table produces no debounce warning.
+/// A root manifest without the `[watcher]` table does not draw the debounce
+/// warning.
 #[test]
 fn no_watcher_table_does_not_warn() {
     let f = Fixture::new();
@@ -177,8 +176,9 @@ mod foreground {
             assert!(status.success(), "kill -{name} {pid} failed");
         }
 
-        /// Wait for the child to exit, up to `timeout`. Returns the exit code,
-        /// or `None` if it had not exited in time (after which it is killed).
+        /// Wait for the child to exit, up to `timeout`. Returns the exit code.
+        /// A child still running at the deadline is killed, and the return is
+        /// `None`.
         fn wait_exit(&mut self, timeout: Duration) -> Option<i32> {
             let deadline = Instant::now() + timeout;
             while Instant::now() < deadline {
@@ -407,17 +407,16 @@ mod foreground {
         // This scenario models an external `patina apply` that commits new
         // state while the watcher runs. The watcher must detect the new
         // journal record under the watched journal dir and rescan. An
-        // unchanged re-apply is a full no-op that writes no journal, so the
-        // parallel apply must change committed state to produce the
-        // `.COMMIT` this scenario needs. An idempotent re-apply produces
-        // neither a journal nor a rescan.
+        // unchanged re-apply is a full no-op that does not write a journal
+        // record, and no rescan follows one, so the parallel apply has to
+        // change committed state to produce the `.COMMIT` this scenario needs.
         //
         // Introduce a brand-new entry after the watcher has subscribed, so it
         // falls outside the current subscription set. The parallel apply
         // then performs a real Create and commits a fresh journal record, and
         // the watcher reacts to that journal write rather than to the new
-        // source/target, which it is not yet watching. This isolates the loop
-        // guard's target behaviour, an external apply's commit triggering a
+        // source/target, a pair it is not yet watching. That isolates the loop
+        // guard's target behaviour: an external apply's commit triggering a
         // journal rescan.
         let extra = f.module(
             "extra",
@@ -435,8 +434,8 @@ mod foreground {
         );
 
         // After settling, the rescan count stays bounded. A single CLI apply
-        // drives a small, finite number of rescans, not a runaway loop, which
-        // would push the count into the dozens.
+        // drives a small, finite number of rescans, not a runaway loop. A
+        // runaway loop would push the count into the dozens.
         std::thread::sleep(Duration::from_secs(1));
         let rescans = watcher.count_event_lines("journal_rescan");
         assert!(
@@ -477,9 +476,10 @@ mod foreground {
         //
         // The notification count is asserted deterministically by the
         // `patina-core` drift unit tests against the capture sink. The CLI
-        // binary always uses the real `notify-rust` sink, which a headless CI
-        // runner cannot capture, so the count is not assertable here. This
-        // test owns the observable on-disk and status side-effects instead.
+        // binary always uses the real `notify-rust` sink, and a headless CI
+        // runner cannot capture that sink, so no count is assertable in this
+        // suite. It owns the observable on-disk and status side-effects
+        // instead.
         let f = applied_copy_fixture();
         let target = f.home.join(".gitconfig");
         // The fixture applied the source bytes to the target; capture the
@@ -525,9 +525,9 @@ mod foreground {
             watcher.stderr_snapshot()
         );
 
-        // The watcher must not re-apply the divergent target, since a
-        // re-apply would rewrite it back to source and re-trigger. No
-        // re_apply event fired.
+        // A re-apply would rewrite the divergent target back to source and
+        // re-trigger, so the watcher must not re-apply it. The `re_apply`
+        // event must be absent.
         assert_eq!(
             watcher.count_event_lines("patina_core: re_apply re_apply_id"),
             0,
@@ -576,9 +576,9 @@ mod foreground {
 
     #[test]
     fn a_watcher_reapply_commits_exactly_one_new_journal_record() {
-        // A single watched-source edit drives exactly
-        // one watcher re-apply, which commits exactly one new journal record on
-        // top of the fixture's initial apply (two COMMITs total). This is the
+        // A single watched-source edit drives exactly one watcher re-apply.
+        // That re-apply commits exactly one new journal record on top of the
+        // fixture's initial apply (two COMMITs total). This is the
         // deterministic, single-process slice of the two-committed-plans
         // contract; the full concurrent-CLI race is exercised by the engine's
         // `NonBlocking` unit tests.
@@ -615,9 +615,9 @@ mod foreground {
         );
 
         // Poll for the new COMMIT rather than sleeping a fixed interval. The
-        // re_apply event is logged after the engine commits, so the COMMIT is
-        // already on disk, but polling absorbs scheduler jitter under
-        // parallel test load.
+        // engine commits before it logs the `re_apply` event, so the COMMIT is
+        // already on disk, but polling absorbs scheduler jitter under parallel
+        // test load.
         let two_commits = {
             let deadline = Instant::now() + Duration::from_secs(3);
             loop {
@@ -632,7 +632,8 @@ mod foreground {
         };
 
         // The watcher held the lock for its own re-apply and committed one new
-        // record; no contention skip occurred (no competing holder).
+        // record. Nothing competed for that lock, so the run never skipped on
+        // contention.
         assert_eq!(
             watcher.count_event_lines("lock_contention_skip"),
             0,

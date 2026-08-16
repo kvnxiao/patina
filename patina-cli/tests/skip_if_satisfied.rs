@@ -8,18 +8,19 @@
 //! ## Per-entry skip
 //!
 //! A re-apply over a partially-drifted repo must leave the already-satisfied
-//! (`Unchanged`) entry completely untouched, with the same inode and mtime
-//! and no backup entry. It must still mutate the drifted entry and back up
-//! its prior bytes. The skipped entry stays recorded in the commit, so
-//! `patina status` reports it `Clean` and a later reap never removes it.
+//! (`Unchanged`) entry completely untouched: the same inode, the same mtime,
+//! and nothing written into the backup cycle. It must still mutate the drifted
+//! entry and back up its prior bytes. The skipped entry stays recorded in the
+//! commit, so `patina status` reports it `Clean` and a later reap never
+//! removes it.
 //!
 //! ## Full-no-op short-circuit
 //!
 //! When every entry is `Unchanged` and there is nothing to reap, the apply is
-//! a full no-op. It writes no new journal record and creates no new backup
-//! cycle, leaving the prior commit authoritative. It also skips the
-//! diff-and-prompt confirmation entirely, presenting no prompt and reading no
-//! stdin. The interactive prompt-skip itself is unit-tested in
+//! a full no-op. It does not write a new journal record and does not create a
+//! new backup cycle, so the prior commit stays authoritative. It also skips
+//! the diff-and-prompt confirmation entirely: it does not emit a prompt and
+//! never reads stdin. The interactive prompt-skip itself is unit-tested in
 //! `patina-cli/src/cmd/apply.rs` (the subprocess fixture here pins stdin to a
 //! non-TTY); this suite covers the no-write property over the real engine.
 //!
@@ -118,9 +119,9 @@ fn latest_backup_cycle(backups_root: &Utf8Path) -> Option<Utf8PathBuf> {
     cycles.pop()
 }
 
-/// The single committed journal record `<ts>.COMMIT` under `journal_dir`,
-/// or a panic if there is not exactly one. A no-op re-apply must overwrite
-/// none of it.
+/// The single committed journal record `<ts>.COMMIT` under `journal_dir`.
+/// Finding anything other than exactly one panics. A no-op re-apply must not
+/// overwrite it.
 fn sole_commit_file(journal_dir: &Utf8Path) -> Utf8PathBuf {
     let mut commits: Vec<Utf8PathBuf> = fs_err::read_dir(journal_dir.as_std_path())
         .expect("read journal dir")
@@ -139,13 +140,15 @@ fn sole_commit_file(journal_dir: &Utf8Path) -> Utf8PathBuf {
 
 /// Resolve a materialized target to the absolute, symlink-and-prefix-folded
 /// form the engine records, and therefore the form `mirror_backup_path`
-/// mirrors under the backup cycle. The engine resolves every target through
-/// `resolve_location`, which canonicalizes the parent and strips the Windows
-/// `\\?\` verbatim prefix; on macOS the fixture tempdir's `/var/...` resolves
-/// to `/private/var/...`. A raw `f.home`-derived target would not match the
-/// mirrored backup path on those platforms (Linux `/tmp` canonicalizes to a
-/// no-op). `dunce::canonicalize` mirrors the engine's `canonicalize`; the leaf
-/// must exist (these targets are materialized regular files by call time).
+/// mirrors under the backup cycle.
+///
+/// The engine resolves every target through `resolve_location`. That function
+/// canonicalizes the parent and strips the Windows `\\?\` verbatim prefix; on
+/// macOS the fixture tempdir's `/var/...` resolves to `/private/var/...`. A
+/// raw `f.home`-derived target would not match the mirrored backup path on
+/// those platforms (Linux `/tmp` canonicalizes to a no-op).
+/// `dunce::canonicalize` mirrors the engine's `canonicalize`, and the leaf
+/// must exist: these targets are materialized regular files by call time.
 fn engine_canonical(target: &Utf8Path) -> Utf8PathBuf {
     Utf8PathBuf::from_path_buf(
         dunce::canonicalize(target.as_std_path()).expect("canonicalize target"),
@@ -156,9 +159,9 @@ fn engine_canonical(target: &Utf8Path) -> Utf8PathBuf {
 #[test]
 fn fully_satisfied_reapply_writes_no_new_journal_or_backup() {
     // After a converging first apply, a second apply over the unchanged source
-    // is a full no-op. It must add no new `*.plan` / `*.COMMIT` to the journal
-    // directory, must not rewrite the existing `<ts>.COMMIT`, and must create
-    // no new backup-cycle directory. The prior commit stays the single
+    // is a full no-op. It must not add a `*.plan` / `*.COMMIT` to the journal
+    // directory, must not rewrite the existing `<ts>.COMMIT`, and must not
+    // create a backup-cycle directory. The prior commit stays the single
     // authoritative record.
     //
     // A basename-set compare alone is not enough. `current_timestamp()` is
@@ -214,11 +217,10 @@ target = "~/.rc"
         String::from_utf8_lossy(&second.stderr)
     );
 
-    // The journal directory gained no `*.plan` / `*.COMMIT` entry, and the
-    // backups directory gained no new cycle. Comparing the full entry set
+    // The journal directory did not gain a `*.plan` / `*.COMMIT` entry, and
+    // the backups directory did not gain a cycle. Comparing the full entry set
     // rather than counts also catches a stray `.progress` file. A same-second
-    // overwrite slips past this check, which is what the identity asserts
-    // below cover.
+    // overwrite slips past this check; the identity assertions catch it.
     assert_eq!(
         entry_names(&journal_dir),
         journal_before,
@@ -230,10 +232,10 @@ target = "~/.rc"
         "a no-op re-apply must add no new backup cycle"
     );
 
-    // The sole `<ts>.COMMIT` was neither rewritten nor replaced. Its path,
-    // bytes, and mtime are all unchanged, so a full write cycle, which
-    // deletes and rewrites the commit, cannot pass even when the second
-    // apply lands in the same wall-clock second.
+    // The sole `<ts>.COMMIT` was neither rewritten nor replaced: its path,
+    // bytes, and mtime are all unchanged. A full write cycle deletes and
+    // rewrites the commit, so it cannot pass here even when the second apply
+    // lands in the same wall-clock second.
     let commit_path_after = sole_commit_file(&journal_dir);
     assert_eq!(
         commit_path_after, commit_path,
@@ -305,9 +307,10 @@ mode = "copy"
 #[test]
 fn unchanged_entry_is_not_rewritten_or_backed_up_while_drift_is() {
     // Two `copy` entries. After the first apply both targets match their
-    // source. The test then drifts exactly one (`b`) and re-applies. `a`
-    // must stay byte-for-byte with its original mtime and no backup entry,
-    // while `b` is rewritten and its prior (drifted) bytes are backed up.
+    // source. The test then drifts exactly one (`b`) and re-applies. `a` must
+    // stay byte-for-byte with its original mtime, and must not appear in the
+    // backup cycle. `b` is rewritten and its prior (drifted) bytes are backed
+    // up.
     let f = Fixture::new();
     let m = f.module(
         "m",
@@ -400,14 +403,13 @@ mode = "copy"
 
 #[test]
 fn copy_tree_re_apply_restores_drift_and_backs_up_the_tree_as_a_unit() {
-    // Tree path through the real engine. A `copy-tree` with three leaves, one
-    // drifted out of band, re-applies to restore the drifted leaf. The whole
-    // target directory is backed up as a unit (the
-    // `backup_before_overwrite(<dir>)` model), so every leaf's prior bytes,
-    // including the clean ones, land in the backup cycle. The per-leaf
-    // write-skip, where a clean leaf's link or file is not re-created, is
-    // tested directly by the `copy_tree` / `tree_symlink` executor unit
-    // tests.
+    // Tree path through the real engine. A `copy-tree` whose leaves include one
+    // drifted out of band re-applies to restore that leaf. The whole target
+    // directory is backed up as a unit (the `backup_before_overwrite(<dir>)`
+    // model), so every leaf's prior bytes, the clean ones included, land in the
+    // backup cycle. The per-leaf write-skip, where a clean leaf's link or file
+    // is not re-created, is tested directly by the `copy_tree` /
+    // `tree_symlink` executor unit tests.
     let f = Fixture::new();
     let m = f.module(
         "m",
@@ -517,8 +519,8 @@ mode = "copy"
     );
 
     // `--yes` is required. A non-interactive `rollback` without it only
-    // previews and performs no mutation, which would exit 0 having changed
-    // nothing and mask the behaviour under test.
+    // previews and does not mutate. Such a run exits 0 with the filesystem
+    // untouched, so it would mask the behaviour under test.
     let rollback = f.run(&["rollback", "--yes"], &[]);
     assert_eq!(
         code(&rollback),
@@ -606,9 +608,10 @@ mode = "copy"
     );
 }
 
-/// Parse an `apply --json` stdout into its plan array, asserting the standard
-/// top-level envelope shape (`repo_root`, `profile`, `plan`, `result`) is
-/// present. Returns the `plan` rows so a caller can inspect per-entry `state`.
+/// Parse an `apply --json` stdout into its plan array. The standard top-level
+/// envelope shape (`repo_root`, `profile`, `plan`, `result`) is asserted on the
+/// way through. Returns the `plan` rows so a caller can inspect per-entry
+/// `state`.
 fn plan_rows(stdout: &[u8]) -> Vec<serde_json::Value> {
     let doc: serde_json::Value =
         serde_json::from_slice(stdout).expect("apply --json stdout must be one JSON document");
@@ -707,10 +710,10 @@ mode = "copy"
         "the drifted target must report state `update`; rows: {rows:?}"
     );
 
-    // The plan is now fully satisfied; a second --json apply over the
-    // unchanged state must be byte-identical (determinism). The test compares
-    // a re-run against the satisfied state to itself rather than against the
-    // mixed first run, since the first run mutated the filesystem.
+    // The plan is now fully satisfied, so a second --json apply over the
+    // unchanged state must be byte-identical (determinism). The first run
+    // mutated the filesystem, so the comparison is between two runs against
+    // the satisfied state rather than against that mixed first run.
     let satisfied = f.apply(&["--json", "--yes"]);
     assert_eq!(code(&satisfied), 0, "the satisfying apply must succeed");
     let again = f.apply(&["--json", "--yes"]);

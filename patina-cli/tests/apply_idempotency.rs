@@ -5,11 +5,11 @@
 
 //! Re-apply idempotency across every [`FileMode`](patina_core::FileMode). A
 //! second `patina apply` over an unchanged source must converge (exit 0) and
-//! must never mutate a repository source. Two failure modes make that worth
+//! must never mutate a repository source. Known failure modes make that worth
 //! asserting directly. The default `Symlink` mode can delete the source (see
-//! `symlink_reapply.rs`), and the atomic `SymlinkDir` mode fails with
-//! `EEXIST` on re-apply if its executor does not clear the pre-existing
-//! link. This suite locks the guarantee for all modes so neither recurs.
+//! `symlink_reapply.rs`), and an executor that does not clear the pre-existing
+//! link makes the atomic `SymlinkDir` mode fail with `EEXIST` on re-apply.
+//! This suite locks the guarantee for every mode so neither recurs.
 
 mod common;
 

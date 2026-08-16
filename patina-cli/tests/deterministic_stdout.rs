@@ -7,9 +7,9 @@
 //!
 //! Two consecutive `patina apply` invocations against
 //! an unchanged source repository produce byte-identical stdout in both
-//! `--json` and human modes. No wall-clock timestamp, PID, or random ID
-//! leaks into user-facing output. The journal `<ts>` filename is the only
-//! place a timestamp is permitted, and it never appears on stdout.
+//! `--json` and human modes. A wall-clock timestamp, PID, or random ID never
+//! reaches user-facing output. The journal `<ts>` filename is the only place a
+//! timestamp is permitted, and it never appears on stdout.
 //!
 //! Each test drives the real `patina` binary through [`common::Fixture`].
 
@@ -79,8 +79,8 @@ fn json_apply_is_byte_identical_across_two_runs() {
 
 #[test]
 fn human_apply_is_byte_identical_across_two_runs() {
-    // As in the JSON variant above, a priming apply converges the repo
-    // first, so the two measured runs share state.
+    // As in the `--json` variant, a priming apply converges the repo first, so
+    // the two measured runs share state.
     let f = rich_fixture();
 
     let prime = f.apply(&["--yes"]);

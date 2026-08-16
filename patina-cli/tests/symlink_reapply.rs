@@ -10,10 +10,10 @@
 //! tool's pre-existing symlink that already points into this repository (the
 //! dotfile-manager migration case).
 //!
-//! Both reduce to one hazard. The engine must resolve a target by its
-//! declared location and must not follow a symbolic link occupying the leaf
-//! back to the repository source. If it did, the per-file executor, which
-//! removes the target before re-linking, would delete the source and leave a
+//! Both reduce to one hazard. The engine must resolve a target by its declared
+//! location and must not follow a symbolic link occupying the leaf back to the
+//! repository source. The per-file executor removes the target before
+//! re-linking, so following that link would delete the source and leave a
 //! self-referential link.
 
 mod common;
@@ -98,9 +98,9 @@ fn single_file_symlink_re_apply_preserves_source() {
         String::from_utf8_lossy(&second.stderr)
     );
 
-    // This guards against a re-apply that canonicalizes the target through
-    // its own link back to the source, which would make the executor delete
-    // the source.
+    // This guards against a re-apply that canonicalizes the target through its
+    // own link back to the source. That resolution would make the executor
+    // delete the source.
     assert_source_intact(&source);
     assert_eq!(
         read_link_canonical(&target),

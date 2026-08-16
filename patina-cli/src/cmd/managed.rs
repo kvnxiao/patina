@@ -4,13 +4,13 @@
 //! `remove` and `promote` follow the same shape. Each takes one exclusive
 //! advisory lock for the whole command, then locates the journaled
 //! [`ExpectedTarget`](patina_core::ExpectedTarget) for an input path in the
-//! latest commit. Each then does command-specific filesystem work, and
-//! re-journals by driving the engine re-apply under [`LockPolicy::Held`]. The
-//! fresh `<ts>.COMMIT` therefore reflects the new managed state.
+//! latest commit. Each then does its own filesystem work and re-journals by
+//! driving the engine re-apply under [`LockPolicy::Held`]. The fresh
+//! `<ts>.COMMIT` records the new managed state.
 //!
-//! Two of those pieces are shared and live here: the lock acquisition and the
-//! re-apply. Neither command repeats the lock path, the engine-error mapping,
-//! or the re-plan / re-execute sequence.
+//! The lock acquisition and the re-apply live here. Neither command repeats
+//! the lock path, the engine-error mapping, or the re-plan / re-execute
+//! sequence.
 
 use anyhow::Context;
 use anyhow::Result;
@@ -29,23 +29,22 @@ use patina_core::resolve_state_dir;
 
 /// The `.tmpl` source suffix marking an implicit template-rendered target.
 ///
-/// Both commands scaffolded here read it: `remove` re-renders such a source
-/// to reconstruct last-applied content, and `promote` rejects the target
-/// outright.
+/// `remove` re-renders such a source to reconstruct the last-applied content.
+/// `promote` refuses the target outright.
 pub(crate) const TEMPLATE_SUFFIX: &str = ".tmpl";
 
 /// Resolve the per-machine state directory and acquire the engine's
 /// exclusive advisory lock at `<state>/lock`.
 ///
 /// The returned guard is held by the caller for the whole command and reused
-/// by [`rejournal`] via [`LockPolicy::Held`], so the re-apply does not
-/// self-contend against the command's own lock.
+/// by [`rejournal`] via [`LockPolicy::Held`], so the re-apply does not block on
+/// the command's own lock.
 ///
 /// # Errors
 ///
 /// Returns an error when the state directory cannot be resolved, or the lock
-/// cannot be acquired within [`exclusive_timeout`]. That is exit 1, or exit 4
-/// on a lock-acquisition timeout via the engine-error chain.
+/// cannot be acquired within [`exclusive_timeout`]. A resolution failure is
+/// exit 1; a lock timeout reaches exit 4 through the engine-error chain.
 pub(crate) fn acquire_state_and_lock() -> Result<(Utf8PathBuf, LockGuard)> {
     let state = resolve_state_dir().map_err(EngineError::from)?;
     let lock_path = state.join("lock");
@@ -56,9 +55,11 @@ pub(crate) fn acquire_state_and_lock() -> Result<(Utf8PathBuf, LockGuard)> {
 }
 
 /// Re-journal the current managed set by re-applying under the already-held
-/// lock `guard`. Plans against the present manifests (so any edit the caller
-/// made is reflected) and executes with [`LockPolicy::Held`], writing a fresh
-/// `<ts>.COMMIT` that records the new expected state.
+/// lock `guard`.
+///
+/// The plan is computed against the manifests as they stand, so an edit the
+/// caller just made is included. Execution runs under [`LockPolicy::Held`] and
+/// writes a fresh `<ts>.COMMIT` recording the new expected state.
 ///
 /// # Errors
 ///

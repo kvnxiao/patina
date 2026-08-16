@@ -6,7 +6,7 @@
 //! fresh `<ts>.COMMIT` therefore records the new content's hash as the
 //! expected hash, and `patina status` classifies the target CLEAN again.
 //!
-//! Two target shapes are refused (exit 1):
+//! These target shapes are refused (exit 1):
 //!
 //! - **Symbolic-link targets** ([`ExpectedTarget::Symlink`]). The bytes a user
 //!   sees through the link are already the repository's, so there is nothing to
@@ -16,7 +16,7 @@
 //!   into a template, so promotion cannot recover the source.
 //!
 //! A `copy-tree` target promotes the individual leaf file named, not the whole
-//! tree: the journal carries one [`ExpectedTarget`] per materialized leaf, so
+//! tree: the journal records one [`ExpectedTarget`] per materialized leaf, so
 //! the lookup resolves the single leaf and only its source is rewritten.
 //!
 //! Like `remove`, `promote` holds one exclusive advisory lock for the whole
@@ -68,7 +68,6 @@ pub async fn run(
 
     let (state, guard) = acquire_state_and_lock()?;
 
-    // Locate the journaled expectation for this target in the latest commit.
     let journal_dir = state.join("journal");
     let record = read_latest_commit(&journal_dir).map_err(EngineError::from)?;
     let expected = record.as_ref().and_then(|record| {
@@ -81,8 +80,8 @@ pub async fn run(
         return Ok(report_unmanaged(args, reporter));
     };
 
-    // Refuse the two non-promotable shapes (exit 1), before any prompt or
-    // mutation, so a refused promote never touches the filesystem.
+    // Refuse before any prompt or mutation, so a refused promote never
+    // touches the filesystem.
     if let Some(code) = refuse_unpromotable(args, expected, reporter) {
         return Ok(code);
     }
@@ -104,9 +103,9 @@ pub async fn run(
     Ok(ExitCode::Success.code())
 }
 
-/// Refuse the two non-promotable target shapes. Returns `Some(exit code)` when
-/// the target is a symlink or template-rendered (the caller returns it); `None`
-/// when the target is a promotable copy-mode `Content` target.
+/// Refuse a target `promote` cannot reconcile. A symbolic-link or
+/// template-rendered target returns `Some(exit code)`, and the caller
+/// propagates it. A promotable copy-mode `Content` target returns `None`.
 fn refuse_unpromotable(
     args: &PromoteArgs,
     expected: &ExpectedTarget,
@@ -182,9 +181,10 @@ fn confirm(
 
 /// Report the unmanaged-target refusal (exit 1) and return the exit code.
 ///
-/// The message names the target and the three discovery sources. It repeats
-/// the established discovery-error wording, so `remove` and `promote` explain
-/// an unmanaged path the same way.
+/// The message names the target and every discovery source: `$PATINA_REPO`,
+/// the walk-up from the current directory, and the persisted default. It
+/// repeats the established discovery-error wording, so `remove` and `promote`
+/// explain an unmanaged path the same way.
 fn report_unmanaged(args: &PromoteArgs, reporter: &mut impl Reporter) -> i32 {
     let message = format!(
         "{} is not managed by patina (no journaled apply lists it). \
