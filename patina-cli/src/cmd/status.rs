@@ -7,8 +7,8 @@
 //! live in `patina_core::status`; this module is presentation and control flow.
 //!
 //! `status` does not write, and exits 0 on any successful read. A shared-lock
-//! timeout reaches the user as a stderr warning (the read-only escape hatch)
-//! and leaves the exit code alone.
+//! timeout is printed as a stderr warning (the read-only escape hatch) and does
+//! not change the exit code.
 
 use crate::cli::StatusArgs;
 use crate::exit_code::ExitCode;
@@ -36,7 +36,7 @@ pub async fn run(args: &StatusArgs, reporter: &mut impl Reporter) -> Result<i32>
         .await
         .context("failed to compute status")?;
 
-    // Every warning, lock timeout included, goes to stderr in both output
+    // Every warning, lock timeout included, is printed to stderr in both output
     // formats, so stdout stays a single parseable JSON document.
     for warning in &report.warnings {
         reporter.warn(warning);
@@ -112,8 +112,8 @@ fn render_human(report: &StatusReport, reporter: &mut impl Reporter) {
 /// The clean / drifted / missing / orphaned counters on one line, each
 /// non-zero counter painted in its state's color.
 ///
-/// A zero counter stays plain. Painting it would spend the state's color on
-/// the absence of that state, and a clean repository has to read at a glance.
+/// A zero counter stays plain. Painting it would use the state's color for the
+/// absence of that state, and a clean repository has to be legible at a glance.
 fn render_summary(report: &StatusReport, styles: &Styles) -> String {
     [
         (TargetState::Clean, report.clean),
@@ -185,7 +185,7 @@ mod tests {
     }
 
     #[test]
-    fn json_envelope_carries_counters_and_files() {
+    fn json_envelope_sets_counters_and_files() {
         let report = report_with_entries();
         let doc: serde_json::Value =
             serde_json::from_str(&json_envelope(&report)).expect("valid JSON");
@@ -223,7 +223,7 @@ mod tests {
     }
 
     #[test]
-    fn warnings_route_to_stderr_in_both_formats() {
+    fn warnings_are_printed_to_stderr_in_both_formats() {
         let mut report = report_with_entries();
         report.warnings.push("lock timed out".to_owned());
         let mut r = BufferReporter::new();
@@ -263,8 +263,8 @@ mod tests {
         report
     }
 
-    /// A stripped render shows the state word and nothing else, so each row
-    /// must lead with its own label.
+    /// A stripped render shows only the state word, so each row must lead with
+    /// its own label.
     #[test]
     fn every_state_leads_its_row_with_its_own_label() {
         let mut r = BufferReporter::new();
@@ -276,9 +276,9 @@ mod tests {
         }
     }
 
-    /// A non-zero counter is painted so a clean repository reads at a glance; a
-    /// zero counter stays plain so the color marks a state that is present, not
-    /// one that is merely named.
+    /// A non-zero counter is painted, so a clean repository is legible at a
+    /// glance. A zero counter stays plain, so the color marks a state that is
+    /// present rather than one that is only listed.
     #[test]
     fn only_a_non_zero_counter_is_painted() {
         let report = StatusReport {
@@ -306,7 +306,7 @@ mod tests {
     }
 
     #[test]
-    fn pending_remotes_reach_stdout_in_both_renderers() {
+    fn both_renderers_include_every_pending_remote() {
         let mut report = report_with_entries();
         report.remotes_pending = vec!["humanizer".to_owned(), "prompts".to_owned()];
 
@@ -325,7 +325,7 @@ mod tests {
                 .and_then(serde_json::Value::as_array)
                 .map(|names| names.iter().filter_map(serde_json::Value::as_str).collect()),
             Some(vec!["humanizer", "prompts"]),
-            "the envelope must carry the whole pending set, in order: {doc}"
+            "the envelope must include the whole pending set, in order: {doc}"
         );
     }
 
@@ -347,7 +347,7 @@ mod tests {
     }
 
     #[test]
-    fn an_empty_pending_set_adds_no_line() {
+    fn an_empty_pending_set_does_not_add_a_line() {
         // Counting lines rather than matching the notice wording: the wording
         // belongs to the notice subsystem and may change, while the
         // one-line-or-nothing shape is this renderer's own.
@@ -362,7 +362,7 @@ mod tests {
         assert_eq!(
             noisy.out.lines().count(),
             quiet.out.lines().count() + 1,
-            "the pending set must add exactly one line, and none when it is empty:\n{}\n---\n{}",
+            "a non-empty pending set must add exactly one line:\n{}\n---\n{}",
             quiet.out,
             noisy.out
         );

@@ -98,9 +98,9 @@ impl Fixture {
     /// sentinels into. The resolved state root is platform-dependent:
     /// Linux/Windows honour `XDG_STATE_HOME` / `LOCALAPPDATA` (→ `self.state`),
     /// while macOS ignores both and uses `$HOME/Library/Application Support`
-    /// (→ `self.home`). Resolve it from this fixture's own isolated env values
-    /// (the same ones `invoke` passes to the subprocess) so the path matches
-    /// wherever the binary actually wrote the journal.
+    /// (→ `self.home`). To match the path the binary wrote the journal to,
+    /// resolve it from this fixture's own isolated env values, the same ones
+    /// `invoke` passes to the subprocess.
     fn journal_dir(&self) -> Utf8PathBuf {
         patina_core::state_dir::resolve_with_env(HostOs::current(), |name| match name {
             "XDG_STATE_HOME" | "LOCALAPPDATA" => Some(self.state.as_str().to_owned()),

@@ -15,9 +15,10 @@
 //!   Templating is non-invertible: the rendered bytes cannot be turned back
 //!   into a template, so promotion cannot recover the source.
 //!
-//! A `copy-tree` target promotes the individual leaf file named, not the whole
-//! tree: the journal records one [`ExpectedTarget`] per materialized leaf, so
-//! the lookup resolves the single leaf and only its source is rewritten.
+//! A `copy-tree` target promotes only the leaf file given on the command line,
+//! not the whole tree: the journal records one [`ExpectedTarget`] per
+//! materialized leaf, so the lookup resolves the single leaf and only its
+//! source is rewritten.
 //!
 //! Like `remove`, `promote` holds one exclusive advisory lock for the whole
 //! command and re-journals under
@@ -51,8 +52,8 @@ use patina_core::read_latest_commit;
 ///
 /// # Errors
 ///
-/// Returns an error (exit 1, or exit 4 on a lock-acquisition timeout via the
-/// engine-error chain) when: the state directory cannot be resolved; the lock
+/// Returns an error (exit 1, or exit 4 on a lock-acquisition timeout through
+/// the engine-error chain) when: the state directory cannot be resolved; the lock
 /// cannot be acquired; the target is not currently managed; the target is a
 /// symlink or template-rendered (refused); the target's bytes cannot be read;
 /// the repository source cannot be written; or the re-apply fails.
@@ -146,8 +147,8 @@ fn refuse_unpromotable(
     }
 }
 
-/// Report a refusal through the reporter: a JSON error envelope under `--json`,
-/// otherwise a warning line. The message goes to stderr either way.
+/// Report a refusal through the reporter: a JSON error envelope on stdout under
+/// `--json`, otherwise a warning line on stderr.
 fn report_refusal(args: &PromoteArgs, error: &str, message: &str, reporter: &mut impl Reporter) {
     if args.json {
         reporter.json(&error_envelope(error, args.target.as_str(), message));

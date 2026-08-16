@@ -1065,7 +1065,7 @@ mod tests {
         );
         assert!(
             list_row(&view, false, &plain).ends_with("\thttps://example.invalid/r\n"),
-            "a remote at its pin must carry no tag"
+            "a remote at its pin must render without a tag"
         );
     }
 
@@ -1122,7 +1122,7 @@ mod tests {
             Action::Held {
                 eligible_at: Some(1_786_456_800)
             },
-            "a cooldown must carry the instant it becomes eligible"
+            "a cooldown must include the instant it becomes eligible"
         );
         assert!(
             inv.lockfile.is_empty(),
@@ -1130,8 +1130,8 @@ mod tests {
         );
     }
 
-    /// The status cell is the only place a human learns why a pin did not
-    /// move, so each action has to produce its own wording. The integration
+    /// The status cell is the only place the reason a pin did not move
+    /// appears, so each action has to produce its own wording. The integration
     /// suite pins the `already at`, `holding`, and `min_age` phrasings, and a
     /// cooldown must include the instant it becomes eligible.
     #[test]

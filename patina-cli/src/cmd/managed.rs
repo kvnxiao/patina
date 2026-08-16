@@ -44,7 +44,7 @@ pub(crate) const TEMPLATE_SUFFIX: &str = ".tmpl";
 ///
 /// Returns an error when the state directory cannot be resolved, or the lock
 /// cannot be acquired within [`exclusive_timeout`]. A resolution failure is
-/// exit 1; a lock timeout reaches exit 4 through the engine-error chain.
+/// exit 1; a lock timeout maps to exit 4 through the engine-error chain.
 pub(crate) fn acquire_state_and_lock() -> Result<(Utf8PathBuf, LockGuard)> {
     let state = resolve_state_dir().map_err(EngineError::from)?;
     let lock_path = state.join("lock");

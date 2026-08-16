@@ -2,7 +2,7 @@
 //!
 //! Parses the clap-derived command surface ([`cli`]) and dispatches to a
 //! subcommand in [`cmd`]. Every subcommand returns an `anyhow::Result<i32>`,
-//! and [`cli::resolve_exit_code`] maps that to the integer `main` hands to
+//! and [`cli::resolve_exit_code`] maps that to the integer `main` passes to
 //! [`std::process::exit`].
 
 mod cli;
@@ -21,8 +21,8 @@ use std::io::IsTerminal;
 
 /// Detect whether stdin is a terminal.
 ///
-/// A `NonInteractive` result suppresses every prompt. Each command then
-/// decides on its own whether that previews, declines, or refuses.
+/// A `NonInteractive` result suppresses every prompt. Each command chooses its
+/// own non-interactive behaviour: preview, decline, or refuse.
 fn detect_tty() -> Tty {
     if std::io::stdin().is_terminal() {
         Tty::Interactive

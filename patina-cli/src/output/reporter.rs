@@ -2,26 +2,25 @@
 //! user-facing output in `patina-cli`.
 //!
 //! Every byte the CLI prints for the user goes through a [`Reporter`]: the
-//! rendered diff, the JSON envelope, prompt text, and warnings. Logs (via
-//! `tracing`) are a separate channel and never come here. One trait for all
-//! output gives a test a single seam. A test asserts the deterministic-stdout
-//! property against that seam, and captures a command's output without
-//! spawning a subprocess.
+//! rendered diff, the JSON envelope, prompt text, and warnings. `tracing` logs
+//! are a separate channel with its own sink. One trait covers all output, so a
+//! test has a single seam: it asserts the deterministic-stdout property against
+//! that seam, and captures a command's output without spawning a subprocess.
 //!
-//! Two implementations ship:
+//! The implementations:
 //!
 //! - [`StreamReporter`] is the production wiring. It writes rendered blocks /
 //!   JSON to stdout and prompts / warnings / errors to stderr, through an
 //!   `anstream` auto-stream. The auto-stream strips ANSI styling whenever the
 //!   destination is not a terminal, or `--color never` / `NO_COLOR` is in
-//!   effect. Styling enters from the palette the reporter supplies and from the
-//!   warn / error / prompt / confirm paths. The [`anstream::ColorChoice`]
-//!   passed at construction decides whether that styling survives.
+//!   effect. The palette the reporter supplies and the warn / error / prompt /
+//!   confirm paths are what apply styling. The [`anstream::ColorChoice`] passed
+//!   at construction decides whether that styling is written or stripped.
 //! - `BufferReporter` captures both streams into in-memory buffers, so a test
 //!   can assert on exactly what would have been printed. It paints wherever the
 //!   stream reporter paints, from a palette fixed at construction.
-//!   `BufferReporter::new` is plain, so a test asserting on bytes sees no
-//!   escapes; `BufferReporter::colored` uses the production palette.
+//!   `BufferReporter::new` is plain, so a byte-level assertion runs against text
+//!   with no escapes. `BufferReporter::colored` uses the production palette.
 //!   `assert_color_is_additive` drives a renderer through both palettes and
 //!   compares the renders.
 
@@ -37,29 +36,29 @@ use std::io::Write;
 pub trait Reporter {
     /// The palette a renderer paints with.
     ///
-    /// The palette belongs to the sink because the sink decides whether
-    /// escapes survive. The return is by value, since `Styles` is `Copy`:
+    /// The sink decides whether escapes are written, so the palette belongs to
+    /// the sink. The return is by value, since `Styles` is `Copy`:
     /// reading the palette leaves no borrow outstanding against the
     /// `&mut self` writes that follow.
     fn styles(&self) -> Styles;
     /// Emit an already-painted block to the out stream verbatim, newlines and
-    /// all. Every multi-line surface on stdout goes through here, including
-    /// the rendered diff. Add the trailing newline yourself.
+    /// all. Every multi-line surface on stdout calls this, including the
+    /// rendered diff. Add the trailing newline yourself.
     fn out_block(&mut self, rendered: &str);
     /// Emit the JSON envelope to the out stream, followed by a newline.
     fn json(&mut self, document: &str);
     /// Emit a one-line status / summary message to the out stream.
     fn line(&mut self, message: &str);
-    /// Emit a free-form input prompt (no trailing newline) to the err stream
-    /// so it does not pollute the diff on stdout. Styled in the prompt color
-    /// to signal that input is awaited. Use [`Reporter::confirm`] for a
-    /// yes/no question.
+    /// Emit a free-form input prompt (no trailing newline) to the err stream so
+    /// it does not mix into the diff on stdout. Styled in the prompt color to
+    /// signal that input is awaited. Use [`Reporter::confirm`] for a yes/no
+    /// question.
     fn prompt(&mut self, text: &str);
     /// Emit a `<question> [y/N] ` confirmation prompt (no trailing newline) to
-    /// the err stream. The production reporter colors the prose and
-    /// highlights the affirmative `y` and default `N` keys distinctly; `y` /
-    /// `Y` remain the only affirmative answers. Under a plain palette the
-    /// bytes are `"<question> [y/N] "`.
+    /// the err stream. The production reporter colors the prose and highlights
+    /// the affirmative `y` and default `N` keys distinctly. Under a plain
+    /// palette the bytes are `"<question> [y/N] "`. `y` and `Y` are the only
+    /// affirmative answers under either palette.
     fn confirm(&mut self, question: &str);
     /// Emit a warning to the err stream.
     fn warn(&mut self, message: &str);
@@ -89,7 +88,7 @@ pub struct StreamReporter {
 impl StreamReporter {
     /// Construct a reporter with the given color policy. The palette is always
     /// the colored one; `choice` (plus the per-stream terminal check inside
-    /// `anstream`) decides whether the styling survives to the terminal.
+    /// `anstream`) decides whether the styling is written or stripped.
     #[must_use = "construct the reporter to route user-facing output through it"]
     pub fn new(choice: ColorChoice) -> Self {
         Self {
@@ -125,9 +124,9 @@ fn compose_confirm(styles: &Styles, question: &str) -> String {
 impl StreamReporter {
     /// Write `message` to stderr through the auto-stream, wrapped in `style`.
     ///
-    /// An empty style renders to zero bytes, so the plain palette is safe here
-    /// too. `newline` appends a trailing `\n`; a prompt omits it so the answer
-    /// is typed on the same line.
+    /// An empty style renders to zero bytes, so a plain palette writes `message`
+    /// verbatim. `newline` appends a trailing `\n`; a prompt omits it so the
+    /// answer is typed on the same line.
     fn styled_err(&self, style: Style, message: &str, newline: bool) {
         let mut err = AutoStream::new(std::io::stderr().lock(), self.choice);
         let nl = if newline { "\n" } else { "" };
@@ -205,15 +204,15 @@ pub struct BufferReporter {
 
 #[cfg(test)]
 impl BufferReporter {
-    /// Construct an empty capturing reporter over the plain palette, so a test
-    /// asserting on captured bytes sees no escape sequences.
+    /// Construct an empty capturing reporter over the plain palette, so the
+    /// captured bytes contain no escape sequences.
     #[must_use = "construct the reporter to capture user-facing output"]
     pub fn new() -> Self {
         Self::with_styles(&Styles::plain())
     }
 
     /// Construct an empty capturing reporter over the production palette, for a
-    /// test that asserts on what a terminal would receive.
+    /// test that asserts on the bytes written to a terminal.
     #[must_use = "construct the reporter to capture user-facing output"]
     pub fn colored() -> Self {
         Self::with_styles(&Styles::colored())
@@ -230,12 +229,12 @@ impl BufferReporter {
 
 /// Assert that color is purely additive over whatever `render` prints.
 ///
-/// The contract belongs to the output layer, so it is stated here once rather
-/// than in every painting surface. Painting a cell's padding along with the
+/// The contract belongs to the output layer, so this function states it once
+/// rather than every painting surface repeating it. Painting a cell's padding along with the
 /// cell would misalign piped and `--color never` output. Anything a line
 /// reports through color alone disappears wherever ANSI is stripped. Both
-/// streams are checked, so a renderer cannot pass by writing its painted bytes
-/// to the one nobody looked at.
+/// streams are checked, so a renderer cannot pass by painting only one of
+/// them.
 #[cfg(test)]
 pub fn assert_color_is_additive(render: impl Fn(&mut BufferReporter)) {
     let mut plain = BufferReporter::new();
@@ -245,7 +244,7 @@ pub fn assert_color_is_additive(render: impl Fn(&mut BufferReporter)) {
 
     assert!(
         colored.out.contains('\u{1b}') || colored.err.contains('\u{1b}'),
-        "the colored render must carry escapes, or it is painting nothing:\nout: {:?}\nerr: {:?}",
+        "the colored render must contain escapes, or it is painting nothing:\nout: {:?}\nerr: {:?}",
         colored.out,
         colored.err
     );
@@ -309,7 +308,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn blocks_and_json_go_to_out_prompt_warn_error_go_to_err() {
+    fn blocks_and_json_write_to_out_prompts_and_diagnostics_write_to_err() {
         let mut r = BufferReporter::new();
         r.out_block("D");
         r.line("L");
@@ -326,8 +325,8 @@ mod tests {
     }
 
     /// The capturing reporter must paint wherever the stream reporter paints.
-    /// Otherwise a renderer that reports only through `warn` shows no escapes,
-    /// and `assert_color_is_additive` stops covering it.
+    /// Otherwise a renderer that reports only through `warn` does not produce
+    /// escapes, and `assert_color_is_additive` stops covering it.
     #[test]
     fn a_colored_buffer_paints_the_same_paths_the_stream_does() {
         let mut r = BufferReporter::colored();
@@ -362,14 +361,15 @@ mod tests {
     }
 
     #[test]
-    fn confirm_colored_highlights_y_and_n_distinctly_but_strips_to_plain() {
+    fn confirm_colored_highlights_y_and_n_distinctly_and_strips_to_plain() {
         // Color must stay purely additive over the stable bytes. The `y` and
-        // `N` wear styles distinct from the prose and from each other.
-        // Stripping every escape still reduces the whole to the plain form.
+        // `N` are painted in styles distinct from the prose and from each
+        // other. Stripping every escape still reduces the whole to the plain
+        // form.
         let colored = compose_confirm(&Styles::colored(), "Apply?");
         assert!(
             colored.contains('\u{1b}'),
-            "colored confirm must carry escapes: {colored:?}"
+            "colored confirm must contain escapes: {colored:?}"
         );
         let affirm = Styles::colored().prompt_affirm.render().to_string();
         let default = Styles::colored().prompt_default.render().to_string();

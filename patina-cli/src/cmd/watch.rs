@@ -423,7 +423,7 @@ mod tests {
             reporter
                 .err
                 .contains("service not installed; run `patina watch install` first"),
-            "stderr must carry the not-installed message, got: {}",
+            "stderr must include the not-installed message, got: {}",
             reporter.err
         );
     }
@@ -507,7 +507,7 @@ mod tests {
             reporter
                 .err
                 .contains("service not installed; run `patina watch install` first"),
-            "stderr must carry the exact not-installed message, got: {}",
+            "stderr must include the exact not-installed message, got: {}",
             reporter.err
         );
     }
@@ -519,7 +519,7 @@ mod tests {
         assert_eq!(code, ExitCode::Generic.code());
         assert!(
             reporter.err.contains("already installed"),
-            "stderr must carry the already-installed message, got: {}",
+            "stderr must include the already-installed message, got: {}",
             reporter.err
         );
     }

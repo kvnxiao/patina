@@ -21,12 +21,12 @@ pub mod watch;
 /// The manifest filename, at the repository root and in every module.
 pub(crate) const MANIFEST_FILENAME: &str = "patina.toml";
 
-/// Acquire the shared lock. On failure, warn and proceed: this is the
-/// read-only escape hatch every non-mutating subcommand uses.
+/// Acquire the shared lock. On failure, warn and proceed: the read-only escape
+/// hatch every non-mutating subcommand uses.
 ///
 /// `quiet` suppresses the warning for the one surface that must leave stderr
-/// clean, the `remote check --hook` prompt path. A timeout on that path means
-/// an apply holds the exclusive lock. Without `quiet`, every new shell would
+/// clean, the `remote check --hook` prompt path. That path times out while an
+/// apply holds the exclusive lock, so without `quiet` every new shell would
 /// print the warning until the apply finishes.
 pub(crate) fn shared_lock(
     lock_path: &camino::Utf8Path,

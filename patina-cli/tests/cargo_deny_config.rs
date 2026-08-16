@@ -11,8 +11,8 @@
 //!    and `sources`.
 //! 2. The `[licenses].allow` allowlist contains no GPL-family licence, so a
 //!    GPL-3.0 dependency is rejected by `cargo deny check`. Whether the binary
-//!    actually exits non-zero on such a tree is a CI-execution fact; this test
-//!    scripts the policy that makes it so.
+//!    exits non-zero on such a tree is a CI-execution fact; this test asserts
+//!    the policy that produces it.
 //! 3. `[bans].wildcards` is set to `"deny"`, so a `some-crate = "*"` dependency
 //!    is rejected.
 //!

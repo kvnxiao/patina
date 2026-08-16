@@ -1,8 +1,7 @@
 //! The clap-derived command-line surface for `patina`.
 //!
-//! The derive surface parses and nothing more. The command logic lives in
-//! [`crate::cmd`]. A unit test calls it there directly, with no clap in the
-//! loop.
+//! This module only parses. The command logic lives in [`crate::cmd`], where
+//! the unit tests call it directly without clap.
 
 use crate::exit_code::ExitCode;
 use crate::output::reporter::Reporter;
@@ -14,23 +13,24 @@ use clap::ValueEnum;
 
 /// Resolve a command's outcome to a process exit code.
 ///
-/// The exit-code contract lives in one place: every subcommand terminates
-/// here. A subcommand that reaches a terminal state under its own control (a
-/// successful apply, an aborted-by-hook apply, a declined prompt) returns
-/// `Ok(code)`. That code becomes the process status verbatim.
+/// Every subcommand terminates here, so the exit-code contract has one site. A
+/// subcommand that reaches a terminal state under its own control (a successful
+/// apply, an apply a hook aborted, a declined prompt) returns `Ok(code)`, and
+/// that code becomes the process status verbatim.
 ///
-/// An `Err` is an engine-level failure. Every cause in its chain goes to the
-/// reporter's err stream. [`ExitCode::from_error_chain`] then picks the code:
-/// a lock timeout is `4`, every other failure `1`.
+/// An `Err` is an engine-level failure. Each cause in the chain is printed to
+/// the reporter's err stream, then [`ExitCode::from_error_chain`] picks the
+/// code: a lock timeout is `4`, every other failure `1`.
 ///
-/// [`crate::main`] hands the returned `i32` to [`std::process::exit`].
+/// [`crate::main`] passes the returned `i32` to [`std::process::exit`].
 #[must_use = "the returned exit code is the process's terminal status"]
 pub fn resolve_exit_code(outcome: anyhow::Result<i32>, reporter: &mut impl Reporter) -> i32 {
     match outcome {
         Ok(code) => code,
         Err(error) => {
-            // The outermost error is the context wrapper. Only printing the
-            // whole chain reaches the root cause, the offending TOML line.
+            // The outermost error is only the context wrapper. The root cause,
+            // the offending TOML line, is at the end of the chain, so every
+            // cause is printed.
             for cause in error.chain() {
                 reporter.error(&cause.to_string());
             }
@@ -55,9 +55,9 @@ pub struct Cli {
 
 /// The `--color` flag: when to emit ANSI styling.
 ///
-/// [`ColorChoiceArg::choice`] resolves it to an [`anstream::ColorChoice`].
-/// The reporter's auto-stream reads that policy to decide whether styling
-/// survives to the destination stream.
+/// [`ColorChoiceArg::choice`] resolves it to an [`anstream::ColorChoice`]. The
+/// reporter's auto-stream reads that policy to decide whether it styles the
+/// destination stream.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum ColorChoiceArg {
     /// Color when the stream is a terminal; strip to plain text when piped,
@@ -139,8 +139,9 @@ pub enum Command {
     #[cfg(windows)]
     Defender(DefenderArgs),
 
-    /// Debugging utilities. Hidden from the top-level help summary but
-    /// documented; `journal` decodes a binary plan file post-mortem.
+    /// Debugging utilities, hidden from the top-level help summary. `journal`
+    /// decodes a binary plan file post-mortem, and `drift-cache` decodes the
+    /// watcher's drift cache.
     #[command(hide = true, subcommand, disable_help_subcommand = true)]
     Debug(DebugCommand),
 }
@@ -175,12 +176,14 @@ pub struct WatchArgs {
 /// Background-service lifecycle subcommands under `patina watch`.
 ///
 /// Each operates on the per-OS service registration through the
-/// `patina_core::watch::service` backend. Every subcommand but `status`
-/// acquires the exclusive advisory lock; `status` acquires the shared one.
+/// `patina_core::watch::service` backend. `status` is read-only and takes the
+/// shared lock. When the shared lock times out, `status` warns and proceeds
+/// without it. Every other subcommand takes the exclusive lock, and a timeout
+/// on that one is exit `4`.
 #[derive(Debug, Subcommand, Clone)]
 pub enum WatchCommand {
     /// Register the watcher as a per-user background service that launches at
-    /// login. Exits 1 if already installed.
+    /// login. When the service is already installed, exits 1.
     Install,
 
     /// Stop the running watcher and remove the service registration.
@@ -207,10 +210,10 @@ pub enum WatchCommand {
 
 /// Flags for `patina remote`.
 ///
-/// The verbs split by what they write. `update` and `prune` mutate (the
-/// working-tree lockfile, the per-machine cache) and take the exclusive lock.
-/// `list` and `check` take the shared lock: `list` does not write, and `check`
-/// writes only the per-machine notice files it alone owns.
+/// The verbs split by what they write. `update` and `prune` mutate the
+/// working-tree lockfile and the per-machine cache, so both take the exclusive
+/// lock. `list` and `check` take the shared lock: `list` does not write, and
+/// `check` writes only the per-machine notice files it alone owns.
 #[derive(Debug, Args)]
 #[command(disable_help_subcommand = true)]
 pub struct RemoteArgs {
@@ -228,7 +231,7 @@ pub struct RemoteArgs {
 #[derive(Debug, Subcommand, Clone)]
 pub enum RemoteCommand {
     /// Report each remote's URL, ref, pinned rev, and pending-update state.
-    /// Read-only, and offline: the pending state comes from the last
+    /// Read-only and offline: the pending state is read from the last
     /// `patina remote check`.
     List,
 
@@ -236,8 +239,8 @@ pub enum RemoteCommand {
     /// refresh the pending-update notice. Does not download objects. Every pin
     /// is left as recorded.
     Check {
-        /// Run as a shell hook: self-throttle to at most one real check per day
-        /// and stay completely silent on success.
+        /// Run as a shell hook: self-throttle to at most one real check per
+        /// day, and stay silent on success.
         #[arg(long)]
         hook: bool,
     },
@@ -295,7 +298,7 @@ pub struct DebugDriftCacheArgs {
 #[derive(Debug, Args, Default)]
 pub struct InitArgs {
     /// Target directory to initialize. Defaults to the current working
-    /// directory when omitted. Created if it does not yet exist.
+    /// directory. A missing directory is created.
     #[arg(value_name = "path")]
     pub path: Option<Utf8PathBuf>,
 
@@ -315,9 +318,9 @@ pub struct InitArgs {
 /// form a mutually-exclusive clap group: declaring more than one is a usage
 /// error (exit 2). Which flags are legal depends on the source kind.
 /// `--symlink` and `--copy` apply to either a file or a directory source;
-/// `--template` is file-only; `--symlink-tree` is directory-only. `cmd::add`
-/// checks the flag against the kind at use-site and raises a typed error,
-/// because clap cannot see the source's on-disk kind.
+/// `--template` is file-only; `--symlink-tree` is directory-only. clap cannot
+/// see the source's on-disk kind, so `cmd::add` checks the flag against the
+/// kind at use-site and raises a typed error.
 #[derive(Debug, Args, Default)]
 #[command(group = clap::ArgGroup::new("mode").multiple(false))]
 #[expect(
@@ -421,9 +424,9 @@ pub struct RollbackArgs {
 
 /// Flags for `patina doctor`.
 ///
-/// The read-only path (no `--fix`) acquires only the shared lock and emits
-/// findings; `--fix` acquires the exclusive lock and interactively
-/// remediates fixable findings, with `--yes` auto-accepting every prompt.
+/// The read-only path (no `--fix`) takes only the shared lock and emits
+/// findings. `--fix` takes the exclusive lock and interactively remediates
+/// fixable findings. `--yes` auto-accepts every prompt.
 #[derive(Debug, Args, Default)]
 pub struct DoctorArgs {
     /// Interactively remediate fixable findings instead of only reporting
@@ -464,9 +467,13 @@ pub struct ApplyArgs {
     #[arg(long)]
     pub force_deploy: bool,
 
-    /// Run `patina remote update` for every remote before applying. A pin bump
-    /// and its consent diff then happen in one sitting. When a remote is
-    /// unreachable, the run degrades to a plain apply with a warning.
+    /// Run `patina remote update` for every remote before applying, so one run
+    /// covers both the pin bump and the consent diff for its new bytes. When a
+    /// remote is unreachable, the run warns and applies the pins already
+    /// committed. This
+    /// flag is ignored with `--json`, and skipped on a non-interactive preview
+    /// without `--yes`. The apply's own `--yes` does not accept the update
+    /// gate: a flagged bump is still held or prompted.
     #[arg(long)]
     pub update: bool,
 

@@ -215,7 +215,7 @@ fn prune_stale_pins(
 /// Planning has already succeeded, so the lockfile was not needed by any entry
 /// this run. Refusing to apply over one that will not parse would break the
 /// guarantee that a stray `patina.lock` costs a repository nothing until an
-/// entry actually selects a remote. If an entry does select one, the engine
+/// entry selects a remote. If an entry does select one, the engine
 /// raises the parse error on its own read.
 fn stale_pins(
     path: &camino::Utf8Path,
@@ -603,8 +603,8 @@ mod tests {
         }
     }
 
-    /// A scripted reader yielding a fixed sequence of answer lines; used for
-    /// the non-no-op interactive path that genuinely prompts.
+    /// A scripted reader yielding a fixed sequence of answer lines, for the
+    /// non-no-op interactive path that prompts.
     struct ScriptedReader {
         lines: std::collections::VecDeque<String>,
     }

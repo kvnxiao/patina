@@ -9,7 +9,7 @@
 //! Output is deterministic: operations render in plan order, and the rendered
 //! string contains no timestamps, PIDs, or absolute state-dir paths (only the
 //! plan's source path and the target the user declared). The
-//! byte-identical-stdout property rests on that determinism.
+//! byte-identical-stdout property depends on that determinism.
 //!
 //! Some content cannot be line-diffed: a present-but-non-UTF-8 (binary) source
 //! or target, or an unreadable file. Each renders as a compact, deterministic
@@ -22,7 +22,7 @@
 //! materialized that the current plan no longer manages: an entry dropped from
 //! a `patina.toml`, a `when` flipped false, a leaf a new `ignore` pattern now
 //! excludes. Those orphan targets are not [`ResolvedPlan`] operations, so the
-//! CLI passes them in alongside. Each renders as a `remove <target>` block
+//! CLI passes them to [`render`] separately. Each renders as a `remove <target>` block
 //! whose deleted body is the link it pointed at or its current content, so
 //! every reap appears in the consent diff.
 
@@ -43,7 +43,8 @@ use std::fmt::Write as _;
 ///
 /// `orphans` is the reap set the engine would delete this run
 /// ([`patina_core::plan_orphans`]): targets a prior apply materialized that
-/// the current plan no longer manages, each paired with why. They are not
+/// the current plan no longer manages, each paired with the reason it is
+/// reaped. They are not
 /// [`ResolvedPlan`] operations, so the caller passes them in; each renders as a
 /// `remove` block after the create/update blocks and before the unchanged
 /// summary.
@@ -64,7 +65,7 @@ pub fn render(resolved: &ResolvedPlan, orphans: &[Orphan]) -> Result<String, Str
     let vars = &resolved.resolver;
     let styles = Styles::colored();
 
-    // `Unchanged` targets reach the reader as one count rather than a block.
+    // `Unchanged` targets render as one count rather than a block.
     // A tree mode counts materialized leaves, so a drifted tree renders blocks
     // for its drifted leaves and adds its clean leaves to `unchanged`.
     let mut unchanged = 0usize;
@@ -79,8 +80,8 @@ pub fn render(resolved: &ResolvedPlan, orphans: &[Orphan]) -> Result<String, Str
                     )?;
                 }
             } else {
-                // Tree mode: route per materialized leaf so a single drifted
-                // leaf does not pull its clean siblings into the diff body.
+                // Tree mode: render per materialized leaf, so a single drifted
+                // leaf does not put its clean siblings in the diff body.
                 for leaf in &disposition.leaves {
                     if leaf.disposition == Disposition::Unchanged {
                         unchanged += 1;
@@ -174,8 +175,8 @@ fn render_leaf(
 /// the compact placeholder, under the same never-imply-empty rule
 /// [`content_diff`] uses.
 ///
-/// The header includes the reason because a reap is the only block that deletes
-/// something the user did not ask for in this run. Without the reason, a leaf
+/// A reap is the only block that deletes something the user did not ask for in
+/// this run, so the header includes the reason. Without the reason, a leaf
 /// dropped by a pattern the author wrote minutes ago reads as an unexplained
 /// removal.
 fn render_removal(out: &mut String, orphan: &Orphan, styles: &Styles) {
@@ -199,8 +200,8 @@ enum DiffContent {
     Text(String),
     /// Present but not valid UTF-8, or otherwise unreadable. Rendered as a
     /// compact deterministic placeholder instead of a misleading empty diff.
-    /// The preview must never imply a binary target is empty, because the diff
-    /// drives the apply consent decision.
+    /// The diff drives the apply consent decision, so the preview must never
+    /// imply a binary target is empty.
     Opaque(String),
 }
 
@@ -248,8 +249,8 @@ fn read_for_diff(path: &Utf8Path) -> DiffContent {
 /// cannot be line-diffed (binary / unreadable), render a compact placeholder
 /// pair instead of a misleading empty/full-insert diff.
 ///
-/// `header` arrives fully formed rather than as an action plus a path, because
-/// a reap header ends with a reason tag no other caller wants.
+/// A reap header ends with a reason tag no other caller wants, so `header` is
+/// passed fully formed rather than as an action plus a path.
 fn content_diff(
     out: &mut String,
     header: &str,
@@ -266,9 +267,9 @@ fn content_diff(
                 ChangeTag::Insert => (styles.insert, "  + "),
                 ChangeTag::Equal => (styles.context, "    "),
             };
-            // `similar` yields one line per change. That value keeps the
-            // trailing newline when the source line had one. Stripping it puts
-            // the style reset before the newline. `paint_line` then re-appends
+            // `similar` yields one line per change. When the source line had a
+            // trailing newline, that value keeps it. Stripping it puts the
+            // style reset before the newline, and `paint_line` re-appends
             // exactly one, so an unterminated final line still ends with one.
             let value = change.value();
             let line = value.strip_suffix('\n').unwrap_or(value);
@@ -419,7 +420,7 @@ mod tests {
         );
         assert!(
             out.ends_with("    tail\n"),
-            "unterminated line gets a newline, got:\n{out}"
+            "an unterminated line still ends with a newline, got:\n{out}"
         );
     }
 
@@ -435,7 +436,7 @@ mod tests {
 
         assert!(
             out.contains(&format!("remove {target} (unmanaged)")),
-            "the block header must include the removed target and why, got:\n{out}"
+            "the block header must include the removed target and the reason, got:\n{out}"
         );
         assert!(out.contains("  - one\n"), "first line deleted, got:\n{out}");
         assert!(
@@ -466,7 +467,7 @@ mod tests {
 
         assert!(
             out.contains(&format!("remove {target} (unmanaged)")),
-            "the block header must include the removed symlink and why, got:\n{out}"
+            "the block header must include the removed symlink and the reason, got:\n{out}"
         );
         assert!(
             out.contains(&format!("  - {linked}")),
@@ -520,30 +521,30 @@ mod tests {
         content_diff(&mut plain, "copy /t", &current, &new, &Styles::plain());
         assert!(
             !plain.contains('\u{1b}'),
-            "plain output must carry no escapes: {plain:?}"
+            "plain output must contain no escapes: {plain:?}"
         );
         assert!(
             plain.contains("  - drop\n"),
-            "plain delete intact: {plain:?}"
+            "the plain delete line is preserved: {plain:?}"
         );
         assert!(
             plain.contains("  + add\n"),
-            "plain insert intact: {plain:?}"
+            "the plain insert line is preserved: {plain:?}"
         );
 
         let mut colored = String::new();
         content_diff(&mut colored, "copy /t", &current, &new, &Styles::colored());
         assert!(
             colored.contains('\u{1b}'),
-            "colored output must carry escapes: {colored:?}"
+            "colored output must contain escapes: {colored:?}"
         );
         assert!(
             colored.contains("  - drop"),
-            "delete body present under color: {colored:?}"
+            "the delete body is present under color: {colored:?}"
         );
         assert!(
             colored.contains("  + add"),
-            "insert body present under color: {colored:?}"
+            "the insert body is present under color: {colored:?}"
         );
         assert!(
             colored.contains("    keep\n"),

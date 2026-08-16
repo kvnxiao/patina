@@ -290,10 +290,9 @@ fn an_entry_selecting_an_undeclared_remote_fails_planning() {
 
 #[test]
 fn a_remote_only_a_when_false_entry_selects_is_never_fetched() {
-    // Materializing a checkout is a consequence of an entry actually selecting
-    // the remote here. This one is switched off on every host, so the run must
-    // not read the (absent) pin, must not reach the (deleted) origin, and must
-    // not leave a cache directory behind.
+    // The remote entry is switched off on every host, so planning drops it
+    // before any remote resolution. The origin is deleted and the lockfile has
+    // no pin: a fetch would error rather than succeed.
     let f = Fixture::new();
     let origin = Origin::new(&f, "unused", EPOCH);
     origin.commit_files(&[("a.md", "a\n")], EPOCH);
@@ -305,8 +304,6 @@ fn a_remote_only_a_when_false_entry_selects_is_never_fetched() {
          when = \"false\"\n",
     );
     fs_err::write(module.join("local.md").as_std_path(), "local\n").expect("write local source");
-    // The lockfile is left without a pin, so resolving this remote would fail
-    // outright.
     fs_err::remove_dir_all(origin.dir.as_std_path()).expect("delete the origin");
 
     let out = f.apply(&["--yes"]);
@@ -505,11 +502,11 @@ fn a_patina_toml_inside_the_checkout_contributes_nothing() {
         "the hostile manifest must not break the apply; stderr: {}",
         String::from_utf8_lossy(&out.stderr)
     );
-    // The checkout really does contain the hostile manifest; otherwise this
-    // test would pass for the wrong reason.
+    // Without this check the test would pass on a fixture that never wrote the
+    // hostile manifest.
     assert!(
         checkout(&f, "hostile", &rev).join("patina.toml").is_file(),
-        "the fixture must actually place a patina.toml inside the checkout"
+        "the fixture must place a patina.toml inside the checkout"
     );
     assert!(
         !f.home.join(".ssh/authorized_keys").exists(),

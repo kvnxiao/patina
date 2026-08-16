@@ -16,10 +16,12 @@
 //! | The helper never reported an outcome         | 1    |
 //! | User declined the prompt or UAC consent      | 5    |
 //!
-//! The blocked, failed, and unconfirmed outcomes share exit 1 but never a
-//! message. Verification routes through the elevated helper, so a rejection
-//! message means Defender really rejected the write, and an apply whose
-//! outcome nobody observed says exactly that.
+//! `Blocked`, `Failed`, and `Unconfirmed` share exit 1. The error message is the
+//! only thing separating them. An unprivileged CLI process cannot read
+//! Defender's exclusion list, so the helper does the verifying: once it enacts
+//! the request, it re-reads the list and reports what it found. A `Blocked`
+//! message is therefore an observed rejection. `Unconfirmed` means the verdict
+//! never arrived before the deadline; the exclusions may still have changed.
 
 use crate::cli::DefenderArgs;
 use crate::cli::DefenderCommand;
@@ -194,9 +196,9 @@ fn run_reconcile(
     render_preview(&reconcile, reporter);
 
     if diff.is_empty() {
-        // Nothing to enact against Defender, but converging the ledger may
-        // still claim exclusions it did not previously own. The line says so
-        // rather than reporting "no changes" over a write that just happened.
+        // An empty diff enacts nothing against Defender. Converging the ledger
+        // can still claim exclusions Patina did not previously own, so the line
+        // reports that count instead of "no changes".
         let adopted = reconcile.adoptable();
         reconcile.record_ledger()?;
         reporter.line(&if adopted == 0 {
@@ -321,8 +323,9 @@ fn run_reconcile_json(
             report("declined", "");
             Ok(ExitCode::UserDeclined.code())
         }
-        // The failing results share an exit code, so the envelope has to name
-        // what separates them; the human path says it in prose.
+        // The failing results share an exit code, so `result` is what separates
+        // them here. `detail` adds the helper's own words, the same text the
+        // human path puts in its error message.
         DefenderOutcome::Blocked { detail } => {
             report("blocked", &detail);
             Ok(ExitCode::Generic.code())
@@ -543,12 +546,14 @@ fn render_status_desired_only(
 /// `to_remove`, `result`, `detail`.
 ///
 /// `repo_root` is `null` for `clear`: that verb does not plan a repository.
-/// When Defender withheld the live list, `current_readable` is `false`, so a
-/// consumer knows the diff was computed against the ledger. [`status_json`]
-/// emits the same field for the same reason. `detail` is the helper's own
-/// words on a `blocked` or `failed` result and empty otherwise; without it the
-/// results that exit `1` would be indistinguishable to a script in a way they
-/// are not to a reader.
+/// When Defender withheld the live list, `current_readable` is `false`. The
+/// diff behind that envelope was computed against the ledger rather than
+/// against Defender's list. [`status_json`]
+/// emits the same field for the same reason. The three results that exit `1`
+/// are separated by `result` itself. `detail` adds the helper's own words on
+/// `blocked` and `failed`, the same text the human path puts in its error
+/// message, and is an empty string on every other result rather than a missing
+/// key.
 fn reconcile_json(reconcile: &Reconcile<'_>, result: &str, detail: &str) -> String {
     let envelope = serde_json::json!({
         "repo_root": reconcile.repo_root.map(Utf8Path::as_str),
@@ -621,8 +626,8 @@ fn exclusions_json(exclusions: &[Exclusion]) -> Vec<serde_json::Value> {
 }
 
 /// The typed error for a blocked write: Defender returned success but the
-/// helper's elevated re-read shows the exclusions did not change. Names the
-/// likely cause and an actionable next step.
+/// helper's elevated re-read shows the exclusions did not change. The message
+/// states the likely cause and a next step.
 fn blocked_error(detail: &str) -> anyhow::Error {
     anyhow!(
         "Defender rejected the exclusion change; the write did not take \
@@ -638,20 +643,19 @@ fn blocked_error(detail: &str) -> anyhow::Error {
 /// The typed error for a helper that never reached the point of applying: a
 /// path it refused, an unreadable request file, PowerShell unavailable.
 ///
-/// Kept apart from [`blocked_error`] because none of those are Defender
-/// declining the change, and sending the user to hunt for Tamper Protection
-/// over an unrelated failure wastes their time.
+/// None of those is Defender declining the change, so this stays apart from
+/// [`blocked_error`]. Sending the user to hunt for Tamper Protection over an
+/// unrelated failure wastes their time.
 fn failed_error(detail: &str) -> anyhow::Error {
     anyhow!("the elevated helper could not apply the Defender exclusions: {detail}")
 }
 
-/// The typed error for an apply whose outcome nobody observed.
+/// The typed error for an apply whose verdict never arrived.
 ///
-/// It deliberately does not claim anything about Defender's behaviour: the
-/// helper never reported, so the exclusions may well have been applied.
-/// Re-running is safe
-/// because the reconcile is idempotent, and a re-run also writes the ledger
-/// entry this outcome withheld.
+/// The message states only that the outcome is unknown. The helper did not
+/// report before the deadline, so the exclusions may have been applied. The
+/// reconcile is idempotent: a re-run is safe, and it writes the ledger entry
+/// this outcome withheld.
 fn unconfirmed_error() -> anyhow::Error {
     anyhow!(
         "the elevated helper did not report a result, so whether the Defender \
@@ -876,10 +880,10 @@ mod tests {
     }
 
     #[test]
-    fn reconcile_json_carries_the_detail_that_separates_the_failing_results() {
-        // `blocked`, `failed`, and `unconfirmed` all exit 1, so a script that
-        // reads only `result` learns as little as a reader told only "it went
-        // wrong". The human path says which; the envelope has to as well.
+    fn reconcile_json_sets_detail_on_a_blocked_result_and_empties_it_otherwise() {
+        // `blocked`, `failed`, and `unconfirmed` all exit 1, so `result` is
+        // what separates them in the envelope. `detail` adds the helper's own
+        // words on the results that have a reason to report.
         let fixture = Fixture::new(&[], &known(&[]), &[]);
         let blocked = reconcile_json(
             &fixture.reconcile(),
@@ -895,10 +899,9 @@ mod tests {
 
     #[test]
     fn only_a_rejected_write_is_reported_as_defender_refusing_it() {
-        // The blocked, failed, and unconfirmed outcomes share a code, so the
-        // message is the only thing distinguishing them. Blaming Tamper
-        // Protection for an outcome nobody observed is the bug this split
-        // fixes.
+        // `Blocked`, `Failed`, and `Unconfirmed` share a code, so the message is
+        // the only thing separating them. Blaming Tamper Protection for an
+        // unconfirmed outcome is the bug this split fixes.
         let blocked = blocked_error("TamperProtected=True").to_string();
         assert!(blocked.contains("Defender rejected the exclusion change"));
         assert!(blocked.contains("Tamper Protection"));

@@ -86,8 +86,8 @@ fn add_copies_file_writes_entry_and_leaves_target() {
 /// the target a regular file. `patina apply --yes` then materializes the target
 /// as a symbolic link whose readlink destination is the canonical path of
 /// `<repo>/zsh/zshrc`. Only that apply shows the entry `add` wrote is one the
-/// engine can actually deploy; the manifest text and the not-yet-a-symlink
-/// check say nothing about it.
+/// engine can deploy. The manifest text and the not-yet-a-symlink check do not
+/// establish that.
 #[test]
 fn add_then_apply_materializes_target_as_symlink() {
     let fx = Fixture::new();

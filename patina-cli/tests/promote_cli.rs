@@ -276,9 +276,9 @@ fn promote_json_emits_document() {
     );
 }
 
-/// Decode the single COMMIT record produced by the last apply, resolving the
-/// journal directory from this fixture's isolated env (matching the path the
-/// subprocess actually wrote).
+/// Decode the single COMMIT record the last apply produced. To reach the path
+/// the subprocess wrote under, resolve the journal directory from this
+/// fixture's isolated env.
 fn commit_record(fx: &Fixture) -> ApplyRecord {
     let journal_dir =
         patina_core::state_dir::resolve_with_env(HostOs::current(), |name| match name {

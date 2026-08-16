@@ -482,8 +482,8 @@ mod foreground {
         // instead.
         let f = applied_copy_fixture();
         let target = f.home.join(".gitconfig");
-        // The fixture applied the source bytes to the target; capture the
-        // recorded content so the overwrite is genuinely divergent.
+        // The fixture applied the source bytes to the target. Capture them, so
+        // the overwrite written below differs from the recorded content.
         let applied = fs_err::read_to_string(target.as_std_path()).expect("read applied target");
 
         let watcher = Watcher::spawn(&f);

@@ -15,8 +15,8 @@ use tabwriter::TabWriter;
 ///
 /// ANSI mode measures a cell by printable width, so a painted cell pads
 /// exactly as its stripped form does. Writing to a `Vec` cannot fail, so the
-/// unaligned fallback is unreachable; it exists because a print path must not
-/// panic.
+/// unaligned fallback is unreachable. A print path must not panic, so it exists
+/// anyway.
 #[must_use = "the aligned block is what gets printed"]
 pub fn align(table: &str) -> String {
     let mut aligned: Vec<u8> = Vec::new();
@@ -34,7 +34,7 @@ pub fn align(table: &str) -> String {
 /// Join `cells` into one tab-separated, newline-terminated row.
 ///
 /// [`align`] pads a cell only when a tab follows it, so a row ends immediately
-/// after its last cell. The last cell is not padded.
+/// after its last cell.
 #[must_use = "the row is what gets buffered into the table"]
 pub fn row(cells: &[&str]) -> String {
     let mut row = cells.join("\t");
@@ -45,8 +45,8 @@ pub fn row(cells: &[&str]) -> String {
 /// Align a buffered block and print it to the out stream in one write.
 ///
 /// Every row a caller buffers ends in `\n`, and alignment preserves those
-/// terminators, so one write reproduces the whole listing. One write also
-/// keeps a long listing to a single stdout lock and flush. An empty block does
+/// terminators, so one write reproduces the whole listing. One write also means
+/// one stdout lock and one flush, however long the listing. An empty block does
 /// not print.
 pub fn emit_aligned(table: &str, reporter: &mut impl Reporter) {
     reporter.out_block(&align(table));
@@ -76,8 +76,8 @@ mod tests {
 
     /// Writing the block in one write is only safe while alignment preserves
     /// every terminator a caller buffered. A dropped final `\n` runs a listing
-    /// into whatever the command prints next. An extra one opens a blank line
-    /// no plain-output test expects.
+    /// into whatever the command prints next. An extra one adds a blank line no
+    /// plain-output test expects.
     #[test]
     fn emitting_a_table_terminates_every_row_and_adds_no_blank_line() {
         let table = [row(&["a", "one"]), row(&["longer", "two"])].concat();
@@ -96,8 +96,8 @@ mod tests {
         );
     }
 
-    /// A listing with no rows must not print anything. A stray terminator
-    /// would leave a blank line where the table would have gone.
+    /// A listing with no rows must not print anything. A stray terminator would
+    /// print a blank line in place of the absent table.
     #[test]
     fn emitting_an_empty_table_prints_nothing() {
         let mut reporter = BufferReporter::new();
@@ -107,13 +107,13 @@ mod tests {
 
     /// The `.ansi(true)` setting makes color additive over an aligned block.
     /// A cell wrapped in escapes must pad by its printable width, so
-    /// stripping the escapes gives back the plain alignment byte for byte. Byte
+    /// stripping the escapes reproduces the plain alignment byte for byte. Byte
     /// measurement would pad the colored form short and misalign piped output.
     #[test]
     fn a_painted_cell_pads_by_printable_width() {
         let plain = align("a\tone\nlonger\ttwo\n");
         let painted = align("\u{1b}[32ma\u{1b}[0m\tone\nlonger\ttwo\n");
-        assert_ne!(plain, painted, "the painted block must carry its escapes");
+        assert_ne!(plain, painted, "the painted block must contain its escapes");
         assert_eq!(
             anstream::adapter::strip_str(&painted).to_string(),
             plain,

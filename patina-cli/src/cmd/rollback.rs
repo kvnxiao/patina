@@ -33,9 +33,9 @@ use patina_core::RollbackOptions;
 /// # Errors
 ///
 /// Returns an error when the engine-level rollback fails for a reason other
-/// than `NoPriorApply` or `RollbackPartial`. Either of those reaches the user
-/// as a stderr warning and exit code 1 rather than as an `Err`. A declined
-/// prompt maps to exit code 5.
+/// than `NoPriorApply` or `RollbackPartial`. Either of those is printed as a
+/// stderr warning and exits 1 instead of returning `Err`. A declined prompt
+/// maps to exit code 5.
 pub async fn run(
     args: &RollbackArgs,
     tty: Tty,
@@ -130,7 +130,7 @@ mod tests {
     }
 
     #[test]
-    fn json_envelope_carries_result() {
+    fn json_envelope_sets_result() {
         let doc: serde_json::Value =
             serde_json::from_str(&json_envelope("rolled_back")).expect("valid JSON");
         assert_eq!(
