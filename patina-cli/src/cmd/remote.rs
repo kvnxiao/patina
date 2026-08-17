@@ -11,9 +11,9 @@
 //!
 //! Locking follows the read/write split the rest of the CLI uses. `update` and
 //! `prune` mutate the working-tree lockfile and the cache, so both take the
-//! exclusive lock. `list` and `check` take the shared lock with the read-only
-//! escape hatch: `list` does not write, and `check` writes only the per-machine
-//! notice files it alone owns.
+//! exclusive lock. `list` and `check` acquire the shared lock with the
+//! read-only escape hatch: `list` does not write, and `check` writes only the
+//! per-machine notice files it alone owns.
 //!
 //! A shell hook must never contend with a running apply, and the shared lock is
 //! therefore held across the inventory read alone, never across the network. A

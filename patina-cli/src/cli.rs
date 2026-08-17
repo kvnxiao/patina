@@ -176,10 +176,10 @@ pub struct WatchArgs {
 /// Background-service lifecycle subcommands under `patina watch`.
 ///
 /// Each operates on the per-OS service registration through the
-/// `patina_core::watch::service` backend. `status` is read-only and takes the
-/// shared lock. When the shared lock times out, `status` warns and proceeds
-/// without it. Every other subcommand takes the exclusive lock, and a timeout
-/// on that one is exit `4`.
+/// `patina_core::watch::service` backend. `status` is read-only and acquires
+/// the shared lock. When the shared lock times out, `status` warns and proceeds
+/// without it. Every other subcommand acquires the exclusive lock, and a
+/// timeout on that one is exit `4`.
 #[derive(Debug, Subcommand, Clone)]
 pub enum WatchCommand {
     /// Register the watcher as a per-user background service that launches at
@@ -212,7 +212,7 @@ pub enum WatchCommand {
 ///
 /// The verbs split by what they write. `update` and `prune` mutate the
 /// working-tree lockfile and the per-machine cache, so both take the exclusive
-/// lock. `list` and `check` take the shared lock: `list` does not write, and
+/// lock. `list` and `check` acquire the shared lock: `list` does not write, and
 /// `check` writes only the per-machine notice files it alone owns.
 #[derive(Debug, Args)]
 #[command(disable_help_subcommand = true)]
@@ -424,8 +424,8 @@ pub struct RollbackArgs {
 
 /// Flags for `patina doctor`.
 ///
-/// The read-only path (no `--fix`) takes only the shared lock and emits
-/// findings. `--fix` takes the exclusive lock and interactively remediates
+/// The read-only path (no `--fix`) acquires only the shared lock and emits
+/// findings. `--fix` acquires the exclusive lock and interactively remediates
 /// fixable findings. `--yes` auto-accepts every prompt.
 #[derive(Debug, Args, Default)]
 pub struct DoctorArgs {

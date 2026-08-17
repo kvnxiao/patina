@@ -160,9 +160,9 @@ fn rewrites_the_lockfile(args: &ApplyArgs, tty: Tty) -> bool {
 /// pins instead.
 ///
 /// The common case, nothing stale, is decided from an unlocked read and does
-/// not take the lock. A mutating pass then redoes the read-modify-write under
-/// the exclusive lock: `Lockfile::save` rewrites the whole file, so a snapshot
-/// taken outside the lock would silently revert whatever a concurrent
+/// not acquire the lock. A mutating pass then redoes the read-modify-write
+/// under the exclusive lock: `Lockfile::save` rewrites the whole file, so a
+/// snapshot taken outside the lock would silently revert whatever a concurrent
 /// `patina remote update` bumped in between.
 fn prune_stale_pins(
     resolved: &patina_core::ResolvedPlan,

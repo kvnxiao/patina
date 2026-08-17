@@ -8,8 +8,8 @@
 //! [`patina_core::watch::service`] backend.
 //!
 //! All lifecycle subcommands except `status` acquire the exclusive advisory
-//! lock. `status` takes the shared lock and proceeds without it on a timeout.
-//! State-dir resolution, the service
+//! lock. `status` acquires the shared lock and proceeds without it on a
+//! timeout. State-dir resolution, the service
 //! backend, and log-counter recovery live in `patina_core`; this module is
 //! control flow, lock acquisition, and output formatting.
 //!
@@ -374,7 +374,7 @@ mod tests {
     fn dispatch_routes_each_subcommand_to_its_backend_method() {
         // The recorded call proves which backend method the dispatch invoked, so
         // a miswired match arm (e.g. `Restart` calling `stop`) fails this test.
-        // `status` dispatches separately (it takes the shared lock), so it is
+        // `status` dispatches separately (it acquires the shared lock), so it is
         // not part of this mutating path.
         let cases = [
             (WatchCommand::Install, "install"),

@@ -236,7 +236,7 @@ fn run_report(args: &DoctorArgs, state: &Utf8Path, reporter: &mut impl Reporter)
 /// The interactive remediation path (`--fix`).
 ///
 /// A non-TTY `--fix` without `--yes` cannot prompt, so it refuses up front
-/// with exit 1 before taking any lock or mutating anything. With a
+/// with exit 1 before acquiring any lock or mutating anything. With a
 /// TTY (or `--yes`) it acquires the exclusive lock, recomputes the
 /// findings under the lock, then walks each fixable finding: prompt (or
 /// auto-accept under `--yes`) and remediate on accept. A non-fixable finding

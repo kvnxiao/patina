@@ -178,7 +178,7 @@ fn fix_without_yes_in_non_tty_exits_one_identifying_yes() {
     );
 
     // The refusal must not have written the default_repo pointer (it returns
-    // before taking the lock or mutating anything).
+    // before acquiring the lock or mutating anything).
     let pointer = fx.state_root().join("default_repo");
     assert!(
         !pointer.as_std_path().exists(),
