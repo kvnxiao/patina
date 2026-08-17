@@ -47,8 +47,8 @@ const SYSTEM_DIR_ENV_VARS: [&str; 4] = [
 #[cfg(windows)]
 const RESULT_FILENAME: &str = "defender-result.txt";
 
-/// The scratch name that holds the verdict until the rename into place, so the
-/// polling CLI never reads a partially-written result.
+/// The helper writes the verdict under this name, then renames it onto the
+/// result file.
 #[cfg(windows)]
 const RESULT_TMP_FILENAME: &str = "defender-result.txt.tmp";
 
