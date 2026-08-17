@@ -5,12 +5,9 @@
 
 //! Integration tests for the `patina rollback` CLI surface.
 //!
-//! Each test builds a self-contained tempdir dotfiles repository, applies
-//! it (`patina apply --yes`), then runs `patina rollback --yes` and asserts
-//! the filesystem returns to its pre-apply state and a `<ts>.ROLLED_BACK`
-//! sentinel appears in the journal. The per-machine state directory is
-//! isolated under the tempdir so neither apply nor rollback touches the
-//! developer's real `$HOME`.
+//! Each test applies a [`common::Fixture`] repository (`patina apply --yes`),
+//! then runs `patina rollback --yes` and asserts the filesystem returns to
+//! its pre-apply state with a `<ts>.ROLLED_BACK` sentinel in the journal.
 
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
@@ -140,9 +137,9 @@ fn assert_applied(out: &Output) {
 fn rollback_restores_an_unmanaged_file_overwritten_by_a_copy() {
     // The consent + always-backup guarantee for content mode: a pre-existing
     // *unmanaged* regular file overwritten by a copy-mode apply is first backed
-    // up, so `rollback --yes` restores its original bytes byte-for-byte. This is
-    // the non-tree, content-mode companion to
-    // `rollback_restores_a_regular_file_replaced_by_a_symlink` below.
+    // up, so `rollback --yes` restores its original bytes byte-for-byte. The
+    // non-tree, content-mode companion to
+    // `rollback_restores_a_regular_file_replaced_by_a_symlink`.
     let f = Fixture::new();
     let module = f.module(
         "shell",
@@ -186,7 +183,7 @@ fn rollback_deletes_a_symlink_target_and_writes_the_sentinel() {
     // no pre-existing file, rolled back, is removed (the link had no backup)
     // and a ROLLED_BACK sentinel is written. The pre-existing-regular-file →
     // symlink → restore-to-regular-file leg is exercised end-to-end by
-    // `rollback_restores_a_regular_file_replaced_by_a_symlink` below.
+    // `rollback_restores_a_regular_file_replaced_by_a_symlink`.
     let f = Fixture::new();
     let module = f.module(
         "zsh",
@@ -293,7 +290,7 @@ fn rollback_deletes_a_freshly_created_target() {
 }
 
 #[test]
-fn rollback_with_no_prior_apply_exits_one_and_names_no_prior_apply() {
+fn rollback_with_no_prior_apply_exits_one_and_includes_no_prior_apply() {
     let f = Fixture::new();
     f.module(
         "shell",
@@ -305,7 +302,7 @@ fn rollback_with_no_prior_apply_exits_one_and_names_no_prior_apply() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         stderr.contains("no prior apply found"),
-        "stderr must name the failure, got: {stderr}"
+        "stderr must include the failure, got: {stderr}"
     );
 }
 

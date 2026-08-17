@@ -2,15 +2,13 @@
 //!
 //! Classifies every managed target as CLEAN / DRIFTED / MISSING / ORPHANED
 //! against the last committed apply. Renders the result as a human-readable
-//! table by default, and as a JSON envelope under `--json`.
-//! The engine semantics (journal read, current-plan recomputation,
-//! classification, shared lock) live in `patina_core::status`; this module
-//! is presentation and control flow only, all output routed through the
-//! [`Reporter`].
+//! table by default, and as a JSON envelope under `--json`. The journal read,
+//! the current-plan recomputation, the classification, and the shared lock all
+//! live in `patina_core::status`; this module is presentation and control flow.
 //!
-//! Status is read-only: it never mutates and always exits 0 on a
-//! successful read. A shared-lock timeout is surfaced as a stderr warning
-//! (the read-only escape hatch), not a non-zero exit.
+//! `status` does not write, and exits 0 on any successful read. A shared-lock
+//! timeout is printed as a stderr warning (the read-only escape hatch) and does
+//! not change the exit code.
 
 use crate::cli::StatusArgs;
 use crate::exit_code::ExitCode;
@@ -32,15 +30,14 @@ use patina_core::TargetState;
 ///
 /// Returns an error when the engine-level status read fails (repository
 /// discovery, manifest parse, state-directory resolution, or a journal
-/// read error). A shared-lock timeout is not an error: it is reported as
-/// a warning on the report.
+/// read error).
 pub async fn run(args: &StatusArgs, reporter: &mut impl Reporter) -> Result<i32> {
     let report = patina_core::status(StatusOptions::default())
         .await
         .context("failed to compute status")?;
 
-    // Lock-timeout (and any other) warnings go to stderr regardless of the
-    // output format so they never pollute the JSON document on stdout.
+    // Every warning, lock timeout included, is printed to stderr in both output
+    // formats, so stdout stays a single parseable JSON document.
     for warning in &report.warnings {
         reporter.warn(warning);
     }
@@ -53,8 +50,8 @@ pub async fn run(args: &StatusArgs, reporter: &mut impl Reporter) -> Result<i32>
     Ok(ExitCode::Success.code())
 }
 
-/// Build the `--json` envelope: `last_apply`, `files`, and the four
-/// aggregate counters.
+/// Build the `--json` envelope: `last_apply`, `files`, the `clean` /
+/// `drifted` / `missing` / `orphaned` counters, and `remotes_pending`.
 fn json_envelope(report: &StatusReport) -> String {
     let last_apply = report
         .last_apply
@@ -88,8 +85,8 @@ fn json_envelope(report: &StatusReport) -> String {
     serde_json::to_string_pretty(&envelope).unwrap_or_else(|_| "{}".to_owned())
 }
 
-/// Render the human-readable table: one row per target plus a summary
-/// line of the aggregate counters.
+/// Render the human-readable table: one row per target, then a summary line of
+/// the counters, then the pending-remote reminder.
 fn render_human(report: &StatusReport, reporter: &mut impl Reporter) {
     if report.last_apply.is_none() {
         reporter.line("No apply has been recorded yet; nothing to report.");
@@ -112,11 +109,11 @@ fn render_human(report: &StatusReport, reporter: &mut impl Reporter) {
     render_remotes_pending(report, reporter);
 }
 
-/// The four aggregate counters on one line, each non-zero counter painted in
-/// its state's color.
+/// The clean / drifted / missing / orphaned counters on one line, each
+/// non-zero counter painted in its state's color.
 ///
-/// A zero counter stays plain. Painting it would spend the state's color on
-/// the absence of that state, and a clean repository has to read at a glance.
+/// A zero counter stays plain. Painting it would use the state's color for the
+/// absence of that state, and a clean repository has to be legible at a glance.
 fn render_summary(report: &StatusReport, styles: &Styles) -> String {
     [
         (TargetState::Clean, report.clean),
@@ -188,7 +185,7 @@ mod tests {
     }
 
     #[test]
-    fn json_envelope_carries_counters_and_files() {
+    fn json_envelope_sets_counters_and_files() {
         let report = report_with_entries();
         let doc: serde_json::Value =
             serde_json::from_str(&json_envelope(&report)).expect("valid JSON");
@@ -226,7 +223,7 @@ mod tests {
     }
 
     #[test]
-    fn warnings_route_to_stderr_in_both_formats() {
+    fn warnings_are_printed_to_stderr_in_both_formats() {
         let mut report = report_with_entries();
         report.warnings.push("lock timed out".to_owned());
         let mut r = BufferReporter::new();
@@ -247,7 +244,7 @@ mod tests {
         assert!(r.out.contains("No apply has been recorded"));
     }
 
-    /// A report holding one target in each of the four states.
+    /// A report with one target in each state.
     fn report_of_every_state() -> StatusReport {
         let mut report = report_with_entries();
         for (path, state) in [
@@ -266,8 +263,8 @@ mod tests {
         report
     }
 
-    /// A stripped render carries the state word and nothing else, so each row
-    /// must lead with its own label.
+    /// A stripped render shows only the state word, so each row must lead with
+    /// its own label.
     #[test]
     fn every_state_leads_its_row_with_its_own_label() {
         let mut r = BufferReporter::new();
@@ -279,9 +276,9 @@ mod tests {
         }
     }
 
-    /// A non-zero counter is painted so a clean repository reads at a glance; a
-    /// zero counter stays plain so the color marks a state that is present, not
-    /// one that is merely named.
+    /// A non-zero counter is painted, so a clean repository is legible at a
+    /// glance. A zero counter stays plain, so the color marks a state that is
+    /// present rather than one that is only listed.
     #[test]
     fn only_a_non_zero_counter_is_painted() {
         let report = StatusReport {
@@ -309,7 +306,7 @@ mod tests {
     }
 
     #[test]
-    fn pending_remotes_reach_stdout_in_both_renderers() {
+    fn both_renderers_include_every_pending_remote() {
         let mut report = report_with_entries();
         report.remotes_pending = vec!["humanizer".to_owned(), "prompts".to_owned()];
 
@@ -317,7 +314,7 @@ mod tests {
         render_human(&report, &mut r);
         assert!(
             r.out.contains("humanizer") && r.out.contains("prompts"),
-            "the human render must name every pending remote: {}",
+            "the human render must include every pending remote: {}",
             r.out
         );
 
@@ -328,7 +325,7 @@ mod tests {
                 .and_then(serde_json::Value::as_array)
                 .map(|names| names.iter().filter_map(serde_json::Value::as_str).collect()),
             Some(vec!["humanizer", "prompts"]),
-            "the envelope must carry the whole pending set, in order: {doc}"
+            "the envelope must include the whole pending set, in order: {doc}"
         );
     }
 
@@ -350,10 +347,10 @@ mod tests {
     }
 
     #[test]
-    fn an_empty_pending_set_adds_no_line() {
+    fn an_empty_pending_set_does_not_add_a_line() {
         // Counting lines rather than matching the notice wording: the wording
-        // belongs to the notice subsystem and may change, but an empty set must
-        // print nothing extra whatever it says.
+        // belongs to the notice subsystem and may change, while the
+        // one-line-or-nothing shape is this renderer's own.
         let mut quiet = BufferReporter::new();
         render_human(&report_with_entries(), &mut quiet);
 
@@ -365,7 +362,7 @@ mod tests {
         assert_eq!(
             noisy.out.lines().count(),
             quiet.out.lines().count() + 1,
-            "the pending set must add exactly one line, and none when it is empty:\n{}\n---\n{}",
+            "a non-empty pending set must add exactly one line:\n{}\n---\n{}",
             quiet.out,
             noisy.out
         );

@@ -1,11 +1,10 @@
 //! `patina rollback` command logic.
 //!
 //! Reverses the most recent committed apply to its pre-apply filesystem
-//! state. The engine semantics (lock, journal scan, per-entry atomic
-//! inverse replay, rolled-back sentinel) live in `patina_core::rollback`;
-//! this module owns the TTY-prompt / `--yes` / `--json` decision tree and
-//! maps the engine outcome onto the process exit code, all output routed
-//! through the [`Reporter`].
+//! state. The lock, the journal scan, the per-entry atomic inverse replay,
+//! and the rolled-back sentinel live in `patina_core::rollback`. This module
+//! owns the TTY-prompt / `--yes` / `--json` decision tree and maps the engine
+//! outcome onto the process exit code.
 //!
 //! ## Exit codes
 //!
@@ -34,9 +33,9 @@ use patina_core::RollbackOptions;
 /// # Errors
 ///
 /// Returns an error when the engine-level rollback fails for a reason other
-/// than the two typed user-facing outcomes, `NoPriorApply` and
-/// `RollbackPartial`. Those two surface as a stderr warning and exit code 1,
-/// rather than as an `Err`. A declined prompt maps to exit code 5.
+/// than `NoPriorApply` or `RollbackPartial`. Either of those is printed as a
+/// stderr warning and exits 1 instead of returning `Err`. A declined prompt
+/// maps to exit code 5.
 pub async fn run(
     args: &RollbackArgs,
     tty: Tty,
@@ -46,7 +45,7 @@ pub async fn run(
     let should_proceed = match (args.yes, tty) {
         (true, _) => true,
         (false, Tty::NonInteractive) => {
-            // Non-TTY without --yes: preview only, exit 0 (mirrors apply).
+            // Mirrors apply: a non-TTY shell without --yes previews, exit 0.
             if args.json {
                 reporter.json(&json_envelope("previewed"));
             } else {
@@ -74,8 +73,6 @@ pub async fn run(
             }
             Ok(ExitCode::Success.code())
         }
-        // The two typed user-facing outcomes exit 1 with the message on
-        // stderr rather than bubbling up as an `anyhow` error.
         Err(EngineError::Rollback(
             err @ (RollbackError::NoPriorApply | RollbackError::RollbackPartial { .. }),
         )) => {
@@ -86,7 +83,7 @@ pub async fn run(
     }
 }
 
-/// Build the `--json` envelope: a single `result` field naming the outcome.
+/// Build the `--json` envelope: a single `result` field set to the outcome.
 fn json_envelope(result: &str) -> String {
     let envelope = serde_json::json!({ "result": result });
     serde_json::to_string_pretty(&envelope).unwrap_or_else(|_| "{}".to_owned())
@@ -133,7 +130,7 @@ mod tests {
     }
 
     #[test]
-    fn json_envelope_carries_result() {
+    fn json_envelope_sets_result() {
         let doc: serde_json::Value =
             serde_json::from_str(&json_envelope("rolled_back")).expect("valid JSON");
         assert_eq!(

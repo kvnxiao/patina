@@ -1,14 +1,9 @@
 //! Patina CLI entry point.
 //!
 //! Parses the clap-derived command surface ([`cli`]) and dispatches to a
-//! subcommand in [`cmd`]. User-facing output is routed exclusively through
-//! the [`output::reporter::Reporter`] layer; logs go through `tracing`.
-//! The process exit code is owned by the subcommand (the exit-code
-//! contract). Each command returns an `anyhow::Result<i32>`: an `Ok(code)`
-//! is a terminal state under the command's own control, an `Err` is an
-//! engine failure. Both funnel through [`cli::resolve_exit_code`], the
-//! single place the exit-code mapping lives, before `main` hands the
-//! result to [`std::process::exit`].
+//! subcommand in [`cmd`]. Every subcommand returns an `anyhow::Result<i32>`,
+//! and [`cli::resolve_exit_code`] maps that to the integer `main` passes to
+//! [`std::process::exit`].
 
 mod cli;
 mod cmd;
@@ -24,8 +19,10 @@ use cmd::apply::Tty;
 use output::reporter::StreamReporter;
 use std::io::IsTerminal;
 
-/// Classify the current stdin as an interactive terminal or not, so prompt
-/// flows fall through to plan-only / non-interactive behavior off a TTY.
+/// Detect whether stdin is a terminal.
+///
+/// A `NonInteractive` result suppresses every prompt. Each command chooses its
+/// own non-interactive behaviour: preview, decline, or refuse.
 fn detect_tty() -> Tty {
     if std::io::stdin().is_terminal() {
         Tty::Interactive
@@ -75,7 +72,8 @@ async fn main() -> ! {
             let mut reader = StdinReader;
             cmd::defender::run(&args, detect_tty(), &mut reader, &mut reporter)
         }
-        // `debug` reports its own terminal state as an exit code already.
+        // A decode failure is a terminal state, not an engine error, so
+        // `debug` returns its exit code directly.
         Command::Debug(command) => Ok(cmd::debug::run(&command, &mut reporter)),
     };
     std::process::exit(resolve_exit_code(outcome, &mut reporter));

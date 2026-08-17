@@ -1,16 +1,13 @@
 //! `patina add <path>` command logic.
 //!
 //! `patina add <path>` brings an existing dotfile under management. It
-//! resolves the repository root, and stages the target's bytes into a module
-//! subdirectory (`<repo>/<module>/<source>`). It then appends the table-array
-//! entry matching the source kind to that module's `patina.toml`, creating
-//! the manifest if absent. A file source gets a `[[file]]` entry, a directory
-//! source a `[[directory]]` entry. The original target is left in place. The
-//! command does NOT drive the engine apply path.
-//! Materialization (turning the target into a symlink / copy / rendered
-//! template) is deferred to a later `patina apply`: `add` copies the bytes
-//! into the repository and leaves the target where it is, so the next apply
-//! converges it.
+//! resolves the repository root, then stages the target's bytes into a module
+//! subdirectory (`<repo>/<module>/<source>`). It appends the table-array entry
+//! matching the source kind to that module's `patina.toml`, and creates the
+//! manifest when none exists. A file source gets a `[[file]]` entry, a
+//! directory source a `[[directory]]` entry. `add` copies the bytes into the
+//! repository and leaves the target where it is; a later `patina apply`
+//! materializes it as a symlink, a copy, or a rendered template.
 //!
 //! `add` is a mutating command: it acquires the engine's
 //! exclusive advisory lock at `<state>/lock` before any filesystem
@@ -19,24 +16,23 @@
 //!
 //! ## Mode and module resolution
 //!
-//! The module name comes from `--module`, else an interactive prompt;
-//! in a non-TTY shell without `--module` the command exits 1 with a typed
-//! error naming the missing flag. The mode comes from exactly one of the
-//! `--symlink` / `--copy` / `--template` / `--symlink-tree` flags (clap
-//! enforces at-most-one, exit 2 on two), else an interactive prompt; in a
-//! non-TTY shell without a mode flag the command exits 1.
+//! The module name is read from `--module`, or from an interactive prompt. In a
+//! non-TTY shell without `--module`, the command warns, identifies the missing
+//! flag, and exits 1. The mode is read from exactly one of the `--symlink` /
+//! `--copy` / `--template` / `--symlink-tree` flags, or from an interactive
+//! prompt. clap enforces at-most-one and exits 2 when more than one is given.
+//! In a non-TTY shell without a mode flag, the command exits 1 the same way.
 //!
 //! The mode flags are kind-checked against the source's on-disk kind:
 //! `--symlink` and `--copy` are valid for either kind, while
 //! `--template` is file-only and `--symlink-tree` is directory-only. An
-//! incompatible flag/kind pair is rejected with a typed error naming the
-//! offending flag and the source kind, before any mutation. A directory
-//! source therefore never emits a `[[file]]` entry and vice versa.
+//! incompatible flag/kind pair is rejected with a typed error that includes
+//! the offending flag and the source kind, before any mutation. A directory
+//! source therefore never emits a `[[file]]` entry, and a file source never
+//! emits a `[[directory]]` entry.
 //!
-//! Module-level engine semantics (manifest editing, repo discovery,
-//! tilde expansion, canonicalization) live in `patina_core`; this module
-//! is presentation and control flow only, all output routed through the
-//! [`Reporter`].
+//! Manifest editing, repo discovery, tilde expansion, and canonicalization
+//! all live in `patina_core`; this module is presentation and control flow.
 
 use crate::cli::AddArgs;
 use crate::cmd::MANIFEST_FILENAME;
@@ -67,13 +63,10 @@ use patina_core::resolve_repository_root;
 use patina_core::resolve_state_dir;
 use patina_core::walk_files;
 
-/// The mode flag the user selected (or resolved through a prompt), before
-/// it is checked against the source's on-disk kind.
+/// The mode flag the user selected, or answered at the prompt, before it is
+/// checked against the source's on-disk kind.
 ///
-/// `--symlink` / `--copy` are valid for either kind; `--template` is
-/// file-only and `--symlink-tree` is directory-only. Resolving a
-/// flag against a [`SourceKind`] yields a kind-checked [`AddMode`] or a
-/// typed incompatibility error.
+/// [`AddMode::resolve`] turns one of these into a kind-checked [`AddMode`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ModeFlag {
     /// `--symlink`.
@@ -110,7 +103,7 @@ enum SourceKind {
 }
 
 impl SourceKind {
-    /// The lowercase word naming the kind in the kind-mismatch error.
+    /// The lowercase word for the kind in the kind-mismatch error.
     fn label(self) -> &'static str {
         match self {
             SourceKind::File => "file",
@@ -121,10 +114,10 @@ impl SourceKind {
 
 /// A mode flag that has been validated against the source's on-disk kind.
 ///
-/// Each variant carries the [`FileMode`] the manifest writer records, and
-/// the variant chosen also selects which table-array (`[[file]]` vs
-/// `[[directory]]`) the entry is written to. Constructed only via
-/// [`AddMode::resolve`], which rejects an incompatible flag/kind pair.
+/// Each variant fixes the [`FileMode`] the manifest writer records, and which
+/// table-array (`[[file]]` vs `[[directory]]`) the entry is written to.
+/// [`AddMode::resolve`] is the only constructor, and it rejects an
+/// incompatible flag/kind pair.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AddMode {
     /// A `[[file]]` `symlink` entry.
@@ -144,8 +137,8 @@ enum AddMode {
 
 impl AddMode {
     /// Validate a user-selected [`ModeFlag`] against the detected
-    /// [`SourceKind`], returning the kind-checked mode or a typed error
-    /// naming the incompatible flag and the source kind.
+    /// [`SourceKind`]. Returns the kind-checked mode, or a typed error that
+    /// includes the incompatible flag and the source kind.
     fn resolve(flag: ModeFlag, kind: SourceKind) -> Result<Self> {
         match (kind, flag) {
             (SourceKind::File, ModeFlag::Symlink) => Ok(AddMode::FileSymlink),
@@ -154,8 +147,6 @@ impl AddMode {
             (SourceKind::Directory, ModeFlag::Symlink) => Ok(AddMode::DirectorySymlink),
             (SourceKind::Directory, ModeFlag::SymlinkTree) => Ok(AddMode::DirectorySymlinkTree),
             (SourceKind::Directory, ModeFlag::Copy) => Ok(AddMode::DirectoryCopy),
-            // The only incompatible pairs: --template on a directory and
-            // --symlink-tree on a file.
             (SourceKind::File, ModeFlag::SymlinkTree)
             | (SourceKind::Directory, ModeFlag::Template) => Err(anyhow!(
                 "{} is not valid for a {} source",
@@ -205,7 +196,7 @@ impl AddMode {
 ///
 /// # Errors
 ///
-/// Returns an error (exit 1, or exit 4 on a lock-acquisition timeout via
+/// Returns an error (exit 1, or exit 4 on a lock-acquisition timeout through
 /// the engine-error chain) when: the repository root cannot be resolved;
 /// the module is missing in a non-TTY shell; the mode is missing in a
 /// non-TTY shell; the target path is already managed; the target file does
@@ -220,8 +211,8 @@ pub async fn run(
     reader: &mut impl PromptReader,
     reporter: &mut impl Reporter,
 ) -> Result<i32> {
-    // Resolve the mode flag and module up front (before any lock or
-    // mutation), failing fast on the non-TTY-missing-input paths.
+    // Mode and module resolve before the lock and before any mutation, so a
+    // missing-input refusal costs nothing.
     let Some(mode_flag) = resolve_mode_flag(args, tty, reader, reporter)? else {
         return Ok(ExitCode::Generic.code());
     };
@@ -233,23 +224,17 @@ pub async fn run(
     let home = resolve_home()?;
     let target = expand_tilde(&args.path, &home);
 
-    // Detect the source kind from the on-disk target and validate the mode
-    // flag against it before taking the lock or mutating anything:
-    // a `--symlink-tree` on a file, or a `--template` on a directory, is
-    // rejected here with a typed error naming the flag and the kind.
+    // The kind check runs before the lock, so an incompatible flag/kind pair
+    // refuses before the lock is acquired.
     let kind = detect_source_kind(&target)?;
     let mode = AddMode::resolve(mode_flag, kind)?;
 
-    // Take the exclusive advisory lock before any mutation.
     let state = resolve_state_dir().map_err(EngineError::from)?;
     let lock_path = state.join("lock");
     let _guard = acquire_lock(&lock_path, LockKind::Exclusive, exclusive_timeout())
         .map_err(EngineError::from)
         .context("failed to acquire the exclusive lock")?;
 
-    // Refuse a path that is already managed: scan every module's
-    // manifest for a `[[file]]` or `[[directory]]` whose target resolves to
-    // the same path.
     if let Some(existing_module) = find_managed(&repo_root, &target, &home)? {
         let message = format!(
             "{} is already managed by module `{existing_module}`",
@@ -270,12 +255,9 @@ pub async fn run(
     let file_name = target
         .file_name()
         .ok_or_else(|| anyhow!("the path `{}` has no file name", args.path))?;
-    // The repository source name strips the leading dot of a dotfile so the
-    // repo holds `zsh/zshrc`, not `zsh/.zshrc`
-    // (`~/.zshrc` → `<repo>/zsh/zshrc`).
     let basename = repo_source_name(file_name);
     // A `--template` source records the `.tmpl` suffix so the engine derives
-    // the implicit template mode; the on-disk copied file keeps that suffix.
+    // the implicit template mode. The copied file on disk ends in `.tmpl` too.
     let source = if mode.is_template() {
         format!("{basename}.tmpl")
     } else {
@@ -292,19 +274,16 @@ pub async fn run(
     if let Some(exit) = refuse_ignored_conflict(args, &repo_root, &dest, reporter)? {
         return Ok(exit);
     }
-    // Tree modes only. A whole-directory `symlink` deploys through one link, so
-    // no pattern drops a leaf and the warning would be false.
+    // Tree modes only. A whole-directory `symlink` deploys through one link,
+    // so a pattern cannot drop a leaf and the warning would be false.
     if matches!(mode, AddMode::DirectorySymlinkTree | AddMode::DirectoryCopy) {
         warn_on_ignored_leaves(&repo_root, &target, reporter)?;
     }
 
     stage_into_repo(&target, &dest, kind)?;
 
-    // Append the entry to the module manifest, creating it if absent,
-    // routing a directory source to the `[[directory]]` table and a file
-    // source to `[[file]]`. The target is stored as the user
-    // wrote it (e.g. `~/.zshrc`) so the manifest stays portable across
-    // machines.
+    // Store the unexpanded target path (e.g. `~/.zshrc`) to keep the manifest
+    // portable across machines.
     let manifest_path = module_dir.join(MANIFEST_FILENAME);
     let existing_text = read_manifest_text(&manifest_path)?;
     let new_text = if mode.is_directory() {
@@ -338,8 +317,8 @@ pub async fn run(
     Ok(ExitCode::Success.code())
 }
 
-/// Refuse the add when a tree-mode entry already excludes `dest`, returning the
-/// exit code to propagate. `None` means the add may proceed.
+/// Refuse the add when a tree-mode entry already excludes `dest`. Returns the
+/// exit code to propagate. `None` allows the add to proceed.
 ///
 /// `--force` skips the check.
 ///
@@ -384,8 +363,9 @@ fn refuse_ignored_conflict(
 /// Declaring a `[[file]]` for a path a `symlink-tree` already excludes is a
 /// contradiction in one manifest: the new entry deploys exactly what the tree
 /// entry was told to skip. Only an entry whose source directory contains `dest`
-/// can contradict it that way. A `[[file]]` deploys its declared source with no
-/// enumeration, so a repo-wide pattern matching it elsewhere is not a conflict.
+/// can create that contradiction. A `[[file]]` deploys its declared source with
+/// no enumeration, so a repo-wide pattern matching it elsewhere is not a
+/// conflict.
 ///
 /// # Errors
 ///
@@ -419,7 +399,7 @@ fn ignoring_tree_entry(
 }
 
 /// Warn when the directory being added contains leaves the repo-wide ignore
-/// list would drop, naming how many.
+/// list would drop. The warning reports how many.
 ///
 /// Informational only. The new entry has no `ignore` of its own yet, so only
 /// the root manifest's patterns can apply.
@@ -458,9 +438,9 @@ fn warn_on_ignored_leaves(
 /// whose target resolves to the same absolute path as `target`. Returns the
 /// owning module's name on a match.
 ///
-/// Targets are compared by tilde-expanded form (the manifest may store a
-/// `~`-relative target while the input is absolute, or vice versa), without
-/// touching the filesystem.
+/// Targets are compared by tilde-expanded form, without touching the
+/// filesystem. The manifest may store a `~`-relative target against an absolute
+/// input, or an absolute target against a `~`-relative input.
 fn find_managed(
     repo_root: &Utf8Path,
     target: &Utf8Path,
@@ -481,16 +461,11 @@ fn find_managed(
     Ok(None)
 }
 
-/// Stage the target into the repository at `to`, leaving the original
-/// `from` in place.
+/// Stage the dotfile at `from` into the repository at `to`.
 ///
-/// `add` brings a dotfile under management without materializing it. The
-/// repository gets the source bytes, and the target stays in place. A
-/// subsequent `patina apply` then converges it into the declared mode. Until
-/// that apply runs, `~/.zshrc` is still a regular file with the original
-/// bytes. A directory source is copied recursively;
-/// a file source is a single byte copy. The bytes are copied (not renamed
-/// away) precisely so the original target survives.
+/// A directory source is copied recursively; a file source is a single byte
+/// copy. The source at `from` remains an untouched regular file until a later
+/// `patina apply` replaces it.
 fn stage_into_repo(from: &Utf8Path, to: &Utf8Path, kind: SourceKind) -> Result<()> {
     match kind {
         SourceKind::File => {
@@ -506,10 +481,10 @@ fn stage_into_repo(from: &Utf8Path, to: &Utf8Path, kind: SourceKind) -> Result<(
     Ok(())
 }
 
-/// Recursively copy the directory at `from` into a freshly-created `to`,
-/// mirroring the tree (subdirectories and regular files). Symbolic links
-/// inside the tree are followed and copied as their target bytes. `add`
-/// stages source content, not link structure.
+/// Recursively copy the directory at `from` into a freshly-created `to`.
+/// Subdirectories and regular files are mirrored. A symbolic link inside the
+/// tree is followed and copied as its target bytes: `add` stages source
+/// content, not link structure.
 fn copy_dir_recursive(from: &Utf8Path, to: &Utf8Path) -> Result<()> {
     fs_err::create_dir_all(to.as_std_path()).with_context(|| format!("failed to create {to}"))?;
     for entry in fs_err::read_dir(from.as_std_path())? {
@@ -529,9 +504,10 @@ fn copy_dir_recursive(from: &Utf8Path, to: &Utf8Path) -> Result<()> {
     Ok(())
 }
 
-/// Detect whether `target` on disk is a regular file or a directory,
-/// following a symbolic-link target so the staged kind matches
-/// what the user pointed at. A missing target is a typed error.
+/// Detect whether `target` on disk is a regular file or a directory.
+///
+/// `fs_err::metadata` follows a symbolic link, so the staged kind matches what
+/// the user pointed at. A missing or unreadable target is an error.
 fn detect_source_kind(target: &Utf8Path) -> Result<SourceKind> {
     let metadata = fs_err::metadata(target.as_std_path()).with_context(|| {
         format!("cannot add `{target}`: the source does not exist or is unreadable")
@@ -543,8 +519,8 @@ fn detect_source_kind(target: &Utf8Path) -> Result<SourceKind> {
     }
 }
 
-/// Read the existing module manifest text, treating a missing file as the
-/// empty document so a fresh module's manifest is created on first `add`.
+/// Read the existing module manifest text. A missing file reads as the empty
+/// document, so a fresh module's manifest is created on first `add`.
 fn read_manifest_text(manifest_path: &Utf8Path) -> Result<String> {
     if manifest_path.exists() {
         fs_err::read_to_string(manifest_path.as_std_path())
@@ -554,10 +530,10 @@ fn read_manifest_text(manifest_path: &Utf8Path) -> Result<String> {
     }
 }
 
-/// Resolve the selected mode flag, prompting in a TTY when no flag is set.
-/// Returns `Ok(None)` for the non-TTY-without-mode refusal (exit 1). The
-/// returned [`ModeFlag`] is validated against the source kind later via
-/// [`AddMode::resolve`].
+/// Resolve the selected mode flag. With no flag set, a TTY prompts for one.
+/// Returns `Ok(None)` for the non-TTY-without-mode refusal (exit 1).
+/// [`AddMode::resolve`] validates the returned [`ModeFlag`] against the source
+/// kind.
 fn resolve_mode_flag(
     args: &AddArgs,
     tty: Tty,
@@ -599,7 +575,7 @@ fn resolve_mode_flag(
     }
 }
 
-/// Resolve the module name, prompting in a TTY when `--module` is absent.
+/// Resolve the module name. With `--module` absent, a TTY prompts for one.
 /// Returns `Ok(None)` for the non-TTY-without-module refusal (exit 1).
 fn resolve_module(
     args: &AddArgs,
@@ -628,10 +604,12 @@ fn resolve_module(
     }
 }
 
-/// Derive the repository source name from a target's file name, stripping a
-/// single leading dot so a dotfile lands as `zsh/zshrc` rather than
-/// `zsh/.zshrc`. A name that is exactly `.` (or empty
-/// after stripping) is returned verbatim so the result is never empty.
+/// Derive the repository source name from a target's file name. A single
+/// leading dot is stripped, so a dotfile is stored as `zsh/zshrc` rather than
+/// `zsh/.zshrc`.
+///
+/// The empty-result guard is unreachable: `Utf8Path::file_name` returns `None`
+/// for `.` and `..`, and the caller rejects a target with no file name.
 fn repo_source_name(file_name: &str) -> String {
     match file_name.strip_prefix('.') {
         Some(rest) if !rest.is_empty() => rest.to_owned(),
@@ -639,8 +617,8 @@ fn repo_source_name(file_name: &str) -> String {
     }
 }
 
-/// Resolve the user's home directory for tilde expansion, reading `$HOME`
-/// then `$USERPROFILE` (the Windows fallback).
+/// Resolve the user's home directory for tilde expansion. `$HOME` is read
+/// first, then `$USERPROFILE` (the Windows fallback).
 pub(crate) fn resolve_home() -> Result<Utf8PathBuf> {
     for name in ["HOME", "USERPROFILE"] {
         if let Ok(value) = std::env::var(name)
@@ -657,8 +635,8 @@ pub(crate) fn resolve_home() -> Result<Utf8PathBuf> {
 /// Build the `--json` success envelope. Deterministic for a given input
 /// (no timestamps / PIDs).
 fn success_envelope(target: &Utf8Path, dest: &Utf8Path, module: &str, mode: AddMode) -> String {
-    // `canonicalize_path` is best-effort here purely for display stability;
-    // the stored manifest target is the verbatim user input.
+    // `canonicalize_path` is best-effort in this envelope, for display
+    // stability only. The stored manifest target is the verbatim user input.
     let canonical_dest = canonicalize_path(dest).unwrap_or_else(|_| dest.to_path_buf());
     let envelope = serde_json::json!({
         "added": target.as_str(),
@@ -669,7 +647,8 @@ fn success_envelope(target: &Utf8Path, dest: &Utf8Path, module: &str, mode: AddM
     serde_json::to_string_pretty(&envelope).unwrap_or_else(|_| "{}".to_owned())
 }
 
-/// Build a `--json` typed-error envelope mirroring `init`'s shape.
+/// Build the `--json` typed-error envelope: `error`, `path`, `message`. `init`
+/// and `remove` emit the same error keys.
 fn error_envelope(error: &str, path: &str, message: &str) -> String {
     let envelope = serde_json::json!({
         "error": error,
@@ -721,18 +700,15 @@ mod tests {
     fn repo_source_name_strips_one_leading_dot() {
         assert_eq!(repo_source_name(".zshrc"), "zshrc");
         assert_eq!(repo_source_name("config"), "config");
-        // A name that is only a dot, or `..`, is preserved (stripping would
-        // leave an empty or surprising name).
+        // At most one leading dot is stripped, and the result is never empty.
         assert_eq!(repo_source_name("."), ".");
         assert_eq!(repo_source_name(".."), ".");
     }
 
     #[test]
     fn add_mode_resolves_each_compatible_flag_kind_pair() {
-        // The full compatibility matrix: --symlink / --copy work
-        // for either kind; --template is file-only; --symlink-tree is
-        // directory-only. Each resolved mode maps to the FileMode the
-        // writer records and selects the right table-array.
+        // The full compatibility matrix. Each row: flag, source kind,
+        // resolved mode, recorded FileMode, is_directory.
         let cases = [
             (
                 ModeFlag::Symlink,
@@ -795,24 +771,24 @@ mod tests {
     }
 
     #[test]
-    fn add_mode_rejects_symlink_tree_on_a_file_naming_flag_and_kind() {
+    fn add_mode_rejects_symlink_tree_on_a_file_with_flag_and_kind() {
         let err = AddMode::resolve(ModeFlag::SymlinkTree, SourceKind::File)
             .expect_err("--symlink-tree on a file must be rejected");
         let message = err.to_string();
         assert!(
             message.contains("--symlink-tree") && message.contains("file"),
-            "error must name the flag and the file kind, got: {message}"
+            "error must include the flag and the file kind, got: {message}"
         );
     }
 
     #[test]
-    fn add_mode_rejects_template_on_a_directory_naming_flag_and_kind() {
+    fn add_mode_rejects_template_on_a_directory_with_flag_and_kind() {
         let err = AddMode::resolve(ModeFlag::Template, SourceKind::Directory)
             .expect_err("--template on a directory must be rejected");
         let message = err.to_string();
         assert!(
             message.contains("--template") && message.contains("directory"),
-            "error must name the flag and the directory kind, got: {message}"
+            "error must include the flag and the directory kind, got: {message}"
         );
     }
 
@@ -852,7 +828,7 @@ mod tests {
         );
         assert!(
             reporter.err.contains("--symlink") && reporter.err.contains("--symlink-tree"),
-            "the refusal must name the mode flags, got: {}",
+            "the refusal must include the mode flags, got: {}",
             reporter.err
         );
     }
@@ -878,7 +854,7 @@ mod tests {
         assert!(module.is_none(), "a non-TTY shell without --module refuses");
         assert!(
             reporter.err.contains("--module"),
-            "the refusal must name the missing --module flag, got: {}",
+            "the refusal must include the missing --module flag, got: {}",
             reporter.err
         );
     }
@@ -895,7 +871,7 @@ mod tests {
     }
 
     #[test]
-    fn success_envelope_is_deterministic_and_names_fields() {
+    fn success_envelope_is_deterministic_and_sets_its_fields() {
         let target = Utf8Path::new("~/.zshrc");
         let dest = Utf8Path::new("/repo/zsh/zshrc");
         let first = success_envelope(target, dest, "zsh", AddMode::FileSymlink);

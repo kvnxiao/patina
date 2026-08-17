@@ -5,7 +5,7 @@
 //! fixture repo. Its module declares a `[[file]]` entry carrying a `when`
 //! predicate. A false predicate drops the entry from the plan entirely, with
 //! no operation and no target. A true predicate plans it like an un-gated
-//! entry, including byte-identical second-run parity.
+//! entry, byte-identical second-run parity included.
 
 mod common;
 
@@ -22,9 +22,9 @@ fn current_os_family() -> &'static str {
 
 #[test]
 fn when_false_entry_creates_no_target_and_plans_zero_operations() {
-    // An entry carrying `when = "patina.os == 'definitely-not-this-os'"`
-    // contributes nothing. Its target is not created, and the `--json` plan
-    // records zero operations for it.
+    // An entry whose `when` is `patina.os == 'definitely-not-this-os'` does
+    // not contribute an operation. Its target is not created, and the `--json`
+    // plan records zero operations for it.
     let f = Fixture::new();
     let module = f.module(
         "shell",
@@ -46,8 +46,8 @@ fn when_false_entry_creates_no_target_and_plans_zero_operations() {
         "a `when`-false entry must not materialize its target"
     );
 
-    // The plan array carries one row per planned operation. A `when`-false
-    // entry contributes none, so the `.zshrc` target appears nowhere.
+    // The plan array holds one row per planned operation. A `when`-false entry
+    // does not add a row, so `.zshrc` is absent from the array.
     let stdout = String::from_utf8_lossy(&out.stdout);
     let doc: serde_json::Value =
         serde_json::from_str(&stdout).expect("stdout must be a single JSON document");
@@ -70,14 +70,11 @@ fn when_true_entry_materializes_and_second_run_is_byte_identical() {
     // its target. Two consecutive applies over the unchanged source produce
     // byte-identical stdout, so `when`-parity holds when a `when` is present.
     // As in `deterministic_stdout.rs`, a priming apply converges the repo
-    // first, so the two measured runs observe the same on-disk state. This
-    // checks that stdout is a stable function of identical inputs.
+    // first, so the two measured runs observe the same on-disk state.
     //
-    // This uses a copy-mode entry because a symlink's plan diff renders its
-    // link target differently on a fresh run versus a converged run, an
-    // orthogonal quirk that `deterministic_stdout.rs` also sidesteps by using
-    // copy or template modes. Copy mode isolates the `when`-parity property
-    // under test.
+    // Copy mode isolates the property under test. A symlink's plan diff
+    // renders its link target differently on a fresh run than on a converged
+    // run, and `deterministic_stdout.rs` sidesteps that quirk the same way.
     let f = Fixture::new();
     let when = format!("patina.os == '{}'", current_os_family());
     let module = f.module(
@@ -126,8 +123,8 @@ fn when_true_entry_materializes_and_second_run_is_byte_identical() {
 
 #[test]
 fn multi_target_false_when_plans_none_of_its_targets() {
-    // For a multi-target entry, the `when` gates all targets together. A
-    // false predicate plans none of them.
+    // For a multi-target entry, the `when` gates all targets together. A false
+    // predicate leaves every one of them unplanned.
     let f = Fixture::new();
     let module = f.module(
         "agent",
@@ -158,8 +155,8 @@ fn multi_target_false_when_plans_none_of_its_targets() {
 
 #[test]
 fn multi_target_true_when_plans_all_of_its_targets() {
-    // With a true predicate every target of a multi-target entry is
-    // planned (the gate is per-entry, above the target loop).
+    // With a true predicate every target of a multi-target entry is planned
+    // (the gate is per-entry, outside the target loop).
     let f = Fixture::new();
     let when = format!("patina.os == '{}'", current_os_family());
     let module = f.module(

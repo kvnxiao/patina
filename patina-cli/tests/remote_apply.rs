@@ -8,8 +8,8 @@
 //! Each test declares the remote in the root manifest, builds a throwaway
 //! origin repository with the real `git` binary inside the fixture tempdir,
 //! hand-writes the `patina.lock` a producer machine would have committed, and
-//! drives the CLI as a subprocess. Nothing touches the network: the "remote" is
-//! a local filesystem path.
+//! drives the CLI as a subprocess. The "remote" is a local filesystem path, so
+//! the network is never involved.
 //!
 //! See `docs/REMOTE_SOURCES.md` "The remote registry", "The remote cache", and
 //! "Trust boundaries".
@@ -110,9 +110,9 @@ fn a_remote_copy_mode_directory_materializes_from_the_pinned_checkout() {
 #[test]
 fn a_checkout_holding_a_real_symlink_fails_the_apply_plan() {
     // Patina materializes checkouts with `core.symlinks=false`, so a real link
-    // in the cache means it was made or altered by something else. The plan
-    // must refuse to deploy through it: the executors dereference links, which
-    // would read (copy) or plant (symlink-tree) paths outside the checkout.
+    // in the cache was made or altered by something else. The plan must refuse
+    // to deploy through it. The executors dereference links, so deploying would
+    // read (copy) or plant (symlink-tree) paths outside the checkout.
     let f = Fixture::new();
     let origin = Origin::new(&f, "humanizer", EPOCH);
     let rev = origin.commit_files(&[("skills/humanizer/SKILL.md", "humanize\n")], EPOCH);
@@ -191,7 +191,7 @@ fn status_reports_applied_leaves_clean_when_the_pin_moved_but_its_checkout_is_ab
 }
 
 #[test]
-fn an_entry_naming_the_remote_in_another_case_still_resolves() {
+fn an_entry_selecting_the_remote_in_another_case_still_resolves() {
     // Names are one identity ignoring case (the registry rejects case-only
     // duplicates on that basis), so a reference spelled differently must find
     // the declaration rather than fail as undeclared.
@@ -266,7 +266,7 @@ fn one_module_mixes_its_own_files_with_a_remotes() {
 }
 
 #[test]
-fn an_entry_naming_an_undeclared_remote_fails_planning() {
+fn an_entry_selecting_an_undeclared_remote_fails_planning() {
     let f = Fixture::new();
     f.module(
         "agents",
@@ -279,21 +279,20 @@ fn an_entry_naming_an_undeclared_remote_fails_planning() {
     assert_eq!(
         code(&out),
         1,
-        "an entry naming nothing declared must fail; stderr: {stderr}"
+        "an entry that selects an undeclared remote must fail; stderr: {stderr}"
     );
     assert!(
         stderr.contains("humanizer") && stderr.contains("[[remote]]"),
-        "the message must name the remote and where to declare it; stderr: {stderr}"
+        "the message must include the remote and where to declare it; stderr: {stderr}"
     );
     assert!(!f.home.join(".skill.md").exists(), "nothing may be applied");
 }
 
 #[test]
-fn a_remote_only_a_when_false_entry_names_is_never_fetched() {
-    // Materializing a checkout is a consequence of an entry actually selecting
-    // the remote here. This one is switched off on every host, so the run must
-    // not read the (absent) pin, must not reach the (deleted) origin, and must
-    // leave no cache directory behind.
+fn a_remote_only_a_when_false_entry_selects_is_never_fetched() {
+    // The remote entry is switched off on every host, so planning drops it
+    // before any remote resolution. The origin is deleted and the lockfile has
+    // no pin: a fetch would error rather than succeed.
     let f = Fixture::new();
     let origin = Origin::new(&f, "unused", EPOCH);
     origin.commit_files(&[("a.md", "a\n")], EPOCH);
@@ -305,7 +304,6 @@ fn a_remote_only_a_when_false_entry_names_is_never_fetched() {
          when = \"false\"\n",
     );
     fs_err::write(module.join("local.md").as_std_path(), "local\n").expect("write local source");
-    // No pin is written at all: resolving this remote would fail outright.
     fs_err::remove_dir_all(origin.dir.as_std_path()).expect("delete the origin");
 
     let out = f.apply(&["--yes"]);
@@ -321,7 +319,7 @@ fn a_remote_only_a_when_false_entry_names_is_never_fetched() {
     );
     assert!(
         !patina_core::remote::cache::module_dir(&f.state_root(), &remote_name("unused")).exists(),
-        "no cache directory may be created for a remote nothing active names"
+        "no cache directory may be created for a remote no active entry selects"
     );
 }
 
@@ -400,7 +398,7 @@ fn apply_update_under_json_does_not_bump_the_lockfile() {
 
 #[test]
 fn a_remote_source_that_escapes_its_checkout_is_refused() {
-    // A hostile manifest climbs out of the checkout with `..` to read host
+    // A hostile manifest points outside the checkout with `..` to read host
     // files. The resolver must refuse it before anything is deployed.
     let f = Fixture::new();
     let origin = Origin::new(&f, "evil", EPOCH);
@@ -421,7 +419,7 @@ fn a_remote_source_that_escapes_its_checkout_is_refused() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         stderr.contains("resolves outside its checkout"),
-        "the failure must name the escape, got: {stderr}"
+        "the failure must include the escape, got: {stderr}"
     );
     assert!(
         !f.home.join(".escaped").exists(),
@@ -457,9 +455,10 @@ fn a_remote_symlink_entry_points_into_the_pinned_checkout() {
     let link = fs_err::read_link(deployed.as_std_path()).expect("the target is a symbolic link");
     let link = Utf8PathBuf::from_path_buf(link).expect("utf8 link target");
     // The engine records canonical paths, while `checkout` spells the cache
-    // directory the way the environment gives the state dir. Canonicalize both
-    // or this compares `/var/...` against `/private/var/...` on macOS and a
-    // long path against an 8.3 short one on Windows.
+    // directory the way the environment gives the state dir. Canonicalizing
+    // both keeps the comparison honest: otherwise it compares `/var/...` with
+    // `/private/var/...` on macOS, and a long path with an 8.3 short one on
+    // Windows.
     let expected = patina_core::canonicalize_path(&checkout(&f, "prompts", &rev))
         .expect("canonicalize the checkout directory");
     let link = patina_core::canonicalize_path(&link).expect("canonicalize the link target");
@@ -503,11 +502,11 @@ fn a_patina_toml_inside_the_checkout_contributes_nothing() {
         "the hostile manifest must not break the apply; stderr: {}",
         String::from_utf8_lossy(&out.stderr)
     );
-    // The checkout really does contain the hostile manifest; otherwise this
-    // test would pass for the wrong reason.
+    // Without this check the test would pass on a fixture that never wrote the
+    // hostile manifest.
     assert!(
         checkout(&f, "hostile", &rev).join("patina.toml").is_file(),
-        "the fixture must actually place a patina.toml inside the checkout"
+        "the fixture must place a patina.toml inside the checkout"
     );
     assert!(
         !f.home.join(".ssh/authorized_keys").exists(),
@@ -531,7 +530,7 @@ fn a_patina_toml_inside_the_checkout_contributes_nothing() {
 }
 
 #[test]
-fn an_entry_naming_an_unpinned_remote_fails_planning_and_names_the_command() {
+fn an_entry_selecting_an_unpinned_remote_fails_planning_and_includes_the_command() {
     let f = Fixture::new();
     let origin = Origin::new(&f, "humanizer", EPOCH);
     origin.commit_files(&[("a.md", "a\n")], EPOCH);
@@ -552,13 +551,13 @@ fn an_entry_naming_an_unpinned_remote_fails_planning_and_names_the_command() {
     );
     assert!(
         stderr.contains("patina remote update humanizer"),
-        "the message must name the command that creates the first pin; stderr: {stderr}"
+        "the message must include the command that creates the first pin; stderr: {stderr}"
     );
     assert!(!f.home.join(".a.md").exists(), "nothing may be applied");
 }
 
 #[test]
-fn a_cold_cache_with_an_unreachable_remote_fails_naming_the_rev() {
+fn a_cold_cache_with_an_unreachable_remote_fails_and_includes_the_rev() {
     let f = Fixture::new();
     let origin = Origin::new(&f, "gone", EPOCH);
     let rev = origin.commit_files(&[("a.md", "a\n")], EPOCH);
@@ -581,7 +580,7 @@ fn a_cold_cache_with_an_unreachable_remote_fails_naming_the_rev() {
     );
     assert!(
         stderr.contains(&rev) && stderr.contains("gone"),
-        "the error must name the remote and the missing rev; stderr: {stderr}"
+        "the error must include the remote and the missing rev; stderr: {stderr}"
     );
     assert!(!f.home.join(".a.md").exists(), "nothing may be applied");
 }
@@ -620,7 +619,7 @@ fn a_warm_cache_applies_fully_with_the_remote_unreachable() {
 fn a_checkout_holds_the_commit_bytes_even_under_autocrlf() {
     // `core.autocrlf = true` is a common Windows setting. If it reached the
     // checkout, the same pinned commit would deploy CRLF on one machine and LF
-    // on another and hash differently in the journal, so a checkout must hold
+    // on another, and hash differently in the journal. A checkout must contain
     // the commit's bytes verbatim.
     let f = Fixture::new();
     let origin = Origin::new(&f, "crlf", EPOCH);
@@ -696,8 +695,9 @@ fn bumping_the_pin_re_points_the_link_and_rollback_restores_the_prior_checkout()
     write_lock(&f, "moving", &origin, &first_rev);
     assert_eq!(code(&f.apply(&["--yes"])), 0, "apply the first pin");
 
-    // Two applies inside one second would share a `<ts>.COMMIT`, leaving the
-    // prior checkout unreferenced and swept, and rollback with a dangling link.
+    // Two applies inside one second would share a `<ts>.COMMIT`. The prior
+    // checkout would then be unreferenced and swept, and rollback would find a
+    // dangling link.
     wait_for_next_second();
 
     let second_rev = origin.commit_files(&[("a.md", "second\n")], EPOCH);
@@ -743,8 +743,8 @@ fn apply_prunes_a_checkout_no_journal_record_references() {
     write_lock(&f, "sweep", &origin, &rev);
     assert_eq!(code(&f.apply(&["--yes"])), 0, "priming apply");
 
-    // A checkout of a rev nothing was ever applied from: no journal record can
-    // name it, so the post-apply sweep must remove it.
+    // A checkout of a rev nothing was ever applied from is unreferenced by
+    // every journal record, so the post-apply sweep must remove it.
     let orphan = checkout(&f, "sweep", "cccccccccccccccccccccccccccccccccccccccc");
     fs_err::create_dir_all(orphan.as_std_path()).expect("mkdir orphan checkout");
     fs_err::write(orphan.join("a.md").as_std_path(), b"stale").expect("write orphan leaf");
@@ -756,6 +756,6 @@ fn apply_prunes_a_checkout_no_journal_record_references() {
     assert!(!orphan.exists(), "the unreferenced checkout must be swept");
     assert!(
         checkout(&f, "sweep", &rev).is_dir(),
-        "the checkout the committed record names must survive"
+        "the checkout the committed record references must survive"
     );
 }

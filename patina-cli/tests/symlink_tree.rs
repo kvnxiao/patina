@@ -15,7 +15,7 @@
 //!   directories stay real;
 //! - a pre-existing regular file at a leaf target is backed up (provable via
 //!   `patina rollback` restoring its prior bytes) and replaced by the link;
-//! - an empty source subdirectory produces no target directory;
+//! - an empty source subdirectory does not produce a target directory;
 //! - a re-apply over unchanged source is a no-op for the entry (idempotent).
 
 mod common;
@@ -27,8 +27,8 @@ use common::code;
 
 /// Read a symlink's target and canonicalize it so the assertion is
 /// independent of the platform's `readlink` representation (Windows returns
-/// the verbatim `\\?\` form; Unix returns the plain path). The CHK contract
-/// is "the leaf link resolves to the source file", which holds when both
+/// the verbatim `\\?\` form; Unix returns the plain path). The contract is
+/// that the leaf link resolves to the source file, and it holds when both
 /// sides are canonicalized.
 fn read_link_canonical(target: &Utf8Path) -> Utf8PathBuf {
     let raw = fs_err::read_link(target.as_std_path()).expect("read_link target");
@@ -94,8 +94,8 @@ fn symlink_tree_links_each_leaf_and_keeps_intermediate_dirs_real() {
 
 #[test]
 fn symlink_tree_backs_up_pre_existing_leaf_and_replaces_it_with_a_link() {
-    // A leaf target `~/d/a.conf` that already holds a regular file is
-    // afterward a symbolic link to the source. The prior bytes were recorded
+    // A leaf target `~/d/a.conf` that already holds a regular file becomes a
+    // symbolic link to the source. The prior bytes were recorded
     // in a backup, proven by `patina rollback` restoring the original file.
     let f = Fixture::new();
     let module = f.module(
@@ -156,8 +156,8 @@ fn symlink_tree_backs_up_pre_existing_leaf_and_replaces_it_with_a_link() {
 
 #[test]
 fn symlink_tree_skips_empty_source_subdirectory() {
-    // An empty source subdirectory produces neither a target
-    // directory nor a link.
+    // For an empty source subdirectory, neither a target directory nor a link
+    // is created.
     let f = Fixture::new();
     let module = f.module(
         "cfg",

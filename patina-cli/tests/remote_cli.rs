@@ -68,7 +68,7 @@ fn json_of(output: &std::process::Output) -> serde_json::Value {
 #[test]
 fn update_creates_the_first_pin_without_waiting_out_the_age_gate() {
     // The commit is made "now" and the floor is the default 72 hours, so only
-    // the first-pin exemption can let this through.
+    // the first-pin exemption can allow the bump.
     let f = Fixture::new();
     let origin = Origin::new(&f, "humanizer", OLD_EPOCH);
     let now = patina_core::current_epoch_seconds();
@@ -232,7 +232,7 @@ fn update_of_an_unknown_remote_name_fails_without_touching_the_lockfile() {
     assert_eq!(code(&out), 1);
     assert!(
         String::from_utf8_lossy(&out.stderr).contains("nope"),
-        "the message must name the remote that was asked for"
+        "the message must include the remote that was asked for"
     );
     assert_eq!(lockfile(&f), "", "no lockfile may be written");
 }
@@ -308,7 +308,7 @@ fn check_reports_a_moved_upstream_and_writes_the_notice() {
     let body = fs_err::read_to_string(notice.as_std_path()).expect("the notice is written");
     assert!(
         body.contains("humanizer") && body.contains("patina apply --update"),
-        "the notice must name the remote and the next step: {body}"
+        "the notice must include the remote and the next step: {body}"
     );
     assert!(
         patina_core::remote::notice::read_pending(&f.state_root()).contains("humanizer"),
@@ -388,7 +388,7 @@ fn check_hook_is_silent_and_self_throttles() {
     let stamp = patina_core::remote::notice::last_check_epoch(&f.state_root());
     assert!(stamp.is_some(), "the hook must stamp its check");
 
-    // Inside the throttle window the second run does no work; the stamp
+    // Inside the throttle window the second run skips the check, and the stamp
     // stays untouched.
     assert_eq!(code(&f.run(&["remote", "check", "--hook"], &[])), 0);
     assert_eq!(
@@ -431,8 +431,8 @@ fn prune_removes_an_unreferenced_checkout() {
 #[test]
 fn prune_removes_the_whole_cache_tree_of_an_undeclared_remote() {
     // The reachability sweep only ever considers checkout directories, so a
-    // remote's own directory and its bare fetch repository would survive
-    // deleting the declaration for good.
+    // remote's own directory and its bare fetch repository would remain after
+    // the declaration is deleted.
     let f = Fixture::new();
     let origin = Origin::new(&f, "humanizer", OLD_EPOCH);
     origin.commit_files(&[("a.md", "first\n")], OLD_EPOCH);
@@ -465,7 +465,7 @@ fn prune_removes_the_whole_cache_tree_of_an_undeclared_remote() {
 }
 
 #[test]
-fn a_mutating_apply_drops_a_pin_no_declaration_names() {
+fn a_mutating_apply_drops_a_pin_no_declaration_selects() {
     let f = Fixture::new();
     let origin = Origin::new(&f, "humanizer", OLD_EPOCH);
     origin.commit_files(&[("a.md", "first\n")], OLD_EPOCH);
@@ -515,8 +515,8 @@ fn a_preview_apply_reports_a_stale_pin_without_rewriting_the_lockfile() {
     fs_err::remove_dir_all(f.root.join("humanizer").as_std_path()).expect("remove the module");
     let before = lockfile(&f);
 
-    // No `--yes` in a non-interactive shell, so this is a preview that must
-    // write nothing.
+    // Without `--yes` in a non-interactive shell this is a preview, and it
+    // must not write.
     let out = f.apply(&[]);
     assert_eq!(code(&out), 0, "a preview exits 0");
     assert_eq!(
@@ -534,7 +534,7 @@ fn a_preview_apply_reports_a_stale_pin_without_rewriting_the_lockfile() {
 #[test]
 fn update_pins_every_declaration_not_only_the_ones_in_use() {
     // The committed lock has to be complete for every machine, so a remote no
-    // entry currently names is still pinned here.
+    // entry currently selects is still pinned here.
     let f = Fixture::new();
     let used = Origin::new(&f, "used", OLD_EPOCH);
     used.commit_files(&[("a.md", "first\n")], OLD_EPOCH);
@@ -552,7 +552,7 @@ fn update_pins_every_declaration_not_only_the_ones_in_use() {
     );
     assert!(
         lockfile(&f).contains(&unused_rev),
-        "a declaration no entry names must still be pinned:\n{}",
+        "a declaration no entry selects must still be pinned:\n{}",
         lockfile(&f)
     );
 }

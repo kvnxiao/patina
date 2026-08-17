@@ -1,17 +1,16 @@
 //! Golden-output coverage for the human diff body.
 //!
-//! In a partial apply the rendered diff emits a per-entry block only
-//! for `Create` / `Update` targets; `Unchanged` targets produce no block and
-//! are reported by exactly one deterministic summary count line.
+//! In a partial apply the rendered diff emits a per-entry block only for
+//! `Create` / `Update` targets. An `Unchanged` target does not produce a
+//! block; one deterministic summary count line reports them all.
 //!
 //! The diff is exercised end-to-end through the real `patina apply` binary on
 //! the non-interactive path: with no `--yes` and a non-TTY stdin, `apply`
-//! renders the diff to stdout and then previews-only (exit 0) without writing
-//! anything. The snapshot pins that captured stdout as the rendered diff
-//! body.
+//! renders the diff to stdout, then exits 0 as a preview without writing.
+//! The snapshot pins that captured stdout as the rendered diff body.
 //!
 //! The per-run tempdir home prefix is redacted to `[HOME]` so the snapshot is
-//! stable across runs and machines while still proving the path-naming shape
+//! stable across runs and machines while still proving the path shape
 //! (one `copy [HOME]/...` line for the single Update block).
 
 mod common;
@@ -65,13 +64,10 @@ mode = "copy"
         String::from_utf8_lossy(&first.stderr)
     );
 
-    // Drift exactly one target's bytes: `b_out` now differs from `b_src`, so
-    // the next plan classifies it Update while a/c/d stay Unchanged.
+    // Drift exactly one target's bytes.
     let b_out = f.home.join("b_out");
     fs_err::write(&b_out, b"b-drifted\n").expect("drift b_out");
 
-    // No `--yes`, non-TTY stdin (subprocess): `apply` renders the diff and
-    // previews-only (exit 0), so stdout holds exactly the rendered diff body.
     // `--color never` makes the strip unconditional: the renderer emits ANSI
     // that the reporter's auto-stream removes, and forcing `never` keeps the
     // pinned bytes plain regardless of the runner's terminal / CLICOLOR_FORCE
@@ -90,8 +86,8 @@ mode = "copy"
 
 /// An entry dropped from a `patina.toml` after a prior apply is reaped on the
 /// next apply. The preview must render that removal as a `remove <target>`
-/// block carrying the deleted content, not omit it and summarize only the
-/// surviving entry as unchanged.
+/// block whose body is the deleted content, rather than omitting it and
+/// summarizing only the surviving entry as unchanged.
 #[test]
 fn dropped_entry_renders_as_a_remove_block_in_the_preview() {
     let f = Fixture::new();
@@ -145,15 +141,15 @@ mode = "copy"
 
 /// Redact the per-run tempdir home prefix to a stable `[HOME]` token so the
 /// snapshot is reproducible across runs and machines while still proving each
-/// block names its target path.
+/// block includes its target path.
 ///
-/// The renderer prints the target resolved through `resolve_location`, which
-/// canonicalizes the parent (this home dir) and strips the Windows verbatim
-/// prefix, so the printed prefix is the *canonical* home, not the raw env
-/// value: on macOS the tempdir's `/var/...` resolves to `/private/var/...`,
+/// The renderer prints the target resolved through `resolve_location`. That
+/// function canonicalizes the parent (this home dir) and strips the Windows
+/// verbatim prefix, so the printed prefix is the *canonical* home, not the raw
+/// env value: on macOS the tempdir's `/var/...` resolves to `/private/var/...`,
 /// and on Windows a junction / short-name / `\\?\` form can differ from the
-/// env string (Linux `/tmp` canonicalizes to a no-op, which is why only it
-/// matched the raw form). Canonicalize the home the same way
+/// env string. Linux `/tmp` canonicalizes to a no-op, so only Linux ever
+/// matched the raw form. Canonicalize the home the same way
 /// (`dunce::canonicalize` mirrors the engine's `canonicalize`) before
 /// redacting, and cover both separator spellings. A literal string replace
 /// (not a regex) avoids re-enabling insta's `filters` feature.

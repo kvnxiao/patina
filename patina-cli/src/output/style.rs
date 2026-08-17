@@ -1,23 +1,20 @@
 //! Terminal styles for user-facing output.
 //!
 //! A [`Styles`] bundles the `anstyle` styles the diff renderer and the
-//! [`Reporter`](super::reporter::Reporter) paint with, separating whether
-//! styled bytes are generated from whether they reach the user:
+//! [`Reporter`](super::reporter::Reporter) paint with. Generating styled bytes
+//! and writing them out are separate decisions.
 //!
 //! - **Whether styled bytes are generated** is [`Styles`]. `Styles::plain`
-//!   (test-only) holds empty styles that render to zero bytes, so a plain
+//!   (test-only) is all-empty styles that render to zero bytes, so a plain
 //!   render is byte-for-byte identical to unstyled output, the form the diff
-//!   unit tests assert against. [`Styles::colored`] carries the production
-//!   palette.
-//! - **Whether those bytes reach the user** is decided at the write boundary in
-//!   `reporter`. Output there goes through an `anstream` auto-stream, which
-//!   strips ANSI when the destination is not a terminal, or when `--color
-//!   never` / `NO_COLOR` is in effect.
+//!   unit tests assert against. [`Styles::colored`] is the production palette.
+//! - **Whether those bytes are written** is decided at the write boundary in
+//!   `reporter`. Every write in `reporter` goes through an `anstream`
+//!   auto-stream, and that auto-stream strips ANSI when the destination is not
+//!   a terminal, or when `--color never` / `NO_COLOR` is in effect.
 //!
-//! The renderer always emits the colored palette; the auto-stream removes it
-//! when color is not wanted. This preserves the deterministic-stdout contract
-//! (piped / redirected output is always plain) while a real terminal gets
-//! color.
+//! Piped and redirected output is therefore plain every time: the
+//! deterministic-stdout contract.
 
 use anstyle::AnsiColor;
 use anstyle::Color;
@@ -25,12 +22,12 @@ use anstyle::Style;
 
 /// The palette the diff renderer and reporter paint with.
 ///
-/// Roles are grouped by the surface that prints them, and one group shares one
-/// row. Two roles in one group must never render alike, or one reads as the
-/// other on a single line. Across groups, identical styling is
-/// deliberate and marks one shared visual meaning.
+/// Roles are grouped by the surface that prints them, and the roles in one
+/// group can appear on a single row. Two roles in one group must therefore
+/// never render alike, or one reads as the other. Across groups, identical
+/// styling is deliberate and marks one shared visual meaning.
 /// [`header`](Styles::header) and [`path`](Styles::path) are both bold, because
-/// each names the subject of its line. [`hint`](Styles::hint),
+/// each marks the subject of its line. [`hint`](Styles::hint),
 /// [`FindingStyles::info`], and [`RemoteStyles::implicit_ref`] are all dimmed,
 /// because each is subordinate to the fact beside it. Separating those roles
 /// would spend scarce terminal hues on a distinction the reader does not need.
@@ -42,7 +39,7 @@ pub struct Styles {
     pub delete: Style,
     /// Unchanged diff context lines. Left plain.
     pub context: Style,
-    /// The per-entry header naming the action and target path.
+    /// The per-entry header line: the action and the target path.
     pub header: Style,
     /// Warnings.
     pub warn: Style,
@@ -55,15 +52,15 @@ pub struct Styles {
     pub prompt_affirm: Style,
     /// The default key in a `[y/N]` confirmation (the capitalized `N`).
     pub prompt_default: Style,
-    /// A completed action that changed nothing for the worse, such as an apply
-    /// that landed or a watch service already running.
+    /// An action that reached the state the user asked for: a completed apply,
+    /// or a watch service already running.
     pub success: Style,
     /// A path embedded in a one-line result sentence, so the path the command
     /// acted on stands out from the prose around it.
     pub path: Style,
     /// A follow-up suggestion, or a stand-in carrying no value of its own such
-    /// as a cell repeating the one beside it. Nothing a line reports may rest
-    /// on this role alone.
+    /// as a cell repeating the one beside it. A line must not report a fact
+    /// through this role alone.
     pub hint: Style,
     /// The roles the `patina status` table paints with.
     pub status: StatusStyles,
@@ -79,8 +76,8 @@ pub struct Styles {
 /// The roles the `patina status` table paints with, one per
 /// [`TargetState`](patina_core::TargetState).
 ///
-/// Each row keeps its state word in text, so the color only makes a clean
-/// repository scannable without reading four counters.
+/// The state word stays in each row's text, so the color only speeds the scan:
+/// a clean repository is legible at a glance rather than through the counters.
 #[derive(Debug, Clone, Copy)]
 pub struct StatusStyles {
     /// A target matching the last apply.
@@ -89,9 +86,9 @@ pub struct StatusStyles {
     pub drifted: Style,
     /// A target the last apply wrote that is no longer on disk.
     pub missing: Style,
-    /// A target the current plan no longer manages. It takes its own hue rather
-    /// than a failure color, because an orphan is a leftover awaiting a reap
-    /// and the next apply offers to remove it.
+    /// A target the current plan no longer manages. An orphan is a leftover
+    /// awaiting a reap rather than a failure, so it takes its own hue. The next
+    /// apply offers to remove it.
     pub orphaned: Style,
 }
 
@@ -112,8 +109,8 @@ pub struct FindingStyles {
 
 /// The roles the `patina remote list` table paints with.
 ///
-/// Every cell these color also carries its meaning in text, so an ANSI-stripped
-/// listing loses the color and nothing else.
+/// Every cell these color also states its meaning in text, so an ANSI-stripped
+/// listing loses only the color.
 #[derive(Debug, Clone, Copy)]
 pub struct RemoteStyles {
     /// The remote's name.
@@ -137,12 +134,11 @@ pub struct RemoteStyles {
 /// Gated with the command that uses them: `patina defender` does not exist off
 /// Windows, so neither do its roles.
 ///
-/// The kind roles paint the **whole path**, and the listing prints no `(file)`
-/// / `(folder)` text alongside. Color is therefore the only place the kind
-/// appears in human output, and it is lost wherever ANSI is stripped: piped
-/// output, `--color never`, `NO_COLOR`. `--json` carries `kind` as a field for
-/// that reason; a consumer that needs the distinction should read that
-/// instead.
+/// The kind roles paint the **whole path**, and the listing does not print
+/// `(file)` / `(folder)` text alongside. Color is therefore the only place the
+/// kind appears in human output, and it is lost wherever ANSI is stripped:
+/// piped output, `--color never`, `NO_COLOR`. `--json` emits `kind` as a field
+/// for that reason.
 #[cfg(windows)]
 #[derive(Debug, Clone, Copy)]
 pub struct ExclusionStyles {
@@ -150,16 +146,17 @@ pub struct ExclusionStyles {
     pub file: Style,
     /// The path of a folder exclusion. Distinct from
     /// [`file`](ExclusionStyles::file): a folder exclusion is the broader blind
-    /// spot, so which kind an entry is has to be readable at a glance down a
-    /// list that runs to dozens of paths.
+    /// spot, so the kind has to be readable at a glance down a list running to
+    /// dozens of paths.
     pub folder: Style,
     /// The state tag on an exclusion already in place and recorded by Patina:
     /// `[present]`, or `[recorded]` when the state came from the ledger.
     pub state_present: Style,
     /// The state tag on an exclusion Defender already excludes that Patina does
-    /// not record. Its own color because it is neither in place *for Patina*
-    /// nor missing from Defender: nothing is wrong, but reversibility
-    /// differs, so it reads as attention rather than success or failure.
+    /// not record. It is neither in place *for Patina* nor missing from
+    /// Defender, so it takes its own color. `clear` cannot reap such an
+    /// exclusion, so the color reads as attention rather than success or
+    /// failure.
     pub state_unmanaged: Style,
     /// The state tag on an exclusion not in place: `[missing]`, or
     /// `[not recorded]` when the state came from the ledger.
@@ -225,14 +222,14 @@ impl Styles {
     /// stand apart from the prose and from each other.
     ///
     /// Severity runs green → yellow → red wherever it appears, so the status
-    /// states and the doctor levels read the same way as a diff does. An
-    /// orphaned target breaks out of that run into magenta, because it is a
-    /// leftover awaiting a reap. It has no place on a severity scale.
+    /// states and the doctor levels read the same way as a diff does. An orphan
+    /// is a leftover awaiting a reap with no place on a severity scale, so an
+    /// orphaned target takes magenta instead.
     ///
     /// The Defender-exclusion roles paint the path blue (file) or magenta
-    /// (folder), leaving green, yellow, and red for the state tag: green in
+    /// (folder). Green, yellow, and red are left for the state tag: green in
     /// place and Patina's, yellow in place but not Patina's, red not in place.
-    /// Path and state therefore never compete for the same hue on one line.
+    /// Path and state therefore never use the same hue on one line.
     #[must_use = "construct the style set to render with it"]
     pub const fn colored() -> Self {
         Self {
@@ -288,7 +285,7 @@ impl Styles {
 /// Wrap `text` in `style`'s opening escape and reset.
 ///
 /// An empty style renders to zero bytes on both, so under the plain palette
-/// this returns `text` unchanged. That keeps a plain render byte-identical
+/// `paint` returns `text` unchanged. That keeps a plain render byte-identical
 /// to unstyled output.
 #[must_use = "the painted string is what gets written"]
 pub fn paint(style: Style, text: &str) -> String {
@@ -300,9 +297,9 @@ mod tests {
     use super::*;
 
     /// The plain palette must render to zero bytes on both the opening code
-    /// and the reset. That keeps plain output byte-identical to unstyled and
-    /// underpins the deterministic-stdout contract. A regression giving
-    /// `plain()` a real color would make this fail.
+    /// and the reset. Zero bytes is what keeps plain output byte-identical to
+    /// unstyled, and the deterministic-stdout contract depends on that. Giving
+    /// `plain()` a real color fails this test.
     #[test]
     fn plain_styles_render_to_zero_bytes() {
         let p = Styles::plain();
@@ -346,8 +343,9 @@ mod tests {
         }
     }
 
-    /// The same zero-byte guarantee for the Windows-only exclusion roles, which
-    /// live in their own struct and so are missed by the loop above.
+    /// The same zero-byte guarantee for the Windows-only exclusion roles. They
+    /// live in their own struct, so `plain_styles_render_to_zero_bytes` does
+    /// not cover them.
     #[cfg(windows)]
     #[test]
     fn plain_exclusion_styles_render_to_zero_bytes() {
@@ -364,19 +362,19 @@ mod tests {
         }
     }
 
-    /// The colored palette must actually emit escape sequences for the +/-
-    /// roles; otherwise "coloring" would be a silent no-op that no other test
-    /// would catch.
+    /// The colored palette must emit escape sequences for the +/- roles.
+    /// Without this check, a palette that colored nothing would pass the whole
+    /// suite: every other assertion in this module compares stripped output.
     #[test]
     fn colored_insert_and_delete_emit_escapes() {
         let c = Styles::colored();
         assert!(
             c.insert.render().to_string().contains('\u{1b}'),
-            "inserts must carry a color escape"
+            "inserts must emit a color escape"
         );
         assert!(
             c.delete.render().to_string().contains('\u{1b}'),
-            "deletes must carry a color escape"
+            "deletes must emit a color escape"
         );
         // Distinct colors: an insert and a delete must not render identically,
         // or +/- would be indistinguishable in a terminal.
@@ -387,16 +385,15 @@ mod tests {
         );
     }
 
-    /// The confirmation prompt's three roles must each emit an escape and be
-    /// mutually distinct, so the prose, the affirmative `y`, and the default
-    /// `N` are visually separable in a terminal.
+    /// The prompt prose, the affirmative `y`, and the default `N` must each
+    /// emit an escape and render apart, so a terminal separates them.
     #[test]
     fn colored_prompt_roles_are_distinct_and_escaped() {
         let c = Styles::colored();
         for style in [c.prompt, c.prompt_affirm, c.prompt_default] {
             assert!(
                 style.render().to_string().contains('\u{1b}'),
-                "each prompt role must carry a color escape"
+                "each prompt role must emit a color escape"
             );
         }
         let prose = c.prompt.render().to_string();
@@ -409,13 +406,13 @@ mod tests {
 
     /// Every role in a group must emit an escape and render unlike every other
     /// role in the same group. A silent `Style::new()` would make one role's
-    /// color a no-op, and two roles sharing a hue would make one read as the
-    /// other wherever they appear on the same row.
+    /// color a no-op. Two roles sharing a hue would make one read as the other
+    /// wherever they appear on the same row.
     fn assert_distinct_and_escaped(roles: &[(&str, Style)]) {
         for (name, style) in roles {
             assert!(
                 style.render().to_string().contains('\u{1b}'),
-                "the {name} role must carry a color escape"
+                "the {name} role must emit a color escape"
             );
         }
         for (index, (left_name, left)) in roles.iter().enumerate() {
@@ -442,9 +439,9 @@ mod tests {
         ]);
     }
 
-    /// The four state colors let a reader scan a long listing without
-    /// reading every state word. Two states rendering alike would defeat
-    /// that purpose.
+    /// The state colors let a reader scan a long listing without reading every
+    /// state word. Two states rendering alike would leave the bracketed word as
+    /// the only signal.
     #[test]
     fn colored_status_roles_are_distinct_and_escaped() {
         let s = Styles::colored().status;
@@ -456,8 +453,8 @@ mod tests {
         ]);
     }
 
-    /// Three levels sharing one hue would leave the severity of a report
-    /// readable only by reading every bracketed word.
+    /// Levels sharing one hue would leave the bracketed word as the only
+    /// severity signal.
     #[test]
     fn colored_finding_roles_are_distinct_and_escaped() {
         let f = Styles::colored().finding;
@@ -468,17 +465,18 @@ mod tests {
         ]);
     }
 
-    /// `init` prints a painted path and a hint on consecutive lines, so the two
-    /// have to read apart even though neither is a table cell.
+    /// `init` prints a painted path and a hint on consecutive lines, so path
+    /// and hint have to read apart even though neither is a table cell.
     #[test]
     fn colored_flat_roles_are_distinct_and_escaped() {
         let c = Styles::colored();
         assert_distinct_and_escaped(&[("success", c.success), ("path", c.path), ("hint", c.hint)]);
     }
 
-    /// Kind and state appear on the same line, so a hue shared between the two
-    /// groups would make one read as the other. The three state colors let a
-    /// reader tell the states apart without reading the bracketed tag.
+    /// Kind and state appear on the same line, so a hue shared between the kind
+    /// roles and the state roles would make one read as the other. The state
+    /// colors let a reader tell the states apart without reading the bracketed
+    /// tag.
     #[cfg(windows)]
     #[test]
     fn colored_exclusion_roles_are_distinct_and_escaped() {
@@ -492,15 +490,16 @@ mod tests {
         ]);
     }
 
-    /// `paint` must be a no-op under the plain palette, which the diff and
-    /// Defender renderers' plain-output tests rest on. Under the colored
-    /// palette it must wrap the text in both an opening escape and a reset.
+    /// `paint` must be a no-op under the plain palette. The diff and Defender
+    /// renderers' plain-output tests depend on that no-op. Under the colored
+    /// palette `paint` must wrap the text in both an opening escape and a
+    /// reset.
     #[test]
     fn paint_is_transparent_when_plain_and_wraps_when_colored() {
         assert_eq!(paint(Styles::plain().insert, "text"), "text");
 
         let painted = paint(Styles::colored().insert, "text");
-        assert!(painted.contains("text"), "the text must survive intact");
+        assert!(painted.contains("text"), "the text must be preserved");
         assert!(
             painted.starts_with('\u{1b}'),
             "an opening escape is required"

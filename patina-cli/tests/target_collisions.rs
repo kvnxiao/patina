@@ -1,4 +1,4 @@
-//! Target-collision validation exercised through the CLI, so the failure lands
+//! Target-collision validation exercised through the CLI, so the failure occurs
 //! before any diff or write. The rules live in `patina_core::apply::collisions`
 //! and `docs/REMOTE_SOURCES.md` "Target collision validation".
 
@@ -37,7 +37,7 @@ fn two_active_entries_on_one_target_fail_planning() {
     );
     assert!(
         stderr.contains("same target") && stderr.contains("git") && stderr.contains("work"),
-        "the error must name both colliding modules; stderr: {stderr}"
+        "the error must include both colliding modules; stderr: {stderr}"
     );
     assert!(
         !f.home.join(".gitconfig").exists(),
@@ -48,7 +48,7 @@ fn two_active_entries_on_one_target_fail_planning() {
 #[test]
 fn when_disjoint_entries_on_one_target_plan_cleanly() {
     // The same target claimed twice, but the two `when` guards cannot both
-    // hold. Only one entry is active, so this is legal and must apply.
+    // hold. Only one entry is active, so the pair is legal and must apply.
     let f = Fixture::new();
     let os = current_os_family();
     let module = f.module(
@@ -112,11 +112,11 @@ fn a_target_inside_a_whole_directory_symlink_target_fails_planning() {
 }
 
 #[test]
-fn a_tree_leaf_colliding_with_another_entry_names_the_leaf() {
+fn a_tree_leaf_colliding_with_another_entry_includes_the_leaf() {
     // The tree deploys `humanizer/SKILL.md` under `~/.claude/skills`, and the
-    // other entry claims exactly that path. Only the expanded leaves make
-    // this visible, since the two declared targets are a directory and a
-    // file inside it.
+    // other entry claims exactly that path. The two declared targets are a
+    // directory and a file inside it, so only the expanded leaves make the
+    // collision visible.
     let f = Fixture::new();
     let tree = f.module(
         "skills",
@@ -145,7 +145,7 @@ fn a_tree_leaf_colliding_with_another_entry_names_the_leaf() {
     );
     assert!(
         stderr.contains("same target") && stderr.contains("SKILL.md"),
-        "the error must name the colliding leaf; stderr: {stderr}"
+        "the error must include the colliding leaf; stderr: {stderr}"
     );
     assert!(
         !f.home.join(".claude").join("skills").exists(),
@@ -155,8 +155,8 @@ fn a_tree_leaf_colliding_with_another_entry_names_the_leaf() {
 
 #[test]
 fn an_entry_under_a_tree_target_that_hits_no_leaf_plans_cleanly() {
-    // This is the shape a remote entry takes when it adds one upstream file to
-    // a directory the repository fills.
+    // A remote entry takes this shape when it adds one upstream file to a
+    // directory the repository fills.
     let f = Fixture::new();
     let tree = f.module(
         "skills",
@@ -210,7 +210,7 @@ fn a_multi_target_fan_out_element_collides() {
     );
     assert!(
         stderr.contains(".rc-b"),
-        "the error must name the colliding fan-out element; stderr: {stderr}"
+        "the error must include the colliding fan-out element; stderr: {stderr}"
     );
     assert!(
         !f.home.join(".rc-a").exists(),

@@ -6,11 +6,9 @@
 
 //! Integration tests for the `patina status` CLI surface.
 //!
-//! Each test builds a self-contained tempdir dotfiles repository, applies
-//! it (`patina apply --yes`), optionally perturbs a materialized target,
-//! then runs `patina status --json` and asserts the classification. The
-//! per-machine state directory is isolated under the tempdir so neither
-//! the apply nor the status touches the developer's real `$HOME`.
+//! Each test applies a [`common::Fixture`] repository (`patina apply --yes`),
+//! optionally perturbs a materialized target, then runs
+//! `patina status --json` and asserts the classification.
 
 use camino::Utf8Path;
 use camino::Utf8PathBuf;

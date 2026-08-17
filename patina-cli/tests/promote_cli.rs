@@ -9,11 +9,10 @@
 
 //! Integration coverage for `patina promote`.
 //!
-//! Each test spawns the real `patina` binary against an isolated tempdir
-//! repo + state + home (via the shared [`common::Fixture`]). A fixture first
-//! `patina apply`s a module so a committed `<ts>.COMMIT` record exists for
-//! `promote` to read; the binary's stdin is not a TTY, so the `--yes`-driven
-//! non-interactive path is the one under test.
+//! Each test drives the real `patina` binary through [`common::Fixture`],
+//! applying a module first so a committed `<ts>.COMMIT` record exists for
+//! `promote` to read. With no TTY, the path under test is the `--yes`-driven
+//! one.
 
 mod common;
 
@@ -127,8 +126,8 @@ fn promote_copy_target_rewrites_source_and_rejournals() {
     );
 }
 
-/// Promoting a template-rendered target mutates nothing, names the
-/// `.tmpl` source and the word `template` on stderr, and exits 1.
+/// Promoting a template-rendered target does not mutate anything. It includes
+/// the `.tmpl` source and the word `template` on stderr, and exits 1.
 #[test]
 fn promote_template_target_refuses() {
     let fx = Fixture::new();
@@ -159,10 +158,10 @@ fn promote_template_target_refuses() {
     let stderr = stderr(&out);
     assert!(
         stderr.contains("gitconfig.tmpl") && stderr.contains("template"),
-        "stderr must name the .tmpl source and the word template, got: {stderr}"
+        "stderr must include the .tmpl source and the word template, got: {stderr}"
     );
 
-    // Nothing was mutated: the template source is unchanged.
+    // The template source is unchanged.
     assert_eq!(
         fs_err::read_to_string(source.as_std_path()).expect("read template source"),
         before,
@@ -170,8 +169,8 @@ fn promote_template_target_refuses() {
     );
 }
 
-/// Promoting a symbolic-link target mutates nothing, names the target
-/// and explains symlink targets share content with their source, and exits 1.
+/// Promoting a symbolic-link target does not mutate anything. It includes the
+/// target, explains that a symlink shares content with its source, and exits 1.
 #[test]
 fn promote_symlink_target_refuses() {
     let fx = Fixture::new();
@@ -206,10 +205,10 @@ fn promote_symlink_target_refuses() {
     let stderr = stderr(&out);
     assert!(
         stderr.contains("~/.zshrc") && stderr.contains("symbolic-link"),
-        "stderr must name the target and explain symlink targets share their source, got: {stderr}"
+        "stderr must include the target and explain symlink targets share their source, got: {stderr}"
     );
 
-    // Nothing was mutated: the target is still a symlink, the source unchanged.
+    // The target is still a symlink, and the source is unchanged.
     assert!(
         is_symlink(&zshrc),
         "~/.zshrc must still be a symlink after a refused promote"
@@ -221,7 +220,7 @@ fn promote_symlink_target_refuses() {
     );
 }
 
-/// Promoting a path that is not managed exits 1 and mutates nothing.
+/// Promoting a path that is not managed exits 1 without mutating anything.
 #[test]
 fn promote_unmanaged_path_exits_1() {
     let fx = applied_copy_fixture();
@@ -238,7 +237,7 @@ fn promote_unmanaged_path_exits_1() {
     let stderr = stderr(&out);
     assert!(
         stderr.contains("~/.bashrc") && stderr.contains("not managed"),
-        "stderr must name the path and say it is not managed, got: {stderr}"
+        "stderr must include the path and say it is not managed, got: {stderr}"
     );
     assert_eq!(
         fs_err::read_to_string(bashrc.as_std_path()).expect("read ~/.bashrc"),
@@ -247,8 +246,8 @@ fn promote_unmanaged_path_exits_1() {
     );
 }
 
-/// `promote --json --yes` emits a single deterministic JSON document
-/// on stdout naming the promoted target and its repository source.
+/// `promote --json --yes` exits 0 and writes a single JSON document to stdout
+/// with the promoted target and its repository source.
 #[test]
 fn promote_json_emits_document() {
     let fx = applied_copy_fixture();
@@ -273,13 +272,13 @@ fn promote_json_emits_document() {
         doc.get("source")
             .and_then(serde_json::Value::as_str)
             .is_some_and(|s| s.replace('\\', "/").ends_with("/git/gitconfig")),
-        "the JSON document must name the repository source, got: {doc}"
+        "the JSON document must include the repository source, got: {doc}"
     );
 }
 
-/// Decode the single COMMIT record produced by the last apply, resolving the
-/// journal directory from this fixture's isolated env (matching the path the
-/// subprocess actually wrote).
+/// Decode the single COMMIT record the last apply produced. To reach the path
+/// the subprocess wrote under, resolve the journal directory from this
+/// fixture's isolated env.
 fn commit_record(fx: &Fixture) -> ApplyRecord {
     let journal_dir =
         patina_core::state_dir::resolve_with_env(HostOs::current(), |name| match name {

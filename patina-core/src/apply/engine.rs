@@ -18,10 +18,9 @@
 //!    pre-existing target first), and runs `post_apply` hooks. Finally it
 //!    either commits or rolls the file operations back.
 //!
-//! The CLI (`patina-cli`) owns the diff rendering, the TTY prompt, the
-//! `--pager` plumbing, and the JSON envelope; this module owns the
-//! engine semantics so those presentation concerns never reach into the
-//! subsystem internals.
+//! The CLI (`patina-cli`) owns the diff rendering, the TTY prompt, and the
+//! JSON envelope; this module owns the engine semantics so those presentation
+//! concerns never reach into the subsystem internals.
 
 use crate::apply::CompletionRecord;
 use crate::apply::ForceDeploy;

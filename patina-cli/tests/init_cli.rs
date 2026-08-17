@@ -5,10 +5,9 @@
 
 //! Integration coverage for `patina init`.
 //!
-//! Each test spawns the real `patina` binary against an isolated tempdir
-//! repo + state + home (via the shared [`common::Fixture`]). `init` targets
-//! a fresh directory under the fixture's home so the fixture's own root
-//! manifest never collides with the directory under test.
+//! Each test drives the real `patina` binary through [`common::Fixture`].
+//! `init` targets a fresh directory under the fixture's home, so the
+//! fixture's own root manifest never collides with the directory under test.
 
 mod common;
 
@@ -61,7 +60,7 @@ fn init_scaffolds_manifest_pointer_and_hint() {
 }
 
 /// `patina init T` against a directory that already contains a
-/// `patina.toml` leaves the file byte-identical, names it on stderr with
+/// `patina.toml` leaves the file byte-identical, prints it on stderr with
 /// `already exists`, and exits 1.
 #[test]
 fn init_refuses_when_manifest_exists() {
@@ -89,10 +88,10 @@ fn init_refuses_when_manifest_exists() {
     );
     assert!(
         stderr.contains(manifest.as_str()),
-        "stderr must name the existing manifest path, got: {stderr:?}"
+        "stderr must include the existing manifest path, got: {stderr:?}"
     );
 
-    // The state directory was never touched: no pointer was written.
+    // The state directory was never touched, and the pointer was not written.
     let pointer = fx.state_root().join("default_repo");
     assert!(
         !pointer.exists(),
@@ -138,7 +137,7 @@ fn init_json_success_and_failure_diverge_then_failure_is_byte_stable() {
         "two failing --json runs must emit byte-identical stdout"
     );
 
-    // The failing --json stdout is a typed-error document naming the path.
+    // The failing --json stdout is a typed-error document that includes the path.
     let stdout = String::from_utf8(second.stdout).expect("utf8 stdout");
     let doc: serde_json::Value =
         serde_json::from_str(stdout.trim()).expect("failing --json stdout is one JSON doc");
@@ -153,9 +152,9 @@ fn init_json_success_and_failure_diverge_then_failure_is_byte_stable() {
 }
 
 /// A successful `init --json` run emits one deterministic JSON document
-/// on stdout. Its `initialized` and `default_repo` fields carry the
-/// canonical target and pointer paths, with nothing non-deterministic like
-/// a `created_at` timestamp.
+/// on stdout. Its `initialized` and `default_repo` fields hold the canonical
+/// target and pointer paths. The document does not include a non-deterministic
+/// value such as a `created_at` timestamp.
 #[test]
 fn init_json_success_emits_deterministic_schema() {
     let fx = Fixture::new();
