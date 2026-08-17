@@ -47,8 +47,8 @@ const SYSTEM_DIR_ENV_VARS: [&str; 4] = [
 #[cfg(windows)]
 const RESULT_FILENAME: &str = "defender-result.txt";
 
-/// The scratch name the result is written under before being renamed into
-/// place, so the polling CLI never reads a partially-written verdict.
+/// The scratch name that holds the verdict until the rename into place, so the
+/// polling CLI never reads a partially-written result.
 #[cfg(windows)]
 const RESULT_TMP_FILENAME: &str = "defender-result.txt.tmp";
 
@@ -100,10 +100,10 @@ pub enum DefenderError {
         source: std::io::Error,
     },
 
-    /// Defender accepted the call and silently rejected the write under Tamper
-    /// Protection or management policy, so the mandatory re-read shows the
-    /// exclusions unchanged. Only this variant means the user should be told
-    /// Defender refused their change.
+    /// Defender accepted the call, but the re-read shows the requested add or
+    /// remove never took effect: Tamper Protection or a management policy
+    /// rejected the write silently. Only this variant means the user should be
+    /// told Defender refused their change.
     Blocked {
         /// The script's detail, naming the specific paths and the live
         /// Tamper-Protection status.
@@ -309,8 +309,8 @@ fn normalize(s: &str) -> String {
 /// given path is authoritative and the helper never recomputes the state
 /// directory.
 ///
-/// The helper writes every outcome to the result file the launching CLI polls.
-/// See the module's *Reporting the verdict back*.
+/// The helper writes every outcome to the result file, which the launching CLI
+/// polls. See the module's *Reporting the verdict back*.
 ///
 /// # Errors
 ///
@@ -342,7 +342,7 @@ fn apply_from_request(request: &Path) -> Result<(), DefenderError> {
     run_apply_and_verify(request)
 }
 
-/// Write the verdict the launching CLI polls for, beside the request file.
+/// Write the verdict beside the request file for the launching CLI to poll.
 ///
 /// The helper writes the body to a scratch name and renames it into place, so
 /// a poll that reads the file mid-write cannot mistake a partial line for a
@@ -432,7 +432,7 @@ fn run_apply_and_verify(request: &Path) -> Result<(), DefenderError> {
     }
 }
 
-/// The marker the apply-and-verify script prefixes onto its
+/// The marker that the apply-and-verify script prefixes onto its
 /// verification-mismatch throw, distinguishing a silently rejected write from
 /// any other non-zero exit.
 #[cfg(windows)]

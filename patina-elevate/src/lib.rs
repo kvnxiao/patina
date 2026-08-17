@@ -10,7 +10,7 @@
 //! Defender path exclusions to add and remove, re-validates every path, then
 //! applies them through the `Defender` PowerShell module and verifies the
 //! change with a mandatory re-read. The helper depends on no other workspace
-//! crate: the surface UAC must trust stays small.
+//! crate, so UAC has a smaller binary to gate.
 //!
 //! ## Library and thin binary split
 //!
@@ -98,7 +98,7 @@ pub enum Command {
     /// Apply the Windows Defender path exclusions listed in a request file,
     /// re-validating each path and verifying the result with a re-read.
     ApplyDefenderExclusions {
-        /// Absolute path to the request file the unprivileged CLI wrote. A
+        /// Absolute path to the request file that the unprivileged CLI wrote. A
         /// `runas` to a different admin resolves a different `%LOCALAPPDATA%`,
         /// so the helper reads this path and never recomputes the state
         /// directory.

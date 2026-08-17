@@ -26,8 +26,8 @@ required-features = ["windows"]
 windows = []
 
 [dependencies]
-# To keep the surface UAC must trust small, the helper depends on no other
-# workspace crate.
+# To keep its trust surface small, the helper depends on no other workspace
+# crate.
 clap = { workspace = true }
 
 # `winsafe` supplies the registry write
