@@ -1,42 +1,34 @@
 //! The `apply-defender-exclusions` action: add and remove Windows Defender
 //! path exclusions under one-time UAC elevation.
 //!
-//! The unprivileged `patina` CLI derives, previews, and gets consent for the
-//! exact exclusion set. It writes that set to a request file in the
-//! per-machine state directory, then launches this helper elevated with the
-//! absolute request path as its one argument. The helper reads that file and
-//! independently re-validates every path. This re-validation is the
-//! **trust boundary**: the helper never trusts the CLI's validation. It
-//! then applies the add and remove through PowerShell's `Defender` module,
-//! and a mandatory re-read verifies the change took.
+//! The unprivileged `patina` CLI derives the exclusion set, previews it, takes
+//! the user's consent, writes it to a request file in the per-machine state
+//! directory, then launches this helper elevated with the absolute request
+//! path as its one argument. The helper re-validates every path it reads back:
+//! the re-validation is the **trust boundary**, and the helper never trusts
+//! the CLI's validation. It then applies the add and remove through
+//! PowerShell's `Defender` module and verifies the change with a mandatory
+//! re-read.
 //!
-//! The real work is `#[cfg(windows)]`-gated. On any other host the action
-//! returns [`DefenderError::NotWindows`] without side effects. That keeps the
-//! argument-parsing surface and the pure validator/parser exercisable by the
-//! cross-platform tests.
+//! The apply exists only under `#[cfg(windows)]`; every other host returns
+//! [`DefenderError::NotWindows`] without side effects. The parser and the
+//! validator stay exercisable by the cross-platform tests.
 //!
 //! ## Reporting the verdict back
 //!
-//! The unprivileged CLI cannot check this helper's work. `Get-MpPreference`
-//! withholds the exclusion list from an unelevated caller, so a verification
-//! attempted there can only ever conclude "not applied". Nor can it read this
-//! process's exit code, because `ShellExecuteEx` hands the launcher no handle
-//! to wait on.
-//!
-//! So the verdict travels through a **result file** written beside the request
-//! file, which the CLI polls for. It is written on every terminal path, so a
-//! clean failure reaches the user as itself, not as a timeout. It also
-//! distinguishes a silently rejected write from a helper that never got that
-//! far. Without that distinction, an unrelated failure could be reported to
-//! the user as Defender refusing the change.
+//! `Get-MpPreference` withholds the exclusion list from an unelevated caller,
+//! and the safe `ShellExecuteEx` wrapper discards the child handle, so the
+//! launching CLI can read neither this helper's work nor its exit code. The
+//! helper writes its verdict to a **result file** beside the request file,
+//! which the CLI polls. It writes that file on every terminal path, so a clean
+//! failure reaches the user as itself rather than as a timeout, and a silently
+//! rejected write stays distinguishable from an unrelated failure.
 //!
 //! ## Duplicated constants
 //!
-//! The system-directory environment-variable names and the result-file name and
-//! verdict tokens below are copied verbatim from `patina-core`, on purpose.
-//! This helper must not depend on `patina-core`, so it cannot share the
-//! denylist or the receipt protocol across the crate boundary. Keep the
-//! sites in sync by hand.
+//! The system-directory environment-variable names, the result-file name, and
+//! the verdict tokens below are copied verbatim from `patina-core`, which this
+//! helper must not depend on. Keep the sites in sync by hand.
 
 use std::fmt;
 use std::path::Path;
@@ -75,9 +67,7 @@ const RECEIPT_FAILED: &str = "failed";
 /// Failure modes of [`apply_defender_exclusions`].
 #[derive(Debug)]
 pub enum DefenderError {
-    /// The action was invoked on a non-Windows build. The Defender apply only
-    /// exists under `#[cfg(windows)]`; everywhere else this is the terminal
-    /// outcome.
+    /// The action was invoked on a non-Windows build.
     NotWindows,
 
     /// A request-file line did not begin with the `A `/`R ` add/remove prefix.
@@ -110,16 +100,10 @@ pub enum DefenderError {
         source: std::io::Error,
     },
 
-    /// The mandatory re-read showed the exclusions did not change as
-    /// requested. Defender accepted the call and silently rejected the
-    /// write (Tamper Protection / managed Defender).
-    ///
-    /// This is kept distinct from `Apply`; only `Blocked` means the user
-    /// should be told Defender refused their change. It is not
-    /// `#[cfg(windows)]`, because it carries nothing platform-specific, and
-    /// leaving it ungated lets [`receipt_body`] be exercised off Windows.
-    /// `Apply` is not linked here, because it is Windows-only. Linking it
-    /// would not resolve when the docs are built for another target.
+    /// Defender accepted the call and silently rejected the write under Tamper
+    /// Protection or management policy, so the mandatory re-read shows the
+    /// exclusions unchanged. Only this variant means the user should be told
+    /// Defender refused their change.
     Blocked {
         /// The script's detail, naming the specific paths and the live
         /// Tamper-Protection status.
@@ -190,10 +174,9 @@ impl std::error::Error for DefenderError {
 
 /// Parse a request-file body into its add and remove path lists.
 ///
-/// Each non-empty line is `A <path>` (add) or `R <path>` (remove). The path
-/// is taken verbatim from the third byte onward, so a path containing
-/// spaces is preserved. Any other line shape is a
-/// [`DefenderError::MalformedRequest`].
+/// Each non-empty line is `A <path>` (add) or `R <path>` (remove). The path is
+/// taken verbatim from the third byte onward, so a path containing spaces is
+/// preserved.
 ///
 /// # Errors
 ///
@@ -222,10 +205,9 @@ pub fn parse_request(content: &str) -> Result<(Vec<String>, Vec<String>), Defend
 /// Re-validate one exclusion path, independently of the CLI.
 ///
 /// Purely lexical, mirroring `patina_core`'s `validate_exclusion_path`. A path
-/// is accepted only when it is a drive-letter-absolute Windows path, is not
-/// UNC, contains no wildcard, and is not a bare drive root. It must also fall
-/// under no env-derived system directory. This is the trust boundary. The
-/// helper never trusts the CLI to have validated.
+/// is accepted only when it is drive-letter-absolute, is neither UNC nor a
+/// bare drive root, contains no wildcard, and sits outside every env-derived
+/// system directory. The helper never trusts the CLI to have validated.
 ///
 /// # Errors
 ///
@@ -235,9 +217,8 @@ pub fn validate_exclusion_path(path: &str) -> Result<(), DefenderError> {
     validate_exclusion_path_with(path, &system_dir_denylist())
 }
 
-/// The lexical core of [`validate_exclusion_path`], taking the system-directory
-/// denylist explicitly so the denylist rule is testable with injected
-/// directories on any platform.
+/// The lexical core of [`validate_exclusion_path`]. Accepts an explicit
+/// denylist so tests can inject arbitrary directories on any host.
 fn validate_exclusion_path_with(path: &str, system_dirs: &[String]) -> Result<(), DefenderError> {
     let invalid = |reason: &'static str| DefenderError::InvalidPath {
         path: path.to_owned(),
@@ -321,16 +302,15 @@ fn normalize(s: &str) -> String {
 /// Apply the add/remove exclusions listed in the request file, and record the
 /// verdict beside it.
 ///
-/// On Windows this reads the request file at the given absolute path. It
-/// must **not** recompute the state directory. A `runas` to a different
-/// admin has a different `%LOCALAPPDATA%`, so the given path is
-/// authoritative. It then
-/// re-validates every path, and runs a single PowerShell invocation that
-/// batches `Add-MpPreference` / `Remove-MpPreference`. A mandatory re-read
-/// verifies the result.
+/// Reads the request file at the given absolute path, re-validates every path
+/// in it, then runs one PowerShell invocation batching `Add-MpPreference` and
+/// `Remove-MpPreference`, with a mandatory re-read verifying the result. A
+/// `runas` to a different admin resolves a different `%LOCALAPPDATA%`, so the
+/// given path is authoritative and the helper never recomputes the state
+/// directory.
 ///
-/// Whatever the outcome, it is written to the result file the launching CLI
-/// polls for. See the module's *Reporting the verdict back*.
+/// The helper writes every outcome to the result file the launching CLI polls.
+/// See the module's *Reporting the verdict back*.
 ///
 /// # Errors
 ///
@@ -344,9 +324,9 @@ pub fn apply_defender_exclusions(request: &Path) -> Result<(), DefenderError> {
     outcome
 }
 
-/// The apply proper, with no receipt concern. Split out so
-/// [`apply_defender_exclusions`] records every terminal path through one seam
-/// rather than repeating the write at each `?`.
+/// The apply proper. Every `?` here returns through
+/// [`apply_defender_exclusions`], which writes the receipt once for all
+/// terminal paths.
 #[cfg(windows)]
 fn apply_from_request(request: &Path) -> Result<(), DefenderError> {
     let content =
@@ -364,14 +344,11 @@ fn apply_from_request(request: &Path) -> Result<(), DefenderError> {
 
 /// Write the verdict the launching CLI polls for, beside the request file.
 ///
-/// Written to a scratch name and renamed into place, so a poll that reads the
-/// file mid-write cannot mistake a partial line for a verdict.
-///
-/// Failures here are deliberately silent. There is nowhere to report them,
-/// since the helper runs with no console attached. The consequence is
-/// already well-defined. The CLI waits out its deadline and tells the user
-/// it could not confirm the outcome, an accurate description of what
-/// happened.
+/// The helper writes the body to a scratch name and renames it into place, so
+/// a poll that reads the file mid-write cannot mistake a partial line for a
+/// verdict. A failed write is silent: the helper runs with no console
+/// attached, and the CLI reports an unconfirmed outcome once its deadline
+/// passes.
 #[cfg(windows)]
 fn write_receipt(request: &Path, outcome: &Result<(), DefenderError>) {
     let tmp = request.with_file_name(RESULT_TMP_FILENAME);
@@ -385,15 +362,11 @@ fn write_receipt(request: &Path, outcome: &Result<(), DefenderError>) {
 
 /// Render an outcome as the result file's single-line body.
 ///
-/// The line is `<verdict>` or `<verdict> <detail>`. The detail is flattened to
-/// one line because the format reserves the first token for the verdict and a
-/// PowerShell error rendering spans several lines.
-///
-/// Public, like [`parse_request`] and [`validate_exclusion_path`], so the
-/// protocol it defines is exercisable on any host. The writer that calls it
-/// is Windows-only, but the CLI parses this format on every host, so the
-/// format is worth pinning everywhere.
-#[must_use = "the rendered body is what the launching CLI reads as the verdict"]
+/// The line is `<verdict>` or `<verdict> <detail>`. The format reserves the
+/// first token for the verdict, so a multi-line PowerShell error rendering is
+/// flattened to one line. The CLI parses this format on every host, so the
+/// function stays public off Windows.
+#[must_use = "the launching CLI reads this body as the verdict"]
 pub fn receipt_body(outcome: &Result<(), DefenderError>) -> String {
     match outcome {
         Ok(()) => format!("{RECEIPT_APPLIED}\n"),
@@ -460,22 +433,17 @@ fn run_apply_and_verify(request: &Path) -> Result<(), DefenderError> {
 }
 
 /// The marker the apply-and-verify script prefixes onto its
-/// verification-mismatch throw.
-///
-/// It exists so a silently rejected write is recognizable in stderr. Without
-/// it, a rejected write and an unrelated cmdlet failure would both look
-/// like "PowerShell exited non-zero", and the user would be told Defender
-/// refused a change even when the real failure had nothing to do with
-/// Defender's policy.
+/// verification-mismatch throw, distinguishing a silently rejected write from
+/// any other non-zero exit.
 #[cfg(windows)]
 const BLOCKED_MARKER: &str = "PATINA-BLOCKED";
 
-/// Extract the verification-mismatch detail from the script's stderr, or `None`
-/// if this was some other failure.
+/// Extract the verification-mismatch detail from the script's stderr, or
+/// `None` for any other failure.
 ///
-/// PowerShell wraps a thrown message in its own multi-line error rendering.
-/// The marker is therefore searched for anywhere in stderr, rather than
-/// expected at the start. The detail runs to the end of the marker's line.
+/// PowerShell wraps a thrown message in its own multi-line rendering, so the
+/// marker is searched for anywhere in stderr and the detail runs to the end of
+/// its line.
 #[cfg(windows)]
 fn blocked_detail(stderr: &str) -> Option<String> {
     let (_, after_marker) = stderr.split_once(BLOCKED_MARKER)?;
@@ -556,10 +524,8 @@ mod tests {
 
     #[test]
     fn validator_rejects_the_same_categories_as_core() {
-        // Denylist parity with `patina_core`'s validator: UNC, wildcard,
-        // drive-relative, empty, drive-root, and system-dir must all be
-        // rejected here too. The system-dir case uses an injected directory so
-        // it runs on any platform.
+        // Every category `patina_core`'s validator rejects must be rejected
+        // here too.
         for bad in [
             "",
             "\\\\server\\share\\x",
@@ -590,9 +556,6 @@ mod tests {
 
     #[test]
     fn cross_platform_errors_render_and_carry_no_source() {
-        // The three host-independent variants must display a message naming the
-        // offending input (so the CLI can surface it) and expose no `source`,
-        // because they wrap nothing.
         let malformed = DefenderError::MalformedRequest {
             line: "bogus".to_owned(),
         };
@@ -615,10 +578,6 @@ mod tests {
 
     #[test]
     fn is_drive_root_guards_input_without_a_drive_and_colon() {
-        // The early-return guard. `is_drive_root` is only reached with a
-        // drive-absolute path through the validator, so this test exercises
-        // the guard directly with input that lacks the drive-letter-and-colon
-        // prefix.
         assert!(is_drive_root("C:"));
         assert!(is_drive_root("C:\\"));
         assert!(!is_drive_root("C"));
@@ -638,9 +597,6 @@ mod tests {
 
     #[test]
     fn receipt_body_distinguishes_a_rejected_write_from_any_other_failure() {
-        // The distinction the CLI relays to the user. Only `Blocked` produces
-        // the "Defender refused this" message, so the two verdicts must not
-        // share a token.
         let blocked = receipt_body(&Err(DefenderError::Blocked {
             detail: "exclusions not applied (TamperProtected=True)".to_owned(),
         }));
@@ -660,9 +616,6 @@ mod tests {
 
     #[test]
     fn receipt_body_is_a_single_line_even_for_a_multi_line_detail() {
-        // The format reserves the first token for the verdict, so a detail
-        // spanning lines (a PowerShell error rendering always does) must be
-        // flattened or the CLI reads only its first fragment.
         let body = receipt_body(&Err(DefenderError::Blocked {
             detail: "not added:\n  C:\\a\n  C:\\b".to_owned(),
         }));
@@ -673,8 +626,6 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn blocked_detail_is_found_inside_powershells_error_rendering() {
-        // PowerShell wraps a thrown message in its own multi-line rendering, so
-        // the marker never sits at the start of stderr.
         let stderr = "\
 C:\\script.ps1 : PATINA-BLOCKED exclusions not applied (TamperProtected=True)
 At line:1 char:1
@@ -689,8 +640,6 @@ At line:1 char:1
     #[cfg(windows)]
     #[test]
     fn blocked_detail_is_absent_for_an_unrelated_failure() {
-        // An `Add-MpPreference` error carries no marker, so it must not be
-        // reported as Defender refusing the change.
         assert_eq!(
             blocked_detail("Add-MpPreference : The service cannot be started"),
             None
@@ -700,9 +649,8 @@ At line:1 char:1
     #[cfg(windows)]
     #[test]
     fn the_apply_script_emits_the_marker_the_parser_looks_for() {
-        // The script and `blocked_detail` must agree on the marker text.
-        // Renaming it on one side and not the other silently downgrades
-        // every rejected write to a generic failure.
+        // Renaming the marker on one side only downgrades every rejected
+        // write to a generic failure.
         assert!(apply_script("'C:\\request.txt'").contains(BLOCKED_MARKER));
     }
 }

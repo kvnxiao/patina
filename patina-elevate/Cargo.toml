@@ -1,6 +1,6 @@
 [package]
 name = "patina-elevate"
-description = "Standalone Windows-only helper that toggles the Developer Mode registry flag under one-time UAC elevation."
+description = "Standalone Windows-only helper that sets the Developer Mode registry flag and applies Windows Defender path exclusions under one-time UAC elevation."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -12,44 +12,34 @@ readme.workspace = true
 keywords = ["dotfiles", "windows", "elevation"]
 categories = ["command-line-utilities", "os::windows-apis"]
 
-# Gate the bin behind a `windows` feature that is only
-# enabled on Windows targets (see the `[target.'cfg(windows)'.dependencies]`
-# block below, which activates it). Cargo silently skips a `[[bin]]` whose
-# `required-features` are not enabled, so a non-Windows
-# `cargo build --release` produces no `patina-elevate` artifact at all.
 [[bin]]
 name = "patina-elevate"
 required-features = ["windows"]
 
 [features]
-# Gates the bin via `required-features` above. OFF by
-# default, so a plain `cargo build --release` produces no `patina-elevate`
-# artifact on macOS/Linux: Cargo silently skips a bin whose required feature
-# is off (proven by `tests/artifact_absence.rs`). Windows release packaging
-# turns it on with `--features windows`; the crate's own test harness does the
-# same to exercise the binary cross-platform. This explicit
-# build flag is the "small build-config wart" it trades for the dropped
-# artifact. The feature carries no deps of its own: `winsafe` is pulled in
-# unconditionally on Windows targets (the target table below), so the cfg gate
-# and the feature gate coincide there.
+# Gates the `[[bin]]` above through its `required-features`. Off by default, so
+# a plain `cargo build --release` does not emit a `patina-elevate` artifact on
+# macOS/Linux (`tests/artifact_absence.rs`). `just build` and `just install`
+# turn it on with `--features windows` when the host is Windows. The feature
+# has no dependency of its own: the target table below resolves `winsafe`
+# on every Windows target, so the cfg gate and the feature gate coincide.
 windows = []
 
 [dependencies]
-# no `patina-core` / `patina-cli` dependency: the helper keeps the
-# smallest possible trust surface so UAC has the least to audit.
+# To keep the surface UAC must trust small, the helper depends on no other
+# workspace crate.
 clap = { workspace = true }
 
-# `winsafe` carries the registry-write API: the write
-# (`AppModelUnlock\AllowDevelopmentWithoutDevLicense`) lives in its `advapi`
-# feature, with `kernel` for the base handle types. `taskschd` is deliberately
-# NOT enabled here. The dependency only exists on Windows targets so a
-# non-Windows build never resolves it into the graph.
+# `winsafe` supplies the registry write
+# (`AppModelUnlock\AllowDevelopmentWithoutDevLicense`) from its `advapi`
+# feature, with `kernel` for the base handle types. `taskschd` stays off. The
+# per-target declaration keeps `winsafe` out of a non-Windows build's graph.
 [target.'cfg(windows)'.dependencies]
 winsafe = { workspace = true }
 
 [dev-dependencies]
 # `artifact_absence.rs` drives a real `cargo build --release` and parses its
-# `--message-format=json` output to prove the bin-gating.
+# `--message-format=json` output.
 serde_json = { workspace = true }
 tempfile = { workspace = true }
 
