@@ -221,11 +221,11 @@ pub use windows::is_unc_path;
 pub use windows::plan_has_symlink_op;
 pub use windows::windows_build_supports_dev_mode;
 
-/// Options accepted by [`apply`](fn@crate::apply). The TTY-driven prompt,
-/// `--json` envelope, and `--pager` plumbing live in the CLI, which drives
-/// the plan through [`plan_apply`] and [`execute_plan`], the two engine
-/// primitives. This convenience entry point unconditionally plans and
-/// executes, mirroring `patina apply --yes`.
+/// Options accepted by [`apply`](fn@crate::apply). The TTY-driven prompt and
+/// the `--json` envelope live in the CLI, which drives the plan through
+/// [`plan_apply`] and [`execute_plan`], the two engine primitives. This
+/// convenience entry point unconditionally plans and executes, mirroring
+/// `patina apply --yes`.
 #[derive(Debug, Default, Clone)]
 #[non_exhaustive]
 pub struct ApplyOptions {

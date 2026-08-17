@@ -3,8 +3,8 @@
     reason = "integration tests use .expect() on fixture setup and assertions; allow-expect-in-tests covers #[cfg(test)] modules but not the top level of a tests/*.rs integration crate."
 )]
 
-//! End-to-end crash-safety coverage. This interrupts a real `patina apply`
-//! process mid-materialize, then proves the next run converges.
+//! End-to-end crash-safety coverage: interrupt a real `patina apply` process
+//! mid-materialize, then prove the next run converges.
 //!
 //! Unlike `patina-core/tests/recovery_crash.rs`, which stages on-disk orphan
 //! states and calls `recover_orphans` directly, this suite spawns the actual
@@ -17,8 +17,8 @@
 //! the engine's own recover-before-flush wiring that the direct-staging
 //! tests cannot.
 //!
-//! Both cases converge to pre-apply because the interrupted apply never
-//! committed. Completed overwrite operations are reversed from backups, and
+//! The interrupted apply never committed, so each case converges to pre-apply.
+//! Completed overwrite operations are reversed from backups, and
 //! completed fresh-creation operations are deleted.
 
 mod common;
@@ -60,7 +60,7 @@ fn count_suffix(journal: &Utf8Path, suffix: &str) -> usize {
 }
 
 /// A `patina apply` killed after its first operation leaves a flushed plan
-/// and no COMMIT. The next run's recovery reverses the completed overwrite
+/// without a COMMIT. The next run's recovery reverses the completed overwrite
 /// from its backup and leaves the un-started fresh create absent, restoring
 /// the pre-apply state.
 #[test]
@@ -91,7 +91,7 @@ fn kill_after_first_op_converges_to_pre_apply_on_recovery() {
         "a killed apply must not have written a COMMIT sentinel"
     );
 
-    // The next run recovers the orphan, converging to the pre-apply state.
+    // The next run recovers the orphan and converges to the pre-apply state.
     let report = recover_orphans(&journal, &backups).expect("recovery");
     assert!(report.recovered_any(), "the orphan plan must be recovered");
 
@@ -130,13 +130,13 @@ fn kill_after_all_ops_before_commit_converges_to_pre_apply_on_recovery() {
     let journal = state.join("journal");
     let backups = state.join("backups");
 
-    // Both ops ran, but with no COMMIT the run is still an orphan.
+    // Every op ran, but with no COMMIT the run is still an orphan.
     assert_eq!(
         count_suffix(&journal, COMMIT_SUFFIX),
         0,
         "an uncommitted apply must not have written a COMMIT sentinel"
     );
-    // Before recovery, both targets are already materialized.
+    // Before recovery, each target is already materialized.
     assert_eq!(
         fs_err::read_to_string(fx.home.join(".a")).expect("read ~/.a before recovery"),
         "NEW-A\n"

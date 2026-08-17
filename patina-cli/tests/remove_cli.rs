@@ -5,11 +5,10 @@
 
 //! Integration coverage for `patina remove`.
 //!
-//! Each test spawns the real `patina` binary against an isolated tempdir
-//! repo + state + home (via the shared [`common::Fixture`]). The fixture
-//! first `patina apply`s a symlink module so a committed `<ts>.COMMIT`
-//! record exists for `remove` to read; the binary's stdin is not a TTY, so
-//! the `--yes`-driven non-interactive path is the one under test.
+//! Each test drives the real `patina` binary through [`common::Fixture`],
+//! applying a symlink module first so a committed `<ts>.COMMIT` record
+//! exists for `remove` to read. With no TTY, the path under test is the
+//! `--yes`-driven one.
 
 mod common;
 
@@ -48,10 +47,10 @@ fn applied_symlink_fixture() -> Fixture {
     fx
 }
 
-/// `patina remove ~/.zshrc --yes` replaces the symlink with a
-/// regular file holding the last-applied content, removes the `[[file]]`
-/// entry, leaves the repository source unchanged, and a subsequent
-/// `patina status --json` no longer lists the target.
+/// `patina remove ~/.zshrc --yes` replaces the symlink with a regular file
+/// containing the last-applied content, removes the `[[file]]` entry, and
+/// leaves the repository source unchanged. A subsequent `patina status --json`
+/// no longer lists the target.
 #[test]
 fn remove_replaces_target_drops_entry_and_status_omits_it() {
     let fx = applied_symlink_fixture();
@@ -148,8 +147,8 @@ fn remove_purge_deletes_target_and_drops_entry() {
     );
 }
 
-/// Removing a path that is not currently managed exits 1, names the
-/// path and the three discovery sources, and mutates nothing.
+/// Removing a path that is not currently managed exits 1, includes the path and
+/// every discovery source, and does not mutate anything.
 #[test]
 fn remove_unmanaged_path_exits_1() {
     let fx = applied_symlink_fixture();
@@ -166,7 +165,7 @@ fn remove_unmanaged_path_exits_1() {
     let stderr = stderr(&out);
     assert!(
         stderr.contains("~/.bashrc") && stderr.contains("not managed"),
-        "stderr must name the path and say it is not managed, got: {stderr}"
+        "stderr must include the path and say it is not managed, got: {stderr}"
     );
 
     assert_eq!(
@@ -182,8 +181,8 @@ fn remove_unmanaged_path_exits_1() {
     );
 }
 
-/// `remove --json --yes` emits a single deterministic JSON document
-/// on stdout naming the removed target and the purge flag.
+/// `remove --json --yes` exits 0 and writes a single JSON document to stdout
+/// with the removed target and the purge flag.
 #[test]
 fn remove_json_emits_document() {
     let fx = applied_symlink_fixture();

@@ -3,12 +3,11 @@
     reason = "integration tests use .expect() on fixture setup and assertions; allow-expect-in-tests covers #[cfg(test)] modules but not the top level of a tests/*.rs integration crate."
 )]
 
-//! Integration coverage for `patina add`'s source-kind-aware table routing.
-//! A file source writes a `[[file]]` entry, a directory source writes a
+//! Integration coverage for how `patina add` picks the table-array by source
+//! kind. A file source writes a `[[file]]` entry, a directory source writes a
 //! `[[directory]]` entry, and the mode flags are kind-checked.
 //!
-//! Each test spawns the real `patina` binary against an isolated tempdir
-//! repo, state, and home (via the shared [`common::Fixture`]).
+//! Each test drives the real `patina` binary through [`common::Fixture`].
 
 mod common;
 
@@ -28,8 +27,8 @@ fn manifest_value(fx: &Fixture, module: &str) -> toml::Value {
     toml::from_str(&body).expect("module manifest parses")
 }
 
-/// `patina add F --module m` on a regular file writes a `[[file]]`
-/// table-array entry and no `[[directory]]` entry.
+/// `patina add F --module m` on a regular file writes a `[[file]]` table-array
+/// entry, and does not write a `[[directory]]` entry.
 #[test]
 fn add_file_writes_file_table_and_no_directory_table() {
     let fx = Fixture::new();
@@ -119,8 +118,8 @@ fn add_directory_symlink_tree_writes_directory_table_with_mode() {
 }
 
 /// A `[[directory]]` entry written by `add` is applyable. A follow-up
-/// `patina apply` materializes the symlink-tree leaves, proving `add` wrote
-/// a correct directory entry, beyond correct manifest text alone.
+/// `patina apply` materializes the symlink-tree leaves. Only that second apply
+/// shows the entry can be deployed; correct manifest text alone does not.
 #[test]
 fn add_directory_then_apply_materializes_leaf_symlinks() {
     let fx = Fixture::new();
@@ -149,8 +148,9 @@ fn add_directory_then_apply_materializes_leaf_symlinks() {
     );
 }
 
-/// `--symlink-tree` on a regular file source is rejected with a
-/// typed error naming the flag and the file source kind; no entry is written.
+/// `--symlink-tree` on a regular file source is rejected with a typed error
+/// that includes the flag and the file source kind. The manifest is left
+/// unwritten.
 #[test]
 fn add_symlink_tree_on_a_file_is_rejected() {
     let fx = Fixture::new();
@@ -172,10 +172,10 @@ fn add_symlink_tree_on_a_file_is_rejected() {
     let stderr = stderr(&out);
     assert!(
         stderr.contains("--symlink-tree") && stderr.contains("file"),
-        "stderr must name --symlink-tree and the file kind, got: {stderr}"
+        "stderr must include --symlink-tree and the file kind, got: {stderr}"
     );
-    // No module manifest is written, because the kind check runs before
-    // staging.
+    // The kind check runs before staging, so the module manifest is never
+    // written.
     assert!(
         !fx.root.join("m").join("patina.toml").exists(),
         "no manifest should be written on a kind-mismatch refusal"
@@ -183,7 +183,7 @@ fn add_symlink_tree_on_a_file_is_rejected() {
 }
 
 /// `--template` on a directory source is rejected with a typed
-/// error naming the flag and the directory source kind.
+/// error that includes the flag and the directory source kind.
 #[test]
 fn add_template_on_a_directory_is_rejected() {
     let fx = Fixture::new();
@@ -198,7 +198,7 @@ fn add_template_on_a_directory_is_rejected() {
     let stderr = stderr(&out);
     assert!(
         stderr.contains("--template") && stderr.contains("directory"),
-        "stderr must name --template and the directory kind, got: {stderr}"
+        "stderr must include --template and the directory kind, got: {stderr}"
     );
 }
 

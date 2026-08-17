@@ -5,11 +5,10 @@
 
 //! Integration coverage for `patina add`.
 //!
-//! Each test spawns the real `patina` binary against an isolated tempdir
-//! repo, state, and home (via the shared [`common::Fixture`]). The binary
-//! runs as a subprocess, so its stdin is not a TTY. These tests cover the
-//! non-interactive paths, such as missing-flag refusals and no prompts. The
-//! TTY prompt branches are unit-tested in `cmd::add`.
+//! Each test drives the real `patina` binary through [`common::Fixture`], so
+//! the paths covered here are the non-interactive ones: the missing-flag
+//! refusals, and a run that prompts for nothing. The TTY prompt branches are
+//! unit-tested in `cmd::add`.
 
 mod common;
 
@@ -26,12 +25,11 @@ use std::sync::Once;
 use std::time::Duration;
 use std::time::Instant;
 
-/// `patina add ~/.zshrc --module zsh --symlink --yes` moves the
-/// dotfile into `<repo>/zsh/zshrc` and writes a `[[file]]` entry. The
-/// original target stays a regular file with the original bytes, because
-/// apply has not run yet.
+/// `patina add ~/.zshrc --module zsh --symlink --yes` copies the dotfile into
+/// `<repo>/zsh/zshrc` and writes a `[[file]]` entry. `apply` has not run, so
+/// the original target stays a regular file with the original bytes.
 #[test]
-fn add_moves_file_writes_entry_and_leaves_target() {
+fn add_copies_file_writes_entry_and_leaves_target() {
     let fx = Fixture::new();
     let zshrc = fx.home.join(".zshrc");
     fs_err::write(zshrc.as_std_path(), "foo").expect("seed ~/.zshrc");
@@ -42,14 +40,14 @@ fn add_moves_file_writes_entry_and_leaves_target() {
     );
     assert_eq!(code(&out), 0, "add must exit 0; stderr: {}", stderr(&out));
 
-    let moved = fx.root.join("zsh").join("zshrc");
-    assert!(moved.is_file(), "<repo>/zsh/zshrc must be a regular file");
+    let staged = fx.root.join("zsh").join("zshrc");
+    assert!(staged.is_file(), "<repo>/zsh/zshrc must be a regular file");
     assert!(
-        !is_symlink(&moved),
+        !is_symlink(&staged),
         "<repo>/zsh/zshrc must not be a symlink"
     );
     assert_eq!(
-        fs_err::read_to_string(moved.as_std_path()).expect("read moved file"),
+        fs_err::read_to_string(staged.as_std_path()).expect("read staged file"),
         "foo"
     );
 
@@ -75,7 +73,7 @@ fn add_moves_file_writes_entry_and_leaves_target() {
         Some("symlink")
     );
 
-    // Add does not materialize the target, so apply has not run yet.
+    // `apply` has not run, and `add` on its own never materializes a target.
     assert!(zshrc.is_file(), "~/.zshrc must remain a regular file");
     assert!(!is_symlink(&zshrc), "~/.zshrc must not be a symlink yet");
     assert_eq!(
@@ -84,12 +82,12 @@ fn add_moves_file_writes_entry_and_leaves_target() {
     );
 }
 
-/// The prior add left the file staged in the repo, wrote the `[[file]]`
-/// entry, and left the target a regular file. Running `patina apply --yes`
-/// materializes the target as a symbolic link whose readlink destination is
-/// the canonical path of `<repo>/zsh/zshrc`. This proves `add` wrote a
-/// correct, applyable entry, which the manifest text and not-yet-a-symlink
-/// check alone cannot prove.
+/// `add` leaves the file staged in the repo, the `[[file]]` entry written, and
+/// the target a regular file. `patina apply --yes` then materializes the target
+/// as a symbolic link whose readlink destination is the canonical path of
+/// `<repo>/zsh/zshrc`. Only that apply shows the entry `add` wrote is one the
+/// engine can deploy. The manifest text and the not-yet-a-symlink check do not
+/// establish that.
 #[test]
 fn add_then_apply_materializes_target_as_symlink() {
     let fx = Fixture::new();
@@ -129,7 +127,7 @@ fn add_then_apply_materializes_target_as_symlink() {
 }
 
 /// Two mode flags produce a clap usage error (exit 2)
-/// and stderr names the conflicting flags.
+/// and stderr includes the conflicting flags.
 #[test]
 fn add_two_mode_flags_is_a_usage_error() {
     let fx = Fixture::new();
@@ -145,11 +143,11 @@ fn add_two_mode_flags_is_a_usage_error() {
     let stderr = stderr(&out);
     assert!(
         stderr.contains("--symlink") && stderr.contains("--copy"),
-        "stderr must name the conflicting flags, got: {stderr}"
+        "stderr must include the conflicting flags, got: {stderr}"
     );
 }
 
-/// In a non-TTY shell without `--module`, `add` exits 1 and names
+/// In a non-TTY shell without `--module`, `add` exits 1 and identifies
 /// the missing `--module` flag.
 #[test]
 fn add_non_tty_without_module_exits_1() {
@@ -161,7 +159,7 @@ fn add_non_tty_without_module_exits_1() {
     assert_eq!(code(&out), 1, "non-TTY add without --module must exit 1");
     assert!(
         stderr(&out).contains("--module"),
-        "stderr must name the missing --module flag, got: {}",
+        "stderr must include the missing --module flag, got: {}",
         stderr(&out)
     );
 
@@ -172,7 +170,7 @@ fn add_non_tty_without_module_exits_1() {
     );
 }
 
-/// A path that is already managed exits 1 and names the owning
+/// A path that is already managed exits 1 and identifies the owning
 /// module.
 #[test]
 fn add_already_managed_path_exits_1() {
@@ -198,11 +196,10 @@ fn add_already_managed_path_exits_1() {
     assert!(zshrc.is_file(), "~/.zshrc must be untouched on refusal");
 }
 
-/// `add --json --yes` emits a single deterministic JSON document
-/// on stdout naming the added target, module, and mode; stderr carries no
-/// prose.
+/// `add --json --yes` exits 0 and writes a single JSON document to stdout with
+/// the added target, its module, and its mode.
 #[test]
-fn add_json_emits_deterministic_document() {
+fn add_json_emits_one_document_with_target_module_and_mode() {
     let fx = Fixture::new();
     let zshrc = fx.home.join(".zshrc");
     fs_err::write(zshrc.as_std_path(), "foo").expect("seed ~/.zshrc");
@@ -288,9 +285,9 @@ fn add_serializes_behind_a_held_exclusive_lock() {
         "add must complete once the lock frees; stderr: {}",
         stderr(&out)
     );
-    // B must have blocked for most of the hold window, because it cannot
-    // have completed before A released the lock. Allow slack for process
-    // startup, but require it waited a clear majority of the hold.
+    // B cannot have completed before A released the lock, so it must have
+    // blocked for most of the hold window. Allow slack for process startup, but
+    // require that it waited a clear majority of the hold.
     assert!(
         waited >= Duration::from_secs(1),
         "add should have blocked on the held lock (waited {waited:?})"
@@ -366,8 +363,8 @@ fn lock_helper_path() -> Utf8PathBuf {
 }
 
 /// Spawn the lock holder. It acquires the exclusive lock at `<state>/lock`
-/// and holds it for `hold`. Its own acquisition timeout is long, but it
-/// acquires immediately, because nothing else holds the lock yet.
+/// and holds it for `hold`. Nothing else holds the lock yet, so it acquires
+/// immediately despite its long acquisition timeout.
 fn spawn_holder(helper: &Utf8Path, state: &Utf8Path, hold: Duration) -> Child {
     Command::new(helper.as_std_path())
         .arg(state.as_str())
@@ -380,9 +377,9 @@ fn spawn_holder(helper: &Utf8Path, state: &Utf8Path, hold: Duration) -> Child {
         .expect("spawn lock_helper holder")
 }
 
-/// Block until the holder prints its `ACQUIRED` marker, proving it holds the
-/// lock. Then drain the rest of its stdout in the background so it never
-/// blocks on a later write.
+/// Block until the holder prints its `ACQUIRED` marker. That marker proves it
+/// holds the lock. Then drain the rest of its stdout in the background so it
+/// never blocks on a later write.
 fn wait_for_acquired(child: &mut Child) {
     let stdout = child.stdout.take().expect("holder stdout piped");
     let mut reader = BufReader::new(stdout);

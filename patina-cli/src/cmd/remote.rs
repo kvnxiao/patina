@@ -1,19 +1,19 @@
 //! `patina remote` command logic.
 //!
-//! Four verbs over the remote-source subsystem: `list` (offline, read-only),
-//! `check` (`ls-remote` only, refreshes the pending-update notice), `update`
-//! (the producer verb that fetches, runs the update gate, and rewrites the
+//! The remote-source subsystem exposes `list` (offline, read-only), `check`
+//! (`ls-remote` only, refreshes the pending-update notice), `update` (the
+//! producer verb that fetches, runs the update gate, and rewrites the
 //! lockfile), and `prune` (sweeps unreferenced checkouts).
 //!
 //! The engine owns the semantics: [`patina_core::remote::update`] computes a
 //! proposal per remote and [`patina_core::remote::gate`] decides. This module
-//! is control flow, lock acquisition, prompting, and output, all of it through
-//! the [`Reporter`].
+//! is control flow, lock acquisition, prompting, and output.
 //!
 //! Locking follows the read/write split the rest of the CLI uses. `update` and
-//! `prune` mutate (the working-tree lockfile, the cache) and take the exclusive
-//! lock; `list` and `check` take the shared lock with the read-only escape
-//! hatch, since `check` writes only the per-machine notice files it alone owns.
+//! `prune` mutate the working-tree lockfile and the cache, so both take the
+//! exclusive lock. `list` and `check` acquire the shared lock with the
+//! read-only escape hatch: `list` does not write, and `check` writes only the
+//! per-machine notice files it alone owns.
 //!
 //! A shell hook must never contend with a running apply, and the shared lock is
 //! therefore held across the inventory read alone, never across the network. A
@@ -98,9 +98,11 @@ pub fn run(
 }
 
 /// Run `patina remote update` over every declared remote, with the default
-/// flags and the exclusive lock. The producer pass `patina apply --update`
-/// drives, so the two spell one operation rather than the apply synthesizing a
-/// command line.
+/// flags and the exclusive lock.
+///
+/// This is the entry point `patina apply --update` calls, so the producer pass
+/// and the standalone command run the same code rather than the apply
+/// synthesizing a command line.
 ///
 /// # Errors
 ///
@@ -137,8 +139,8 @@ fn run_update_locked(
 ) -> Result<i32> {
     let _guard = acquire_lock(lock_path, LockKind::Exclusive, exclusive_timeout())
         .context("failed to acquire the exclusive lock for `patina remote update`")?;
-    // Read the lockfile only once the exclusive lock is held: this is a
-    // read-modify-write of a file another `patina remote update` may be
+    // Read the lockfile only once the exclusive lock is held. The update pass
+    // is a read-modify-write of a file another `patina remote update` may be
     // rewriting, so a read taken before the lock could silently drop a
     // concurrent bump.
     let mut inventory = declared_remotes()?;
@@ -153,9 +155,8 @@ fn declared_remotes() -> Result<RemoteInventory> {
 /// Read the inventory under the shared lock, releasing it before returning.
 ///
 /// The lock covers the read of the manifest and the lockfile, the files a
-/// concurrent `apply` or `remote update` rewrites, and nothing after it. The
-/// caller may then spend as long as it likes on the network without an apply
-/// waiting behind it.
+/// concurrent `apply` or `remote update` rewrites, and nothing after it.
+/// Holding the lock across an untimed `git` call blocks every later apply.
 fn read_inventory(
     lock_path: &camino::Utf8Path,
     quiet: bool,
@@ -208,7 +209,7 @@ fn run_list(inventory: &RemoteInventory, json: bool, reporter: &mut impl Reporte
     ExitCode::Success.code()
 }
 
-/// The column headings for one of this command's two tables.
+/// The painted column headings for a listing.
 fn header_row(labels: &[&str], styles: &Styles) -> String {
     let painted: Vec<String> = labels
         .iter()
@@ -217,9 +218,9 @@ fn header_row(labels: &[&str], styles: &Styles) -> String {
     row(&painted.iter().map(String::as_str).collect::<Vec<&str>>())
 }
 
-/// One listing row. The URL is the trailing cell, which elastic tabstops leave
-/// unpadded, so a pending tag can follow it without widening a column for every
-/// other remote.
+/// One listing row. The URL is the trailing cell, and elastic tabstops leave
+/// that cell unpadded, so a pending tag can follow it without widening a
+/// column for every other remote.
 fn list_row(view: &RemoteView, pending: bool, styles: &Styles) -> String {
     let git_ref = match &view.spec.git_ref {
         Some(declared) => paint(styles.remote.declared_ref, declared),
@@ -266,9 +267,9 @@ fn run_check(
         }
     }
 
-    // A repository behind its own origin may already carry pins another machine
-    // gated and committed. Pulling those is the right move, so that message wins
-    // over "run the gate here".
+    // A repository behind its own origin may already have pins another machine
+    // gated and committed. Pulling those is the first step, so the repo-behind
+    // message replaces the pending-updates one.
     let repo_behind = patina_core::remote::git::repo_differs_from_origin(&inventory.repo_root);
     let message = if repo_behind {
         Some(notice::repo_behind_message())
@@ -279,8 +280,8 @@ fn run_check(
         Some(notice::pending_updates_message(&names))
     };
 
-    // A write failure here must not fail a shell hook, so it is reported and the
-    // command still succeeds.
+    // A notice-write failure must not fail a shell hook, so it is reported and
+    // the command still succeeds.
     for error in [
         notice::publish(&inventory.state_dir, &behind, message.as_deref()).err(),
         notice::record_check(&inventory.state_dir, now).err(),
@@ -328,8 +329,8 @@ fn run_check(
     exit.code()
 }
 
-/// The parsed `patina remote update` flags, grouped so the runner does not take
-/// four positional booleans.
+/// The parsed `patina remote update` flags, grouped so the runner does not
+/// take a run of positional arguments.
 struct UpdateFlags {
     name: Option<String>,
     bypass_age: bool,
@@ -440,20 +441,20 @@ fn run_update(
 /// How many remotes are fetched at once.
 ///
 /// A cap keeps a repository declaring dozens of remotes from opening dozens of
-/// connections at once. It sits above the core count because each fetch is a
-/// `git` subprocess waiting on a server.
+/// connections at once. Each fetch is a `git` subprocess waiting on a server,
+/// so the cap sits above the core count.
 const FETCH_BATCH: usize = 8;
 
 /// Fetch and gate every selected remote, [`FETCH_BATCH`] at a time.
 ///
 /// Each call blocks on `git` talking to a different server, so a batch costs
-/// about one fetch of wall time. Results come back in `views` order whatever
+/// about one fetch of wall time. Results are returned in `views` order whatever
 /// order the servers answer in, and that order drives the prompts, the table,
 /// and the `--json` rows.
 ///
-/// A worker that produces nothing at all yields an error string, and the run
-/// continues. Its panic message has already reached stderr through the default
-/// hook, and one dead worker must not abort a run that an unreachable server
+/// A worker that dies without returning a result yields an error string, and
+/// the run continues. The default hook has already written its panic message to
+/// stderr, and one dead worker must not abort a run that an unreachable server
 /// would not.
 fn propose_all(
     views: &[&RemoteView],
@@ -478,12 +479,12 @@ fn propose_all(
     proposals
 }
 
-/// Render one aligned row per remote the run touched. A row names where the
+/// Render one aligned row per remote the run touched. A row reports where the
 /// pin was, the candidate the run considered, and what became of the pin.
 ///
-/// Every remote gets a row, including one that could not be reached, so the
+/// Every remote has a row, including one that could not be reached, so the
 /// table accounts for the whole run. The reason a remote failed or was refused
-/// stays on stderr, where the warning already is.
+/// stays on stderr, beside the warning that already reported it.
 fn render_outcomes(outcomes: &[Outcome], reporter: &mut impl Reporter) {
     let styles = &reporter.styles();
     let mut table = header_row(&["NAME", "FROM", "TO", "STATUS"], styles);
@@ -511,10 +512,10 @@ fn update_row(outcome: &Outcome, styles: &Styles) -> String {
     ])
 }
 
-/// A rev cell holds the rev itself, or `absent` in the attention color when
-/// there is none. The two absences differ and must not be worded alike.
-/// `(unpinned)` means no pin was recorded. `(unknown)` means the run never
-/// learned a candidate.
+/// A rev cell shows the rev itself, or the caller's `absent` text in the
+/// attention color. The absences differ and must not be worded alike:
+/// `(unpinned)` marks a remote with no recorded pin, and `(unknown)` marks a
+/// run that never learned a candidate.
 fn rev_cell(rev: Option<&str>, absent: &str, styles: &Styles) -> String {
     match rev {
         Some(rev) => paint(styles.remote.rev, rev),
@@ -540,7 +541,7 @@ fn status_for(action: Action) -> String {
     }
 }
 
-/// What one remote's update pass amounted to, for the human table, the JSON
+/// The result of one remote's update pass, for the human table, the JSON
 /// envelope, the exit code, and the notice reconciliation.
 struct Outcome {
     name: patina_core::RemoteName,
@@ -591,10 +592,10 @@ fn reconcile_notice(
 
 /// The exit code for a whole `remote update` run.
 ///
-/// A failure outranks a decline: a run that both failed to reach one remote and
-/// was told no about another reports the failure, the more actionable of the
-/// two. A pin the gate held on its own is a success: the run did what the gate
-/// said, and a script that treated a cooldown as an error would fail daily.
+/// A failure outranks a decline: a run that failed to reach one remote and was
+/// declined on another reports the failure, the more actionable outcome. A pin
+/// the gate held on its own is a success: the run followed the gate's verdict,
+/// and a script that treated a cooldown as an error would fail daily.
 fn exit_for(outcomes: &[Outcome]) -> ExitCode {
     if outcomes
         .iter()
@@ -619,14 +620,15 @@ enum Action {
     /// The pin moved.
     Updated,
     /// The gate held it back on its own: a cooldown, or a verdict this binary
-    /// does not recognize. Nobody was asked, so nothing was refused.
+    /// does not recognize. The user was never prompted, so this is not a
+    /// refusal.
     ///
-    /// `eligible_at` carries the cooldown's expiry, the one datum the human row
+    /// `eligible_at` is the cooldown's expiry, the one datum the human row
     /// needs that the action alone cannot supply. It is `None` for every hold
     /// with no window to report.
     Held { eligible_at: Option<i64> },
-    /// The user was asked and said no. Distinct from [`Action::Held`] because
-    /// exit code 5 means a declined prompt across every command.
+    /// The user was asked and answered no. Exit code 5 is the declined-prompt
+    /// code across every command, so this is distinct from [`Action::Held`].
     Declined,
     /// A hard reject.
     Rejected,
@@ -652,8 +654,8 @@ impl Action {
     clippy::too_many_arguments,
     reason = "settling one proposal needs the inventory it writes into, the view and \
               proposal it is about, the timestamp to stamp, the invocation flags, and the \
-              three output/input seams (tty, reader, reporter). Grouping them behind a \
-              struct would move the same fields without removing any."
+              output/input seams (tty, reader, reporter). Grouping them behind a struct \
+              would move the same fields without removing any."
 )]
 fn settle(
     lockfile: &mut patina_core::remote::lockfile::Lockfile,
@@ -724,7 +726,7 @@ fn bump(
 /// Ask whether to accept a flagged pin bump.
 ///
 /// `--yes` accepts without asking. A non-interactive shell cannot be asked, so
-/// it declines: leaving the pin where it is, is the safe answer for a check
+/// it declines and leaves the pin where it is, the safe answer for a check
 /// that exists to catch a rewritten or backdated upstream.
 fn confirm(
     name: &str,
@@ -761,17 +763,18 @@ enum Confirmed {
     Yes,
     /// The user was asked and said no.
     No,
-    /// There was no way to ask. Distinct from [`Confirmed::No`] because a
-    /// non-interactive run that could not raise the prompt refused nothing, and
-    /// exit code 5 means a prompt was declined.
+    /// The run could not raise a prompt. Exit code 5 is the declined-prompt
+    /// code, and a run that never raised the prompt is not a refusal, so this
+    /// is distinct from [`Confirmed::No`].
     Unasked,
 }
 
-/// Run the cache sweep by hand: whole trees for remotes the root manifest no
-/// longer declares, then unreferenced checkouts of the ones it does. The
-/// currently pinned checkouts are kept regardless of journal reachability: a
-/// pin bumped but not yet applied is the warm cache an offline apply depends
-/// on.
+/// Sweep the cache on demand: whole trees for remotes the root manifest no
+/// longer declares, then unreferenced checkouts of the ones it does.
+///
+/// A currently pinned checkout is kept even when no journal record references
+/// it. A pin bumped but not yet applied is the warm cache an offline apply
+/// depends on.
 fn run_prune(inventory: &RemoteInventory, json: bool, reporter: &mut impl Reporter) -> Result<i32> {
     let declared = inventory
         .remotes
@@ -834,9 +837,9 @@ mod tests {
         vec![GateConcern::HistoryRewritten]
     }
 
-    /// An inventory holding one remote, optionally pinned, over a state
-    /// directory that does not exist. Nothing here touches the network or the
-    /// filesystem: the renderers read only what they are handed.
+    /// An inventory with one remote, optionally pinned, over a state directory
+    /// that does not exist. The renderers read only what they are handed, so
+    /// this fixture reaches neither the network nor the filesystem.
     fn inventory(rev: Option<&str>) -> RemoteInventory {
         let pin = rev.map(|rev| patina_core::remote::lockfile::LockEntry {
             url: "https://example.invalid/r".to_owned(),
@@ -1037,10 +1040,11 @@ mod tests {
         }
     }
 
-    /// Color must be purely additive over the plain table: the colored render
-    /// has to carry escapes, and stripping them has to give back the plain
+    /// Color must be purely additive over the plain table. The colored render
+    /// has to contain escapes, and stripping them has to reproduce the plain
     /// render byte for byte. Padding painted along with its cell would break
-    /// this, and with it the alignment of piped and `--color never` output.
+    /// that equality, and with it the alignment of piped and `--color never`
+    /// output.
     #[test]
     fn list_human_color_strips_back_to_the_plain_table() {
         let inv = inventory(Some(&"a".repeat(40)));
@@ -1063,7 +1067,7 @@ mod tests {
         );
         assert!(
             list_row(&view, false, &plain).ends_with("\thttps://example.invalid/r\n"),
-            "a remote at its pin must carry no tag"
+            "a remote at its pin must render without a tag"
         );
     }
 
@@ -1120,7 +1124,7 @@ mod tests {
             Action::Held {
                 eligible_at: Some(1_786_456_800)
             },
-            "a cooldown must carry the instant it becomes eligible"
+            "a cooldown must include the instant it becomes eligible"
         );
         assert!(
             inv.lockfile.is_empty(),
@@ -1128,10 +1132,10 @@ mod tests {
         );
     }
 
-    /// The status cell is the only place a human learns why a pin did not move,
-    /// so each action has to produce its own wording. Three of these are pinned
-    /// by the integration suite (`already at`, `holding`, `min_age`), and a
-    /// cooldown must name the instant it becomes eligible.
+    /// The status cell is the only place the reason a pin did not move
+    /// appears, so each action has to produce its own wording. The integration
+    /// suite pins the `already at`, `holding`, and `min_age` phrasings, and a
+    /// cooldown must include the instant it becomes eligible.
     #[test]
     fn each_action_reports_its_own_status() {
         for (action, expected) in [
@@ -1153,8 +1157,8 @@ mod tests {
     }
 
     /// A remote whose proposal never happened has no candidate rev, and an
-    /// unpinned one has no prior rev. The two absences must read differently.
-    /// A row reporting `(unpinned)` where nothing was learned would claim the
+    /// unpinned one has no prior rev. The absences must read differently. A
+    /// row reporting `(unpinned)` where nothing was learned would claim the
     /// upstream is at no commit.
     #[test]
     fn the_two_absent_revs_are_worded_apart() {
@@ -1197,7 +1201,7 @@ mod tests {
         );
     }
 
-    /// Every remote the run touched must get a row, including one that failed,
+    /// Every remote the run touched must have a row, including one that failed,
     /// so the table accounts for the whole run and not only its successes.
     #[test]
     fn the_table_carries_one_row_per_remote_under_a_header() {
@@ -1222,7 +1226,7 @@ mod tests {
         assert_eq!(lines.len(), 3, "a header and two rows: {:?}", reporter.out);
         let header = lines.first().expect("the header row");
         for label in ["NAME", "FROM", "TO", "STATUS"] {
-            assert!(header.contains(label), "the header must name {label}");
+            assert!(header.contains(label), "the header must include {label}");
         }
         let column = header.find("STATUS").expect("the STATUS header");
         for row in lines.iter().skip(1) {
@@ -1327,7 +1331,7 @@ mod tests {
     #[test]
     fn a_declined_prompt_exits_five_and_a_gate_hold_exits_zero() {
         // Exit 5 is the repository-wide code for a declined prompt, so a
-        // decline must not be folded into the gate's own holds, which are the
+        // decline must not be folded into the gate's own holds. A hold is the
         // ordinary daily outcome of a cooldown.
         let outcome = |action| {
             vec![Outcome {
@@ -1396,7 +1400,7 @@ mod tests {
         );
         assert!(
             reporter.err.contains("--yes"),
-            "the message must name the flag that would accept it: {}",
+            "the message must include the flag that would accept it: {}",
             reporter.err
         );
     }

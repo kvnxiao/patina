@@ -7,13 +7,11 @@
 //!
 //! Two consecutive `patina apply` invocations against
 //! an unchanged source repository produce byte-identical stdout in both
-//! `--json` and human modes. No wall-clock timestamp, PID, or random ID
-//! leaks into user-facing output. The journal `<ts>` filename is the only
-//! place a timestamp is permitted, and it never appears on stdout.
+//! `--json` and human modes. A wall-clock timestamp, PID, or random ID never
+//! reaches user-facing output. The journal `<ts>` filename is the only place a
+//! timestamp is permitted, and it never appears on stdout.
 //!
-//! Each test builds a self-contained tempdir dotfiles repository, points
-//! `PATINA_REPO` at it, and isolates the per-machine state directory under
-//! the tempdir so the apply never touches the developer's real `$HOME`.
+//! Each test drives the real `patina` binary through [`common::Fixture`].
 
 mod common;
 
@@ -81,8 +79,8 @@ fn json_apply_is_byte_identical_across_two_runs() {
 
 #[test]
 fn human_apply_is_byte_identical_across_two_runs() {
-    // As in the JSON variant above, a priming apply converges the repo
-    // first, so the two measured runs share state.
+    // As in the `--json` variant, a priming apply converges the repo first, so
+    // the two measured runs share state.
     let f = rich_fixture();
 
     let prime = f.apply(&["--yes"]);
@@ -148,9 +146,9 @@ fn fully_satisfied_applies_are_byte_identical_and_report_up_to_date() {
 #[test]
 fn multi_target_rows_preserve_input_declaration_order() {
     // A multi-target [[file]] entry with `targets` declared in deliberately
-    // non-alphabetical order. Determinism means a stable function of
-    // inputs, not an alphabetized sort, so the plan rows must keep declared
-    // order (.codex before .claude).
+    // non-alphabetical order. Determinism is a stable function of inputs, not
+    // an alphabetized sort, so the plan rows must keep declared order (.codex
+    // before .claude).
     let f = Fixture::new();
     let agent = f.module(
         "agent",

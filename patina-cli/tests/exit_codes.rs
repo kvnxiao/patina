@@ -5,11 +5,8 @@
 
 //! Integration tests for the formalized CLI exit-code contract.
 //!
-//! Each test builds a self-contained tempdir dotfiles repository, points
-//! `PATINA_REPO` at it, and isolates the per-machine state directory under
-//! the tempdir so the apply never touches the developer's real `$HOME`.
-//! The binary runs as a subprocess (stdin therefore is not a TTY) so the
-//! observed exit code is the real process status `main` produced through
+//! Each test drives the real `patina` binary through [`common::Fixture`], so
+//! the observed exit code is the real process status `main` produced through
 //! the single `cli::resolve_exit_code` funnel.
 //!
 //! | Scenario                                   | Expected code |
@@ -20,9 +17,10 @@
 //! | exclusive lock held past the timeout cap   | 4             |
 //! | apply succeeds end-to-end                  | 0             |
 //!
-//! The declined-prompt case (exit 5) needs an interactive TTY, which a
-//! subprocess pipe cannot simulate; it is covered by the in-process unit
-//! tests on the injected `PromptReader` in `cmd::apply` and `cmd::rollback`.
+//! The declined-prompt case (exit 5) needs an interactive TTY, and a
+//! subprocess pipe cannot simulate one. The in-process unit tests on the
+//! injected `PromptReader` in `cmd::apply` and `cmd::rollback` cover it
+//! instead.
 
 mod common;
 
@@ -87,7 +85,7 @@ fn post_apply_hook_failure_exits_3() {
 }
 
 #[test]
-fn toml_syntax_error_exits_1_and_names_the_failure() {
+fn toml_syntax_error_exits_1_and_includes_the_failure() {
     let f = Fixture::new();
     // `=` with no value is a TOML syntax error the parser rejects.
     f.module("broken", "[[file]]\nsource =\n");
@@ -109,9 +107,9 @@ fn toml_syntax_error_exits_1_and_names_the_failure() {
 #[test]
 fn exclusive_lock_timeout_exits_4() {
     // A second apply that cannot acquire the held exclusive lock within the
-    // (test-shrunk) timeout cap exits 4. We hold the lock in-process and
-    // shrink the subprocess's cap via PATINA_LOCK_TIMEOUT_MS so the test
-    // does not wait the production minute.
+    // (test-shrunk) timeout cap exits 4. The lock is held in-process, and
+    // PATINA_LOCK_TIMEOUT_MS shrinks the subprocess's cap so the test does
+    // not wait the production minute.
     let f = Fixture::new();
     let module = f.module(
         "shell",

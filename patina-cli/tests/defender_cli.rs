@@ -1,18 +1,18 @@
 //! Integration tests for the `patina defender` CLI surface.
 //!
 //! Every test here stays on a **read-only** path. `apply` and `clear` mutate
-//! antivirus configuration behind a UAC prompt, which no test may raise, so the
-//! suite covers the preview and status paths that reach the same derivation,
-//! diff, and rendering without ever launching the elevated helper: a non-TTY
-//! subprocess without `--yes` previews and exits `0` by contract.
+//! antivirus configuration behind a UAC prompt, and a test may never raise
+//! one. The suite therefore covers the preview and status paths. Those paths
+//! reach the same derivation, diff, and rendering without launching the
+//! elevated helper: a non-TTY subprocess without `--yes` previews and exits
+//! `0` by contract.
 //!
-//! These tests cover the CLI's report on a Defender exclusion list it
-//! cannot read. Run unelevated, as CI and a normal developer shell are,
-//! `Get-MpPreference` withholds the list, so these tests pin the honest
-//! rendering of that case. Run elevated they would see a real list and the
-//! `current_readable` assertions would legitimately flip, so each one that
-//! depends on the distinction skips when the process is elevated rather than
-//! asserting something only true unprivileged.
+//! These tests cover the CLI's report on a Defender exclusion list it cannot
+//! read. Unelevated, as CI and a normal developer shell are,
+//! `Get-MpPreference` withholds the list, and the tests pin the honest
+//! rendering of that case. Elevated, a real list is returned and the
+//! `current_readable` assertions legitimately invert, so every test that turns
+//! on the distinction skips when the process is elevated.
 //!
 //! This doc block sits *above* the `cfg` deliberately. `patina defender` is
 //! Windows-only, so the crate is gated away elsewhere, and a crate root
@@ -59,7 +59,8 @@ fn json_of(output: &Output) -> serde_json::Value {
 }
 
 /// Whether this test process can read Defender's exclusion list. The
-/// `current_readable` assertions below are only meaningful when it cannot.
+/// `current_readable` assertions in this suite are only meaningful when it
+/// cannot.
 fn elevated() -> bool {
     patina_core::is_elevated()
 }
@@ -67,10 +68,11 @@ fn elevated() -> bool {
 /// Canonicalize `path` the way the engine does, as the string form the CLI
 /// reports.
 ///
-/// Derived paths come out of the plan canonicalized, so a raw fixture path is
-/// not comparable to one. The two forms differ on a CI runner, whose `%TEMP%`
-/// resolves through a junction, and match on most developer machines. That
-/// difference passes locally and fails in CI. `dunce::canonicalize` mirrors
+/// The plan canonicalizes every derived path, so a raw fixture path is not
+/// comparable to one. On a CI runner `%TEMP%` resolves through a junction and
+/// the two forms differ; on most developer machines they match. A test
+/// comparing raw paths therefore passes locally and fails in CI.
+/// `dunce::canonicalize` mirrors
 /// the engine's `canonicalize_path`: a filesystem canonicalize with the
 /// Windows `\\?\` verbatim prefix stripped where the plain form is
 /// equivalent.
@@ -83,7 +85,7 @@ fn canonical(path: &camino::Utf8Path) -> String {
 
 #[test]
 fn apply_without_yes_previews_and_writes_nothing() {
-    // This is the contract a non-interactive shell relies on: no `--yes`, no
+    // A non-interactive shell relies on this contract: no `--yes`, no
     // mutation, exit 0. The rest of this suite depends on it holding.
     let fixture = fixture();
     let output = fixture.run(&["defender", "apply", "--json"], &[]);
@@ -145,8 +147,8 @@ fn status_reports_that_the_live_list_was_not_readable() {
         !entries.is_empty(),
         "the desired set is still reported when the live list is withheld: {envelope}"
     );
-    // With the live list withheld only the two ledger-derived states can arise;
-    // `unmanaged` needs a readable list to be detected at all.
+    // With the live list withheld, only `recorded` and `not recorded` can
+    // arise; `unmanaged` needs a readable list to be detected at all.
     for entry in entries {
         let state = entry["state"].as_str().expect("each entry carries a state");
         assert!(
@@ -159,7 +161,8 @@ fn status_reports_that_the_live_list_was_not_readable() {
 #[test]
 fn every_status_entry_carries_its_kind_and_state_as_data() {
     // The kind is color-only in human output, so `--json` is the only place it
-    // survives a pipe. The state token is the field a consumer branches on.
+    // is preserved through a pipe. The state token is the field a consumer branches
+    // on.
     let envelope = json_of(&fixture().run(&["defender", "status", "--json"], &[]));
 
     for entry in envelope["exclusions"]
@@ -185,7 +188,8 @@ fn every_status_entry_carries_its_kind_and_state_as_data() {
 #[test]
 fn the_preview_proposes_the_repo_root_and_each_managed_target() {
     // Derivation reaching the rendered envelope: the repository root as a
-    // folder plus the one declared target as a file, and nothing else.
+    // folder plus the one declared target as a file. No other exclusion is
+    // derived.
     let fixture = fixture();
     let envelope = json_of(&fixture.run(&["defender", "apply", "--json"], &[]));
 
@@ -206,8 +210,8 @@ fn the_preview_proposes_the_repo_root_and_each_managed_target() {
         proposed.contains(&(repo_root.as_str(), "folder")),
         "the repository root must be proposed as a folder exclusion: {proposed:?}"
     );
-    // The target does not exist yet. Canonicalize its parent and rejoin the
-    // leaf, matching the engine's own path resolution.
+    // The target does not exist yet, so its parent is canonicalized and the
+    // leaf rejoined. That mirrors the engine's own path resolution.
     let target = format!("{}\\.gitconfig", canonical(&fixture.home));
     assert!(
         proposed.contains(&(target.as_str(), "file")),
@@ -223,7 +227,8 @@ fn the_preview_proposes_the_repo_root_and_each_managed_target() {
 #[test]
 fn clear_previews_an_empty_removal_set_with_no_ledger() {
     // `clear` must stay usable as the reversibility escape hatch even with
-    // nothing recorded, and it plans no repository, hence a null `repo_root`.
+    // nothing recorded, and it does not plan a repository, hence a null
+    // `repo_root`.
     let output = fixture().run(&["defender", "clear", "--json"], &[]);
 
     assert_eq!(code(&output), 0);
@@ -239,7 +244,7 @@ fn clear_previews_an_empty_removal_set_with_no_ledger() {
 
 #[test]
 fn repeated_previews_are_byte_identical() {
-    // The deterministic-stdout bar. It also guards the ledger fallback: a diff
+    // The deterministic-stdout contract. It also guards the ledger fallback: a diff
     // recomputed from a withheld list must not vary between runs.
     let fixture = fixture();
     let first = fixture.run(&["defender", "apply", "--json"], &[]);

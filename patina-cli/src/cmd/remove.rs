@@ -1,36 +1,33 @@
 //! `patina remove <path>` command logic.
 //!
-//! `patina remove <path>` unmanages a target. It removes the target's
-//! `[[file]]` entry from its module's `patina.toml`, and replaces the target
-//! on disk with a regular file holding the last-applied content, so the
-//! user's system stays functional. It then re-journals the new managed set.
-//! `patina status` therefore treats the path as deliberately unmanaged, and
-//! leaves it out of the report, rather than reporting an ORPHANED leftover.
-//! With `--purge` the
-//! target is deleted from disk entirely instead of replaced.
+//! `patina remove <path>` unmanages a target. It replaces the target on disk
+//! with a regular file containing the last-applied content, so an application
+//! reading the target still finds valid content. It then removes the target's
+//! `[[file]]` entry from
+//! its module's `patina.toml` and re-journals the new managed set. `patina
+//! status` therefore treats the path as deliberately unmanaged and leaves it
+//! out of the report, rather than reporting an ORPHANED leftover. With
+//! `--purge` the target is deleted from disk entirely instead of replaced.
 //!
-//! This is the first command to drive the engine re-apply under
-//! [`LockPolicy::Held`](patina_core::LockPolicy): it holds ONE exclusive
-//! advisory lock for the whole command so the re-apply that writes
-//! the fresh `<ts>.COMMIT` reuses the already-held guard instead of
-//! self-contending against the command's own lock.
+//! `remove` holds one exclusive advisory lock for the whole command and
+//! re-journals under [`LockPolicy::Held`](patina_core::LockPolicy) through
+//! the shared helpers in [`crate::cmd::managed`].
 //!
 //! ## Reconstructing the last-applied content
 //!
-//! The committed apply record maps each target to its
-//! canonical journaled source path. For a symlink or copy target the
-//! last-applied content is the bytes of that source, read from the
-//! repository. For a template-rendered target the journal records only a
-//! blake3 hash of the rendered bytes; such a target has a journaled source
-//! ending in `.tmpl`. The content is therefore reconstructed by re-rendering
-//! the source through `MiniJinja`, against the variable context resolved at
-//! remove time. That is the
-//! deliberate "reset to current source intent" semantics.
+//! The committed apply record maps each target to its canonical journaled
+//! source path. For a symlink or copy target, the last-applied content is the
+//! bytes of that source, read from the repository. For a template-rendered
+//! target the journal records only a blake3 hash of the rendered bytes; such a
+//! target has a journaled source ending in `.tmpl`. The content is therefore
+//! reconstructed by re-rendering the source through `MiniJinja`, against the
+//! variable context resolved at remove time. Re-rendering is deliberate: the
+//! replacement matches the template source as it stands now, not the bytes the
+//! last apply wrote.
 //!
-//! Module-level engine semantics (planning, journaling, manifest editing,
-//! repo discovery, template rendering) live in `patina_core`; this module is
-//! presentation and control flow only, all output routed through the
-//! [`Reporter`].
+//! Planning, journaling, manifest editing, repo discovery, and template
+//! rendering live in `patina_core`; this module is presentation and control
+//! flow.
 
 use crate::cli::RemoveArgs;
 use crate::cmd::MANIFEST_FILENAME;
@@ -64,8 +61,8 @@ use patina_core::remove_file_entry;
 ///
 /// # Errors
 ///
-/// Returns an error (exit 1, or exit 4 on a lock-acquisition timeout via the
-/// engine-error chain) when: the state directory or repository cannot be
+/// Returns an error (exit 1, or exit 4 on a lock-acquisition timeout through
+/// the engine-error chain) when: the state directory or repository cannot be
 /// resolved; the path is not currently managed; the journaled source cannot
 /// be read or re-rendered; the target replacement fails; the manifest edit
 /// fails; or the re-apply fails.
@@ -79,12 +76,8 @@ pub async fn run(
     let target = expand_tilde(&args.path, &home);
     let target_key = manage_key(&target);
 
-    // Take ONE exclusive advisory lock for the whole command. The
-    // re-apply below reuses this guard via LockPolicy::Held rather than
-    // acquiring a second time (which would self-contend).
     let (state, guard) = acquire_state_and_lock()?;
 
-    // Locate the journaled expectation for this target in the latest commit.
     let journal_dir = state.join("journal");
     let record = read_latest_commit(&journal_dir).map_err(EngineError::from)?;
     let expected = record.as_ref().and_then(|record| {
@@ -97,43 +90,34 @@ pub async fn run(
         return Ok(report_unmanaged(args, reporter));
     };
 
-    // Confirm before mutating (never mutate without consent).
     if !confirm(args, tty, reader, reporter) {
         return Ok(ExitCode::UserDeclined.code());
     }
 
-    // Plan against the CURRENT managed set (before the entry is removed) so
-    // the resolver carries the variable context a template target needs for
-    // its last-applied re-render.
+    // Plan against the still-current managed set, before the entry is
+    // removed, so the resolver has the variable context a template target
+    // needs for its last-applied re-render.
     let timestamp = current_timestamp();
     let resolved =
         plan_apply(&ApplyRequest::default(), &timestamp).context("failed to compute the plan")?;
 
-    // Reconstruct the last-applied content (skipped for --purge, which
-    // deletes the target outright).
     let content = if args.purge {
         None
     } else {
         Some(reconstruct_content(expected, &resolved)?)
     };
 
-    // Replace the target on disk: this is remove-specific filesystem work
-    // done BEFORE the re-apply. The target path is the journaled canonical
-    // path of the materialized object.
+    // The target path is read from the journal: the canonical path of the
+    // materialized object, not the user's spelling of it.
     let target_path = Utf8PathBuf::from(expected.target());
     replace_target(&target_path, content.as_deref())?;
 
-    // Remove the `[[file]]` entry from the owning module's manifest. The
-    // owning module is the journaled source's parent directory.
     let source = Utf8PathBuf::from(expected.source());
     let manifest_path = owning_manifest(&source)?;
     remove_entry(&manifest_path, args.path.as_str(), &target_path)?;
 
-    // Re-journal by re-applying under the held lock: the fresh plan now omits
-    // the removed entry, so the new <ts>.COMMIT omits the target and
-    // `patina status` no longer lists it. Re-plan AFTER the manifest edit so
-    // the new plan reflects the removal; drive the apply with the lock we
-    // already hold.
+    // The re-plan runs after the manifest edit, so the fresh <ts>.COMMIT
+    // omits the removed target and `patina status` stops listing it.
     rejournal(guard).await?;
 
     report_success(args, &target_path, reporter);
@@ -167,7 +151,7 @@ fn reconstruct_content(expected: &ExpectedTarget, resolved: &ResolvedPlan) -> Re
 /// without it (`--purge`), delete the target entirely.
 ///
 /// The existing target is removed first so a symlink is replaced by a real
-/// file (writing through a symlink would clobber the repository source).
+/// file (writing through a symlink would overwrite the repository source).
 fn replace_target(target: &Utf8Path, content: Option<&[u8]>) -> Result<()> {
     remove_if_present(target)?;
     if let Some(bytes) = content {
@@ -206,9 +190,11 @@ fn owning_manifest(source: &Utf8Path) -> Result<Utf8PathBuf> {
 }
 
 /// Remove the `[[file]]` entry for `entry_target` from the module manifest at
-/// `manifest_path`, writing the edited text back. The manifest stores the
-/// target as the user wrote it (e.g. `~/.zshrc`); the writer also accepts the
-/// canonical form, so both spellings are attempted before giving up.
+/// `manifest_path`, then write the edited text back.
+///
+/// The manifest stores the target unexpanded (e.g. `~/.zshrc`), while the
+/// writer also accepts the canonical form. Both spellings are tried before the
+/// removal fails.
 fn remove_entry(
     manifest_path: &Utf8Path,
     entry_target: &str,
@@ -216,8 +202,6 @@ fn remove_entry(
 ) -> Result<()> {
     let text = fs_err::read_to_string(manifest_path.as_std_path())
         .with_context(|| format!("failed to read {manifest_path}"))?;
-    // The entry's `target` key matches the manifest spelling; fall back to
-    // the canonical absolute path in case the manifest stored that form.
     let edited = match remove_file_entry(&text, entry_target) {
         Ok(edited) => edited,
         Err(_) => remove_file_entry(&text, canonical_target.as_str())
@@ -253,9 +237,12 @@ fn confirm(
     }
 }
 
-/// Report the unmanaged-path refusal (exit 1) and return the exit code. The
-/// message names the path and the three discovery sources, matching the
-/// established discovery-error wording.
+/// Report the unmanaged-path refusal (exit 1) and return the exit code.
+///
+/// The message includes the path and every discovery source: `$PATINA_REPO`,
+/// the walk-up from the current directory, and the persisted default. It
+/// repeats the established discovery-error wording, so `remove` and `promote`
+/// explain an unmanaged path the same way.
 fn report_unmanaged(args: &RemoveArgs, reporter: &mut impl Reporter) -> i32 {
     let message = format!(
         "{} is not managed by patina (no journaled apply lists it). \
@@ -298,7 +285,8 @@ fn success_envelope(target: &Utf8Path, resolved_target: &Utf8Path, purged: bool)
     serde_json::to_string_pretty(&envelope).unwrap_or_else(|_| "{}".to_owned())
 }
 
-/// Build a `--json` typed-error envelope mirroring `add`'s shape.
+/// Build the `--json` typed-error envelope: `error`, `path`, `message`. `init`
+/// and `add` emit the same error keys.
 fn error_envelope(error: &str, path: &str, message: &str) -> String {
     let envelope = serde_json::json!({
         "error": error,
@@ -367,7 +355,7 @@ mod tests {
         assert!(!proceed, "a non-TTY shell without --yes must decline");
         assert!(
             reporter.err.contains("--yes"),
-            "the refusal must name --yes, got: {}",
+            "the refusal must include --yes, got: {}",
             reporter.err
         );
     }
@@ -460,11 +448,11 @@ mod tests {
         );
         assert!(
             body.contains("~/.vimrc"),
-            "the sibling entry must survive, got: {body}"
+            "the sibling entry must be preserved, got: {body}"
         );
         assert!(
             body.contains("# keep me"),
-            "the sibling's comment must survive, got: {body}"
+            "the sibling's comment must be preserved, got: {body}"
         );
     }
 

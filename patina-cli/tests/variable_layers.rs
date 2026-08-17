@@ -112,9 +112,9 @@ fn per_module_variable_beats_repo_shared() {
 
 #[test]
 fn no_profile_selects_no_per_profile_table() {
-    // The no-profile fallback (empty profile name) selects no per-profile
-    // table. A `[profiles.work.variables]` override is inert when `work` is
-    // not the active profile, so the repo-shared value renders.
+    // The no-profile fallback (empty profile name) does not select a
+    // per-profile table. A `[profiles.work.variables]` override is inert when
+    // `work` is not the active profile, so the repo-shared value renders.
     let f = Fixture::new();
     root_manifest_with(
         &f,
@@ -126,8 +126,8 @@ fn no_profile_selects_no_per_profile_table() {
     );
     fs_err::write(module.join("editor.tmpl"), "editor = {{ editor }}\n").expect("write tmpl");
 
-    // Fixture::run/apply already env_remove("PATINA_PROFILE"), so no profile
-    // is active here.
+    // `Fixture::run` / `apply` already `env_remove("PATINA_PROFILE")`, so this
+    // run has no active profile.
     let out = f.apply(&["--yes"]);
 
     assert_eq!(

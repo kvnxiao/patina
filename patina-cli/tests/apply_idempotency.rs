@@ -5,11 +5,11 @@
 
 //! Re-apply idempotency across every [`FileMode`](patina_core::FileMode). A
 //! second `patina apply` over an unchanged source must converge (exit 0) and
-//! must never mutate a repository source. Two failure modes make that worth
-//! asserting directly. The default `Symlink` mode can delete the source (see
-//! `symlink_reapply.rs`), and the atomic `SymlinkDir` mode fails with
-//! `EEXIST` on re-apply if its executor does not clear the pre-existing
-//! link. This suite locks the guarantee for all modes so neither recurs.
+//! must never mutate a repository source. The guarantee has been broken before,
+//! so it is asserted directly. The default `Symlink` mode can delete the source
+//! (see `symlink_reapply.rs`), and an executor that does not clear the
+//! pre-existing link makes the atomic `SymlinkDir` mode fail with `EEXIST` on
+//! re-apply. This suite locks the guarantee for every mode so neither recurs.
 
 mod common;
 
@@ -67,8 +67,8 @@ fn dir_symlink_re_apply_is_idempotent() {
         String::from_utf8_lossy(&first.stderr)
     );
 
-    // Before the fix the executor never cleared the existing directory link,
-    // so this second apply failed with EEXIST (os error 183).
+    // An executor that does not clear the existing directory link fails this
+    // second apply with EEXIST (os error 183).
     let second = f.apply(&["--yes"]);
     assert_eq!(
         code(&second),
@@ -152,7 +152,7 @@ mode = "copy"
         String::from_utf8_lossy(&second.stderr)
     );
 
-    // Every repository source survives the re-apply byte-for-byte.
+    // Every repository source is preserved byte-for-byte across the re-apply.
     assert_source_file(&m.join("f_sym"), b"sym-src");
     assert_source_file(&m.join("f_copy"), b"copy-src");
     assert_source_file(&m.join("t.tmpl"), b"os={{ patina.os }}\n");

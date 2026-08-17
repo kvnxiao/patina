@@ -6,28 +6,27 @@
 //! fresh `<ts>.COMMIT` therefore records the new content's hash as the
 //! expected hash, and `patina status` classifies the target CLEAN again.
 //!
-//! Two target shapes are refused (exit 1):
+//! These target shapes are refused (exit 1):
 //!
-//! - **Symbolic-link targets** ([`ExpectedTarget::Symlink`]). A symlink IS its
-//!   source: the bytes the user sees through the link are the repository bytes,
-//!   so there is nothing to copy back and promotion is meaningless.
+//! - **Symbolic-link targets** ([`ExpectedTarget::Symlink`]). The bytes a user
+//!   sees through the link are already the repository's, so there is nothing to
+//!   copy back.
 //! - **Template-rendered targets** (the journaled source ends in `.tmpl`).
 //!   Templating is non-invertible: the rendered bytes cannot be turned back
 //!   into a template, so promotion cannot recover the source.
 //!
-//! A `copy-tree` target promotes the individual leaf file named, not the whole
-//! tree: the journal carries one [`ExpectedTarget`] per materialized leaf, so
-//! the lookup resolves the single leaf and only its source is rewritten.
+//! A `copy-tree` target promotes only the leaf file given on the command line,
+//! not the whole tree: the journal records one [`ExpectedTarget`] per
+//! materialized leaf, so the lookup resolves the single leaf and only its
+//! source is rewritten.
 //!
-//! Like `remove`, `promote` holds ONE exclusive advisory lock for the whole
-//! command. It re-journals under
-//! [`LockPolicy::Held`](patina_core::LockPolicy) via the shared
-//! [`crate::cmd::managed`] scaffolding, so the re-apply reuses the held guard
-//! instead of self-contending.
+//! Like `remove`, `promote` holds one exclusive advisory lock for the whole
+//! command and re-journals under
+//! [`LockPolicy::Held`](patina_core::LockPolicy) through the shared helpers in
+//! [`crate::cmd::managed`].
 //!
-//! Module-level engine semantics (planning, journaling, repo discovery) live
-//! in `patina_core`; this module is presentation and control flow only, all
-//! output routed through the [`Reporter`].
+//! Planning, journaling, and repo discovery live in `patina_core`; this
+//! module is presentation and control flow.
 
 use crate::cli::PromoteArgs;
 use crate::cmd::add::resolve_home;
@@ -53,10 +52,10 @@ use patina_core::read_latest_commit;
 ///
 /// # Errors
 ///
-/// Returns an error (exit 1, or exit 4 on a lock-acquisition timeout via the
-/// engine-error chain) when: the state directory cannot be resolved; the lock
-/// cannot be acquired; the target is not currently managed; the target is a
-/// symlink or template-rendered (refused); the target's bytes cannot be read;
+/// Returns an error (exit 1, or exit 4 on a lock-acquisition timeout through
+/// the engine-error chain) when: the state directory cannot be resolved; the
+/// lock cannot be acquired; the target is not currently managed; the target is
+/// a symlink or template-rendered (refused); the target's bytes cannot be read;
 /// the repository source cannot be written; or the re-apply fails.
 pub async fn run(
     args: &PromoteArgs,
@@ -68,11 +67,8 @@ pub async fn run(
     let target = expand_tilde(&args.target, &home);
     let target_key = manage_key(&target);
 
-    // Take ONE exclusive advisory lock for the whole command. The
-    // re-apply below reuses this guard via LockPolicy::Held.
     let (state, guard) = acquire_state_and_lock()?;
 
-    // Locate the journaled expectation for this target in the latest commit.
     let journal_dir = state.join("journal");
     let record = read_latest_commit(&journal_dir).map_err(EngineError::from)?;
     let expected = record.as_ref().and_then(|record| {
@@ -85,19 +81,16 @@ pub async fn run(
         return Ok(report_unmanaged(args, reporter));
     };
 
-    // Refuse the two non-promotable shapes (exit 1), before any prompt or
-    // mutation, so a refused promote never touches the filesystem.
+    // Refuse before any prompt or mutation, so a refused promote never
+    // touches the filesystem.
     if let Some(code) = refuse_unpromotable(args, expected, reporter) {
         return Ok(code);
     }
 
-    // Confirm before mutating (never mutate without consent).
     if !confirm(args, tty, reader, reporter) {
         return Ok(ExitCode::UserDeclined.code());
     }
 
-    // Copy the target's current bytes back into the repository source the
-    // target was materialized from (the journal records that canonical source).
     let target_path = Utf8PathBuf::from(expected.target());
     let source_path = Utf8PathBuf::from(expected.source());
     let bytes = fs_err::read(target_path.as_std_path())
@@ -105,18 +98,15 @@ pub async fn run(
     fs_err::write(source_path.as_std_path(), &bytes)
         .with_context(|| format!("failed to write the repository source {source_path}"))?;
 
-    // Re-journal by re-applying under the held lock: the fresh <ts>.COMMIT
-    // records content_hash(new bytes) as the expected hash, so `status`
-    // classifies the target CLEAN.
     rejournal(guard).await?;
 
     report_success(args, &target_path, &source_path, reporter);
     Ok(ExitCode::Success.code())
 }
 
-/// Refuse the two non-promotable target shapes. Returns `Some(exit code)` when
-/// the target is a symlink or template-rendered (the caller returns it); `None`
-/// when the target is a promotable copy-mode `Content` target.
+/// Refuse a target `promote` cannot reconcile. A symbolic-link or
+/// template-rendered target returns `Some(exit code)`, and the caller
+/// propagates it. A promotable copy-mode `Content` target returns `None`.
 fn refuse_unpromotable(
     args: &PromoteArgs,
     expected: &ExpectedTarget,
@@ -157,8 +147,8 @@ fn refuse_unpromotable(
     }
 }
 
-/// Report a refusal through the reporter: a JSON error envelope under `--json`,
-/// otherwise a warning line. The message goes to stderr either way.
+/// Report a refusal through the reporter: a JSON error envelope on stdout under
+/// `--json`, otherwise a warning line on stderr.
 fn report_refusal(args: &PromoteArgs, error: &str, message: &str, reporter: &mut impl Reporter) {
     if args.json {
         reporter.json(&error_envelope(error, args.target.as_str(), message));
@@ -190,9 +180,12 @@ fn confirm(
     }
 }
 
-/// Report the unmanaged-target refusal (exit 1) and return the exit code. The
-/// message names the target and the three discovery sources, matching the
-/// established discovery-error wording.
+/// Report the unmanaged-target refusal (exit 1) and return the exit code.
+///
+/// The message includes the target and every discovery source: `$PATINA_REPO`,
+/// the walk-up from the current directory, and the persisted default. It
+/// repeats the established discovery-error wording, so `remove` and `promote`
+/// explain an unmanaged path the same way.
 fn report_unmanaged(args: &PromoteArgs, reporter: &mut impl Reporter) -> i32 {
     let message = format!(
         "{} is not managed by patina (no journaled apply lists it). \
@@ -240,7 +233,9 @@ fn success_envelope(target: &Utf8Path, resolved_target: &Utf8Path, source: &Utf8
     serde_json::to_string_pretty(&envelope).unwrap_or_else(|_| "{}".to_owned())
 }
 
-/// Build a `--json` typed-error envelope mirroring `remove`'s shape.
+/// Build the `--json` typed-error envelope: `error`, `target`, `message`.
+/// `promote` keys the subject `target` rather than `path`, after its own
+/// positional argument.
 fn error_envelope(error: &str, target: &str, message: &str) -> String {
     let envelope = serde_json::json!({
         "error": error,
@@ -331,7 +326,7 @@ mod tests {
         assert_eq!(code, Some(ExitCode::Generic.code()));
         assert!(
             reporter.err.contains("gitconfig.tmpl") && reporter.err.contains("template"),
-            "the refusal must name the .tmpl source and the word template, got: {}",
+            "the refusal must include the .tmpl source and the word template, got: {}",
             reporter.err
         );
     }
@@ -376,7 +371,7 @@ mod tests {
         assert!(!proceed, "a non-TTY shell without --yes must decline");
         assert!(
             reporter.err.contains("--yes"),
-            "the refusal must name --yes, got: {}",
+            "the refusal must include --yes, got: {}",
             reporter.err
         );
     }

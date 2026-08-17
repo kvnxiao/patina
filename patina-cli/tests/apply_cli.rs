@@ -1,16 +1,11 @@
 //! Integration tests for the `patina apply` CLI surface.
 //!
-//! Each test builds a self-contained tempdir dotfiles repository and points
-//! `PATINA_REPO` at it. It isolates the per-machine state directory under
-//! the tempdir, so the apply never touches the developer's real `$HOME`.
-//! The binary runs as a subprocess, so its stdin is not a TTY and it
-//! exercises the non-interactive path.
+//! Each test drives the real `patina` binary through [`common::Fixture`].
 
 mod common;
 
 use common::Fixture;
 use common::code;
-use std::process::Command;
 
 #[test]
 fn non_tty_apply_previews_without_mutating() {
@@ -33,7 +28,7 @@ fn non_tty_apply_previews_without_mutating() {
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
         stdout.contains(".rc"),
-        "stdout must contain the rendered diff naming the target, got: {stdout}"
+        "stdout must contain the rendered diff including the target, got: {stdout}"
     );
 }
 
@@ -65,7 +60,7 @@ fn post_apply_hook_failure_rolls_back_and_exits_3() {
 
 #[test]
 fn force_deploy_downgrades_hook_failure_and_exits_0() {
-    // The same hook as above, applied with `--force-deploy`.
+    // The same failing post_apply hook, applied with `--force-deploy`.
     let f = Fixture::new();
     let module = f.module(
         "shell",
@@ -91,7 +86,7 @@ fn force_deploy_downgrades_hook_failure_and_exits_0() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         stderr.contains("exit 1"),
-        "stderr must warn naming the failed hook, got: {stderr}"
+        "stderr must warn and include the failed hook, got: {stderr}"
     );
 }
 
@@ -175,52 +170,13 @@ fn cli_variable_override_renders_into_template() {
     );
 }
 
-#[test]
-fn missing_pager_falls_back_with_warning() {
-    let f = Fixture::new();
-    let module = f.module(
-        "shell",
-        "[[file]]\nsource = \"rc\"\ntarget = \"~/.rc\"\nmode = \"copy\"\n",
-    );
-    fs_err::write(module.join("rc"), "p\n").expect("write source");
-
-    // Force a PATH with no `delta` so the fallback path is deterministic.
-    let bin = env!("CARGO_BIN_EXE_patina");
-    let out = Command::new(bin)
-        .arg("apply")
-        .args(["--pager=delta", "--yes"])
-        .env("PATINA_REPO", f.root.as_str())
-        .env("HOME", f.home.as_str())
-        .env("USERPROFILE", f.home.as_str())
-        .env("XDG_STATE_HOME", f.state.as_str())
-        .env("LOCALAPPDATA", f.state.as_str())
-        .env("PATH", f.state.as_str())
-        .env_remove("PATINA_PROFILE")
-        .output()
-        .expect("spawn patina");
-
-    assert_eq!(
-        code(&out),
-        0,
-        "stderr: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        stderr.contains("delta") && stderr.to_lowercase().contains("fall"),
-        "stderr must warn about the missing pager, got: {stderr}"
-    );
-}
-
 #[cfg(not(windows))]
 #[test]
 fn non_windows_symlink_apply_skips_dev_mode_flow() {
-    // On macOS or Linux, a symlink `[[file]]` apply proceeds with no gate.
-    // The Developer Mode gate reports `Proceed` because the probe is
-    // `NotWindows`, so no registry read happens and `patina-elevate` is
-    // never spawned. This test proves the positive case. The symlink lands
-    // and the command exits 0, which is only possible if the gate did not
-    // short-circuit the apply.
+    // On macOS or Linux the probe reports `NotWindows`, so the Developer
+    // Mode gate returns `Proceed` without reading a registry or spawning
+    // `patina-elevate`. The symlink is only created, and the exit only 0, if
+    // the gate let the apply proceed.
     let f = Fixture::new();
     let module = f.module(
         "shell",
@@ -237,8 +193,7 @@ fn non_windows_symlink_apply_skips_dev_mode_flow() {
         String::from_utf8_lossy(&out.stderr)
     );
 
-    // The symlink materialized, pointing back at the repo source. The gate
-    // proceeded rather than refusing to mutate.
+    // The symlink materialized. It points back at the repo source.
     let target = f.home.join(".rc");
     let meta = fs_err::symlink_metadata(&target).expect("symlink target must exist");
     assert!(
@@ -246,8 +201,8 @@ fn non_windows_symlink_apply_skips_dev_mode_flow() {
         "the target must be a symbolic link, proving the apply mutated"
     );
 
-    // Nothing in the output mentions the elevation helper or Developer Mode,
-    // so the Windows-only flow was not entered.
+    // The output never mentions the elevation helper or Developer Mode, so the
+    // Windows-only flow was not entered.
     let combined = format!(
         "{}{}",
         String::from_utf8_lossy(&out.stdout),
@@ -264,10 +219,10 @@ fn non_windows_symlink_apply_skips_dev_mode_flow() {
 }
 
 // On a Windows host with Developer Mode off and a symlink `[[file]]`, a
-// `patina apply --yes` whose UAC consent is declined creates no symbolic
-// link. It names `Developer Mode` and `patina doctor --fix` on stderr, and
-// exits 5. This is gated `#[ignore]` because it needs a real Windows host
-// and a human, or harness, to decline the UAC dialog; CI is not Windows.
+// `patina apply --yes` whose UAC consent is declined does not create a
+// symbolic link. It includes `Developer Mode` and `patina doctor --fix` on
+// stderr, and exits 5. Declining the UAC dialog needs a real Windows host and
+// a human or harness, and CI is not Windows, so this is gated `#[ignore]`.
 #[cfg(windows)]
 #[test]
 #[ignore = "requires a Windows host with Developer Mode off and a declined UAC dialog"]
@@ -290,14 +245,14 @@ fn windows_declined_uac_exits_5_and_creates_no_symlink() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         stderr.contains("Developer Mode") && stderr.contains("patina doctor --fix"),
-        "stderr must name Developer Mode and `patina doctor --fix`, got: {stderr}"
+        "stderr must include Developer Mode and `patina doctor --fix`, got: {stderr}"
     );
 }
 
 // On a Windows host with Developer Mode on, the apply creates the symlink
-// with no UAC prompt and no `patina-elevate.exe` spawn. This is gated
-// `#[ignore]` because it needs a real Windows host with Developer Mode
-// enabled; CI is not Windows.
+// with no UAC prompt and no `patina-elevate.exe` spawn. This needs a real
+// Windows host with Developer Mode enabled, and CI is not Windows, so it is
+// gated `#[ignore]`.
 #[cfg(windows)]
 #[test]
 #[ignore = "requires a Windows host with Developer Mode enabled"]

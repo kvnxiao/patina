@@ -8,17 +8,17 @@
 //! The `output::Reporter` abstraction is the only sanctioned site
 //! for user-facing prints: `println!`, `eprintln!`, `print!`, and `eprint!`
 //! are denied everywhere else via the workspace `clippy.toml`'s
-//! `disallowed-macros` list. This suite proves the contract holds. A fresh
+//! `disallowed-macros` list. A fresh
 //! `println!("hi")` in a non-`output` file makes clippy fail with a
-//! `clippy::disallowed_macros` diagnostic that names the offending file, while
-//! the `tracing`-style macros and a module-scoped
+//! `clippy::disallowed_macros` diagnostic that includes the offending file,
+//! while the `tracing`-style macros and a module-scoped
 //! `#[expect(clippy::disallowed_macros, ...)]` carve-out stay clean.
 //!
-//! Rather than mutate the checked-in source tree (which would race with other
-//! parallel tests and risk leaving the tree dirty on failure), each scenario
+//! Mutating the checked-in source tree would race with other parallel tests
+//! and risk leaving the tree dirty on failure. Each scenario therefore
 //! compiles a throwaway crate in a tempdir that reuses the real workspace
-//! `clippy.toml`, the artifact under test, so the assertion exercises the
-//! same config CI enforces.
+//! `clippy.toml`, the artifact under test, so the assertion exercises the same
+//! config CI enforces.
 
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
@@ -48,19 +48,18 @@ fn scratch_crate(temp: &TempDir, body: &str) -> Utf8PathBuf {
         root.join("Cargo.toml"),
         // A leaf crate, deliberately not part of the patina workspace
         // (`[workspace]` makes it its own root), so clippy resolves the
-        // clippy.toml we copy beside it rather than the repo's.
+        // clippy.toml copied beside it rather than the repo's.
         "[package]\nname = \"scratch\"\nversion = \"0.0.0\"\nedition = \"2021\"\n\n[workspace]\n",
     )
     .expect("write Cargo.toml");
     // Name the file `plan.rs` to mirror a realistic
-    // `patina-core/src/plan.rs`; the assertion checks the diagnostic names it.
+    // `patina-core/src/plan.rs`; the assertion checks that the diagnostic includes
+    // it.
     fs_err::write(root.join("src/plan.rs"), body).expect("write plan.rs");
     // `pub mod` makes the fixture's `pub fn`s reachable as crate API. A
     // private `mod` would make them dead code, so `-D warnings` would fail
     // for that reason instead of the one under test.
     fs_err::write(root.join("src/lib.rs"), "pub mod plan;\n").expect("write lib.rs");
-    // This reuses the real workspace clippy.toml verbatim, because it is the
-    // artifact under test.
     let clippy_toml = fs_err::read_to_string(workspace_clippy_toml()).expect("read clippy.toml");
     fs_err::write(root.join("clippy.toml"), clippy_toml).expect("write scratch clippy.toml");
     root
@@ -86,7 +85,7 @@ fn run_clippy(crate_root: &Utf8Path) -> (bool, Vec<String>) {
             continue;
         };
         // Compiler messages carry `reason == "compiler-message"` and a nested
-        // `message.code.code` naming the lint that fired.
+        // `message.code.code` giving the lint that fired.
         if value.get("reason").and_then(Value::as_str) != Some("compiler-message") {
             continue;
         }
@@ -111,7 +110,7 @@ fn run_clippy(crate_root: &Utf8Path) -> (bool, Vec<String>) {
 }
 
 #[test]
-fn each_raw_print_macro_outside_output_module_fails_clippy_naming_the_file() {
+fn each_raw_print_macro_outside_output_module_fails_clippy_for_the_file() {
     // One use of each denied macro in a non-`output` file (here `plan.rs`,
     // mirroring `patina-core/src/plan.rs`) makes clippy exit non-zero with
     // one `disallowed_macros` diagnostic per use. A macro missing from the
@@ -136,26 +135,25 @@ fn each_raw_print_macro_outside_output_module_fails_clippy_naming_the_file() {
     assert_eq!(
         in_plan, 4,
         "each of println!, eprintln!, print!, and eprint! must raise its own \
-         disallowed_macros diagnostic naming plan.rs; named {files:?}"
+         disallowed_macros diagnostic for plan.rs; got {files:?}"
     );
 }
 
 #[test]
 fn tracing_macro_and_scoped_expect_stay_clean() {
-    // This covers two sibling scenarios. Replacing the offending line with a
-    // non-listed macro, a `tracing`-style `info!` stubbed locally so the
-    // scratch crate needs no dependency, does not fire the lint. A
-    // module-scoped `#[expect(clippy::disallowed_macros, ...)]` carve-out,
-    // the same shape the `output` module and the lock_helper example use,
-    // suppresses it cleanly with no unfulfilled-expectation warning.
+    // Two sibling scenarios share this fixture. A non-listed macro, here a
+    // `tracing`-style `info!` stubbed locally so the scratch crate needs no
+    // dependency, does not fire the lint. A module-scoped
+    // `#[expect(clippy::disallowed_macros, ...)]` carve-out, the same shape
+    // the `output` module and the lock_helper example use, suppresses it
+    // cleanly with no unfulfilled-expectation warning.
     let temp = TempDir::new().expect("tempdir");
     let crate_root = scratch_crate(
         &temp,
         // `info!` is a local `macro_rules` stub, so a macro outside the
-        // disallowed list never fires the lint. The second fn carries the
-        // scoped expect over a genuine `println!`, fulfilling the
-        // expectation with no `unfulfilled_lint_expectations` warning under
-        // `-D warnings`.
+        // disallowed list never fires the lint. The second fn puts the scoped
+        // expect over a genuine `println!`. That fulfils the expectation, so
+        // `-D warnings` raises no `unfulfilled_lint_expectations`.
         "macro_rules! info {\n    ($($t:tt)*) => {{ let _ = format!($($t)*); }};\n}\n\
          pub fn logged() {\n    info!(\"hi\");\n}\n\n\
          #[expect(clippy::disallowed_macros, reason = \"carve-out under test\")]\n\
