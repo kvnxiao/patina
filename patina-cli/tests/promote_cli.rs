@@ -246,8 +246,8 @@ fn promote_unmanaged_path_exits_1() {
     );
 }
 
-/// `promote --json --yes` emits a single deterministic JSON document
-/// on stdout with the promoted target and its repository source.
+/// `promote --json --yes` exits 0 and writes a single JSON document to stdout
+/// with the promoted target and its repository source.
 #[test]
 fn promote_json_emits_document() {
     let fx = applied_copy_fixture();

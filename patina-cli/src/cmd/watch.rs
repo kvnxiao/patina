@@ -317,10 +317,11 @@ mod tests {
 
     /// An in-memory [`ServiceBackend`] fake that records which method the
     /// dispatch called and returns a configured [`LifecycleResult`] from every
-    /// mutating action. Recording the call proves the dispatch without depending on
-    /// the rendered label; the configured result drives the not-installed path.
-    /// It does not touch the supervisor or the filesystem, so it runs on every
-    /// CI OS where the real per-OS backends cannot.
+    /// mutating action. Recording the call proves the dispatch without
+    /// depending on the rendered label; the configured result drives the
+    /// not-installed path. It does not touch the supervisor or the
+    /// filesystem, so it runs on every CI OS where the real per-OS backends
+    /// cannot.
     struct RecordingBackend {
         calls: RefCell<Vec<&'static str>>,
         result: LifecycleResult,
@@ -372,9 +373,9 @@ mod tests {
     #[test]
     fn dispatch_routes_each_subcommand_to_its_backend_method() {
         // The recorded call proves which backend method the dispatch invoked, so
-        // a miswired match arm (e.g. `Restart` calling `stop`) fails this test. `status`
-        // dispatches separately (it takes the shared lock), so it is not part of
-        // this mutating path.
+        // a miswired match arm (e.g. `Restart` calling `stop`) fails this test.
+        // `status` dispatches separately (it takes the shared lock), so it is
+        // not part of this mutating path.
         let cases = [
             (WatchCommand::Install, "install"),
             (WatchCommand::Uninstall { yes: true }, "uninstall"),

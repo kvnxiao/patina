@@ -17,8 +17,8 @@
 //! the engine's own recover-before-flush wiring that the direct-staging
 //! tests cannot.
 //!
-//! Both cases converge to pre-apply because the interrupted apply never
-//! committed. Completed overwrite operations are reversed from backups, and
+//! The interrupted apply never committed, so each case converges to pre-apply.
+//! Completed overwrite operations are reversed from backups, and
 //! completed fresh-creation operations are deleted.
 
 mod common;
@@ -130,13 +130,13 @@ fn kill_after_all_ops_before_commit_converges_to_pre_apply_on_recovery() {
     let journal = state.join("journal");
     let backups = state.join("backups");
 
-    // Both ops ran, but with no COMMIT the run is still an orphan.
+    // Every op ran, but with no COMMIT the run is still an orphan.
     assert_eq!(
         count_suffix(&journal, COMMIT_SUFFIX),
         0,
         "an uncommitted apply must not have written a COMMIT sentinel"
     );
-    // Before recovery, both targets are already materialized.
+    // Before recovery, each target is already materialized.
     assert_eq!(
         fs_err::read_to_string(fx.home.join(".a")).expect("read ~/.a before recovery"),
         "NEW-A\n"

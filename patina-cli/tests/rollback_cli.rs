@@ -137,8 +137,8 @@ fn assert_applied(out: &Output) {
 fn rollback_restores_an_unmanaged_file_overwritten_by_a_copy() {
     // The consent + always-backup guarantee for content mode: a pre-existing
     // *unmanaged* regular file overwritten by a copy-mode apply is first backed
-    // up, so `rollback --yes` restores its original bytes byte-for-byte. This
-    // is the non-tree, content-mode companion to
+    // up, so `rollback --yes` restores its original bytes byte-for-byte. The
+    // non-tree, content-mode companion to
     // `rollback_restores_a_regular_file_replaced_by_a_symlink`.
     let f = Fixture::new();
     let module = f.module(

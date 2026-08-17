@@ -514,8 +514,8 @@ fn update_row(outcome: &Outcome, styles: &Styles) -> String {
 
 /// A rev cell shows the rev itself, or the caller's `absent` text in the
 /// attention color. The absences differ and must not be worded alike:
-/// `(unpinned)` marks a remote with no recorded pin, and `(unknown)` marks a run
-/// that never learned a candidate.
+/// `(unpinned)` marks a remote with no recorded pin, and `(unknown)` marks a
+/// run that never learned a candidate.
 fn rev_cell(rev: Option<&str>, absent: &str, styles: &Styles) -> String {
     match rev {
         Some(rev) => paint(styles.remote.rev, rev),
@@ -764,8 +764,8 @@ enum Confirmed {
     /// The user was asked and said no.
     No,
     /// The run could not raise a prompt. Exit code 5 is the declined-prompt
-    /// code, and a run that never raised the prompt is not a refusal, so this is
-    /// distinct from [`Confirmed::No`].
+    /// code, and a run that never raised the prompt is not a refusal, so this
+    /// is distinct from [`Confirmed::No`].
     Unasked,
 }
 

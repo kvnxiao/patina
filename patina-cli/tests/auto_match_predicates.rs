@@ -75,7 +75,7 @@ fn auto_match_rule_on_os_resolves_its_profile() {
 fn file_inequality_predicate_materializes_target() {
     // A `[[file]]` `when` using `!=` evaluates true and materializes the
     // target. An evaluator narrowed back to single equality would raise
-    // `UnsupportedPredicate` here.
+    // `UnsupportedPredicate` on this entry.
     let f = Fixture::new();
     let module = f.module(
         "shell",

@@ -469,8 +469,8 @@ fn a_negation_the_walk_cannot_reach_does_not_strand_a_deployed_leaf() {
 
 #[test]
 fn an_entry_whose_every_leaf_is_ignored_settles_instead_of_re_prompting() {
-    // Both executors create leaf directories on demand, so an all-ignored entry
-    // never creates its target.
+    // The symlink-tree and copy-tree executors create leaf directories on
+    // demand, so an all-ignored entry never creates its target.
     let f = Fixture::new();
     let module = f.module(
         "py",

@@ -266,8 +266,8 @@ fn two_applies_record_byte_identical_hash() {
     );
 }
 
-// The COMMIT file's first two bytes are the little-endian u16 major version.
-// It matches the journal's supported FILE_MAJOR_VERSION.
+// The COMMIT file's first two bytes are the little-endian u16 major version,
+// and that value matches the journal's supported FILE_MAJOR_VERSION.
 #[test]
 fn commit_envelope_major_matches_supported() {
     let f = Fixture::new();
@@ -318,7 +318,7 @@ fn status_uses_recorded_blake3_for_drift() {
 }
 
 // A committed apply over both `[[file]]` and `[[directory]]` table-arrays
-// uses one monotonic entry-index space. Every declared entry gets a distinct
+// uses one monotonic entry-index space. Every declared entry has a distinct
 // index, so a `[[file]]` entry never collides with a `[[directory]]` entry.
 // Targets sharing one declared entry share its index. The COMMIT version
 // envelope major stays the journal's supported major, with no version bump.
@@ -348,7 +348,7 @@ fn directory_and_file_entries_get_distinct_indices_and_envelope_major_is_unchang
 
     let record = f.commit_record();
 
-    // The two `[[file]]` entries land first (indices 0, 1), then the single
+    // The `[[file]]` entries take indices 0 and 1, then the single
     // `[[directory]]` entry's two leaves share one later index.
     let a = entry_for(&record, "/.a").entry();
     let b = entry_for(&record, "/.b").entry();

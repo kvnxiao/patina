@@ -181,8 +181,8 @@ fn remove_unmanaged_path_exits_1() {
     );
 }
 
-/// `remove --json --yes` emits a single deterministic JSON document
-/// on stdout with the removed target and the purge flag.
+/// `remove --json --yes` exits 0 and writes a single JSON document to stdout
+/// with the removed target and the purge flag.
 #[test]
 fn remove_json_emits_document() {
     let fx = applied_symlink_fixture();

@@ -196,11 +196,10 @@ fn add_already_managed_path_exits_1() {
     assert!(zshrc.is_file(), "~/.zshrc must be untouched on refusal");
 }
 
-/// `add --json --yes` emits a single deterministic JSON document
-/// on stdout with the added target, module, and mode; stderr carries no
-/// prose.
+/// `add --json --yes` exits 0 and writes a single JSON document to stdout with
+/// the added target, its module, and its mode.
 #[test]
-fn add_json_emits_deterministic_document() {
+fn add_json_emits_one_document_with_target_module_and_mode() {
     let fx = Fixture::new();
     let zshrc = fx.home.join(".zshrc");
     fs_err::write(zshrc.as_std_path(), "foo").expect("seed ~/.zshrc");
@@ -286,9 +285,9 @@ fn add_serializes_behind_a_held_exclusive_lock() {
         "add must complete once the lock frees; stderr: {}",
         stderr(&out)
     );
-    // B must have blocked for most of the hold window, because it cannot
-    // have completed before A released the lock. Allow slack for process
-    // startup, but require it waited a clear majority of the hold.
+    // B cannot have completed before A released the lock, so it must have
+    // blocked for most of the hold window. Allow slack for process startup, but
+    // require that it waited a clear majority of the hold.
     assert!(
         waited >= Duration::from_secs(1),
         "add should have blocked on the held lock (waited {waited:?})"
@@ -364,8 +363,8 @@ fn lock_helper_path() -> Utf8PathBuf {
 }
 
 /// Spawn the lock holder. It acquires the exclusive lock at `<state>/lock`
-/// and holds it for `hold`. Its own acquisition timeout is long, but it
-/// acquires immediately, because nothing else holds the lock yet.
+/// and holds it for `hold`. Nothing else holds the lock yet, so it acquires
+/// immediately despite its long acquisition timeout.
 fn spawn_holder(helper: &Utf8Path, state: &Utf8Path, hold: Duration) -> Child {
     Command::new(helper.as_std_path())
         .arg(state.as_str())

@@ -19,10 +19,10 @@
 //! - `BufferReporter` captures both streams into in-memory buffers, so a test
 //!   can assert on exactly what would have been printed. It paints wherever the
 //!   stream reporter paints, from a palette fixed at construction.
-//!   `BufferReporter::new` is plain, so a byte-level assertion runs against text
-//!   with no escapes. `BufferReporter::colored` uses the production palette.
-//!   `assert_color_is_additive` drives a renderer through both palettes and
-//!   compares the renders.
+//!   `BufferReporter::new` is plain, so a byte-level assertion runs against
+//!   text with no escapes. `BufferReporter::colored` uses the production
+//!   palette. `assert_color_is_additive` drives a renderer through both
+//!   palettes and compares the renders.
 
 use crate::output::style::Styles;
 use crate::output::style::paint;
@@ -124,9 +124,9 @@ fn compose_confirm(styles: &Styles, question: &str) -> String {
 impl StreamReporter {
     /// Write `message` to stderr through the auto-stream, wrapped in `style`.
     ///
-    /// An empty style renders to zero bytes, so a plain palette writes `message`
-    /// verbatim. `newline` appends a trailing `\n`; a prompt omits it so the
-    /// answer is typed on the same line.
+    /// An empty style renders to zero bytes, so a plain palette writes
+    /// `message` verbatim. `newline` appends a trailing `\n`; a prompt
+    /// omits it so the answer is typed on the same line.
     fn styled_err(&self, style: Style, message: &str, newline: bool) {
         let mut err = AutoStream::new(std::io::stderr().lock(), self.choice);
         let nl = if newline { "\n" } else { "" };
@@ -230,11 +230,11 @@ impl BufferReporter {
 /// Assert that color is purely additive over whatever `render` prints.
 ///
 /// The contract belongs to the output layer, so this function states it once
-/// rather than every painting surface repeating it. Painting a cell's padding along with the
-/// cell would misalign piped and `--color never` output. Anything a line
-/// reports through color alone disappears wherever ANSI is stripped. Both
-/// streams are checked, so a renderer cannot pass by painting only one of
-/// them.
+/// rather than every painting surface repeating it. Painting a cell's padding
+/// along with the cell would misalign piped and `--color never` output.
+/// Anything a line reports through color alone disappears wherever ANSI is
+/// stripped. Both streams are checked, so a renderer cannot pass by painting
+/// only one of them.
 #[cfg(test)]
 pub fn assert_color_is_additive(render: impl Fn(&mut BufferReporter)) {
     let mut plain = BufferReporter::new();

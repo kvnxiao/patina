@@ -363,8 +363,9 @@ fn refuse_ignored_conflict(
 /// Declaring a `[[file]]` for a path a `symlink-tree` already excludes is a
 /// contradiction in one manifest: the new entry deploys exactly what the tree
 /// entry was told to skip. Only an entry whose source directory contains `dest`
-/// can create that contradiction. A `[[file]]` deploys its declared source with no
-/// enumeration, so a repo-wide pattern matching it elsewhere is not a conflict.
+/// can create that contradiction. A `[[file]]` deploys its declared source with
+/// no enumeration, so a repo-wide pattern matching it elsewhere is not a
+/// conflict.
 ///
 /// # Errors
 ///

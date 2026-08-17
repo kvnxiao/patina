@@ -61,7 +61,7 @@ fn debounce_ms_key_in_root_manifest_warns() {
     );
 }
 
-/// A root manifest without the `[watcher]` table does not draw the debounce
+/// A root manifest without the `[watcher]` table does not raise the debounce
 /// warning.
 #[test]
 fn no_watcher_table_does_not_warn() {
@@ -331,9 +331,9 @@ mod foreground {
 
     #[test]
     fn five_touches_within_the_debounce_window_coalesce_to_one_reapply() {
-        // A burst of writes to a watched source must coalesce into exactly
-        // one `re_apply` event, since the 500ms debounce window swallows the
-        // burst.
+        // The 500ms debounce window covers the whole burst, so a burst of
+        // writes to a watched source must coalesce into exactly one `re_apply`
+        // event.
         //
         // The five writes are issued back-to-back with no inter-write sleep,
         // on purpose. An earlier revision slept 20ms between writes to mimic
@@ -344,7 +344,7 @@ mod foreground {
         // and fired one re-apply per straggler, up to one per write, flaking
         // the `== 1` assertion below. A bare `write` loop has no yield point,
         // so the burst stays well inside one window regardless of scheduler
-        // load. Do not reintroduce a per-write sleep here.
+        // load. Do not reintroduce a per-write sleep in this loop.
         let f = applied_copy_fixture();
         let watcher = Watcher::spawn(&f);
 
@@ -467,7 +467,7 @@ mod foreground {
 
     #[test]
     fn an_external_target_edit_logs_drift_and_populates_the_cache() {
-        // This covers the platform-independent, deterministic slice. A
+        // This test covers the platform-independent, deterministic slice. A
         // running watcher over an applied copy-mode `~/.gitconfig`, when the
         // target is overwritten with bytes that hash differently, logs a
         // `drift` event, records the divergence in `<state>/drift.cache` with
@@ -478,8 +478,8 @@ mod foreground {
         // `patina-core` drift unit tests against the capture sink. The CLI
         // binary always uses the real `notify-rust` sink, and a headless CI
         // runner cannot capture that sink, so no count is assertable in this
-        // suite. It owns the observable on-disk and status side-effects
-        // instead.
+        // suite. This suite owns the observable on-disk and status
+        // side-effects instead.
         let f = applied_copy_fixture();
         let target = f.home.join(".gitconfig");
         // The fixture applied the source bytes to the target. Capture them, so
@@ -494,8 +494,8 @@ mod foreground {
         );
 
         // Overwrite the target out-of-band with content that hashes
-        // differently (H2 ≠ H1). This is the kind of change made outside
-        // Patina that drift detection is meant to catch.
+        // differently (H2 ≠ H1). Drift detection exists to catch exactly this
+        // kind of out-of-band change.
         let drifted = format!("{applied}; drifted = true\n");
         assert_ne!(drifted, applied, "the overwrite must change the bytes");
         fs_err::write(target.as_std_path(), &drifted).expect("overwrite target");
@@ -578,7 +578,7 @@ mod foreground {
     fn a_watcher_reapply_commits_exactly_one_new_journal_record() {
         // A single watched-source edit drives exactly one watcher re-apply.
         // That re-apply commits exactly one new journal record on top of the
-        // fixture's initial apply (two COMMITs total). This is the
+        // fixture's initial apply (two COMMITs total). That pair is the
         // deterministic, single-process slice of the two-committed-plans
         // contract; the full concurrent-CLI race is exercised by the engine's
         // `NonBlocking` unit tests.
@@ -600,9 +600,9 @@ mod foreground {
         // `current_timestamp`), so a re-apply landing in the same wall-clock
         // second as the fixture apply would reuse its timestamp and overwrite
         // the COMMIT rather than add a second one. Wait past the current second
-        // boundary before editing so the re-apply gets a distinct timestamp,
+        // boundary before editing so the re-apply takes a distinct timestamp,
         // the same separation a real user edit (≥500ms debounce after any prior
-        // apply) gets in practice.
+        // apply) has in practice.
         std::thread::sleep(Duration::from_millis(1100));
 
         let source = f.root.join("git").join("gitconfig");

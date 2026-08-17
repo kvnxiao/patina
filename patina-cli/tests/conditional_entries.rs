@@ -72,10 +72,9 @@ fn when_true_entry_materializes_and_second_run_is_byte_identical() {
     // As in `deterministic_stdout.rs`, a priming apply converges the repo
     // first, so the two measured runs observe the same on-disk state.
     //
-    // Copy mode isolates the property under test: a symlink's plan diff
-    // renders its link target differently on a fresh run versus a converged
-    // run, an orthogonal quirk `deterministic_stdout.rs` sidesteps the same
-    // way.
+    // Copy mode isolates the property under test. A symlink's plan diff
+    // renders its link target differently on a fresh run than on a converged
+    // run, and `deterministic_stdout.rs` sidesteps that quirk the same way.
     let f = Fixture::new();
     let when = format!("patina.os == '{}'", current_os_family());
     let module = f.module(

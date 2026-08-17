@@ -19,9 +19,8 @@ mod common;
 use common::Fixture;
 use common::code;
 
-/// `patina watch` with neither a lifecycle subcommand nor `--foreground`
-/// reports the usage hint and exits non-zero, because there is no default
-/// action.
+/// `patina watch` has no default action, so with neither a lifecycle
+/// subcommand nor `--foreground` it reports the usage hint and exits non-zero.
 #[test]
 fn watch_with_no_mode_reports_the_usage_hint() {
     let f = Fixture::new();
@@ -44,8 +43,8 @@ fn watch_with_no_mode_reports_the_usage_hint() {
 ///
 /// On macOS the launchd backend finds no plist (`is_installed()` false) and
 /// returns the not-installed no-op; on a host with no implemented backend the
-/// factory's unsupported stub returns the foreground-escape-hatch error. Both
-/// are exit 1 with an actionable stderr message.
+/// factory's unsupported stub returns the foreground-escape-hatch error. Each
+/// is exit 1 with an actionable stderr message.
 #[test]
 fn start_with_no_installed_service_exits_one_with_a_clear_message() {
     let f = Fixture::new();

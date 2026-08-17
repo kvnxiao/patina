@@ -94,8 +94,8 @@ fn symlink_tree_links_each_leaf_and_keeps_intermediate_dirs_real() {
 
 #[test]
 fn symlink_tree_backs_up_pre_existing_leaf_and_replaces_it_with_a_link() {
-    // A leaf target `~/d/a.conf` that already holds a regular file is
-    // afterward a symbolic link to the source. The prior bytes were recorded
+    // A leaf target `~/d/a.conf` that already holds a regular file becomes a
+    // symbolic link to the source. The prior bytes were recorded
     // in a backup, proven by `patina rollback` restoring the original file.
     let f = Fixture::new();
     let module = f.module(

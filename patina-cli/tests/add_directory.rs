@@ -3,8 +3,8 @@
     reason = "integration tests use .expect() on fixture setup and assertions; allow-expect-in-tests covers #[cfg(test)] modules but not the top level of a tests/*.rs integration crate."
 )]
 
-//! Integration coverage for `patina add`'s source-kind-aware table routing.
-//! A file source writes a `[[file]]` entry, a directory source writes a
+//! Integration coverage for how `patina add` picks the table-array by source
+//! kind. A file source writes a `[[file]]` entry, a directory source writes a
 //! `[[directory]]` entry, and the mode flags are kind-checked.
 //!
 //! Each test drives the real `patina` binary through [`common::Fixture`].

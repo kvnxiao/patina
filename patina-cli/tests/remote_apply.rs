@@ -110,9 +110,9 @@ fn a_remote_copy_mode_directory_materializes_from_the_pinned_checkout() {
 #[test]
 fn a_checkout_holding_a_real_symlink_fails_the_apply_plan() {
     // Patina materializes checkouts with `core.symlinks=false`, so a real link
-    // in the cache means it was made or altered by something else. The plan
-    // must refuse to deploy through it: the executors dereference links, which
-    // would read (copy) or plant (symlink-tree) paths outside the checkout.
+    // in the cache was made or altered by something else. The plan must refuse
+    // to deploy through it. The executors dereference links, so deploying would
+    // read (copy) or plant (symlink-tree) paths outside the checkout.
     let f = Fixture::new();
     let origin = Origin::new(&f, "humanizer", EPOCH);
     let rev = origin.commit_files(&[("skills/humanizer/SKILL.md", "humanize\n")], EPOCH);
@@ -398,7 +398,7 @@ fn apply_update_under_json_does_not_bump_the_lockfile() {
 
 #[test]
 fn a_remote_source_that_escapes_its_checkout_is_refused() {
-    // A hostile manifest climbs out of the checkout with `..` to read host
+    // A hostile manifest points outside the checkout with `..` to read host
     // files. The resolver must refuse it before anything is deployed.
     let f = Fixture::new();
     let origin = Origin::new(&f, "evil", EPOCH);
@@ -456,8 +456,8 @@ fn a_remote_symlink_entry_points_into_the_pinned_checkout() {
     let link = Utf8PathBuf::from_path_buf(link).expect("utf8 link target");
     // The engine records canonical paths, while `checkout` spells the cache
     // directory the way the environment gives the state dir. Canonicalizing
-    // both keeps the comparison honest: otherwise it pits `/var/...` against
-    // `/private/var/...` on macOS, and a long path against an 8.3 short one on
+    // both keeps the comparison honest: otherwise it compares `/var/...` with
+    // `/private/var/...` on macOS, and a long path with an 8.3 short one on
     // Windows.
     let expected = patina_core::canonicalize_path(&checkout(&f, "prompts", &rev))
         .expect("canonicalize the checkout directory");

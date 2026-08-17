@@ -68,7 +68,7 @@ fn json_of(output: &std::process::Output) -> serde_json::Value {
 #[test]
 fn update_creates_the_first_pin_without_waiting_out_the_age_gate() {
     // The commit is made "now" and the floor is the default 72 hours, so only
-    // the first-pin exemption can let this through.
+    // the first-pin exemption can allow the bump.
     let f = Fixture::new();
     let origin = Origin::new(&f, "humanizer", OLD_EPOCH);
     let now = patina_core::current_epoch_seconds();
@@ -431,8 +431,8 @@ fn prune_removes_an_unreferenced_checkout() {
 #[test]
 fn prune_removes_the_whole_cache_tree_of_an_undeclared_remote() {
     // The reachability sweep only ever considers checkout directories, so a
-    // remote's own directory and its bare fetch repository would survive
-    // deleting the declaration for good.
+    // remote's own directory and its bare fetch repository would remain after
+    // the declaration is deleted.
     let f = Fixture::new();
     let origin = Origin::new(&f, "humanizer", OLD_EPOCH);
     origin.commit_files(&[("a.md", "first\n")], OLD_EPOCH);

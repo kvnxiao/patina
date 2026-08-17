@@ -152,9 +152,9 @@ fn init_json_success_and_failure_diverge_then_failure_is_byte_stable() {
 }
 
 /// A successful `init --json` run emits one deterministic JSON document
-/// on stdout. Its `initialized` and `default_repo` fields carry the
-/// canonical target and pointer paths, with nothing non-deterministic like
-/// a `created_at` timestamp.
+/// on stdout. Its `initialized` and `default_repo` fields hold the canonical
+/// target and pointer paths. The document does not include a non-deterministic
+/// value such as a `created_at` timestamp.
 #[test]
 fn init_json_success_emits_deterministic_schema() {
     let fx = Fixture::new();

@@ -22,9 +22,9 @@
 //! materialized that the current plan no longer manages: an entry dropped from
 //! a `patina.toml`, a `when` flipped false, a leaf a new `ignore` pattern now
 //! excludes. Those orphan targets are not [`ResolvedPlan`] operations, so the
-//! CLI passes them to [`render`] separately. Each renders as a `remove <target>` block
-//! whose deleted body is the link it pointed at or its current content, so
-//! every reap appears in the consent diff.
+//! CLI passes them to [`render`] separately. Each renders as a `remove
+//! <target>` block whose deleted body is the link it pointed at or its current
+//! content, so every reap appears in the consent diff.
 
 use crate::output::style::Styles;
 use anstyle::Style;

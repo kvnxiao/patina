@@ -8,7 +8,7 @@
 //! ## Per-entry skip
 //!
 //! A re-apply over a partially-drifted repo must leave the already-satisfied
-//! (`Unchanged`) entry completely untouched: the same inode, the same mtime,
+//! (`Unchanged`) entry untouched: the same inode, the same mtime,
 //! and nothing written into the backup cycle. It must still mutate the drifted
 //! entry and back up its prior bytes. The skipped entry stays recorded in the
 //! commit, so `patina status` reports it `Clean` and a later reap never
@@ -19,7 +19,7 @@
 //! When every entry is `Unchanged` and there is nothing to reap, the apply is
 //! a full no-op. It does not write a new journal record and does not create a
 //! new backup cycle, so the prior commit stays authoritative. It also skips
-//! the diff-and-prompt confirmation entirely: it does not emit a prompt and
+//! the diff-and-prompt confirmation: it does not emit a prompt and
 //! never reads stdin. The interactive prompt-skip itself is unit-tested in
 //! `patina-cli/src/cmd/apply.rs` (the subprocess fixture here pins stdin to a
 //! non-TTY); this suite covers the no-write property over the real engine.
@@ -170,7 +170,7 @@ fn fully_satisfied_reapply_writes_no_new_journal_or_backup() {
     // the basename set identical. The collision-proof signal is the commit
     // file's own identity, its mtime and bytes. A write cycle changes at
     // least one of those, so disabling the no-op short-circuit turns this
-    // test red regardless of whether the two applies land in the same
+    // test fail regardless of whether the two applies land in the same
     // wall-clock second.
     let f = Fixture::new();
     let m = f.module(
@@ -234,8 +234,8 @@ target = "~/.rc"
 
     // The sole `<ts>.COMMIT` was neither rewritten nor replaced: its path,
     // bytes, and mtime are all unchanged. A full write cycle deletes and
-    // rewrites the commit, so it cannot pass here even when the second apply
-    // lands in the same wall-clock second.
+    // rewrites the commit, so it cannot pass this assertion even when the second
+    // apply lands in the same wall-clock second.
     let commit_path_after = sole_commit_file(&journal_dir);
     assert_eq!(
         commit_path_after, commit_path,
@@ -260,8 +260,8 @@ fn fully_satisfied_apply_without_yes_skips_prompt_and_reports_up_to_date() {
     // up-to-date line and exits 0 without reading stdin and without
     // rendering a diff. The no-op branch precedes the `(yes, tty)` prompt
     // decision in the human path, so neither the prompt nor a stdin read is
-    // ever reached. Feeding a decline answer on stdin therefore changes
-    // nothing.
+    // ever reached. Feeding a decline answer on stdin therefore has no
+    // effect.
     let f = Fixture::new();
     let m = f.module(
         "m",
@@ -284,7 +284,7 @@ mode = "copy"
     // human path would either preview the diff (non-interactive) or prompt,
     // and both of those omit the up-to-date line and emit a diff body. The
     // up-to-date line and the absence of `Apply?` in stderr together show the
-    // prompt/stdin branch was skipped entirely.
+    // prompt/stdin branch was skipped.
     let out = f.apply(&[]);
     assert_eq!(
         code(&out),
@@ -406,9 +406,9 @@ fn copy_tree_re_apply_restores_drift_and_backs_up_the_tree_as_a_unit() {
     // Tree path through the real engine. A `copy-tree` whose leaves include one
     // drifted out of band re-applies to restore that leaf. The whole target
     // directory is backed up as a unit (the `backup_before_overwrite(<dir>)`
-    // model), so every leaf's prior bytes, the clean ones included, land in the
-    // backup cycle. The per-leaf write-skip, where a clean leaf's link or file
-    // is not re-created, is tested directly by the `copy_tree` /
+    // model), so every leaf's prior bytes, the clean ones included, are written
+    // to the backup cycle. The per-leaf write-skip, where a clean leaf's link or
+    // file is not re-created, is tested directly by the `copy_tree` /
     // `tree_symlink` executor unit tests.
     let f = Fixture::new();
     let m = f.module(
@@ -529,7 +529,7 @@ mode = "copy"
         String::from_utf8_lossy(&rollback.stderr)
     );
 
-    // The Unchanged target is left byte-for-byte in place. Had rollback used
+    // The Unchanged target is left byte-for-byte in place. If rollback used
     // the naive no-backup → delete rule, this target would be gone.
     assert_eq!(
         fs_err::read(unchanged_out.as_std_path()).expect("read unchanged_out post-rollback"),
@@ -599,7 +599,7 @@ mode = "copy"
     );
 
     // A subsequent apply must not reap the Unchanged target. It stays on
-    // disk afterward with its bytes intact.
+    // disk with its bytes intact.
     assert_eq!(code(&f.apply(&["--yes"])), 0, "third apply succeeds");
     assert_eq!(
         fs_err::read(keep_out.as_std_path()).expect("read keep_out"),

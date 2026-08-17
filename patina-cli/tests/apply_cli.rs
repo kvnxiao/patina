@@ -175,8 +175,8 @@ fn cli_variable_override_renders_into_template() {
 fn non_windows_symlink_apply_skips_dev_mode_flow() {
     // On macOS or Linux the probe reports `NotWindows`, so the Developer
     // Mode gate returns `Proceed` without reading a registry or spawning
-    // `patina-elevate`. The symlink landing and an exit 0 are only possible
-    // if the gate left the apply alone.
+    // `patina-elevate`. The symlink is only created, and the exit only 0, if
+    // the gate let the apply proceed.
     let f = Fixture::new();
     let module = f.module(
         "shell",
@@ -221,9 +221,8 @@ fn non_windows_symlink_apply_skips_dev_mode_flow() {
 // On a Windows host with Developer Mode off and a symlink `[[file]]`, a
 // `patina apply --yes` whose UAC consent is declined does not create a
 // symbolic link. It includes `Developer Mode` and `patina doctor --fix` on
-// stderr, and exits 5. This is gated `#[ignore]` because it needs a real
-// Windows host and a human, or harness, to decline the UAC dialog; CI is not
-// Windows.
+// stderr, and exits 5. Declining the UAC dialog needs a real Windows host and
+// a human or harness, and CI is not Windows, so this is gated `#[ignore]`.
 #[cfg(windows)]
 #[test]
 #[ignore = "requires a Windows host with Developer Mode off and a declined UAC dialog"]
@@ -251,9 +250,9 @@ fn windows_declined_uac_exits_5_and_creates_no_symlink() {
 }
 
 // On a Windows host with Developer Mode on, the apply creates the symlink
-// with no UAC prompt and no `patina-elevate.exe` spawn. This is gated
-// `#[ignore]` because it needs a real Windows host with Developer Mode
-// enabled; CI is not Windows.
+// with no UAC prompt and no `patina-elevate.exe` spawn. This needs a real
+// Windows host with Developer Mode enabled, and CI is not Windows, so it is
+// gated `#[ignore]`.
 #[cfg(windows)]
 #[test]
 #[ignore = "requires a Windows host with Developer Mode enabled"]

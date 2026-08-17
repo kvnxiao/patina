@@ -53,9 +53,9 @@ use patina_core::read_latest_commit;
 /// # Errors
 ///
 /// Returns an error (exit 1, or exit 4 on a lock-acquisition timeout through
-/// the engine-error chain) when: the state directory cannot be resolved; the lock
-/// cannot be acquired; the target is not currently managed; the target is a
-/// symlink or template-rendered (refused); the target's bytes cannot be read;
+/// the engine-error chain) when: the state directory cannot be resolved; the
+/// lock cannot be acquired; the target is not currently managed; the target is
+/// a symlink or template-rendered (refused); the target's bytes cannot be read;
 /// the repository source cannot be written; or the re-apply fails.
 pub async fn run(
     args: &PromoteArgs,

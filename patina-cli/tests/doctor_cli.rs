@@ -78,7 +78,7 @@ fn doctor_json_is_byte_identical_across_runs() {
     );
 }
 
-/// Doctor routes its findings to stderr, never to stdout, in human
+/// Doctor writes its findings to stderr, never to stdout, in human
 /// (non-`--json`) mode, so stdout stays clean for piping.
 #[test]
 fn human_mode_keeps_findings_off_stdout() {
@@ -189,8 +189,8 @@ fn fix_without_yes_in_non_tty_exits_one_identifying_yes() {
 /// On a Windows host with Developer Mode OFF and a
 /// symlink-declaring repository, `patina doctor --fix` (auto-accepting the
 /// first prompt) drives the UAC elevation flow, leaving the Developer Mode
-/// registry value at 1, and exits 0. Gated to Windows and `#[ignore]` because
-/// it depends on the host's real registry state and a UAC dialog.
+/// registry value at 1, and exits 0. This depends on the host's real registry
+/// state and a UAC dialog, so it is gated to Windows and `#[ignore]`.
 #[test]
 #[cfg(windows)]
 #[ignore = "requires a Windows host with Developer Mode OFF and interactive UAC"]
@@ -225,7 +225,7 @@ fn windows_fix_enables_dev_mode_and_exits_zero() {
     );
 }
 
-/// The DOC-WIN-UNC finding rests on the cross-platform [`is_unc_path`]
+/// The DOC-WIN-UNC finding depends on the cross-platform [`is_unc_path`]
 /// predicate, so checking that predicate exercises the finding's trigger on
 /// macOS/Linux CI. Neither platform can mount a real UNC share.
 #[test]
@@ -243,8 +243,8 @@ fn unc_predicate_distinguishes_unc_from_posix_repo_paths() {
 /// On a Windows test host with Developer Mode OFF and a
 /// repository declaring at least one `mode = "symlink"` entry, `doctor --json`
 /// emits a `DOC-WIN-DEVMODE` warning whose message includes Developer Mode and
-/// the registry path. Gated to Windows and `#[ignore]` because it depends on
-/// the host's real Developer Mode registry state.
+/// the registry path. This depends on the host's real Developer Mode registry
+/// state, so it is gated to Windows and `#[ignore]`.
 #[test]
 #[cfg(windows)]
 #[ignore = "requires a Windows host with Developer Mode OFF"]

@@ -146,9 +146,9 @@ fn fully_satisfied_applies_are_byte_identical_and_report_up_to_date() {
 #[test]
 fn multi_target_rows_preserve_input_declaration_order() {
     // A multi-target [[file]] entry with `targets` declared in deliberately
-    // non-alphabetical order. Determinism means a stable function of
-    // inputs, not an alphabetized sort, so the plan rows must keep declared
-    // order (.codex before .claude).
+    // non-alphabetical order. Determinism is a stable function of inputs, not
+    // an alphabetized sort, so the plan rows must keep declared order (.codex
+    // before .claude).
     let f = Fixture::new();
     let agent = f.module(
         "agent",

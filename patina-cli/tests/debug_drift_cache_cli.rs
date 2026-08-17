@@ -39,7 +39,7 @@ fn code(output: &Output) -> i32 {
 #[test]
 fn decodes_a_drift_cache_and_prints_version_timestamp_path_and_hashes() {
     // A populated drift cache renders with `version:`, the bound journal
-    // timestamp, the target path, and both hash values.
+    // timestamp, the target path, and the expected and actual hashes.
     let temp = TempDir::new().expect("tempdir");
     let dir = Utf8Path::from_path(temp.path()).expect("utf8 tempdir");
     let entry = DriftEntry::new("/home/u/.gitconfig", [0xab; 32], [0xcd; 32], 1_700_000_000);

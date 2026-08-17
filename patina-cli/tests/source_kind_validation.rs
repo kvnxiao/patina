@@ -14,9 +14,9 @@
 //!   `[[file]]`;
 //! - a `when`-true entry whose source is absent exits 1 with a missing-source
 //!   error and no journal artifact;
-//! - a `when`-false entry whose source is absent and wrong-shaped on this OS
-//!   exits 0 with no kind / missing-source error, because source-kind
-//!   validation never runs on a gated-off entry.
+//! - source-kind validation never runs on a gated-off entry, so a `when`-false
+//!   entry whose source is absent and wrong-shaped on this OS exits 0 with no
+//!   kind or missing-source error.
 
 mod common;
 

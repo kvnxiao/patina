@@ -16,8 +16,8 @@
 //! | The helper never reported an outcome         | 1    |
 //! | User declined the prompt or UAC consent      | 5    |
 //!
-//! `Blocked`, `Failed`, and `Unconfirmed` share exit 1. The error message is the
-//! only thing separating them. An unprivileged CLI process cannot read
+//! `Blocked`, `Failed`, and `Unconfirmed` share exit 1. The error message is
+//! the only thing separating them. An unprivileged CLI process cannot read
 //! Defender's exclusion list, so the helper does the verifying: once it enacts
 //! the request, it re-reads the list and reports what it found. A `Blocked`
 //! message is therefore an observed rejection. `Unconfirmed` means the verdict
