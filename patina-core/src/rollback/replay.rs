@@ -188,7 +188,7 @@ fn snapshot_targets(stage: &Utf8Path, targets: &[&str]) -> std::io::Result<Vec<S
 
 /// Revert one target to its pre-apply state. Restore it from its backup if
 /// one exists (the overwrite case), otherwise delete it (the
-/// fresh-creation case). This is the same rule crash recovery applies.
+/// fresh-creation case). Crash recovery applies the same rule.
 fn revert_target(
     backups_dir: &Utf8Path,
     timestamp: &str,
@@ -197,8 +197,8 @@ fn revert_target(
     let backup = mirror_backup_path(backups_dir, timestamp, target);
     if crate::fsx::entry_present(&backup) {
         // Overwrite case: restore the original entry, preserving its kind.
-        // A symlink comes back a symlink, a directory a directory, a file a
-        // file. Presence is probed with `entry_present` rather than
+        // A symlink restores as a symlink, a directory as a directory, and a
+        // file as a file. Presence is probed with `entry_present` rather than
         // `exists`, so a backed-up symlink whose destination is gone is
         // still restored; `exists` would report it as absent and misroute
         // to the "no backup, delete" path.

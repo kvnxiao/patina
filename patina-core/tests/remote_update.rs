@@ -1,17 +1,9 @@
+//! Integration tests for remote update.
+
 #![expect(
     clippy::expect_used,
     reason = "integration tests use .expect() on fixture setup; allow-expect-in-tests covers #[cfg(test)] modules but not the helper functions in tests/*.rs integration crates."
 )]
-
-//! The producer path: reading upstream, running the gate, and writing a pin.
-//!
-//! These drive [`patina_core::remote::update`] in-process against throwaway
-//! origin repositories, so each gate verdict is asserted against real git
-//! history rather than only through the CLI subprocess. The gate's arithmetic
-//! is unit-tested in `patina_core::remote::gate`. These tests prove that
-//! the inputs it receives are derived correctly from a repository.
-//!
-//! See `docs/REMOTE_SOURCES.md` "Commands" and "The update gate".
 
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
@@ -29,12 +21,10 @@ use std::process::Command;
 use std::time::Duration;
 use tempfile::TempDir;
 
-/// The one remote every fixture declares.
 fn humanizer() -> RemoteName {
     RemoteName::parse("humanizer").expect("a legal remote name")
 }
 
-/// "Now" for every gate evaluation here, so no assertion depends on the clock.
 const NOW: i64 = 1_800_000_000;
 const WEEK: i64 = 7 * 24 * 60 * 60;
 
@@ -61,8 +51,6 @@ fn git_in(cwd: &Utf8Path, epoch: i64, args: &[&str]) -> String {
     String::from_utf8_lossy(&output.stdout).trim().to_owned()
 }
 
-/// An origin repository, an isolated state directory, and a repository root the
-/// lockfile is written into.
 struct Fixture {
     _temp: TempDir,
     origin: Utf8PathBuf,
@@ -96,7 +84,6 @@ impl Fixture {
         git_in(&self.origin, epoch, &["rev-parse", "HEAD"])
     }
 
-    /// An inventory holding one remote, optionally already pinned.
     fn inventory(&self, min_age: Option<Duration>, pin: Option<LockEntry>) -> RemoteInventory {
         let mut lockfile = Lockfile::default();
         if let Some(pin) = pin.clone() {
@@ -120,7 +107,6 @@ impl Fixture {
     }
 }
 
-/// A pin recorded `weeks_ago` before [`NOW`].
 fn pin(rev: &str, weeks_ago: i64) -> LockEntry {
     let at = jiff::Timestamp::from_second(NOW - weeks_ago * WEEK).expect("in-range timestamp");
     LockEntry {
@@ -131,7 +117,6 @@ fn pin(rev: &str, weeks_ago: i64) -> LockEntry {
     }
 }
 
-/// The single view an inventory built by the fixture holds.
 fn only(inventory: &RemoteInventory) -> RemoteView {
     inventory
         .find("humanizer")
@@ -234,7 +219,6 @@ fn a_fast_forward_past_the_cooldown_is_allowed() {
 fn a_rewritten_history_needs_confirmation() {
     let f = Fixture::new();
     let first = f.commit("one\n", NOW - 3 * WEEK);
-    // A force-push leaves an orphan root commit promoted to `main`.
     git_in(
         &f.origin,
         NOW - 2 * WEEK,
@@ -257,9 +241,6 @@ fn a_rewritten_history_needs_confirmation() {
 fn a_candidate_older_than_the_pin_timestamp_needs_confirmation() {
     let f = Fixture::new();
     let first = f.commit("one\n", NOW - 3 * WEEK);
-    // The new tip descends from the pin but has an older committer date. A
-    // long-lived branch's fast-forward creates this pattern, which the
-    // backdating check flags.
     f.commit("two\n", NOW - 4 * WEEK);
     let inventory = f.inventory(Some(Duration::from_secs(0)), Some(pin(&first, 1)));
 

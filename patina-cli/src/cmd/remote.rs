@@ -6,8 +6,8 @@
 //! lockfile), and `prune` (sweeps unreferenced checkouts).
 //!
 //! The engine owns the semantics: [`patina_core::remote::update`] computes a
-//! proposal per remote and [`patina_core::remote::gate`] decides. This module
-//! is control flow, lock acquisition, prompting, and output.
+//! proposal per remote and [`patina_core::remote::gate`] decides. The command
+//! module handles control flow, lock acquisition, prompting, and output.
 //!
 //! Locking follows the read/write split the rest of the CLI uses. `update` and
 //! `prune` mutate the working-tree lockfile and the cache, so both take the
@@ -100,7 +100,7 @@ pub fn run(
 /// Run `patina remote update` over every declared remote, with the default
 /// flags and the exclusive lock.
 ///
-/// This is the entry point `patina apply --update` calls, so the producer pass
+/// Serve the entry point `patina apply --update` calls, so the producer pass
 /// and the standalone command run the same code rather than the apply
 /// synthesizing a command line.
 ///

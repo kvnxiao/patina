@@ -1,15 +1,9 @@
+//! Integration tests for watch logging.
+
 #![expect(
     clippy::expect_used,
     reason = "integration tests use .expect() on fixture setup; the lint's allow-expect-in-tests covers #[cfg(test)] modules but not the helper functions in tests/*.rs integration crates."
 )]
-
-//! Integration tests for the watcher's `<state>/patina/logs/` directory and
-//! its rotating-log stack.
-//!
-//! These tests pin two contracts at the public-API boundary:
-//! `state_dir::resolve_with_env` creates `journal/` and `backups/` but NOT
-//! `logs/`, and `watch::logging::build_file_appender` lazily creates `logs/`
-//! and writes a daily-rotating log file into it.
 
 use camino::Utf8PathBuf;
 use patina_core::HostOs;
@@ -64,8 +58,6 @@ fn build_file_appender_creates_logs_dir_and_writes_a_rotating_file() {
     );
 
     writeln!(appender.writer, "re_apply id=1").expect("write log line");
-    // Dropping the appender flushes the non-blocking worker before the test
-    // reads the file.
     drop(appender);
 
     let mut log_files: Vec<Utf8PathBuf> = fs_err::read_dir(logs_dir.as_std_path())

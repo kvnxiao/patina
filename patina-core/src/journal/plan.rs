@@ -29,7 +29,7 @@ use serde::Serialize;
 /// newer file via the version envelope.
 pub const FILE_MAJOR_VERSION: u16 = 1;
 
-/// One planned filesystem operation. This is the minimal record the
+/// Store one planned filesystem operation, the minimal record the
 /// journal needs. Recovery derives the inverse operation, the backup path
 /// to restore from, externally via
 /// [`mirror_backup_path`](super::probe::mirror_backup_path), rather than

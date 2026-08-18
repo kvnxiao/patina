@@ -1,9 +1,9 @@
+//! Integration tests for module discovery.
+
 #![expect(
     clippy::expect_used,
     reason = "integration tests use .expect() on fixture setup; the lint's allow-expect-in-tests covers #[cfg(test)] modules but not the helper functions in tests/*.rs integration crates."
 )]
-
-//! Integration tests for module enumeration.
 
 use camino::Utf8Path;
 use camino::Utf8PathBuf;

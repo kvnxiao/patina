@@ -28,7 +28,7 @@ use serde::Deserialize;
 
 /// Executor-facing materialization mode the apply engine dispatches on.
 ///
-/// This is the resolved operation taxonomy, distinct from the collapsed
+/// Represent the resolved operation taxonomy, distinct from the collapsed
 /// *user-facing* mode names (`symlink` / `symlink-tree` / `copy`) that
 /// the table context disambiguates at parse time. The per-table
 /// constructors on [`ManagedEntry`] map a collapsed user mode plus the
@@ -89,8 +89,8 @@ pub struct ManagedEntry {
     /// single-target entries become a one-element vec internally so
     /// downstream consumers do not need to special-case the shape.
     pub targets: Vec<Utf8PathBuf>,
-    /// Optional `when` predicate as raw expression source. This module
-    /// only parses and carries it, and does not evaluate it through
+    /// Optional `when` predicate as raw expression source. Parse and carry it;
+    /// do not evaluate it through
     /// `MiniJinja` (mirrors [`HookEntry.when`](super::HookEntry::when)).
     pub when: Option<String>,
     /// The root-declared remote this entry's `source` is relative to, or

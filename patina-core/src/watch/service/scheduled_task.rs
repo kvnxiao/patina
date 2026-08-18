@@ -287,7 +287,7 @@ struct TaskReadout {
 /// Map a registered task's `(get_State, get_LastTaskResult, get_LastRunTime)`
 /// triple to the liveness / last-fired / last-exit-code status fields.
 ///
-/// This is the pure value-mapping half of [`query_task_status`], split out,
+/// Map the pure value half of [`query_task_status`], split out,
 /// mirroring the launchd / systemd siblings' `parse_launchctl_print` /
 /// `parse_systemctl_show`, so the three predicates are unit-testable without a
 /// live Task Scheduler:

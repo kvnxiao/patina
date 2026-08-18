@@ -28,9 +28,9 @@
 //! 4. Deletes the orphan `<ts>.plan` and `<ts>.progress` files once every
 //!    operation has been reversed.
 //!
-//! Recovery is **idempotent**: the second run finds no orphan, because the
-//! plan file was removed by the first. It is therefore a no-op that
-//! yields the same filesystem state. Within a single run it is also
+//! Recovery is **idempotent**: the second run finds no orphan because the
+//! first run removed the plan file. The second run leaves the filesystem
+//! unchanged. Within a single run it is also
 //! self-idempotent: restoring a backup over an already-restored target
 //! rewrites identical bytes, and deleting an already-absent fresh target
 //! is a no-op.

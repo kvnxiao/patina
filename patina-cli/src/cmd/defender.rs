@@ -323,8 +323,8 @@ fn run_reconcile_json(
             report("declined", "");
             Ok(ExitCode::UserDeclined.code())
         }
-        // The failing results share an exit code, so `result` is what separates
-        // them here. `detail` adds the helper's own words, the same text the
+        // The failing results share an exit code, so `result` separates them
+        // here. `detail` adds the helper's own words, the same text the
         // human path puts in its error message.
         DefenderOutcome::Blocked { detail } => {
             report("blocked", &detail);
@@ -976,7 +976,7 @@ mod tests {
     #[test]
     fn the_plain_palette_leaves_a_path_and_tag_byte_identical_to_unstyled() {
         // What every other assertion in this module relies on: a plain render
-        // does not emit escapes, so a path or label reads back verbatim.
+        // does not emit escapes, so a path or label remains verbatim.
         let file = Exclusion::new(r"C:\a", ExclusionKind::File);
         assert_eq!(path_by_kind(&file, &Styles::plain()), r"C:\a");
         assert_eq!(

@@ -3,7 +3,7 @@
 //! The file-mode executors ([`crate::apply::materialize`]), the hook
 //! runner ([`crate::apply::hooks`]), the plan journal
 //! ([`crate::journal`]), and the backup tree ([`crate::backups`]) each
-//! own one slice of an apply. This module is the orchestrator that wires
+//! own one slice of an apply. The apply orchestrator wires
 //! them together into the two-phase shape described here:
 //!
 //! 1. [`plan`] resolves the repository, enumerates modules, parses every module
@@ -764,9 +764,9 @@ fn build_planning_context(
 /// manages, keyed by [`crate::status::manage_key`] for cross-time comparison
 /// against the recorded commit.
 ///
-/// This is the `when`-aware, `symlink-tree`-aware managed set both
+/// Compute the `when`-aware, `symlink-tree`-aware managed set consumed by both
 /// `patina status` (to classify a dropped target ORPHANED) and the apply-time
-/// orphan reap consume. It mirrors [`plan`]'s entry walk with two
+/// orphan reap. It mirrors [`plan`]'s entry walk with two
 /// differences that make it safe to run for status, where the plan would
 /// refuse:
 ///
@@ -1096,7 +1096,7 @@ fn assemble_plan_operations(
 /// canonicalize the entry's source and resolve its targets by declared
 /// location.
 ///
-/// This enforces the per-entry order: step (1) the `when` gate runs
+/// Enforce the per-entry order: step (1) the `when` gate runs
 /// first, so a `when`-false entry returns `Ok(None)` and is **never**
 /// canonicalized; step (2) canonicalization happens only for a surviving
 /// (`when`-true or no-`when`) entry. Returning `None` lets the caller keep
@@ -1261,7 +1261,7 @@ fn classify_target(
 
 /// Canonicalize one managed entry's source and resolve its targets under
 /// `module_path` and `home`. Then validate the canonical source's existence
-/// and kind against the entry's declared table. That is step 3 of the
+/// and kind against the entry's declared table. Step 3 of the
 /// order. The source is canonicalized through the filesystem; each
 /// target is resolved by *declared location* via [`resolve_location`] so a
 /// symlink already occupying the target is never followed back to the source.
@@ -1652,7 +1652,7 @@ pub async fn execute(
     // Windows-only symlink-elevation gate. Runs after
     // recovery and BEFORE the first backup / materialize, so a plan that
     // needs Developer Mode cannot mutate the filesystem without consent.
-    // This is the engine-side backstop: the CLI normally drives the UAC
+    // The engine provides the backstop: the CLI normally drives the UAC
     // prompt before calling `execute`, so a `RequireElevation` verdict here
     // means the gate was reached without that orchestration. Refuse to
     // proceed with a typed signal. On a host that is already
@@ -1827,9 +1827,10 @@ pub async fn execute(
         // pinned rev by construction.
         //
         // Planning reads `patina.lock` only when an active entry selects a
-        // remote, so a run without one arrives here not knowing what is pinned.
-        // It is re-read here rather than assumed empty; a lockfile that cannot
-        // be read leaves every declared remote's cache untouched.
+        // remote, so the engine reaches this point without knowing what is pinned.
+        // The engine re-reads the lockfile instead of assuming it is empty; a
+        // lockfile that cannot be read leaves every declared remote's cache
+        // untouched.
         //
         // Pruning is best-effort cleanup after a durable commit, so a failure
         // anywhere here is logged, not propagated: the apply already succeeded
@@ -1869,12 +1870,12 @@ pub async fn execute(
 /// Every managed target becomes one [`ExpectedTarget`], **including
 /// `Unchanged` targets** that the execute write-skip left untouched and that
 /// therefore produced no [`CompletionRecord`]. The record is sourced
-/// from the resolved plan rather than from the written objects. That keeps an
-/// `Unchanged` target in the commit, so `status` reports it managed (`Clean`)
-/// and [`reap_orphans`] never removes it. A symlink records its canonical link
-/// target (which is also its source); a copy or render records its canonical
-/// source path and a `blake3` hash of the live target bytes, read back so the
-/// recorded hash matches exactly what `status` computes; the live
+/// from the resolved plan rather than from the written objects. The commit
+/// therefore retains an `Unchanged` target, so `status` reports it managed
+/// (`Clean`) and [`reap_orphans`] never removes it. A symlink records its
+/// canonical link target (which is also its source); a copy or render records
+/// its canonical source path and a `blake3` hash of the live target bytes, read
+/// back so the recorded hash matches exactly what `status` computes; the live
 /// bytes hold the desired output whether the target was just written
 /// (`Create` / `Update`) or already matched (`Unchanged`). Each target carries
 /// its real plan-time [`Disposition`] (per-leaf for a tree), the
@@ -2044,7 +2045,7 @@ fn reap_orphans(resolved: &ResolvedPlan, backups_dir: &Utf8Path) -> Result<(), E
 /// reap set is empty. `reap` mirrors [`execute`]'s policy gate: a
 /// `Held` run never reaps, so its orphan set is not consulted.
 ///
-/// This is the single source of truth for the condition, shared by
+/// Share the full-no-op condition between
 /// [`execute`]'s pre-flush short-circuit and the public [`plan_is_full_noop`]
 /// probe the CLI calls to decide whether to skip the diff-and-prompt.
 /// The `Unchanged` check is pure (it reads the plan-time dispositions, no IO);
@@ -2095,8 +2096,8 @@ fn is_full_noop(resolved: &ResolvedPlan, reap: bool) -> Result<bool, EngineError
 /// prior commit present, and nothing to reap.
 ///
 /// The CLI calls this *before* prompting so a fully-satisfied repo skips the
-/// diff-and-prompt confirmation and never reads stdin. This is a read-only
-/// probe. [`execute`] re-checks the same condition under the held lock, so
+/// diff-and-prompt confirmation and never reads stdin. The probe is read-only.
+/// [`execute`] re-checks the same condition under the held lock, so
 /// this decision only governs the prompt. Because the CLI's `apply` path
 /// always reaps, this fixes `reap` to `true`.
 ///
@@ -2811,7 +2812,7 @@ mod tests {
     // journal, the apply returns the typed contention error, leaves the
     // orphan plan and its progress untouched (recovery never runs because
     // the lock is resolved first), and writes no new plan / COMMIT / backup.
-    // This is the regression that the acquire-then-recover reorder fixes.
+    // The acquire-then-recover reorder fixes this regression.
     #[tokio::test]
     async fn non_blocking_contention_leaves_pending_orphan_untouched() {
         const ORPHAN_TS: &str = "20260529T090000Z";

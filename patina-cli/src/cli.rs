@@ -1,7 +1,7 @@
 //! The clap-derived command-line surface for `patina`.
 //!
-//! This module only parses. The command logic lives in [`crate::cmd`], where
-//! the unit tests call it directly without clap.
+//! Parse the clap command surface. Command logic lives in [`crate::cmd`], and
+//! unit tests call it directly without clap.
 
 use crate::exit_code::ExitCode;
 use crate::output::reporter::Reporter;
@@ -316,7 +316,7 @@ pub struct InitArgs {
 ///
 /// The mode flags (`--symlink` / `--copy` / `--template` / `--symlink-tree`)
 /// form a mutually-exclusive clap group: declaring more than one is a usage
-/// error (exit 2). Which flags are legal depends on the source kind.
+/// error (exit 2). The legal flags depend on the source kind.
 /// `--symlink` and `--copy` apply to either a file or a directory source;
 /// `--template` is file-only; `--symlink-tree` is directory-only. clap cannot
 /// see the source's on-disk kind, so `cmd::add` checks the flag against the

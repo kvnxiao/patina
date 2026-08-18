@@ -16,9 +16,9 @@ use unicode_normalization::UnicodeNormalization;
 /// caseless match. The mapping can leave its own output unnormalized, so a
 /// single trailing pass would not converge.
 ///
-/// This function lowercases input instead of applying true case folding,
-/// because APFS applies simple case folding and leaves `ß` alone. Full case
-/// folding maps `ß` to `ss`, merging two names macOS keeps distinct.
+/// Lowercase input instead of applying true case folding. APFS applies simple
+/// case folding and leaves `ß` alone; full case folding maps `ß` to `ss`,
+/// merging two names macOS keeps distinct.
 #[must_use = "the folded form is the comparison key, not a display string"]
 pub fn fold(value: &str) -> String {
     // ASCII has no decompositions, so the tables cannot change it.

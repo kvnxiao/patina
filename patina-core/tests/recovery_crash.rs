@@ -1,25 +1,9 @@
+//! Integration tests for recovery crash.
+
 #![expect(
     clippy::expect_used,
     reason = "integration tests use .expect() on fixture setup; allow-expect-in-tests covers #[cfg(test)] modules but not the helper functions in tests/*.rs integration crates."
 )]
-
-//! Integration coverage for crash recovery.
-//!
-//! These tests drive the `patina_core::journal::recover_orphans` entry
-//! point directly by staging the on-disk crash states they cover (a flushed
-//! `<ts>.plan`, a per-apply backup tree, no `<ts>.COMMIT`) and asserting
-//! recovery converges backward to the pre-apply state. Each test maps to one
-//! recovery bullet:
-//!
-//! - N-of-M completed ops are reversed from backups; orphan plan and progress
-//!   files are removed (the headline scenario).
-//! - "interrupted before any op executed": no targets touched, orphan files
-//!   removed, filesystem unchanged.
-//! - "recovery is idempotent": a second pass is a clean no-op.
-//! - "recovery never proceeds forward": an un-started op's target is left
-//!   absent. Recovery rolls back; it does not finish the apply.
-//! - probe-over-cursor: a lying progress cursor does not change the reversal,
-//!   because recovery probes the filesystem.
 
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
@@ -32,8 +16,6 @@ use patina_core::journal::mirror_backup_path;
 use patina_core::journal::recover_orphans;
 use tempfile::TempDir;
 
-/// A staged crash scene: a state directory with a `journal/` and
-/// `backups/` tree, plus a `home/` standing in for the user's targets.
 struct Scene {
     _temp: TempDir,
     journal: Utf8PathBuf,
@@ -65,25 +47,17 @@ impl Scene {
         self.home.join(name)
     }
 
-    /// Stage an *overwrite*: the target pre-existed with `original`
-    /// content, the backup of that original was taken, and the apply then
-    /// replaced the target with `new_content` before crashing.
     fn stage_overwrite(&self, name: &str, original: &str, new_content: &str) -> PlannedOperation {
         let target = self.target(name);
-        // The engine stashed the original under the per-apply backup root
-        // before mutating.
         let backup = mirror_backup_path(&self.backups, TS, &target);
         if let Some(parent) = backup.parent() {
             fs_err::create_dir_all(parent).expect("backup parent");
         }
         fs_err::write(&backup, original).expect("write backup");
-        // The crashed apply left the new, overwriting content in place.
         fs_err::write(&target, new_content).expect("write overwriting target");
         PlannedOperation::copy(format!("repo/{name}"), target.as_str(), Disposition::Create)
     }
 
-    /// Stage a *fresh creation* that completed: no backup (nothing
-    /// pre-existed), and the target now holds the freshly created content.
     fn stage_fresh_created(&self, name: &str, content: &str) -> PlannedOperation {
         let target = self.target(name);
         if let Some(parent) = target.parent() {
@@ -93,7 +67,6 @@ impl Scene {
         PlannedOperation::copy(format!("repo/{name}"), target.as_str(), Disposition::Create)
     }
 
-    /// Stage a *fresh creation* that never started: no backup, no target.
     fn stage_fresh_unstarted(&self, name: &str) -> PlannedOperation {
         PlannedOperation::copy(
             format!("repo/{name}"),
@@ -102,14 +75,12 @@ impl Scene {
         )
     }
 
-    /// Write the orphan plan (no COMMIT sentinel) for the crash scene.
     fn write_orphan_plan(&self, ops: Vec<PlannedOperation>) {
         let plan = Plan::new(ops);
         let bytes = plan.encode().expect("encode plan");
         fs_err::write(self.journal.join(format!("{TS}{PLAN_SUFFIX}")), bytes).expect("write plan");
     }
 
-    /// Write a progress cursor claiming `completed` op indices.
     fn write_progress(&self, completed: &[u32]) {
         let mut bytes = Vec::new();
         for &i in completed {
@@ -129,14 +100,10 @@ impl Scene {
     }
 }
 
-// The apply completes 3 of 5 operations before SIGKILL, with the backup
-// directory intact.
 #[test]
 fn restores_overwritten_targets_and_clears_orphan_files() {
     let scene = Scene::new();
 
-    // Ops 0..3 overwrote pre-existing files (3 of 5 completed). Ops 3, 4
-    // were fresh creations; one started, one did not.
     let ops = vec![
         scene.stage_overwrite("a", "orig-a", "new-a"),
         scene.stage_overwrite("b", "orig-b", "new-b"),
@@ -158,7 +125,6 @@ fn restores_overwritten_targets_and_clears_orphan_files() {
         let got = fs_err::read_to_string(scene.target(name)).expect("read restored target");
         assert_eq!(got, original, "target {name} restored to pre-apply bytes");
     }
-    // The completed fresh creation is deleted because no backup exists to restore.
     assert!(
         !scene.target("d").exists(),
         "freshly-created target is removed, converging to pre-apply (absent)"
@@ -248,25 +214,20 @@ fn recovery_rolls_back_and_never_completes_an_unstarted_op() {
 #[test]
 fn lying_progress_cursor_is_ignored_in_favour_of_the_filesystem() {
     let scene = Scene::new();
-    // Only op 0 actually overwrote a target; op 1 never started.
     let ops = vec![
         scene.stage_overwrite("a", "orig-a", "new-a"),
         scene.stage_fresh_unstarted("b"),
     ];
     scene.write_orphan_plan(ops);
-    // The cursor lies. It claims both ops completed even though op 1 never ran.
     scene.write_progress(&[0, 1]);
 
     recover_orphans(&scene.journal, &scene.backups).expect("recovery");
 
-    // Op 0 is reversed from its backup regardless of the cursor.
     assert_eq!(
         fs_err::read_to_string(scene.target("a")).expect("read a"),
         "orig-a",
         "the genuinely-overwritten target is restored"
     );
-    // Op 1's target was never created. Recovery does not invent one to
-    // satisfy the cursor's false claim.
     assert!(
         !scene.target("b").exists(),
         "the cursor's lie about op 1 does not cause a phantom restore/delete"

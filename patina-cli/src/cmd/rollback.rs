@@ -2,7 +2,7 @@
 //!
 //! Reverses the most recent committed apply to its pre-apply filesystem
 //! state. The lock, the journal scan, the per-entry atomic inverse replay,
-//! and the rolled-back sentinel live in `patina_core::rollback`. This module
+//! and the rolled-back sentinel live in `patina_core::rollback`. The command
 //! owns the TTY-prompt / `--yes` / `--json` decision tree and maps the engine
 //! outcome onto the process exit code.
 //!

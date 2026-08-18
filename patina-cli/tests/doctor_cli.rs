@@ -1,14 +1,9 @@
+//! Integration tests for doctor cli.
+
 #![expect(
     clippy::expect_used,
     reason = "integration tests use .expect() on fixture setup and assertions; allow-expect-in-tests covers #[cfg(test)] modules but not the top level of a tests/*.rs integration crate."
 )]
-
-//! Integration coverage for `patina doctor`.
-//!
-//! Each test drives the real `patina` binary through [`common::Fixture`].
-//! Both the read-only path (no `--fix`) and the `--fix` remediation path are
-//! covered. With no TTY the read-only path never prompts. `--fix` runs with
-//! `--yes` to auto-accept, or without it to exercise the non-TTY refusal.
 
 mod common;
 
@@ -22,9 +17,6 @@ fn stdout(out: &std::process::Output) -> String {
     String::from_utf8(out.stdout.clone()).expect("stdout is utf8")
 }
 
-/// A tempdir state directory with no
-/// `default_repo` and a valid repository yields a `findings` entry with
-/// `code = DOC-NO-DEFAULT-REPO`, `level = info`, and the process exits 0.
 #[test]
 fn missing_default_repo_reports_info_finding_and_exits_zero() {
     let fx = Fixture::new();
@@ -52,9 +44,6 @@ fn missing_default_repo_reports_info_finding_and_exits_zero() {
         "the missing-default-repo finding is info, not warning"
     );
 
-    // The fixture's repository resolves (PATINA_REPO points at it), so the
-    // advice must be `doctor --fix`: `patina init` refuses on an existing
-    // manifest and can never clear this finding.
     let message = note
         .get("message")
         .and_then(serde_json::Value::as_str)
@@ -78,8 +67,6 @@ fn doctor_json_is_byte_identical_across_runs() {
     );
 }
 
-/// Doctor writes its findings to stderr, never to stdout, in human
-/// (non-`--json`) mode, so stdout stays clean for piping.
 #[test]
 fn human_mode_keeps_findings_off_stdout() {
     let fx = Fixture::new();
@@ -97,15 +84,9 @@ fn human_mode_keeps_findings_off_stdout() {
     );
 }
 
-/// The DOC-NO-DEFAULT-REPO remediation: on a clean
-/// state directory with no `default_repo` and a CWD that is a valid Patina
-/// repository, `patina doctor --fix --yes` writes the `default_repo` pointer
-/// holding the CWD's canonical absolute path and exits 0.
 #[test]
 fn fix_yes_writes_default_repo_from_cwd_and_exits_zero() {
     let fx = Fixture::new();
-    // The subprocess CWD is the fixture's repo root (it carries a
-    // `root = true` manifest), so the remediation records it as the default.
     let out = fx.run_in(&fx.root, &["doctor", "--fix", "--yes"], &[]);
     assert_eq!(
         code(&out),
@@ -125,15 +106,9 @@ fn fix_yes_writes_default_repo_from_cwd_and_exits_zero() {
     );
 }
 
-/// `patina doctor --fix --yes` run from a directory that is not a Patina
-/// repository must refuse: it exits 1 and does not write a `default_repo`
-/// pointer, rather than recording an arbitrary directory as the default repo.
-/// Guards the `validate_repo_root` check in `fix_default_repo`; without that
-/// check the pointer would be written unconditionally.
 #[test]
 fn fix_yes_from_non_repo_cwd_exits_one_and_writes_no_pointer() {
     let fx = Fixture::new();
-    // A plain directory with no `patina.toml`, so not a repository root.
     let not_a_repo = fx.home.join("not_a_repo");
     fs_err::create_dir_all(not_a_repo.as_std_path()).expect("mkdir non-repo cwd");
 
@@ -157,10 +132,6 @@ fn fix_yes_from_non_repo_cwd_exits_one_and_writes_no_pointer() {
     );
 }
 
-/// A non-TTY `patina doctor --fix` without `--yes`
-/// exits 1 and identifies the missing `--yes` flag on stderr (no per-finding
-/// prompt is possible without a TTY). The subprocess stdin is not a TTY, so
-/// this is the real non-interactive path.
 #[test]
 fn fix_without_yes_in_non_tty_exits_one_identifying_yes() {
     let fx = Fixture::new();
@@ -177,8 +148,6 @@ fn fix_without_yes_in_non_tty_exits_one_identifying_yes() {
         "the refusal must include the missing --yes flag, got stderr: {stderr}"
     );
 
-    // The refusal must not have written the default_repo pointer (it returns
-    // before acquiring the lock or mutating anything).
     let pointer = fx.state_root().join("default_repo");
     assert!(
         !pointer.as_std_path().exists(),
@@ -186,11 +155,6 @@ fn fix_without_yes_in_non_tty_exits_one_identifying_yes() {
     );
 }
 
-/// On a Windows host with Developer Mode OFF and a
-/// symlink-declaring repository, `patina doctor --fix` (auto-accepting the
-/// first prompt) drives the UAC elevation flow, leaving the Developer Mode
-/// registry value at 1, and exits 0. This depends on the host's real registry
-/// state and a UAC dialog, so it is gated to Windows and `#[ignore]`.
 #[test]
 #[cfg(windows)]
 #[ignore = "requires a Windows host with Developer Mode OFF and interactive UAC"]
@@ -209,8 +173,6 @@ fn windows_fix_enables_dev_mode_and_exits_zero() {
     )
     .expect("seed repo source");
 
-    // --yes auto-accepts the per-finding prompt (the test harness cannot click
-    // a real UAC dialog; this asserts the command's own exit contract).
     let out = fx.run(&["doctor", "--fix", "--yes"], &[]);
     assert_eq!(
         code(&out),
@@ -225,9 +187,6 @@ fn windows_fix_enables_dev_mode_and_exits_zero() {
     );
 }
 
-/// The DOC-WIN-UNC finding depends on the cross-platform [`is_unc_path`]
-/// predicate, so checking that predicate exercises the finding's trigger on
-/// macOS/Linux CI. Neither platform can mount a real UNC share.
 #[test]
 fn unc_predicate_distinguishes_unc_from_posix_repo_paths() {
     assert!(
@@ -240,11 +199,6 @@ fn unc_predicate_distinguishes_unc_from_posix_repo_paths() {
     );
 }
 
-/// On a Windows test host with Developer Mode OFF and a
-/// repository declaring at least one `mode = "symlink"` entry, `doctor --json`
-/// emits a `DOC-WIN-DEVMODE` warning whose message includes Developer Mode and
-/// the registry path. This depends on the host's real Developer Mode registry
-/// state, so it is gated to Windows and `#[ignore]`.
 #[test]
 #[cfg(windows)]
 #[ignore = "requires a Windows host with Developer Mode OFF"]

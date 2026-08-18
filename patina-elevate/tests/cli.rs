@@ -1,21 +1,7 @@
-//! Process-level integration tests for the `patina-elevate` binary.
-//!
-//! These assert the exit codes the spawned process produces, where the
-//! library's unit tests cover the parsing contract in-process.
-//!
-//! The binary exists only under the `windows` feature. Without it the
-//! process-spawning tests no-op; run them with
-//! `cargo test -p patina-elevate --features windows`.
+//! Integration tests for cli.
 
 use std::process::Command;
 
-/// Path to the built `patina-elevate` binary, or `None` when the bin was not
-/// built.
-///
-/// Cargo sets `CARGO_BIN_EXE_patina-elevate` at compile time even when the
-/// bin's `required-features` are off and no binary was produced, so the guard
-/// is the file existing on disk. Without it a plain `cargo test` would spawn a
-/// non-existent path and panic instead of no-opping.
 fn elevate_bin() -> Option<&'static str> {
     let path = option_env!("CARGO_BIN_EXE_patina-elevate")?;
     std::path::Path::new(path).exists().then_some(path)
@@ -81,9 +67,6 @@ fn enable_developer_mode_off_windows_exits_1() {
     );
 }
 
-/// An elevated `patina-elevate.exe enable-developer-mode` sets the registry
-/// flag to `1` and exits `0`. Run it by hand from an elevated Windows shell
-/// with `--ignored`.
 #[cfg(windows)]
 #[test]
 #[ignore = "needs an elevated Windows host with Developer Mode OFF and a real UAC accept"]
@@ -104,15 +87,6 @@ fn enable_developer_mode_elevated_sets_flag_and_exits_0() {
     assert_eq!(flag, Some(1), "the Developer Mode flag must read back as 1");
 }
 
-/// The elevated `apply-defender-exclusions` action adds a path exclusion, and
-/// its mandatory re-read confirms the write, so the process exits `0` and
-/// records `applied`. A follow-up removal clears the exclusion again. On a
-/// Tamper-Protected or policy-managed host the add exits `1` and records
-/// `blocked` instead. Run it by hand from an elevated Windows shell with
-/// `--ignored`.
-///
-/// The result file is asserted alongside the exit code: the launching CLI
-/// reads the result file and cannot collect the child's status.
 #[cfg(windows)]
 #[test]
 #[ignore = "needs an elevated Windows host with an active, unmanaged Defender"]
@@ -160,13 +134,6 @@ fn apply_defender_exclusions_adds_then_removes_a_path() {
     );
 }
 
-/// A request the helper refuses records `failed`, not `blocked`. The launching
-/// CLI must not tell the user Defender rejected a change Defender never saw.
-///
-/// The helper's own validator rejects the path before any cmdlet runs, so this
-/// test needs neither elevation nor Defender and runs unattended on the
-/// Windows CI leg. It skips when the helper binary is absent, since that leg
-/// runs a bare `cargo test --workspace`.
 #[cfg(windows)]
 #[test]
 fn a_refused_path_is_recorded_as_failed_not_blocked() {
@@ -197,8 +164,6 @@ fn a_refused_path_is_recorded_as_failed_not_blocked() {
     );
 }
 
-/// Read the Developer Mode DWORD back out. Duplicated read: the helper must
-/// not depend on `patina-core`.
 #[cfg(windows)]
 fn read_dev_mode_flag() -> Result<Option<u32>, Box<dyn std::error::Error>> {
     use winsafe::co;

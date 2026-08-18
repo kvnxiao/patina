@@ -49,8 +49,8 @@ use serde::Deserialize;
 use serde::Serialize;
 use thiserror::Error;
 
-/// Current on-disk drift-cache format major version. This is the drift
-/// cache's *own* version, intentionally separate from the journal's
+/// Current on-disk drift-cache format major version. The drift cache has its
+/// own version, separate from the journal's
 /// [`FILE_MAJOR_VERSION`](crate::journal::FILE_MAJOR_VERSION). The two
 /// formats version independently, so a journal-layout bump must never force
 /// a drift-cache bump. Bump this only when the serialized [`DriftCache`]

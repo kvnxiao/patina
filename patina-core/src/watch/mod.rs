@@ -297,8 +297,8 @@ where
                             //   re-apply.
                             // - Otherwise the batch touched only content-target
                             //   paths, either a re-apply's own target rewrite or
-                            //   an external edit. That is drift detection's
-                            //   concern, not a re-apply. A content-target event
+                            //   an external edit. Drift detection owns that
+                            //   concern, not re-apply. A content-target event
                             //   re-hashes the live bytes and notifies on
                             //   divergence. It must not re-apply, because
                             //   re-applying would rewrite the target and
@@ -539,8 +539,8 @@ mod tests {
     fn only_source_paths_classify_as_source_events() {
         // The re-apply trigger fires only for a repository source path. A
         // content-target path is watched (for drift) but is not a source, so a
-        // batch naming only the target does not re-apply. This is the loop
-        // guard that stops a re-apply's own target rewrite from re-triggering.
+        // batch naming only the target does not re-apply. The loop guard stops a
+        // re-apply's own target rewrite from re-triggering.
         let sources = vec![Utf8PathBuf::from("/repo/git/gitconfig")];
         assert!(source_event(&batch(&["/repo/git/gitconfig"]), &sources));
         assert!(!source_event(&batch(&["/home/u/.gitconfig"]), &sources));

@@ -144,8 +144,8 @@ fn leaf_of(tree_target: Option<&Utf8Path>) -> String {
 
 /// Reject both collision shapes over the active entry set.
 ///
-/// Claims must arrive in declaration order, which makes the reported pair a
-/// deterministic function of the manifest rather than of hash iteration.
+/// Claims must arrive in declaration order. The reported pair then depends on
+/// the manifest rather than on hash iteration.
 ///
 /// # Errors
 ///
@@ -185,8 +185,8 @@ struct StakedTarget<'a> {
 /// of the parent chain as exists on disk, so how much of a resolved target is
 /// canonical depends on how deep the missing directories start. Given
 /// `~/.claude/skills` and `~/.claude/skills/note.md` where neither `.claude`
-/// nor `skills` exists yet, the first comes back with `$HOME` canonicalized and
-/// the second stays lexical from `$HOME` down. Some hosts reach `$HOME`
+/// nor `skills` exists yet, the first path is canonicalized through `$HOME` and
+/// the second remains lexical from `$HOME` down. Some hosts resolve `$HOME`
 /// through a symbolic link (macOS `/var` to `/private/var`), or give it a
 /// short name (Windows 8.3). Those two spellings then differ, and the
 /// containment between them would go unnoticed.

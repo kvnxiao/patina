@@ -10,11 +10,10 @@
 //! It also carries the `[[remote]]` registry: every third-party git source the
 //! repository consumes, declared once so a module entry can select one by name.
 //!
-//! This module is parse-and-return only: it reads the root manifest,
-//! validates each table against the reserved `patina.*` namespace via
-//! [`crate::variables::reject_reserved_keys`], and hands back the raw
-//! [`toml::value::Table`]s for the resolver to ingest. It does
-//! no layering and no precedence work.
+//! Parse and return the root manifest. Validate each table against the reserved
+//! `patina.*` namespace via [`crate::variables::reject_reserved_keys`], then
+//! return raw [`toml::value::Table`]s for the resolver to ingest. Do not apply
+//! layering or precedence here.
 //!
 //! A missing manifest, a missing `[variables]` table, or a missing
 //! `[profiles]` section each yield empty results rather than an error,
@@ -362,7 +361,7 @@ mod tests {
         assert_eq!(
             names,
             ["zsh", "humanizer"],
-            "declaration order is what decides first-use fetch order"
+            "declaration order determines first-use fetch order"
         );
         let humanizer = config.remotes.last().expect("the second declaration");
         assert_eq!(humanizer.git_ref.as_deref(), Some("main"));

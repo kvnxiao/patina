@@ -328,7 +328,7 @@ fn unrolled_commit_timestamps(dir: &Utf8Path) -> Result<Vec<String>, JournalErro
 /// stale state. Skipping it would silently report or revert an older commit,
 /// and defeat that guard.
 ///
-/// This single scan backs both readers of "the last apply": `patina status`
+/// One scan backs both readers of "the last apply": `patina status`
 /// via [`read_latest_commit`] and `patina rollback`, so the two cannot
 /// disagree on which commit is current.
 ///
@@ -372,8 +372,8 @@ pub(crate) fn read_latest_commit_with_ts(
 /// sentinel is torn or corrupt.
 ///
 /// `patina status` is the reader: it decodes the latest apply's
-/// recorded targets and classifies each against the live filesystem. This is
-/// the `<ts>`-less convenience wrapper over the crate-internal
+/// recorded targets and classifies each against the live filesystem. The
+/// `<ts>`-less convenience wrapper calls the crate-internal
 /// `read_latest_commit_with_ts`, which owns the torn-sentinel fallback and the
 /// version-mismatch carve-out.
 ///

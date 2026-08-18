@@ -1,16 +1,9 @@
+//! Integration tests for state dir resolution.
+
 #![expect(
     clippy::expect_used,
     reason = "integration tests use .expect() on fixture setup; the lint's allow-expect-in-tests covers #[cfg(test)] modules but not the helper functions in tests/*.rs integration crates."
 )]
-
-//! Integration tests for per-machine state directory resolution.
-//!
-//! These tests exercise `state_dir::resolve_with_env`, the testable
-//! core that takes an explicit [`HostOs`] and an environment-lookup
-//! closure. Tests run against real tempdir filesystems so the
-//! idempotent-creation contract is exercised end-to-end, but the OS
-//! family is supplied explicitly so every layout branch runs on
-//! every CI host.
 
 use camino::Utf8PathBuf;
 use patina_core::HostOs;
@@ -91,9 +84,6 @@ fn windows_resolves_under_localappdata() {
 
 #[test]
 fn resolve_does_not_create_lazy_files() {
-    // The owners of `profile`, `default_repo`, and
-    // `lock` create those files lazily. `resolve` must only
-    // create the directory tree, not the files.
     let (_keep, t) = utf8_tempdir();
     let env = env_map(vec![("XDG_STATE_HOME", t.to_string())]);
     let root = resolve_with_env(HostOs::Linux, &env).expect("resolve");
@@ -108,7 +98,6 @@ fn resolve_does_not_create_lazy_files() {
 
 #[test]
 fn resolve_does_not_write_to_external_repository() {
-    // The engine must never write to the dotfiles repository.
     let (_keep_state, t) = utf8_tempdir();
     let (_keep_repo, repo) = utf8_tempdir();
 

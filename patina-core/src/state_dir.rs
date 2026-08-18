@@ -17,7 +17,8 @@
 //! host returns the same path and is a filesystem no-op.
 //!
 //! The lazily-created files `profile`, `default_repo`, and `lock` belong to
-//! their owning subsystems. This module only creates the directory tree.
+//! their owning subsystems. The state-directory layer only creates the
+//! directory tree.
 //!
 //! `<state>/patina/logs/` is deliberately NOT created here. The watcher owns
 //! that directory and its rotating-log stack, creating it lazily on first
@@ -125,8 +126,8 @@ pub fn resolve() -> Result<Utf8PathBuf, StateDirError> {
 /// Resolve and materialize the per-machine state directory using an
 /// explicit host family and environment-lookup closure.
 ///
-/// This is the testable core of [`resolve`]. The closure receives an
-/// environment-variable name and returns `Some(value)` when the
+/// Test [`resolve`] with an explicit host and environment lookup. The closure
+/// receives an environment-variable name and returns `Some(value)` when the
 /// variable is set to a non-empty string, `None` otherwise.
 ///
 /// # Errors
@@ -144,9 +145,9 @@ where
 /// Compute the state-directory root for `host` from `env` without
 /// touching the filesystem.
 ///
-/// This is the pure, side-effect-free core of [`resolve`]: it does not
-/// create any directory. [`resolve`] layers directory materialization on
-/// top. Repository discovery ([`crate::discovery`]) calls this directly, so
+/// Compute the root without touching the filesystem. [`resolve`] layers
+/// directory materialization on top. Repository discovery
+/// ([`crate::discovery`]) calls this directly, so
 /// it can locate the persisted-default file without creating the state
 /// tree on a read-only path.
 pub(crate) fn compute_root<F>(host: HostOs, env: &F) -> Result<Utf8PathBuf, StateDirError>

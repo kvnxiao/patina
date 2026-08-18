@@ -1,8 +1,7 @@
 //! TOML schema parsing for the `[[file]]`, `[[directory]]`, and
 //! `[[hook]]` table arrays declared inside a module's `patina.toml`.
 //!
-//! This module owns parsing and validation only. The resulting
-//! [`ModuleConfig`] is consumed by later subsystems:
+//! Parse and validate the schema. Later subsystems consume [`ModuleConfig`]:
 //!
 //! - File mode executors read [`ManagedEntry`] / [`FileMode`].
 //! - Hook execution reads [`HookEntry`] / [`HookEvent`].
@@ -10,8 +9,8 @@
 //!   so it does not need a second TOML pass.
 //!
 //! `[variables]` is intentionally captured as a raw `toml::Value::Table`
-//! (boxed to keep the [`ModuleConfig`] enum size bounded). This module
-//! does not validate variable keys against the reserved `patina.*`
+//! (boxed to keep the [`ModuleConfig`] enum size bounded). The parser does not
+//! validate variable keys against the reserved `patina.*`
 //! namespace; that is the resolver's job. Capturing the raw table here
 //! is the handoff.
 

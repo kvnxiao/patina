@@ -96,7 +96,7 @@ fn remove_symlink(path: &Utf8Path, file_type: std::fs::FileType) -> std::io::Res
 /// and a regular file is byte-copied. Any existing entry at `to` is removed
 /// first and `to`'s parent chain is created.
 ///
-/// This is the primitive both directions of the backup contract use:
+/// Both directions of the backup contract use this primitive:
 /// `clone_entry(target, backup)` to stash a pre-existing target before an
 /// overwrite, and `clone_entry(backup, target)` to restore it
 /// during crash recovery or rollback. Using one

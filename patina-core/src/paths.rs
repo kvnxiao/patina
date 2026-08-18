@@ -79,8 +79,8 @@ pub enum PathError {
 /// canonicalized lexically by joining with the canonical parent (when
 /// the parent exists) or the canonical current working directory.
 ///
-/// This function never expands `~`; expand it with [`expand_tilde`]
-/// first if the input may carry a home-relative prefix.
+/// Do not expand `~`; call [`expand_tilde`] first if the input may carry a
+/// home-relative prefix.
 ///
 /// On Windows, any `\\?\` verbatim prefix is stripped where the plain form
 /// is equivalent, so canonical paths never carry the verbatim prefix into
@@ -268,9 +268,9 @@ fn fold_dot_segments(path: &Utf8Path) -> Utf8PathBuf {
 /// leading-tilde shell convention is honoured. Paths that do not begin
 /// with `~` are returned unchanged.
 ///
-/// This is purely lexical: it does not canonicalize, does not consult
-/// the filesystem, and does not validate that `home` exists. Pipe the
-/// result through [`canonicalize`] to obtain an absolute,
+/// Keep this operation lexical: do not canonicalize, consult the filesystem,
+/// or validate that `home` exists. Pipe the result through [`canonicalize`] to
+/// obtain an absolute,
 /// symlink-resolved form.
 ///
 /// # Examples

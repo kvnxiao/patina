@@ -20,7 +20,7 @@ use anstyle::AnsiColor;
 use anstyle::Color;
 use anstyle::Style;
 
-/// The palette the diff renderer and reporter paint with.
+/// The palette used by the diff renderer and reporter.
 ///
 /// Roles are grouped by the surface that prints them, and the roles in one
 /// group can appear on a single row. Two roles in one group must therefore
@@ -55,25 +55,24 @@ pub struct Styles {
     /// An action that reached the state the user asked for: a completed apply,
     /// or a watch service already running.
     pub success: Style,
-    /// A path embedded in a one-line result sentence, so the path the command
-    /// acted on stands out from the prose around it.
+    /// The command's target path in a one-line result sentence.
     pub path: Style,
     /// A follow-up suggestion, or a stand-in carrying no value of its own such
     /// as a cell repeating the one beside it. A line must not report a fact
     /// through this role alone.
     pub hint: Style,
-    /// The roles the `patina status` table paints with.
+    /// Styles for the `patina status` table.
     pub status: StatusStyles,
-    /// The roles the `patina doctor` findings paint with.
+    /// Styles for the `patina doctor` findings.
     pub finding: FindingStyles,
-    /// The roles the `patina remote list` table paints with.
+    /// Styles for the `patina remote list` table.
     pub remote: RemoteStyles,
-    /// The roles the Defender exclusion listing paints with.
+    /// Styles for the Defender exclusion listing.
     #[cfg(windows)]
     pub exclusion: ExclusionStyles,
 }
 
-/// The roles the `patina status` table paints with, one per
+/// Styles for the `patina status` table, one per
 /// [`TargetState`](patina_core::TargetState).
 ///
 /// The state word stays in each row's text, so the color only speeds the scan:
@@ -92,7 +91,7 @@ pub struct StatusStyles {
     pub orphaned: Style,
 }
 
-/// The roles the `patina doctor` findings paint with, one per
+/// Styles for the `patina doctor` findings, one per
 /// [`Level`](crate::cmd::doctor::Level).
 ///
 /// The level also stays bracketed in the row's first cell, so an ANSI-stripped
@@ -107,9 +106,9 @@ pub struct FindingStyles {
     pub error: Style,
 }
 
-/// The roles the `patina remote list` table paints with.
+/// Styles for the `patina remote list` table.
 ///
-/// Every cell these color also states its meaning in text, so an ANSI-stripped
+/// Every colored cell also states its meaning in text, so an ANSI-stripped
 /// listing loses only the color.
 #[derive(Debug, Clone, Copy)]
 pub struct RemoteStyles {
@@ -129,7 +128,7 @@ pub struct RemoteStyles {
     pub implicit_ref: Style,
 }
 
-/// The styles the Defender exclusion listing paints with.
+/// Styles for the Defender exclusion listing.
 ///
 /// Gated with the command that uses them: `patina defender` does not exist off
 /// Windows, so neither do its roles.
@@ -284,10 +283,9 @@ impl Styles {
 
 /// Wrap `text` in `style`'s opening escape and reset.
 ///
-/// An empty style renders to zero bytes on both, so under the plain palette
-/// `paint` returns `text` unchanged. That keeps a plain render byte-identical
-/// to unstyled output.
-#[must_use = "the painted string is what gets written"]
+/// An empty style renders to zero bytes on both, so the plain palette preserves
+/// `text` byte-for-byte.
+#[must_use = "write or return the painted string"]
 pub fn paint(style: Style, text: &str) -> String {
     format!("{}{text}{}", style.render(), style.render_reset())
 }
@@ -296,10 +294,6 @@ pub fn paint(style: Style, text: &str) -> String {
 mod tests {
     use super::*;
 
-    /// The plain palette must render to zero bytes on both the opening code
-    /// and the reset. Zero bytes is what keeps plain output byte-identical to
-    /// unstyled, and the deterministic-stdout contract depends on that. Giving
-    /// `plain()` a real color fails this test.
     #[test]
     fn plain_styles_render_to_zero_bytes() {
         let p = Styles::plain();

@@ -17,10 +17,9 @@
 //! subscriptions; dropping it tears them down. The watcher holds it for its
 //! process lifetime and drops it on shutdown.
 //!
-//! This module wires the debounce and the bridge only. Interpreting a batch,
-//! deciding whether it is a source edit (re-apply), a content-target
-//! edit (drift check), or a journal-directory event (rescan),
-//! is the select-loop's job, not this module's.
+//! Wire the debounce and bridge. The select loop interprets each batch as a
+//! source edit (re-apply), a content-target edit (drift check), or a
+//! journal-directory event (rescan).
 
 use camino::Utf8Path;
 use camino::Utf8PathBuf;

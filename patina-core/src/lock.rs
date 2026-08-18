@@ -263,11 +263,11 @@ pub fn acquire(path: &Utf8Path, kind: LockKind, timeout: Duration) -> Result<Loc
 /// Acquire the advisory lock at `path` in the requested `kind` with a
 /// single non-blocking attempt, never waiting for a conflicting holder.
 ///
-/// This is the zero-wait counterpart to [`acquire`]: it makes exactly one
-/// `try_lock_*` attempt, and returns [`LockError::Contended`] immediately if
-/// the lock is already held, rather than polling. It exists for the apply
-/// path's `NonBlocking` policy (the watcher's background reapply), which
-/// must not block waiting for the lock.
+/// Attempt the counterpart to [`acquire`] exactly once with `try_lock_*`, and
+/// return [`LockError::Contended`] immediately if
+/// the lock is already held, rather than polling. The apply path uses this
+/// function for its `NonBlocking` policy (the watcher's background reapply),
+/// which must not block waiting for the lock.
 ///
 /// On success the returned [`LockGuard`] holds the lock until it is
 /// dropped, exactly as for [`acquire`].

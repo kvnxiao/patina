@@ -1,21 +1,9 @@
+//! Integration tests for backups.
+
 #![expect(
     clippy::expect_used,
     reason = "integration tests use .expect() on fixture setup; allow-expect-in-tests covers #[cfg(test)] modules but not the helper functions in tests/*.rs integration crates."
 )]
-
-//! Integration coverage for backup-on-overwrite.
-//!
-//! These tests drive the `patina_core::backups::backup_before_overwrite`
-//! entry point directly. Each test stages an on-disk state it covers (a
-//! pre-existing target, an absent target, or a clean repository) and
-//! asserts the backup tree converges to the expected shape. Each test maps
-//! to one backup bullet:
-//!
-//! - overwriting a pre-existing `~/.zshrc` produces a backup holding the
-//!   original bytes at the mirrored path before the overwrite.
-//! - an absent target yields no backup entry.
-//! - backups land under the state tree; a sibling repository directory stays
-//!   byte-for-byte untouched.
 
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
@@ -25,9 +13,6 @@ use tempfile::TempDir;
 
 const TS: &str = "20260528T120000Z";
 
-/// A staged apply scene: a state directory with `backups/`, `home/` for the
-/// user's targets, and `repo/` for the dotfiles repository. The engine must
-/// never write to `repo/`.
 struct Scene {
     _temp: TempDir,
     backups: Utf8PathBuf,
@@ -54,8 +39,6 @@ impl Scene {
     }
 }
 
-/// Snapshot every regular file under `dir` as (relative-path, bytes) pairs,
-/// so a later snapshot can prove the tree is byte-for-byte unchanged.
 fn snapshot(dir: &Utf8Path) -> Vec<(String, Vec<u8>)> {
     let mut out = Vec::new();
     let mut stack = vec![dir.to_owned()];

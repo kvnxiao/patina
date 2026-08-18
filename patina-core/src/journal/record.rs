@@ -7,7 +7,7 @@
 //! against it. The plan file is deleted at commit, so the record cannot
 //! live there.
 //!
-//! This module makes the commit sentinel carry that payload: a
+//! Make the commit sentinel carry that payload: a
 //! `postcard`-encoded [`ApplyRecord`] behind the same fixed-size version
 //! envelope the plan file uses, so a future format change is refused
 //! rather than mis-decoded. Recovery is unaffected: it keys only on the
@@ -57,8 +57,7 @@ pub enum ExpectedTarget {
     Symlink {
         /// Canonical absolute target path of the symlink itself.
         target: String,
-        /// Canonical absolute path the link is expected to point at. This is
-        /// the canonical source for a symlink target.
+        /// Canonical absolute source path for the symlink target.
         link_target: String,
         /// Index of the `[[file]]` entry that materialized this target.
         /// Targets sharing an entry index form one atomic rollback unit: a

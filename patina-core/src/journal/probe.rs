@@ -3,7 +3,7 @@
 //! Recovery never trusts the advisory progress cursor. It asks the
 //! filesystem what state each planned target is in, and checks the
 //! per-apply backup directory to decide how to reverse the operation.
-//! This module owns those two pure-ish helpers:
+//! Two pure helpers cover those operations:
 //!
 //! - [`mirror_backup_path`] computes where the backup of a given target lives
 //!   under `<backups>/<ts>/`. The mapping mirrors the target's absolute path

@@ -1,24 +1,9 @@
+//! Integration tests for watch lock contention.
+
 #![expect(
     clippy::expect_used,
     reason = "integration tests use .expect() on fixture setup and assertions; allow-expect-in-tests covers #[cfg(test)] modules but not the top level of a tests/*.rs integration crate."
 )]
-
-//! Cross-process coverage for the watcher's lock-contention skip.
-//!
-//! The watcher re-applies under [`LockPolicy::NonBlocking`]. The engine
-//! self-acquires the exclusive advisory lock with a single non-blocking
-//! attempt. On contention, it returns having mutated nothing.
-//!
-//! This test holds the exclusive lock in the test process, exactly as a
-//! concurrent CLI `apply` or `rollback` would in another process. It drives
-//! `run_reapply` in the `reapply_probe` child. It asserts the child reports
-//! `SKIPPED` and creates no target. It then releases the lock, re-runs the
-//! child, and asserts the cycle now reports `APPLIED` and materializes.
-//!
-//! The re-apply runs in a child because the crate forbids `unsafe`. The test
-//! cannot mutate its own environment, which `run_reapply` reads to resolve
-//! the repo and state dir. The child inherits a clean environment via
-//! `Command::env`.
 
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
@@ -33,9 +18,6 @@ use tempfile::TempDir;
 
 static BUILD: Once = Once::new();
 
-/// Build the `reapply_probe` example once for the whole test binary so each
-/// spawn is a fast exec of an already-compiled artifact rather than a `cargo
-/// run` that might race the build cache. Mirrors `lock_concurrency.rs`.
 fn ensure_probe_built() {
     BUILD.call_once(|| {
         let status = Command::new(env!("CARGO"))
@@ -48,10 +30,6 @@ fn ensure_probe_built() {
     });
 }
 
-/// The cargo target root this test binary was built into, derived from the
-/// running test executable (`<target-root>/<profile>/deps/<test-exe>`), so the
-/// example build and the spawn lookup agree under both `cargo test` and
-/// `cargo llvm-cov`.
 fn target_root() -> Utf8PathBuf {
     let test_exe = std::env::current_exe().expect("current test exe path");
     let root = test_exe
@@ -62,7 +40,6 @@ fn target_root() -> Utf8PathBuf {
     Utf8PathBuf::from_path_buf(root.to_owned()).expect("utf8 target root")
 }
 
-/// Locate the compiled `reapply_probe` example next to this test binary.
 fn probe_path() -> Utf8PathBuf {
     let test_exe = std::env::current_exe().expect("current test exe path");
     let deps_dir = test_exe.parent().expect("deps dir");
@@ -104,8 +81,6 @@ impl Fixture {
         .expect("module manifest");
         fs_err::write(module.join("rc"), "reapplied\n").expect("source content");
 
-        // Resolve the state dir the same way the child will from its
-        // environment, then create it so the lock file's parent exists.
         let state_base_owned = state_base.clone();
         let home_owned = home.clone();
         let state_dir =
@@ -126,8 +101,6 @@ impl Fixture {
         }
     }
 
-    /// Run the `reapply_probe` child with this fixture's repo/state/home wired
-    /// through the environment, exactly as the CLI resolves them.
     fn run_probe(&self, probe: &Utf8Path) -> Output {
         Command::new(probe.as_std_path())
             .env("PATINA_REPO", self.repo.as_str())
@@ -155,7 +128,6 @@ fn reapply_skips_without_mutating_while_the_exclusive_lock_is_held() {
     let fx = Fixture::new();
     let target = fx.home.join(".rc");
 
-    // Hold the exclusive lock, standing in for a concurrent CLI apply.
     let guard = acquire_lock(
         &fx.state_dir.join("lock"),
         LockKind::Exclusive,
@@ -175,7 +147,6 @@ fn reapply_skips_without_mutating_while_the_exclusive_lock_is_held() {
         "a skipped re-apply must not create the target"
     );
 
-    // Release the lock so the next re-apply can proceed.
     drop(guard);
     let released = fx.run_probe(&probe);
     assert_eq!(

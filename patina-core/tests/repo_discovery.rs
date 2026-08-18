@@ -1,16 +1,9 @@
+//! Integration tests for repo discovery.
+
 #![expect(
     clippy::expect_used,
     reason = "integration tests use .expect() on fixture setup; the lint's allow-expect-in-tests covers #[cfg(test)] modules but not the helper functions in tests/*.rs integration crates."
 )]
-
-//! Integration tests for repository-root resolution.
-//!
-//! Tests use the `resolve_repository_root_with` seam so they can
-//! inject env-var, CWD, and persisted-default values explicitly
-//! without touching process-level state. The production wrapper
-//! `resolve_repository_root` is exercised only by the trivial
-//! "all three sources empty" case below to confirm the no-arg form
-//! threads through.
 
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
@@ -32,10 +25,6 @@ fn write_root_manifest(dir: &Utf8Path) {
 fn utf8_tempdir() -> (TempDir, Utf8PathBuf) {
     let td = TempDir::new().expect("create tempdir");
     let path = Utf8PathBuf::from_path_buf(td.path().to_path_buf()).expect("tempdir path is utf-8");
-    // Canonicalize so test expectations match the function's own
-    // post-resolution canonicalization. `dunce::canonicalize` mirrors the
-    // engine because it strips the Windows `\\?\` verbatim prefix that plain
-    // `canonicalize_utf8` would leave on the fixture path.
     let canon = dunce::canonicalize(path.as_std_path()).expect("canonicalize tempdir");
     let canonical = Utf8PathBuf::from_path_buf(canon).expect("canonical tempdir is utf-8");
     (td, canonical)

@@ -4,8 +4,8 @@
 //! `<state>/patina/journal/<ts>.progress`. The cursor is advisory: it is
 //! written through to the kernel page cache but is **never** `fsync`-ed
 //! per operation. After a crash the last record may lag the real
-//! filesystem state by at most one operation. This is why crash recovery
-//! probes the filesystem rather than trusting the cursor. Skipping the
+//! filesystem state by at most one operation. Crash recovery therefore probes
+//! the filesystem rather than trusting the cursor. Skipping the
 //! per-op `fsync` keeps a 100-operation apply from paying 100 durability
 //! syscalls.
 //!

@@ -1,26 +1,9 @@
+//! Integration tests for exit codes.
+
 #![expect(
     clippy::expect_used,
     reason = "integration tests use .expect() on fixture setup; allow-expect-in-tests covers #[cfg(test)] modules but not the helper functions in tests/*.rs integration crates."
 )]
-
-//! Integration tests for the formalized CLI exit-code contract.
-//!
-//! Each test drives the real `patina` binary through [`common::Fixture`], so
-//! the observed exit code is the real process status `main` produced through
-//! the single `cli::resolve_exit_code` funnel.
-//!
-//! | Scenario                                   | Expected code |
-//! |--------------------------------------------|---------------|
-//! | `must_succeed` `pre_apply` hook fails      | 2             |
-//! | `must_succeed` `post_apply` hook fails     | 3             |
-//! | `patina.toml` has a TOML syntax error      | 1             |
-//! | exclusive lock held past the timeout cap   | 4             |
-//! | apply succeeds end-to-end                  | 0             |
-//!
-//! The declined-prompt case (exit 5) needs an interactive TTY, and a
-//! subprocess pipe cannot simulate one. The in-process unit tests on the
-//! injected `PromptReader` in `cmd::apply` and `cmd::rollback` cover it
-//! instead.
 
 mod common;
 
@@ -29,8 +12,6 @@ use common::code;
 use patina_core::LockKind;
 use std::time::Duration;
 
-/// A module with a single copy `[[file]]` plus a hook of the given event /
-/// command. Used to drive the hook-failure exit codes.
 fn hook_module(f: &Fixture, event: &str, command: &str) {
     let module = f.module(
         "shell",
@@ -44,8 +25,6 @@ fn hook_module(f: &Fixture, event: &str, command: &str) {
 
 #[test]
 fn pre_apply_hook_failure_exits_2() {
-    // A `pre_apply` hook with `command = "false"` and the default
-    // `must_succeed = true` aborts before any file operation, exit code 2.
     let f = Fixture::new();
     hook_module(&f, "pre_apply", "false");
 
@@ -65,8 +44,6 @@ fn pre_apply_hook_failure_exits_2() {
 
 #[test]
 fn post_apply_hook_failure_exits_3() {
-    // A `post_apply` hook returning non-zero under the default
-    // `must_succeed = true` rolls back the file operations, exit code 3.
     let f = Fixture::new();
     hook_module(&f, "post_apply", "exit 1");
 
@@ -87,7 +64,6 @@ fn post_apply_hook_failure_exits_3() {
 #[test]
 fn toml_syntax_error_exits_1_and_includes_the_failure() {
     let f = Fixture::new();
-    // `=` with no value is a TOML syntax error the parser rejects.
     f.module("broken", "[[file]]\nsource =\n");
 
     let out = f.apply(&["--yes"]);
@@ -106,10 +82,6 @@ fn toml_syntax_error_exits_1_and_includes_the_failure() {
 
 #[test]
 fn exclusive_lock_timeout_exits_4() {
-    // A second apply that cannot acquire the held exclusive lock within the
-    // (test-shrunk) timeout cap exits 4. The lock is held in-process, and
-    // PATINA_LOCK_TIMEOUT_MS shrinks the subprocess's cap so the test does
-    // not wait the production minute.
     let f = Fixture::new();
     let module = f.module(
         "shell",
@@ -117,8 +89,6 @@ fn exclusive_lock_timeout_exits_4() {
     );
     fs_err::write(module.join("rc"), "payload\n").expect("write source");
 
-    // Hold the exclusive lock for the whole subprocess window. The engine
-    // resolves the lock to `<state>/patina/lock`; match that path here.
     let lock_path = f.state_root().join("lock");
     let _held = patina_core::acquire_lock(&lock_path, LockKind::Exclusive, Duration::from_secs(5))
         .expect("hold the exclusive lock for the duration of the subprocess apply");

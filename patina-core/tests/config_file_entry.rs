@@ -1,10 +1,9 @@
+//! Integration tests for config file entry.
+
 #![expect(
     clippy::indexing_slicing,
     reason = "integration tests use direct [0] / [1] indexing for assertion-only fixture inspection where the vector length is already asserted immediately above; bounds-check panics would be acceptable test signal anyway."
 )]
-
-//! Integration tests for the kind-typed `[[file]]` / `[[directory]]`
-//! table-array schema.
 
 use patina_core::ConfigParseError;
 use patina_core::FileMode;
@@ -68,8 +67,6 @@ mode = "symlink-tree"
 
 #[test]
 fn directory_omitted_mode_resolves_to_atomic_whole_directory_symlink() {
-    // Omitted mode maps to `FileMode::SymlinkDir`, the historical
-    // `symlink-dir` name.
     let toml = r#"
 [[directory]]
 source = "nvim-config"
@@ -82,8 +79,6 @@ target = "~/.config/nvim"
 
 #[test]
 fn directory_copy_resolves_to_recursive_copy() {
-    // mode = "copy" maps to `FileMode::CopyTree`, the historical
-    // `copy-tree` name.
     let toml = r#"
 [[directory]]
 source = "scripts"
@@ -115,8 +110,6 @@ mode = "copy"
 
 #[test]
 fn carries_optional_when_expression_verbatim() {
-    // The optional `when` field is parsed and carried as raw source. It is
-    // not evaluated here.
     let toml = r#"
 [[file]]
 source = "wmrc"
@@ -199,8 +192,6 @@ mode = "{removed}"
 
 #[test]
 fn directory_with_tmpl_source_is_rejected() {
-    // Directory sources ending in `.tmpl` are rejected because template
-    // render is file-only.
     let toml = r#"
 [[directory]]
 source = "theme.tmpl"
@@ -218,7 +209,6 @@ target = "~/.config/theme"
 
 #[test]
 fn rejects_target_and_targets_both_set_on_file() {
-    // A file entry requires exactly one of `target` or `targets`.
     let toml = r#"
 [[file]]
 source = "agent.toml"
@@ -238,7 +228,6 @@ targets = ["~/.codex/agent.toml"]
 
 #[test]
 fn rejects_target_and_targets_both_set_on_directory() {
-    // The same exactly-one-of rule applies to `[[directory]]`.
     let toml = r#"
 [[directory]]
 source = "d"
@@ -271,7 +260,6 @@ source = "agent.toml"
 
 #[test]
 fn rejects_empty_targets_array_on_directory() {
-    // The non-empty-targets rule applies to `[[directory]]` too.
     let toml = r#"
 [[directory]]
 source = "d"
@@ -287,10 +275,6 @@ targets = []
     ));
 }
 
-/// Every ASCII control character is refused in a target, including ones that
-/// leave a line-oriented render intact. TOML's own escapes are the only way
-/// to author one, so each case here spells out what the manifest would
-/// contain.
 #[test]
 fn rejects_a_control_character_in_a_target() {
     for (escape, codepoint) in [
@@ -350,8 +334,6 @@ target = \"~/.claude/skills\"
     ));
 }
 
-/// The rule covers every element of a `targets` fan-out, including the last
-/// one, and applies to `[[directory]]` exactly as it does to `[[file]]`.
 #[test]
 fn rejects_a_control_character_in_a_later_fan_out_target() {
     let toml = "
@@ -367,9 +349,6 @@ targets = [\"~/.config/a\", \"~/.config/b\\tc\"]
     ));
 }
 
-/// The rule refuses the ASCII control range only. A space and a non-ASCII
-/// character are both legal in a path on every supported OS, so a predicate
-/// that reached past the control range would break real manifests.
 #[test]
 fn accepts_spaces_and_non_ascii_in_paths() {
     let toml = "
@@ -386,8 +365,6 @@ target = \"~/Application Support/ünïcode 😀/agent.toml\"
 
 #[test]
 fn rejects_unknown_file_mode_naming_accepted_values() {
-    // The error names only the accepted `[[file]]` modes, not the removed
-    // dir-mode spellings.
     let toml = r#"
 [[file]]
 mode = "merge-json"
@@ -526,9 +503,6 @@ ignore = ["*.pyc"]
 
 #[test]
 fn a_whole_directory_symlink_declaring_ignore_is_refused() {
-    // The refusal matters more here than for a [[file]]: accepting it would
-    // leave the author believing the listed paths are filtered while the
-    // single link keeps exposing the whole directory.
     let toml = r#"
 [[directory]]
 source = "mpv"
@@ -551,8 +525,6 @@ ignore = ["*.log"]
 
 #[test]
 fn a_module_level_patina_ignore_is_refused() {
-    // Only the root manifest's `[patina]` table is read, so accepting this
-    // would compile no matcher and filter nothing.
     let toml = r#"
 [patina]
 ignore = ["*.pyc"]
@@ -571,8 +543,6 @@ mode = "symlink-tree"
 
 #[test]
 fn a_module_manifest_without_an_ignore_key_still_parses() {
-    // The root marker lives in the same table; rejecting `ignore` must not
-    // reject the table wholesale.
     let toml = r#"
 [patina]
 root = true

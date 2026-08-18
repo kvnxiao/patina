@@ -41,7 +41,7 @@ fn main() {
         ReapplyOutcome::Failed => "FAILED",
     };
 
-    // This test-harness example talks to its parent test process over stdout; it
+    // The test-harness example talks to its parent test process over stdout; it
     // is not user-facing CLI output and has no `output::Reporter` to route
     // through, so the workspace-wide `disallowed-macros` ban is scoped-out here.
     #[expect(

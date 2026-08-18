@@ -1,13 +1,4 @@
-//! A non-Windows release build of the workspace emits the main `patina`
-//! binary but skips the `patina-elevate` bin.
-//!
-//! Scanning the shared `target/release/` directory would race concurrent
-//! builds and could match a stale artifact left by an earlier
-//! `--features windows` run. This test drives `cargo build --release
-//! --message-format=json` in a hermetic target dir and reads the set of
-//! executables Cargo reports emitting.
-//!
-//! Skipped on Windows, where the bin is built.
+//! Integration tests for artifact absence.
 
 #![cfg(not(windows))]
 
@@ -45,8 +36,6 @@ fn release_build_emits_patina_but_not_patina_elevate() {
         if value.get("reason").and_then(Value::as_str) != Some("compiler-artifact") {
             continue;
         }
-        // Library units report a null `executable`; the file stem keeps the
-        // assertion suffix-agnostic.
         if let Some(exe) = value.get("executable").and_then(Value::as_str)
             && let Some(name) = Path::new(exe).file_stem().and_then(|s| s.to_str())
         {

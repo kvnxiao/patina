@@ -13,8 +13,8 @@
 //!
 //! The file lives beside the root `patina.toml` and is committed, so a remote
 //! update flows to other machines as an ordinary repository change. `apply`
-//! reads `rev` and nothing else, which keeps plan output identical across
-//! machines and runs. `updated_at` exists solely for the update gate's
+//! reads `rev` and nothing else. Plan output is identical across machines and
+//! runs. `updated_at` exists solely for the update gate's
 //! backdating check, and only `patina remote update` writes it.
 //!
 //! Serialization is deterministic: entries in name order, a fixed field order,
@@ -60,7 +60,7 @@ impl LockEntry {
     /// Parsing succeeds for every entry that came through [`Lockfile::parse`],
     /// which validates the field. The `Option` covers an entry constructed
     /// in-process.
-    #[must_use = "the epoch is what the gate's backdating check compares against"]
+    #[must_use = "the backdating check compares against the epoch"]
     pub fn updated_at_epoch(&self) -> Option<i64> {
         self.updated_at
             .parse::<jiff::Timestamp>()
@@ -79,7 +79,7 @@ pub struct Lockfile {
 }
 
 /// `<repo_root>/patina.lock`.
-#[must_use = "the lockfile path is where pins are read from and written to"]
+#[must_use = "the CLI reads and writes pins at this path"]
 pub fn lockfile_path(repo_root: &Utf8Path) -> Utf8PathBuf {
     repo_root.join(LOCKFILE_NAME)
 }
@@ -197,7 +197,7 @@ impl Lockfile {
     /// renders of the same pins are therefore byte-identical, and a pin bump
     /// shows up as a one-entry diff. Each key keeps the spelling its author
     /// declared.
-    #[must_use = "the rendered document is what gets committed"]
+    #[must_use = "commit the rendered document"]
     pub fn render(&self) -> String {
         let mut out = format!("version = {LOCKFILE_VERSION}\n");
         for (name, entry) in &self.remotes {

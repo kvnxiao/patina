@@ -29,7 +29,7 @@ use camino::Utf8Path;
 /// `.tmpl` source once and hands the bytes here so a clean re-apply does not
 /// render twice within this function.
 ///
-/// This classifies a single leaf; tree modes
+/// Classify a single leaf; tree modes
 /// ([`CopyTree`](FileMode::CopyTree), [`SymlinkTree`](FileMode::SymlinkTree))
 /// are classified one leaf at a time by the caller, passing the per-leaf
 /// `source`/`target`.

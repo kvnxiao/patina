@@ -53,8 +53,8 @@ use patina_core::write_persisted_default;
 /// - state-directory resolution, the target-directory creation, the manifest
 ///   write, canonicalization, or the persisted-pointer write fails (exit 1).
 ///
-/// An existing `patina.toml` at the target is not an error. That path reports
-/// the refusal and returns exit code 1.
+/// An existing `patina.toml` at the target is not an error. The target path
+/// reports the refusal and returns exit code 1.
 #[expect(
     clippy::unused_async,
     reason = "the subcommand dispatch in main.rs awaits every command uniformly; init's work is synchronous filesystem and lock I/O but keeps the async signature for parity."

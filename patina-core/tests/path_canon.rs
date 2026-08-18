@@ -1,18 +1,9 @@
+//! Integration tests for path canon.
+
 #![expect(
     clippy::expect_used,
     reason = "integration tests use .expect() on fixture setup; the lint's allow-expect-in-tests covers #[cfg(test)] modules but not the helper functions in tests/*.rs integration crates."
 )]
-
-//! Integration tests for path canonicalization.
-//!
-//! These tests exercise the public `paths::canonicalize` and
-//! `paths::expand_tilde` helpers, and the discovery-layer wiring. A
-//! repository root resolved through a relative `PATINA_REPO` must come
-//! back canonical and absolute. The full `patina apply --yes --json`
-//! surface lands later. The library-level property proved here is that
-//! the `repo_root` value that surface will report is already canonical
-//! and absolute, with no `.` or `..` segments, at the point it is
-//! produced.
 
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
@@ -24,8 +15,6 @@ use tempfile::TempDir;
 fn utf8_tempdir() -> (TempDir, Utf8PathBuf) {
     let td = TempDir::new().expect("create tempdir");
     let path = Utf8PathBuf::from_path_buf(td.path().to_path_buf()).expect("tempdir path is utf-8");
-    // Mirror the engine's `canonicalize`: strip the Windows `\\?\` verbatim
-    // prefix so fixture paths match the stripped form production returns.
     let canon = dunce::canonicalize(path.as_std_path()).expect("canonicalize tempdir");
     let canonical = Utf8PathBuf::from_path_buf(canon).expect("canonical tempdir is utf-8");
     (td, canonical)
@@ -41,8 +30,6 @@ fn write_root_manifest(dir: &Utf8Path) {
 
 #[test]
 fn existing_path_resolves_absolute_with_no_dot_segments() {
-    // This exercises the filesystem branch of `canonicalize`, for a path
-    // that exists on disk.
     let (_td, dir) = utf8_tempdir();
     let messy = dir.join(".").join("sub").join("..");
     fs_err::create_dir_all(dir.join("sub").as_std_path()).expect("create sub");
@@ -56,9 +43,6 @@ fn existing_path_resolves_absolute_with_no_dot_segments() {
 
 #[test]
 fn nonexistent_target_under_missing_grandparent_does_not_error() {
-    // A target whose parent directory does not exist yet canonicalizes
-    // lexically rather than erroring; here the whole `cfg/foo/` chain is
-    // absent.
     let (_td, dir) = utf8_tempdir();
     let target = dir.join("cfg").join("foo").join("bar.conf");
 
@@ -69,11 +53,6 @@ fn nonexistent_target_under_missing_grandparent_does_not_error() {
 
 #[test]
 fn nonexistent_leaf_under_existing_parent_resolves_through_parent_symlinks() {
-    // When the parent exists, even as a symlink, the leaf resolves through
-    // the parent's canonical form. Symlink creation is skipped on
-    // platforms that need elevation for it, such as Windows without
-    // Developer Mode. The parent-canonicalization property is still
-    // asserted there, on the real directory.
     let (_td, dir) = utf8_tempdir();
     let real_parent = dir.join("real-config");
     fs_err::create_dir_all(real_parent.as_std_path()).expect("create real parent");
@@ -96,10 +75,6 @@ fn nonexistent_leaf_under_existing_parent_resolves_through_parent_symlinks() {
 
 #[test]
 fn expand_tilde_then_canonicalize_yields_home_relative_absolute() {
-    // This test covers the user-input `~` variant: it expands against a
-    // concrete home, then canonicalizes. The home tempdir exists but the
-    // leaf does not, so this exercises the lexical-fallback branch under
-    // an existing parent.
     let (_home_td, home) = utf8_tempdir();
     let expanded = expand_tilde(Utf8Path::new("~/.zshrc"), &home);
     assert_eq!(expanded, home.join(".zshrc"));
@@ -111,21 +86,11 @@ fn expand_tilde_then_canonicalize_yields_home_relative_absolute() {
 
 #[test]
 fn relative_repo_resolves_to_canonical_absolute_root() {
-    // Given a CWD `T` and a repository at `T/dot`, a relative
-    // `PATINA_REPO=./dot` resolves to the canonical absolute `T/dot`, with
-    // no `.` or `..` segments.
     let (_td, work) = utf8_tempdir();
     let repo = work.join("dot");
     fs_err::create_dir_all(repo.as_std_path()).expect("create repo dir");
     write_root_manifest(&repo);
 
-    // This call passes the already-absolute `repo` path, because
-    // `validate_root` checks the directory and manifest relative to the
-    // process CWD, and the seam takes the `PATINA_REPO` value verbatim. It
-    // asserts that an absolute value resolves to the canonical, dot-free
-    // result. The relative-path folding property, that a `.`-laden value
-    // resolves to the same canonical root, is proved separately below via
-    // `canonicalize`.
     let resolved = resolve_repository_root_with(Some(repo.as_str()), &work, None)
         .expect("resolution succeeds");
     assert_eq!(resolved, repo);
@@ -133,8 +98,6 @@ fn relative_repo_resolves_to_canonical_absolute_root() {
     assert!(!resolved.as_str().contains("/./"));
     assert!(!resolved.as_str().contains("/../"));
 
-    // This proves the relative-path fold directly. Canonicalizing the
-    // messy, relative-style `T/./dot` form yields the canonical `T/dot`.
     let messy = work.join(".").join("dot");
     let canon = canonicalize(&messy).expect("canonicalize relative-style repo path");
     assert_eq!(canon, repo);

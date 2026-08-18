@@ -112,8 +112,8 @@ pub enum EngineError {
 
     /// On Windows, the plan creates symbolic links but Developer Mode is
     /// disabled and the process is not elevated, so the engine refused to
-    /// mutate the filesystem. This is the engine-side
-    /// backstop: the CLI normally drives the one-time UAC elevation flow
+    /// mutate the filesystem. The engine provides this backstop: the CLI
+    /// normally drives the one-time UAC elevation flow
     /// *before* calling `execute`, so this variant only surfaces when the
     /// gate is reached without that orchestration. The message names
     /// Developer Mode and `patina doctor --fix` so even the backstop path

@@ -146,7 +146,7 @@ fn run(args: &Args) -> Result<(), Failure> {
         code: EXIT_ERROR,
         message: e.to_string(),
     })?;
-    // This test-harness example talks to its parent test process over stdout /
+    // The test-harness example talks to its parent test process over stdout /
     // stderr; it is not user-facing CLI output and has no `output::Reporter` to
     // route through, so the workspace-wide `disallowed-macros` ban is
     // scoped-out here.
