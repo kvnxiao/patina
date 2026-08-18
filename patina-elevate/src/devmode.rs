@@ -1,37 +1,26 @@
-//! The `enable-developer-mode` action: flip the Developer Mode registry
-//! switch to `1`.
+//! The `enable-developer-mode` action: set the Developer Mode registry switch
+//! to `1`.
 //!
-//! The real registry write is `#[cfg(windows)]`-gated. On any other host
-//! the action returns [`DevModeError::NotWindows`] without touching the
-//! registry. That keeps the binary's argument-parsing surface exercisable
-//! by the cross-platform integration tests. The `enable-developer-mode` arm
-//! resolves to a clean error path on Linux/macOS rather than failing to
-//! compile.
+//! The registry write is `#[cfg(windows)]`-gated, and every other host returns
+//! [`DevModeError::NotWindows`] without touching the registry, to keep the
+//! dispatch exercisable by the cross-platform tests.
 //!
 //! ## Duplicated constants
 //!
 //! The registry key path and value name below are copied verbatim from
-//! `patina-core::windows::registry`, on purpose. This helper must not
-//! depend on `patina-core`, so it cannot share the constants across the
-//! crate boundary. Keep the two sites in sync by hand if the Developer
-//! Mode key ever moves; it is a stable Windows ABI, so this is
-//! effectively never.
+//! `patina-core::windows::registry`, which this helper must not depend on.
+//! Keep the sites in sync by hand.
 
 use std::fmt;
 
 /// Failure modes of [`enable_developer_mode`].
 #[derive(Debug)]
 pub enum DevModeError {
-    /// The action was invoked on a non-Windows build. The registry write
-    /// only exists under `#[cfg(windows)]`; everywhere else this is the
-    /// terminal outcome.
+    /// The action was invoked on a non-Windows build.
     NotWindows,
 
-    /// A Windows registry call failed. `call` names the failing API.
-    /// `symbol` names the Win32 error constant, for example
-    /// `ERROR_ACCESS_DENIED` for the non-elevated exit-1 path when the
-    /// helper ran without elevation. `source` carries the OS error with
-    /// its formatted message.
+    /// A Windows registry call failed. A helper running without elevation
+    /// fails here with `ERROR_ACCESS_DENIED`.
     #[cfg(windows)]
     Registry {
         /// The winsafe / Win32 function that failed.
@@ -77,21 +66,15 @@ impl std::error::Error for DevModeError {
 
 /// Set the Developer Mode registry flag to `1`.
 ///
-/// On Windows this opens (creating if absent)
-/// `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock` and
-/// writes the `AllowDevelopmentWithoutDevLicense` DWORD as `1`, the switch
-/// that lets unprivileged processes create symbolic links. The helper must
-/// be running elevated for `HKLM` to be writable; a non-elevated invocation
-/// surfaces `ERROR_ACCESS_DENIED` through [`DevModeError::Registry`].
-///
-/// On any non-Windows build this returns [`DevModeError::NotWindows`]
-/// without side effects.
+/// Opens `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock`,
+/// creating it if absent, and writes the `AllowDevelopmentWithoutDevLicense`
+/// DWORD as `1`, the switch that lets unprivileged processes create symbolic
+/// links. `HKLM` is writable only under elevation.
 ///
 /// # Errors
 ///
-/// Returns [`DevModeError::NotWindows`] off Windows, or
-/// [`DevModeError::Registry`] when opening the key or writing the value
-/// fails (notably access-denied when not elevated).
+/// Returns [`DevModeError::Registry`] when opening the key or writing the
+/// value fails, notably access-denied when the helper is not elevated.
 #[cfg(windows)]
 pub fn enable_developer_mode() -> Result<(), DevModeError> {
     use winsafe::co;
@@ -116,10 +99,8 @@ pub fn enable_developer_mode() -> Result<(), DevModeError> {
 
 /// Map a failing winsafe registry call to a [`DevModeError::Registry`].
 ///
-/// `ERROR_ACCESS_DENIED` (the non-elevated case) is named symbolically.
-/// Every other failure falls back to the OS error's own formatted message
-/// rather than a named constant. The `source` field keeps winsafe's
-/// `Display`, which formats that message.
+/// Only `ERROR_ACCESS_DENIED` is named symbolically; every other failure
+/// reports the OS error's own formatted message through `source`.
 #[cfg(windows)]
 fn registry_error(call: &'static str, err: winsafe::co::ERROR) -> DevModeError {
     use winsafe::co;

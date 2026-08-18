@@ -1,20 +1,13 @@
-//! A non-Windows release build of the workspace produces the main
-//! `patina` binary but no `patina-elevate` artifact.
+//! A non-Windows release build of the workspace emits the main `patina`
+//! binary but skips the `patina-elevate` bin.
 //!
-//! The `patina-elevate` bin is gated `required-features = ["windows"]`, off
-//! by default, so a plain `cargo build --release` skips it on macOS/Linux.
-//! This test proves the gate actually bites, the most error-prone item in
-//! the crate, rather than trusting it by inspection.
+//! Scanning the shared `target/release/` directory would race concurrent
+//! builds and could match a stale artifact left by an earlier
+//! `--features windows` run. This test drives `cargo build --release
+//! --message-format=json` in a hermetic target dir and reads the set of
+//! executables Cargo reports emitting.
 //!
-//! Scanning the shared `target/release/` directory directly is unreliable.
-//! It races every other build, and may hold stale artifacts from an earlier
-//! `--features windows` run. This test instead drives `cargo build
-//! --release --message-format=json` in a hermetic target dir, and reads
-//! the set of executables Cargo reports emitting. That set is
-//! authoritative. An artifact Cargo did not build cannot appear in it.
-//!
-//! Skipped on Windows, where the opposite is required (the bin *is* built);
-//! this is a non-Windows-only contract.
+//! Skipped on Windows, where the bin is built.
 
 #![cfg(not(windows))]
 
@@ -28,8 +21,6 @@ fn release_build_emits_patina_but_not_patina_elevate() {
     let workspace_root = manifest_dir
         .parent()
         .expect("the crate dir has a workspace-root parent");
-    // Hermetic target dir under the OS temp area so the build does not race the
-    // developer's shared `target/` (and reclaims cleanly).
     let target_dir = tempfile::tempdir().expect("create scratch target dir");
 
     let output = Command::new(env!("CARGO"))
@@ -54,9 +45,8 @@ fn release_build_emits_patina_but_not_patina_elevate() {
         if value.get("reason").and_then(Value::as_str) != Some("compiler-artifact") {
             continue;
         }
-        // Binary artifacts carry an `executable` path; library units carry
-        // `null` there. This keeps just the file stem, so the assertion is
-        // platform-suffix agnostic.
+        // Library units report a null `executable`; the file stem keeps the
+        // assertion suffix-agnostic.
         if let Some(exe) = value.get("executable").and_then(Value::as_str)
             && let Some(name) = Path::new(exe).file_stem().and_then(|s| s.to_str())
         {

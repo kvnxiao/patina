@@ -1,12 +1,7 @@
-//! Thin binary entry point for the `patina-elevate` helper.
+//! Binary entry point for the `patina-elevate` helper.
 //!
-//! All logic lives in the library crate (see `lib.rs`). This keeps the
-//! command surface unit-testable without the binary artifact, which is
-//! absent from non-Windows release builds. This file
-//! only parses arguments and hands the parsed command to
-//! [`patina_elevate::run`]. [`patina_elevate::parse_or_exit`] owns the
-//! exit-2 usage path and augments the unknown-subcommand message with the
-//! supported-subcommand listing.
+//! The command surface lives in the library crate, where the cross-platform
+//! tests exercise it without the binary artifact.
 
 use std::process::ExitCode;
 
