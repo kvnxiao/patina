@@ -11,7 +11,7 @@
 //! reads of the registry flag, the process-token elevation check, and
 //! the OS-build query. The *orchestration* (the UAC prompt, the
 //! decline → exit-5 path, re-driving `execute_plan`) lives in
-//! `patina-cli`. The module provides the read side: it exposes
+//! `patina`. The module provides the read side: it exposes
 //! the typed queries plus the pure gate-decision function.
 //!
 //! Everything here compiles on every platform. The Windows-specific

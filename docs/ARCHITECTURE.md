@@ -6,14 +6,14 @@ recovery primitives define the architecture for a mid-apply crash.
 ## Engine layers
 
 Patina is a three-crate Cargo workspace. The `patina-core` /
-`patina-cli` split keeps engine logic free of CLI concerns and lets the
+`patina` split keeps engine logic free of CLI concerns and lets the
 engine be tested without spawning a process; `patina-elevate` is a
 standalone Windows-only helper for the one-time Developer Mode elevation
 flow.
 
 ```mermaid
 flowchart TD
-    subgraph cli["patina-cli (bin)"]
+    subgraph cli["patina (bin)"]
         args["clap arg parsing"]
         reporter["output::Reporter\n(human / --json)"]
         exit["exit-code funnel"]
@@ -44,14 +44,14 @@ flowchart TD
   owns template rendering, path canonicalization, the journal and
   progress cursor, crash recovery, backups, and the per-machine state
   directory. It never prints user-facing output directly.
-- **`patina-cli`** is the binary crate. It parses arguments with
+- **`patina`** is the binary crate. It parses arguments with
   `clap`, drives the engine, and renders results through the
   `output::Reporter` abstraction: human-readable by default, JSON under
   `--json`. All process exit codes flow through a single funnel that
   maps engine outcomes onto the formalized codes.
 - **`patina-elevate`** is a standalone Windows-only helper binary. It
   carries the smallest possible trust surface (no dependency on
-  `patina-core` or `patina-cli`) and performs one elevated action under a
+  `patina-core` or `patina`) and performs one elevated action under a
   single UAC prompt: toggling the Developer Mode registry flag, or
   applying a set of Windows Defender path exclusions. It is gated behind a
   `windows` Cargo feature, so a non-Windows build produces no helper

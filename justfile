@@ -70,7 +70,7 @@ test:
 
 # Build the release binary `patina`, plus the `patina-elevate` helper on Windows.
 build:
-    cargo build --release --locked -p patina-cli
+    cargo build --release --locked -p patina
     {{ if os() == "windows" { "cargo build --release --locked -p patina-elevate --features patina-elevate/windows" } else { "echo 'build: skipping patina-elevate (Windows-only Developer Mode UAC helper)'" } }}
 
 # patina.exe resolves its UAC Developer Mode helper as a sibling executable, so on
