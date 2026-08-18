@@ -1,7 +1,7 @@
 # patina local git hooks
 
-Git hooks for patina contributors. They mirror the fast gate CI runs on every
-PR, so a clean commit means a clean PR check for that gate.
+Git hooks for Patina contributors. They run the local checks that form the
+corresponding pull-request gate.
 
 ## What runs
 
@@ -24,7 +24,8 @@ Both hooks are a no-op when no `Cargo.toml` exists yet.
 git config core.hooksPath .githooks
 ```
 
-That points your local `.git/config` at this directory, and every hook here runs on its git event.
+The command sets `core.hooksPath` in your local `.git/config`, so Git runs the
+matching hook from this directory.
 
 You also need the nightly Rust toolchain (the `pre-commit` hook uses `cargo +nightly fmt`):
 

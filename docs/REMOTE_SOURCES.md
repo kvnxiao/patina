@@ -1,10 +1,9 @@
 # Local and remote sources
 
 Patina materializes declarations from two kinds of sources. A **local
-source** is a path inside your dotfiles repository, the model the rest
-of the documentation describes. A **remote source** is a path inside
-someone else's git repository that Patina clones, pins, and keeps
-current for you: a third-party skill or prompt library you want
+source** is a path inside your dotfiles repository. A **remote source** is
+a path inside another git repository that Patina clones, pins, and updates:
+a third-party skill or prompt library you want
 deployed like a dotfile without hand-copying it on every upstream
 change.
 
@@ -36,7 +35,7 @@ min_age = "0s"           # optional; overrides remote_min_age for this remote
 Entries refer to a remote by its **name**, which also keys the remote's
 pin in the lockfile, its directory in the cache, and every `patina
 remote` verb. Write `name` outright, or let Patina derive it from the
-last path segment of the URL, with any trailing `.git` removed. That gives
+last path segment of the URL, with any trailing `.git` removed. The derived name is
 `humanizer` for all of `https://github.com/blader/humanizer.git`,
 `git@github.com:blader/humanizer`, and `/srv/mirrors/humanizer.git`. A
 URL with no legal last segment is refused with a message telling you to
@@ -78,7 +77,7 @@ target = "~/.claude/skills/humanizer/SKILL.md"
 ```
 
 An entry with no `remote` key resolves its source against its module
-directory. An entry with one resolves against the cached checkout of that
+directory. An entry with a `remote` key resolves against the cached checkout of that
 remote's pinned rev, so its module directory contributes only the
 manifest line. The two sit side by side in one manifest, and one manifest
 may draw on several remotes.
@@ -93,9 +92,8 @@ Naming a remote no `[[remote]]` table declares is an error at plan
 time, before anything is written.
 
 A module manifest may not declare a remote of its own. Patina rejects a
-module-level `[remote]` table by name rather than ignoring it, because
-ignoring it would silently resolve that module's entries against the
-module directory.
+module-level `[remote]` table because entries must select remotes declared
+in the root manifest.
 
 ## Trust boundaries
 
@@ -106,12 +104,12 @@ Remote content is third-party input. Patina enforces these limits on it:
   variables come only from manifests in your own repository.
 - Remote sources are never templates. A `.tmpl` suffix on an entry that
   names a remote is inert, and the file deploys as plain bytes under the
-  declared mode. Third-party files full of `{{ }}` would otherwise
-  fail strict-undefined rendering, or worse, succeed at it. The rule is
-  per entry, so a local `.tmpl` still renders in the same manifest.
+  declared mode. Third-party files full of `{{ }}` would otherwise fail
+  strict-undefined rendering or render as unintended templates. The rule
+  is per entry, so a local `.tmpl` still renders in the same manifest.
 - A remote source may supply only bytes from within its own checkout.
   An entry whose source resolves outside the checkout is refused at plan
-  time. That covers both a `..` in the declared source and a symbolic
+  time. The rule covers both a `..` in the declared source and a symbolic
   link the checkout ships. Symlinks in a checkout are materialized as
   inert files holding their target text, so the resolver cannot follow
   one out of the checkout. Should a cached checkout hold a real
@@ -126,7 +124,7 @@ Remote content is third-party input. Patina enforces these limits on it:
   filesystem only through the same diff-and-prompt loop as local
   changes.
 - Pin bumps are gated by age; see "The update gate" below, including
-  an honest statement of what the gate cannot stop.
+  an explicit statement of what the gate cannot stop.
 
 ## The lockfile
 
@@ -168,14 +166,13 @@ about what this machine happens to use. `patina remote update` with no
 argument covers **every** declaration, including one no entry currently
 names. The committed lock therefore stays complete for machines whose
 active entries differ from yours. A pin whose `[[remote]]` you deleted is stale
-by definition: an apply that may write drops it and says so, while a
-preview reports it and leaves the file alone. A preview here means a
+by definition: a write-capable apply drops it and reports it, while a preview
+reports it and leaves the file alone. A preview here means a
 non-interactive apply without `--yes`, or any `--json` run; neither
 writes your repository.
 
-Patina reads `patina.lock` on the first entry that selects a remote, so a
-repository that uses none never reads a stray lockfile, let alone fails
-on one.
+Patina reads `patina.lock` when an entry selects a remote. A repository that
+uses no remotes therefore does not read or fail on a stray lockfile.
 
 ## The remote cache
 
@@ -242,7 +239,7 @@ occupies.
 
 ## Commands
 
-The verbs split along a producer/consumer line:
+Commands are split into producer and consumer operations:
 
 | Command                      | Role     | Purpose                                                                 |
 | ---------------------------- | -------- | ----------------------------------------------------------------------- |
@@ -284,8 +281,8 @@ prompts    2d5f8c1a4e7b0936d8f2a5c1e4b7d0a3f6c9e250  (unknown)                  
 
 `FROM` is the pin as the lockfile recorded it, `TO` the candidate the run
 considered, and `STATUS` what became of the pin. A `TO` equal to its
-`FROM` prints `-`, because two identical forty-character hashes read as a
-change until you compare them. `(unpinned)` means no pin was recorded;
+`FROM` prints `-`; otherwise two identical forty-character hashes would
+look like a change. `(unpinned)` means no pin was recorded;
 `(unknown)` means the run never learned a candidate. The table prints a row for a remote that
 failed or was refused too, accounting for the whole run; the reason stays
 on stderr with the warning. The rows come after the run because `remote
@@ -312,9 +309,9 @@ Failure shapes worth knowing:
 
 ## The update gate
 
-Bumping a pin is the moment third-party code changes what lands on
-your machines, so it is the moment Patina slows down. A candidate tip
-must clear four checks, evaluated after fetching it:
+Because a pin changes the third-party code that reaches your machines,
+`patina remote update` applies the update gate. A candidate tip must clear
+the update checks, evaluated after fetching it:
 
 1. **Future check.** A committer time more than one hour ahead of the
    local clock is a hard reject.
@@ -331,21 +328,19 @@ must clear four checks, evaluated after fetching it:
    old (the remote's own override, else `[patina] remote_min_age`, else
    72 hours).
 
-Declining a confirmation prompt leaves the pin where it is and exits
+Declining a confirmation prompt leaves the pin unchanged and exits
 `5`, the code every Patina command uses for a declined prompt. A pin the
 gate held back on its own, through a cooldown or a verdict this binary
-does not recognize, exits `0` instead: nobody was asked, so nothing was
-refused.
+does not recognize, exits `0` instead because no prompt was shown.
 
 The first pin of a newly declared remote skips the age gate. Adopting a
 remote is a deliberate act whose content you are about to review in the
 consent diff, and the gate is there to slow down *unattended* pin bumps.
 `--now` bypasses the age gate for one run, with a visible warning.
 
-Whoever makes a commit authors its timestamps. These checks stop
-untargeted, fast-moving compromises, the common case where attackers race
-detection windows and publish with honest timestamps. An attacker who
-backdates a commit specifically to defeat this gate will pass it, and
+Committer timestamps are self-reported. These checks limit untargeted,
+fast-moving compromises. An attacker who backdates a commit to defeat this
+gate will pass it, and
 plain git has no unforgeable, machine-independent clock to check against.
 The diff-and-prompt loop remains the hard boundary in front of every
 byte.
@@ -363,22 +358,22 @@ flowchart LR
     other -->|"patina apply"| files["targets converge"]
 ```
 
-A machine that sat idle for a week catches up with:
+A machine idle for a week catches up with:
 
 ```sh
 git pull && patina apply
 ```
 
 One diff-and-prompt covers the accumulated changes. The consumer path
-skips the gate entirely, because a pinned rev is a decision you already
-made and committed. Running `apply --update` on such a machine is safe,
-the gate being machine-independent, and usually unwanted: it may bump
-pins and strand an uncommitted lockfile change on a box you rarely touch.
-Produce updates where you commit; consume everywhere else.
+skips the gate entirely because a pinned rev is a decision you already
+made and committed. The gate does not depend on the consuming machine, but
+`apply --update` may bump pins and strand an uncommitted lockfile change on
+a machine you rarely touch. Produce updates where you commit them; consume
+them everywhere else.
 
 ## Shell integration
 
-The background check notifies and nothing else, at no cost to your
+The background check only updates the notice and does not delay your
 prompt. `patina remote check --hook` self-throttles through the
 `last_check` stamp (default: at most one real check per 24 hours) and
 maintains the `notice` file. The shell side prints a file and spawns one
@@ -440,19 +435,18 @@ Start-Process patina -ArgumentList 'remote','check','--hook' -WindowStyle Hidden
 
 When upstream tips have moved past your pins, the notice names the
 remotes and suggests `patina apply --update`. When your own dotfiles
-repository is behind its origin, meaning another machine already bumped
-the pins, it says so and suggests `git pull && patina apply` instead:
-those changes are already decided and gated. `patina status` surfaces the
-same pending-update state. A successful `remote update`, including the
-one inside `apply --update`, drops the remotes it settled from the notice
-on the spot, so no announcement outlives the bump it asked for.
+repository is behind its origin because another machine already bumped
+the pins, the notice reports that state and suggests `git pull && patina apply` instead:
+those changes are already decided and gated. `patina status` reports the
+same pending-update state. A successful `remote update`, including the one
+inside `apply --update`, removes the remotes it settled from the notice
+immediately. The notice therefore does not outlive the bump it requested.
 
 ## Target collision validation
 
 Two entries can resolve to the same target, or one entry can plant files
-over another entry's target. Remote trees multiply that risk, because an
-upstream repository can grow files you never anticipated into a tree you
-deploy.
+over another entry's target. Remote trees add files from upstream to a tree
+you deploy, so their contents can introduce new collisions.
 
 Patina validates the plan over the active entry set, before showing a
 diff. Validation runs after `when` filtering, so two entries targeting
@@ -471,21 +465,20 @@ object, so it owns everything underneath. A `symlink-tree` or `copy`
 `[[directory]]` materializes one object per source leaf and journals each
 leaf as its own target, claiming those leaves and nothing between them.
 Another entry may then deploy into the part of that directory the tree
-does not fill. Use that to add one upstream file to a directory your
-repository also populates. Two entries writing one leaf is still refused,
+does not fill. A repository can use this ownership rule to add one upstream
+file to a directory it also populates. Two entries writing one leaf is still refused,
 naming the leaf and the directory target it came from.
 
-The leaves are read from the source tree as it stands, so a file
-appearing upstream under a tree source can fail a plan that passed
-yesterday. That failure lands before any write.
+The leaves are read from the current source tree, so a file appearing
+upstream under a tree source can fail a plan that passed yesterday. The plan
+fails before any write.
 
 Both comparisons ignore case and Unicode normal form, on every platform.
 Windows and macOS resolve two targets differing only in case to one file,
 and APFS does the same for two differing only in NFC/NFD spelling. Linux
 resolves each pair to two files. Folding only where the host needs it
-would let one manifest plan clean on Linux and fail on macOS, and the
-verdict belongs to the manifest rather than the machine. Two targets
-differing only in case or normalization are therefore an error
+would let one manifest plan clean on Linux and fail on macOS. The manifest
+therefore rejects two targets that differ only in case or normalization
 everywhere; rename one.
 
 Folding applies to the comparison only. Targets are created on disk in
