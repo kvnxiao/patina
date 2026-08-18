@@ -1,7 +1,4 @@
-//! Integration tests for the `patina apply` CLI surface.
-//!
-//! Each test drives the real `patina` binary through [`common::Fixture`].
-
+//! Integration tests for `apply_cli`.
 mod common;
 
 use common::Fixture;
@@ -9,7 +6,6 @@ use common::code;
 
 #[test]
 fn non_tty_apply_previews_without_mutating() {
-    // A symlink `[[file]]` entry, applied with no `--yes` in a non-TTY shell.
     let f = Fixture::new();
     let module = f.module(
         "shell",
@@ -34,7 +30,6 @@ fn non_tty_apply_previews_without_mutating() {
 
 #[test]
 fn post_apply_hook_failure_rolls_back_and_exits_3() {
-    // The post_apply hook runs `exit 1`; `must_succeed` defaults to true.
     let f = Fixture::new();
     let module = f.module(
         "shell",
@@ -60,7 +55,6 @@ fn post_apply_hook_failure_rolls_back_and_exits_3() {
 
 #[test]
 fn force_deploy_downgrades_hook_failure_and_exits_0() {
-    // The same failing post_apply hook, applied with `--force-deploy`.
     let f = Fixture::new();
     let module = f.module(
         "shell",
@@ -147,7 +141,6 @@ fn json_with_yes_applies_and_reports_applied() {
 
 #[test]
 fn cli_variable_override_renders_into_template() {
-    // `-v email=...` flows into the `{{ email }}` template render.
     let f = Fixture::new();
     let module = f.module(
         "shell",
@@ -173,10 +166,6 @@ fn cli_variable_override_renders_into_template() {
 #[cfg(not(windows))]
 #[test]
 fn non_windows_symlink_apply_skips_dev_mode_flow() {
-    // On macOS or Linux the probe reports `NotWindows`, so the Developer
-    // Mode gate returns `Proceed` without reading a registry or spawning
-    // `patina-elevate`. The symlink is only created, and the exit only 0, if
-    // the gate let the apply proceed.
     let f = Fixture::new();
     let module = f.module(
         "shell",
@@ -193,7 +182,6 @@ fn non_windows_symlink_apply_skips_dev_mode_flow() {
         String::from_utf8_lossy(&out.stderr)
     );
 
-    // The symlink materialized. It points back at the repo source.
     let target = f.home.join(".rc");
     let meta = fs_err::symlink_metadata(&target).expect("symlink target must exist");
     assert!(
@@ -201,8 +189,6 @@ fn non_windows_symlink_apply_skips_dev_mode_flow() {
         "the target must be a symbolic link, proving the apply mutated"
     );
 
-    // The output never mentions the elevation helper or Developer Mode, so the
-    // Windows-only flow was not entered.
     let combined = format!(
         "{}{}",
         String::from_utf8_lossy(&out.stdout),
@@ -218,11 +204,6 @@ fn non_windows_symlink_apply_skips_dev_mode_flow() {
     );
 }
 
-// On a Windows host with Developer Mode off and a symlink `[[file]]`, a
-// `patina apply --yes` whose UAC consent is declined does not create a
-// symbolic link. It includes `Developer Mode` and `patina doctor --fix` on
-// stderr, and exits 5. Declining the UAC dialog needs a real Windows host and
-// a human or harness, and CI is not Windows, so this is gated `#[ignore]`.
 #[cfg(windows)]
 #[test]
 #[ignore = "requires a Windows host with Developer Mode off and a declined UAC dialog"]
@@ -249,10 +230,6 @@ fn windows_declined_uac_exits_5_and_creates_no_symlink() {
     );
 }
 
-// On a Windows host with Developer Mode on, the apply creates the symlink
-// with no UAC prompt and no `patina-elevate.exe` spawn. This needs a real
-// Windows host with Developer Mode enabled, and CI is not Windows, so it is
-// gated `#[ignore]`.
 #[cfg(windows)]
 #[test]
 #[ignore = "requires a Windows host with Developer Mode enabled"]

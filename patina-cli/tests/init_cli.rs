@@ -1,22 +1,14 @@
+//! Integration tests for `init_cli`.
 #![expect(
     clippy::expect_used,
-    reason = "integration tests use .expect() on fixture setup and assertions; allow-expect-in-tests covers #[cfg(test)] modules but not the top level of a tests/*.rs integration crate."
+    reason = "Integration tests use .expect() for fixture setup and assertions outside #[cfg(test)] modules; allow-expect-in-tests does not cover integration-crate roots."
 )]
-
-//! Integration coverage for `patina init`.
-//!
-//! Each test drives the real `patina` binary through [`common::Fixture`].
-//! `init` targets a fresh directory under the fixture's home, so the
-//! fixture's own root manifest never collides with the directory under test.
 
 mod common;
 
 use common::Fixture;
 use common::code;
 
-/// `patina init T` in an empty directory scaffolds the root
-/// manifest, persists the canonical pointer, prints the next-step hint, and
-/// exits 0.
 #[test]
 fn init_scaffolds_manifest_pointer_and_hint() {
     let fx = Fixture::new();
@@ -25,7 +17,6 @@ fn init_scaffolds_manifest_pointer_and_hint() {
     let out = fx.run(&["init", target.as_str()], &[]);
     assert_eq!(code(&out), 0, "init in an empty dir must exit 0");
 
-    // The manifest exists with [patina] root = true.
     let manifest = target.join("patina.toml");
     let body = fs_err::read_to_string(manifest.as_std_path()).expect("read manifest");
     let parsed: toml::Value = toml::from_str(&body).expect("manifest parses as TOML");
@@ -38,8 +29,6 @@ fn init_scaffolds_manifest_pointer_and_hint() {
         "[patina].root must be true"
     );
 
-    // The state directory's default_repo file holds the canonical absolute
-    // path of the target.
     let pointer = fx.state_root().join("default_repo");
     let recorded = fs_err::read_to_string(pointer.as_std_path()).expect("read default_repo");
     let canonical = canonical_string(&target);
@@ -49,7 +38,6 @@ fn init_scaffolds_manifest_pointer_and_hint() {
         "default_repo must hold the canonical target path"
     );
 
-    // The final stdout line is the `patina add` next-step hint.
     let stdout = String::from_utf8(out.stdout).expect("utf8 stdout");
     let last = stdout.lines().last().expect("at least one stdout line");
     assert!(
@@ -59,9 +47,6 @@ fn init_scaffolds_manifest_pointer_and_hint() {
     );
 }
 
-/// `patina init T` against a directory that already contains a
-/// `patina.toml` leaves the file byte-identical, prints it on stderr with
-/// `already exists`, and exits 1.
 #[test]
 fn init_refuses_when_manifest_exists() {
     let fx = Fixture::new();
@@ -91,7 +76,6 @@ fn init_refuses_when_manifest_exists() {
         "stderr must include the existing manifest path, got: {stderr:?}"
     );
 
-    // The state directory was never touched, and the pointer was not written.
     let pointer = fx.state_root().join("default_repo");
     assert!(
         !pointer.exists(),
@@ -99,12 +83,6 @@ fn init_refuses_when_manifest_exists() {
     );
 }
 
-/// A successful `init T --json` run and a refused one produce different
-/// stdout, while each invocation is itself deterministic. The first run
-/// succeeds (`first`); the second fails because `T/patina.toml` now exists
-/// (`second`); the two documents differ; and a third run (`third`)
-/// byte-matches the second, proving the failure path is byte-stable across
-/// reruns.
 #[test]
 fn init_json_success_and_failure_diverge_then_failure_is_byte_stable() {
     let fx = Fixture::new();
@@ -126,18 +104,15 @@ fn init_json_success_and_failure_diverge_then_failure_is_byte_stable() {
         "third init must fail: manifest still exists"
     );
 
-    // The success and failure documents carry different result fields.
     assert_ne!(
         first.stdout, second.stdout,
         "a successful and a refused --json run must produce different stdout"
     );
-    // The failure path is deterministic: the third run byte-matches the second.
     assert_eq!(
         second.stdout, third.stdout,
         "two failing --json runs must emit byte-identical stdout"
     );
 
-    // The failing --json stdout is a typed-error document that includes the path.
     let stdout = String::from_utf8(second.stdout).expect("utf8 stdout");
     let doc: serde_json::Value =
         serde_json::from_str(stdout.trim()).expect("failing --json stdout is one JSON doc");
@@ -151,10 +126,6 @@ fn init_json_success_and_failure_diverge_then_failure_is_byte_stable() {
     );
 }
 
-/// A successful `init --json` run emits one deterministic JSON document
-/// on stdout. Its `initialized` and `default_repo` fields hold the canonical
-/// target and pointer paths. The document does not include a non-deterministic
-/// value such as a `created_at` timestamp.
 #[test]
 fn init_json_success_emits_deterministic_schema() {
     let fx = Fixture::new();
@@ -180,13 +151,7 @@ fn init_json_success_emits_deterministic_schema() {
     );
 }
 
-/// Canonicalize `path` the same way the engine's `canonicalize_path` does,
-/// returning the UTF-8 string form. The test computes the expected pointer
-/// value independently of the binary under test.
 fn canonical_string(path: &camino::Utf8Path) -> String {
-    // `dunce::canonicalize` mirrors the engine's `canonicalize_path`: a
-    // filesystem canonicalize with the Windows `\\?\` verbatim prefix
-    // stripped where the plain form is equivalent.
     let canon = dunce::canonicalize(path.as_std_path()).expect("canonicalize target");
     camino::Utf8PathBuf::from_path_buf(canon)
         .expect("canonical path is utf8")

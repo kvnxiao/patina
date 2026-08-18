@@ -57,7 +57,7 @@ use patina_core::write_persisted_default;
 /// the refusal and returns exit code 1.
 #[expect(
     clippy::unused_async,
-    reason = "the subcommand dispatch in main.rs awaits every command uniformly; init's work is synchronous filesystem and lock I/O but keeps the async signature for parity."
+    reason = "The dispatch awaits every command; init performs synchronous filesystem and lock I/O but keeps the async signature."
 )]
 pub async fn run(args: &InitArgs, reporter: &mut impl Reporter) -> Result<i32> {
     let target = resolve_target_path(args.path.as_deref())?;

@@ -1,47 +1,16 @@
-//! Source-kind validation at plan time.
-//!
-//! A managed entry's declared kind is validated against its source's on-disk
-//! kind at plan time, before the advisory lock, the journal flush, or any
-//! mutation.
-//!
-//! Each test drives `PATINA_REPO=<tempdir> patina apply --yes` over a fixture
-//! repo whose module declares a `[[file]]` or `[[directory]]` entry, and
-//! asserts that:
-//!
-//! - a `[[file]]` pointing at a directory source exits 1, includes the source
-//!   and `[[directory]]`, and does not write a journal artifact;
-//! - a `[[directory]]` pointing at a file source directs the author to
-//!   `[[file]]`;
-//! - a `when`-true entry whose source is absent exits 1 with a missing-source
-//!   error and no journal artifact;
-//! - source-kind validation never runs on a gated-off entry, so a `when`-false
-//!   entry whose source is absent and wrong-shaped on this OS exits 0 with no
-//!   kind or missing-source error.
-
+//! Integration tests for `source_kind_validation`.
 mod common;
 
 use common::Fixture;
 use common::code;
 
-/// The OS family string the engine's `patina.os` built-in resolves to on
-/// this host. Matches `current_os_family` in `conditional_entries.rs`.
-/// `std::env::consts::OS` equals the value the engine normalizes to on the
-/// three supported platforms, so a `when` built from it is deterministically
-/// true here.
 fn current_os_family() -> &'static str {
     std::env::consts::OS
 }
 
-/// Assert that the apply did not write a `*.plan` or `*.COMMIT` journal file.
-/// That is the plan-time-failure guarantee: a mismatched entry mutates
-/// nothing. The journal directory is `<state>/patina/journal`. A plan-phase
-/// failure may leave it absent entirely, and that absence is itself proof that
-/// nothing was flushed.
 fn assert_no_journal_artifacts(f: &Fixture) {
     let journal = f.state_root().join("journal");
     let Ok(entries) = fs_err::read_dir(&journal) else {
-        // No journal dir → nothing was ever flushed. That satisfies the
-        // "no plan/COMMIT for the run" contract.
         return;
     };
     let artifacts: Vec<String> = entries
@@ -62,9 +31,6 @@ fn assert_no_journal_artifacts(f: &Fixture) {
 
 #[test]
 fn file_entry_with_directory_source_fails_and_directs_to_directory_table() {
-    // A `[[file]]` whose source is a directory exits 1, stderr includes
-    // the source (`confdir`) and the `[[directory]]` table, and no journal
-    // plan/COMMIT is written.
     let f = Fixture::new();
     let module = f.module(
         "shell",
@@ -98,8 +64,6 @@ fn file_entry_with_directory_source_fails_and_directs_to_directory_table() {
 
 #[test]
 fn directory_entry_with_file_source_fails_and_directs_to_file_table() {
-    // A `[[directory]]` whose source is a regular file exits 1 and
-    // stderr directs the author to the `[[file]]` table.
     let f = Fixture::new();
     let module = f.module(
         "git",
@@ -125,15 +89,11 @@ fn directory_entry_with_file_source_fails_and_directs_to_file_table() {
 
 #[test]
 fn when_true_entry_with_absent_source_fails_as_source_not_found() {
-    // A `[[file]]` with `source = "ghost"` and no `when` (so it is
-    // not gated off) whose source is absent exits 1, stderr includes `ghost` as
-    // a missing source, and no journal plan/COMMIT is written.
     let f = Fixture::new();
     f.module(
         "shell",
         "[[file]]\nsource = \"ghost\"\ntarget = \"~/.ghostrc\"\n",
     );
-    // Deliberately do not create `ghost` on disk.
 
     let out = f.apply(&["--yes"]);
 
@@ -157,18 +117,12 @@ fn when_true_entry_with_absent_source_fails_as_source_not_found() {
 
 #[test]
 fn when_false_entry_with_absent_wrong_kind_source_is_not_validated() {
-    // A `[[directory]]` entry gated off on this OS
-    // (`when = "patina.os == 'definitely-not-this-os'"`) with an absent
-    // source exits 0 with no missing-source or kind error. Source-kind
-    // validation never runs on a `when`-false entry.
     let f = Fixture::new();
     f.module(
         "wm",
         "[[directory]]\nsource = \"only-on-other-os\"\ntarget = \"~/.config/wm\"\n\
          when = \"patina.os == 'definitely-not-this-os'\"\n",
     );
-    // Deliberately do not create `only-on-other-os`. A gated-off entry must
-    // never be canonicalized or kind-checked.
 
     let out = f.apply(&["--yes"]);
 
@@ -191,9 +145,6 @@ fn when_false_entry_with_absent_wrong_kind_source_is_not_validated() {
 
 #[test]
 fn when_true_entry_with_present_source_does_apply() {
-    // A control alongside the wrong-OS case. An entry whose `when` is true on
-    // this host and whose source exists with the matching kind applies
-    // cleanly. Guards against `validate_source_kind` rejecting a valid entry.
     let f = Fixture::new();
     let when = format!("patina.os == '{}'", current_os_family());
     let module = f.module(

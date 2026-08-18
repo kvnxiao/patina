@@ -652,10 +652,7 @@ impl Action {
 /// Act on one proposal: bump the pin, prompt first, or report why not.
 #[expect(
     clippy::too_many_arguments,
-    reason = "settling one proposal needs the inventory it writes into, the view and \
-              proposal it is about, the timestamp to stamp, the invocation flags, and the \
-              output/input seams (tty, reader, reporter). Grouping them behind a struct \
-              would move the same fields without removing any."
+    reason = "The function needs the lockfile, remote view, proposal, timestamp, flags, and input/output seams; a struct would only move these fields."
 )]
 fn settle(
     lockfile: &mut patina_core::remote::lockfile::Lockfile,

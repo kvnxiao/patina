@@ -19,10 +19,6 @@ use cmd::apply::Tty;
 use output::reporter::StreamReporter;
 use std::io::IsTerminal;
 
-/// Detect whether stdin is a terminal.
-///
-/// A `NonInteractive` result suppresses every prompt. Each command chooses its
-/// own non-interactive behaviour: preview, decline, or refuse.
 fn detect_tty() -> Tty {
     if std::io::stdin().is_terminal() {
         Tty::Interactive
@@ -72,8 +68,7 @@ async fn main() -> ! {
             let mut reader = StdinReader;
             cmd::defender::run(&args, detect_tty(), &mut reader, &mut reporter)
         }
-        // A decode failure is a terminal state, not an engine error, so
-        // `debug` returns its exit code directly.
+        // Debug owns its terminal exit code.
         Command::Debug(command) => Ok(cmd::debug::run(&command, &mut reporter)),
     };
     std::process::exit(resolve_exit_code(outcome, &mut reporter));

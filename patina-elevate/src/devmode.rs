@@ -1,15 +1,12 @@
 //! The `enable-developer-mode` action: set the Developer Mode registry switch
 //! to `1`.
 //!
-//! The registry write is `#[cfg(windows)]`-gated, and every other host returns
-//! [`DevModeError::NotWindows`] without touching the registry, to keep the
-//! dispatch exercisable by the cross-platform tests.
+//! The registry write is `#[cfg(windows)]`-gated. Other hosts return
+//! [`DevModeError::NotWindows`] without touching the registry.
 //!
 //! ## Duplicated constants
 //!
-//! The registry key path and value name below are copied verbatim from
-//! `patina-core::windows::registry`, which this helper must not depend on.
-//! Keep the sites in sync by hand.
+//! The helper duplicates the registry key and value names used by the CLI.
 
 use std::fmt;
 
@@ -19,8 +16,8 @@ pub enum DevModeError {
     /// The action was invoked on a non-Windows build.
     NotWindows,
 
-    /// A Windows registry call failed. A helper running without elevation
-    /// fails here with `ERROR_ACCESS_DENIED`.
+    /// A Windows registry call failed, including `ERROR_ACCESS_DENIED` without
+    /// elevation.
     #[cfg(windows)]
     Registry {
         /// The winsafe / Win32 function that failed.
@@ -64,22 +61,23 @@ impl std::error::Error for DevModeError {
     }
 }
 
-/// Set the Developer Mode registry flag to `1`.
+/// Set `AllowDevelopmentWithoutDevLicense` to `1` in `HKLM`.
 ///
 /// Opens `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock`,
 /// creating it if absent, and writes the `AllowDevelopmentWithoutDevLicense`
-/// DWORD as `1`, the switch that lets unprivileged processes create symbolic
-/// links. `HKLM` is writable only under elevation.
+/// DWORD as `1`.
+/// The value enables unprivileged symbolic-link creation. `HKLM` requires
+/// elevation for this write.
 ///
 /// # Errors
 ///
-/// Returns [`DevModeError::Registry`] when opening the key or writing the
-/// value fails, notably access-denied when the helper is not elevated.
+/// Returns [`DevModeError::Registry`] when opening the key or writing the value
+/// fails.
 #[cfg(windows)]
 pub fn enable_developer_mode() -> Result<(), DevModeError> {
     use winsafe::co;
 
-    // Duplicated verbatim from `patina-core::windows::registry`.
+    // Keep these literals synchronized with the CLI's registry integration.
     const DEV_MODE_KEY: &str = r"SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock";
     const DEV_MODE_VALUE: &str = "AllowDevelopmentWithoutDevLicense";
 
@@ -97,10 +95,6 @@ pub fn enable_developer_mode() -> Result<(), DevModeError> {
         .map_err(|err| registry_error("RegSetValueEx", err))
 }
 
-/// Map a failing winsafe registry call to a [`DevModeError::Registry`].
-///
-/// Only `ERROR_ACCESS_DENIED` is named symbolically; every other failure
-/// reports the OS error's own formatted message through `source`.
 #[cfg(windows)]
 fn registry_error(call: &'static str, err: winsafe::co::ERROR) -> DevModeError {
     use winsafe::co;
@@ -117,7 +111,7 @@ fn registry_error(call: &'static str, err: winsafe::co::ERROR) -> DevModeError {
     }
 }
 
-/// Non-Windows fallback: the registry write does not exist on this target.
+/// Return [`DevModeError::NotWindows`] on non-Windows targets.
 ///
 /// # Errors
 ///

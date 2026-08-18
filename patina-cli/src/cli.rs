@@ -1,7 +1,7 @@
 //! The clap-derived command-line surface for `patina`.
 //!
-//! This module only parses. The command logic lives in [`crate::cmd`], where
-//! the unit tests call it directly without clap.
+//! The module parses the command surface. Command logic lives in
+//! [`crate::cmd`], where unit tests call it without clap.
 
 use crate::exit_code::ExitCode;
 use crate::output::reporter::Reporter;
@@ -13,14 +13,11 @@ use clap::ValueEnum;
 
 /// Resolve a command's outcome to a process exit code.
 ///
-/// Every subcommand terminates here, so the exit-code contract has one site. A
-/// subcommand that reaches a terminal state under its own control (a successful
-/// apply, an apply a hook aborted, a declined prompt) returns `Ok(code)`, and
-/// that code becomes the process status verbatim.
+/// A command-controlled terminal state returns `Ok(code)`, and the process uses
+/// that code verbatim.
 ///
-/// An `Err` is an engine-level failure. Each cause in the chain is printed to
-/// the reporter's err stream, then [`ExitCode::from_error_chain`] picks the
-/// code: a lock timeout is `4`, every other failure `1`.
+/// An `Err` reports every cause to the reporter's error stream. A lock timeout
+/// maps to `4`; every other failure maps to `1`.
 ///
 /// [`crate::main`] passes the returned `i32` to [`std::process::exit`].
 #[must_use = "the returned exit code is the process's terminal status"]
@@ -28,9 +25,8 @@ pub fn resolve_exit_code(outcome: anyhow::Result<i32>, reporter: &mut impl Repor
     match outcome {
         Ok(code) => code,
         Err(error) => {
-            // The outermost error is only the context wrapper. The root cause,
-            // the offending TOML line, is at the end of the chain, so every
-            // cause is printed.
+            // Report the full chain so the root cause includes the offending
+            // TOML line instead of only the outer context.
             for cause in error.chain() {
                 reporter.error(&cause.to_string());
             }
@@ -47,7 +43,7 @@ pub struct Cli {
     #[command(subcommand)]
     pub command: Command,
 
-    /// When to colorize output. Global: accepted before or after the
+    /// When to colorize output. Global; accepted before or after the
     /// subcommand.
     #[arg(long, value_enum, default_value = "auto", global = true)]
     pub color: ColorChoiceArg,
@@ -166,20 +162,18 @@ pub struct WatchArgs {
     #[arg(long)]
     pub foreground: bool,
 
-    /// Emit a JSON envelope instead of human output. Global, so it is accepted
-    /// both before and after a lifecycle subcommand (`patina watch status
-    /// --json`).
+    /// Emit a JSON envelope instead of human output. Global; accepted before
+    /// or after a lifecycle subcommand (`patina watch status --json`).
     #[arg(long, global = true)]
     pub json: bool,
 }
 
 /// Background-service lifecycle subcommands under `patina watch`.
 ///
-/// Each operates on the per-OS service registration through the
-/// `patina_core::watch::service` backend. `status` is read-only and acquires
-/// the shared lock. When the shared lock times out, `status` warns and proceeds
-/// without it. Every other subcommand acquires the exclusive lock, and a
-/// timeout on that one is exit `4`.
+/// Each command uses the per-OS service registration backend. `status` is
+/// read-only and acquires the shared lock; a shared-lock timeout warns and
+/// allows it to continue. Other subcommands acquire the exclusive lock; a
+/// timeout maps to exit `4`.
 #[derive(Debug, Subcommand, Clone)]
 pub enum WatchCommand {
     /// Register the watcher as a per-user background service that launches at
@@ -221,8 +215,8 @@ pub struct RemoteArgs {
     #[command(subcommand)]
     pub command: RemoteCommand,
 
-    /// Emit a JSON envelope instead of human output. Global, so it is accepted
-    /// both before and after the subcommand (`patina remote list --json`).
+    /// Emit a JSON envelope instead of human output. Global; accepted before
+    /// or after the subcommand (`patina remote list --json`).
     #[arg(long, global = true)]
     pub json: bool,
 }
@@ -315,17 +309,17 @@ pub struct InitArgs {
 /// Flags for `patina add`.
 ///
 /// The mode flags (`--symlink` / `--copy` / `--template` / `--symlink-tree`)
-/// form a mutually-exclusive clap group: declaring more than one is a usage
-/// error (exit 2). Which flags are legal depends on the source kind.
+/// form a mutually-exclusive clap group: more than one is a usage error (exit
+/// 2). Legal flags depend on the source kind.
 /// `--symlink` and `--copy` apply to either a file or a directory source;
-/// `--template` is file-only; `--symlink-tree` is directory-only. clap cannot
-/// see the source's on-disk kind, so `cmd::add` checks the flag against the
-/// kind at use-site and raises a typed error.
+/// `--template` is file-only; `--symlink-tree` is directory-only. `cmd::add`
+/// checks the flag against the source kind at use-site and returns a typed
+/// error for an invalid pair.
 #[derive(Debug, Args, Default)]
 #[command(group = clap::ArgGroup::new("mode").multiple(false))]
 #[expect(
     clippy::struct_excessive_bools,
-    reason = "this is a clap-derived flag struct: each bool is an independent CLI flag (the mode flags, plus --json, --yes, and --force), not a state machine that would be better modelled as an enum. The mode flags are unified at use-site into the AddMode enum."
+    reason = "Each bool is an independent CLI flag (the mode flags plus --json, --yes, and --force). The mode flags become AddMode at use-site."
 )]
 pub struct AddArgs {
     /// The dotfile to bring under management. Absolute or HOME-relative
@@ -365,8 +359,8 @@ pub struct AddArgs {
     pub yes: bool,
 
     /// Add the path even when a tree-mode entry's `ignore` list already
-    /// excludes it. Separate from `--yes`: that flag only skips prompts, while
-    /// this one overrides a validation refusal.
+    /// excludes it. `--yes` skips prompts; `--force` overrides the validation
+    /// refusal.
     #[arg(long)]
     pub force: bool,
 }
@@ -456,7 +450,7 @@ pub struct StatusArgs {
 #[derive(Debug, Args, Default)]
 #[expect(
     clippy::struct_excessive_bools,
-    reason = "this is a clap-derived flag struct: each bool is an independent CLI flag (--yes / --force-deploy / --update / --json), not a state machine that would read better as an enum."
+    reason = "Each bool is an independent CLI flag (--yes, --force-deploy, --update, or --json), not a shared state."
 )]
 pub struct ApplyArgs {
     /// Apply unconditionally with no prompt, regardless of TTY state.
@@ -467,13 +461,11 @@ pub struct ApplyArgs {
     #[arg(long)]
     pub force_deploy: bool,
 
-    /// Run `patina remote update` for every remote before applying, so one run
-    /// covers both the pin bump and the consent diff for its new bytes. When a
-    /// remote is unreachable, the run warns and applies the pins already
-    /// committed. This
-    /// flag is ignored with `--json`, and skipped on a non-interactive preview
-    /// without `--yes`. The apply's own `--yes` does not accept the update
-    /// gate: a flagged bump is still held or prompted.
+    /// Run `patina remote update` for every remote before applying. The same
+    /// run then previews the pin bump and the consent diff for its new bytes.
+    /// An unreachable remote produces a warning, and the apply uses committed
+    /// pins. Ignored with `--json` and with a non-interactive preview without
+    /// `--yes`; `--yes` does not bypass the update gate.
     #[arg(long)]
     pub update: bool,
 

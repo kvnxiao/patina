@@ -1,32 +1,12 @@
-//! Golden-output coverage for the human diff body.
-//!
-//! In a partial apply the rendered diff emits a per-entry block only for
-//! `Create` / `Update` targets. An `Unchanged` target does not produce a
-//! block; one deterministic summary count line reports them all.
-//!
-//! The diff is exercised end-to-end through the real `patina apply` binary on
-//! the non-interactive path: with no `--yes` and a non-TTY stdin, `apply`
-//! renders the diff to stdout, then exits 0 as a preview without writing.
-//! The snapshot pins that captured stdout as the rendered diff body.
-//!
-//! The per-run tempdir home prefix is redacted to `[HOME]` so the snapshot is
-//! stable across runs and machines while still proving the path shape
-//! (one `copy [HOME]/...` line for the single Update block).
-
+//! Integration tests for `diff_render_snapshot`.
 mod common;
 
 use common::Fixture;
 use common::code;
 
-/// A plan with one Update target and three Unchanged targets renders
-/// exactly one per-entry block (the Update) plus one summary line stating three
-/// unchanged.
 #[test]
 fn partial_apply_diff_omits_unchanged_bodies_and_summarizes_the_count() {
     let f = Fixture::new();
-    // Four `copy` entries. After the first apply all four targets match their
-    // source bytes. Drifting exactly one (`b_out`) makes the next plan
-    // classify `b` as Update and the other three as Unchanged.
     let m = f.module(
         "m",
         r#"
@@ -64,14 +44,9 @@ mode = "copy"
         String::from_utf8_lossy(&first.stderr)
     );
 
-    // Drift exactly one target's bytes.
     let b_out = f.home.join("b_out");
     fs_err::write(&b_out, b"b-drifted\n").expect("drift b_out");
 
-    // `--color never` makes the strip unconditional: the renderer emits ANSI
-    // that the reporter's auto-stream removes, and forcing `never` keeps the
-    // pinned bytes plain regardless of the runner's terminal / CLICOLOR_FORCE
-    // state.
     let preview = f.apply(&["--color", "never"]);
     assert_eq!(
         code(&preview),
@@ -84,14 +59,9 @@ mode = "copy"
     insta::assert_snapshot!(redact_home(&stdout, &f.home));
 }
 
-/// An entry dropped from a `patina.toml` after a prior apply is reaped on the
-/// next apply. The preview must render that removal as a `remove <target>`
-/// block whose body is the deleted content, rather than omitting it and
-/// summarizing only the surviving entry as unchanged.
 #[test]
 fn dropped_entry_renders_as_a_remove_block_in_the_preview() {
     let f = Fixture::new();
-    // Two `copy` entries; apply both so a commit records them as managed.
     let m = f.module(
         "m",
         r#"
@@ -117,16 +87,12 @@ mode = "copy"
         String::from_utf8_lossy(&first.stderr)
     );
 
-    // Drop the second entry from the manifest: `keep_out` stays Unchanged and
-    // `drop_out` becomes an orphan the next apply reaps.
     fs_err::write(
         m.join("patina.toml"),
         "[[file]]\nsource = \"keep_src\"\ntarget = \"~/keep_out\"\nmode = \"copy\"\n",
     )
     .expect("rewrite manifest without the dropped entry");
 
-    // Non-interactive preview (no `--yes`, non-TTY stdin, `--color never`):
-    // stdout holds exactly the rendered diff body, plain.
     let preview = f.apply(&["--color", "never"]);
     assert_eq!(
         code(&preview),
@@ -139,23 +105,9 @@ mode = "copy"
     insta::assert_snapshot!(redact_home(&stdout, &f.home));
 }
 
-/// Redact the per-run tempdir home prefix to a stable `[HOME]` token so the
-/// snapshot is reproducible across runs and machines while still proving each
-/// block includes its target path.
-///
-/// The renderer prints the target resolved through `resolve_location`. That
-/// function canonicalizes the parent (this home dir) and strips the Windows
-/// verbatim prefix, so the printed prefix is the *canonical* home, not the raw
-/// env value: on macOS the tempdir's `/var/...` resolves to `/private/var/...`,
-/// and on Windows a junction / short-name / `\\?\` form can differ from the
-/// env string. Linux `/tmp` canonicalizes to a no-op, so only Linux ever
-/// matched the raw form. Canonicalize the home the same way
-/// (`dunce::canonicalize` mirrors the engine's `canonicalize`) before
-/// redacting, and cover both separator spellings. A literal string replace
-/// (not a regex) avoids re-enabling insta's `filters` feature.
 #[expect(
     clippy::expect_used,
-    reason = "test helper on fixture paths; allow-expect-in-tests covers #[test] fns and #[cfg(test)] modules but not free helper fns in a tests/*.rs integration crate."
+    reason = "The helper runs outside #[test] functions and #[cfg(test)] modules; allow-expect-in-tests does not cover free helpers in integration crates."
 )]
 fn redact_home(stdout: &str, home: &camino::Utf8Path) -> String {
     let canon_home = camino::Utf8PathBuf::from_path_buf(

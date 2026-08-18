@@ -133,8 +133,6 @@ mod tests {
 
     #[test]
     fn other_engine_errors_map_to_generic() {
-        // The wildcard arm does not read the error, so one variant is enough.
-        // A state-directory failure stands for anything that arm catches.
         let err = EngineError::StateDir(patina_core::StateDirError::MissingEnv { name: "HOME" });
         assert_eq!(ExitCode::from_engine_error(&err), ExitCode::Generic);
     }

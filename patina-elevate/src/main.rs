@@ -1,7 +1,4 @@
-//! Binary entry point for the `patina-elevate` helper.
-//!
-//! The command surface lives in the library crate, where the cross-platform
-//! tests exercise it without the binary artifact.
+//! Binary entry point for `patina-elevate`.
 
 use std::process::ExitCode;
 

@@ -1,18 +1,8 @@
+//! Integration tests for `remote_apply`.
 #![expect(
     clippy::expect_used,
-    reason = "integration tests use .expect() on fixture setup; allow-expect-in-tests covers #[cfg(test)] modules but not the helper functions in tests/*.rs integration crates."
+    reason = "Integration tests use .expect() for fixture setup outside #[cfg(test)] modules; allow-expect-in-tests does not cover integration-crate roots."
 )]
-
-//! `patina apply` over entries sourced from a declared remote, end to end.
-//!
-//! Each test declares the remote in the root manifest, builds a throwaway
-//! origin repository with the real `git` binary inside the fixture tempdir,
-//! hand-writes the `patina.lock` a producer machine would have committed, and
-//! drives the CLI as a subprocess. The "remote" is a local filesystem path, so
-//! the network is never involved.
-//!
-//! See `docs/REMOTE_SOURCES.md` "The remote registry", "The remote cache", and
-//! "Trust boundaries".
 
 mod common;
 
@@ -21,10 +11,8 @@ use common::Fixture;
 use common::Origin;
 use common::code;
 
-/// A fixed committer epoch, so nothing in these fixtures depends on the clock.
 const EPOCH: i64 = 1_700_000_000;
 
-/// Write the `patina.lock` a producer machine would have committed.
 fn write_lock(f: &Fixture, name: &str, origin: &Origin, rev: &str) {
     let body = format!(
         "version = 1\n\n[remotes.{name}]\nurl = \"{}\"\nref = \"main\"\nrev = \"{rev}\"\n\
@@ -34,16 +22,10 @@ fn write_lock(f: &Fixture, name: &str, origin: &Origin, rev: &str) {
     fs_err::write(f.root.join("patina.lock").as_std_path(), body).expect("write patina.lock");
 }
 
-/// Declare `origin` in the root manifest under `name`, tracking `main`.
 fn declare(f: &Fixture, name: &str, origin: &Origin) {
     f.declare_remote(name, &origin.url(), Some("main"));
 }
 
-/// Block until the wall clock crosses into the next second.
-///
-/// Used only where a test needs two applies to land in distinct journal cycles:
-/// the engine keys those by a one-second-resolution timestamp, so two applies
-/// inside one second collapse onto a single `<ts>.COMMIT`.
 fn wait_for_next_second() {
     let now = || {
         std::time::SystemTime::now()
@@ -56,12 +38,10 @@ fn wait_for_next_second() {
     }
 }
 
-/// The checkout directory the engine resolves a remote-sourced entry against.
 fn checkout(f: &Fixture, name: &str, rev: &str) -> Utf8PathBuf {
     patina_core::remote::cache::checkout_dir(&f.state_root(), &remote_name(name), rev)
 }
 
-/// A validated remote name, for the cache paths the assertions read.
 fn remote_name(spelling: &str) -> patina_core::RemoteName {
     patina_core::RemoteName::parse(spelling).expect("a legal remote name")
 }
@@ -109,10 +89,6 @@ fn a_remote_copy_mode_directory_materializes_from_the_pinned_checkout() {
 
 #[test]
 fn a_checkout_holding_a_real_symlink_fails_the_apply_plan() {
-    // Patina materializes checkouts with `core.symlinks=false`, so a real link
-    // in the cache was made or altered by something else. The plan must refuse
-    // to deploy through it. The executors dereference links, so deploying would
-    // read (copy) or plant (symlink-tree) paths outside the checkout.
     let f = Fixture::new();
     let origin = Origin::new(&f, "humanizer", EPOCH);
     let rev = origin.commit_files(&[("skills/humanizer/SKILL.md", "humanize\n")], EPOCH);
@@ -124,8 +100,6 @@ fn a_checkout_holding_a_real_symlink_fails_the_apply_plan() {
     );
     write_lock(&f, "humanizer", &origin, &rev);
 
-    // Fabricate the checkout the way an attacker (not Patina) would leave it:
-    // a plain leaf plus a link pointing at a file outside the checkout.
     let source_dir = checkout(&f, "humanizer", &rev).join("skills/humanizer");
     fs_err::create_dir_all(source_dir.as_std_path()).expect("mkdir fabricated checkout");
     fs_err::write(source_dir.join("SKILL.md").as_std_path(), "humanize\n")
@@ -149,10 +123,6 @@ fn a_checkout_holding_a_real_symlink_fails_the_apply_plan() {
 
 #[test]
 fn status_reports_applied_leaves_clean_when_the_pin_moved_but_its_checkout_is_absent() {
-    // The multi-machine flow: a `git pull` bumps the pin before the next
-    // apply. Status must not fetch, so the new rev's leaves are unknowable, and
-    // the previously applied, still-correct leaves must read CLEAN with a
-    // warning, not ORPHANED.
     let f = Fixture::new();
     let origin = Origin::new(&f, "humanizer", EPOCH);
     let rev = origin.commit_files(&[("skills/humanizer/SKILL.md", "humanize\n")], EPOCH);
@@ -165,7 +135,6 @@ fn status_reports_applied_leaves_clean_when_the_pin_moved_but_its_checkout_is_ab
     write_lock(&f, "humanizer", &origin, &rev);
     assert_eq!(code(&f.apply(&["--yes"])), 0, "priming apply");
 
-    // The pulled lockfile pins a rev this machine has not materialized.
     write_lock(&f, "humanizer", &origin, &"c".repeat(40));
 
     let out = f.run(&["status"], &[]);
@@ -192,9 +161,6 @@ fn status_reports_applied_leaves_clean_when_the_pin_moved_but_its_checkout_is_ab
 
 #[test]
 fn an_entry_selecting_the_remote_in_another_case_still_resolves() {
-    // Names are one identity ignoring case (the registry rejects case-only
-    // duplicates on that basis), so a reference spelled differently must find
-    // the declaration rather than fail as undeclared.
     let f = Fixture::new();
     let origin = Origin::new(&f, "humanizer", EPOCH);
     let rev = origin.commit_files(&[("SKILL.md", "humanize\n")], EPOCH);
@@ -290,9 +256,6 @@ fn an_entry_selecting_an_undeclared_remote_fails_planning() {
 
 #[test]
 fn a_remote_only_a_when_false_entry_selects_is_never_fetched() {
-    // The remote entry is switched off on every host, so planning drops it
-    // before any remote resolution. The origin is deleted and the lockfile has
-    // no pin: a fetch would error rather than succeed.
     let f = Fixture::new();
     let origin = Origin::new(&f, "unused", EPOCH);
     origin.commit_files(&[("a.md", "a\n")], EPOCH);
@@ -325,9 +288,6 @@ fn a_remote_only_a_when_false_entry_selects_is_never_fetched() {
 
 #[test]
 fn a_repository_with_no_remote_module_ignores_a_malformed_lockfile() {
-    // The lockfile is read lazily, on the first entry that selects a remote, so
-    // a repo with no such entry must apply even when a stray patina.lock is
-    // unreadable.
     let f = Fixture::new();
     let module = f.module(
         "shell",
@@ -355,8 +315,6 @@ fn a_repository_with_no_remote_module_ignores_a_malformed_lockfile() {
 
 #[test]
 fn apply_update_under_json_does_not_bump_the_lockfile() {
-    // A `--json` run is a single-document preview: `--update` must be ignored so
-    // it neither rewrites patina.lock nor prints human lines onto stdout.
     let f = Fixture::new();
     let origin = Origin::new(&f, "humanizer", EPOCH);
     let rev = origin.commit_files(&[("skills/x/SKILL.md", "one\n")], EPOCH);
@@ -367,7 +325,6 @@ fn apply_update_under_json_does_not_bump_the_lockfile() {
          target = \"~/.claude/skills/x\"\nmode = \"copy\"\n",
     );
     write_lock(&f, "humanizer", &origin, &rev);
-    // A newer upstream tip a producer pass would otherwise bump to.
     origin.commit_files(&[("skills/x/SKILL.md", "two\n")], EPOCH);
     let before =
         fs_err::read_to_string(f.root.join("patina.lock").as_std_path()).expect("read lock");
@@ -398,8 +355,6 @@ fn apply_update_under_json_does_not_bump_the_lockfile() {
 
 #[test]
 fn a_remote_source_that_escapes_its_checkout_is_refused() {
-    // A hostile manifest points outside the checkout with `..` to read host
-    // files. The resolver must refuse it before anything is deployed.
     let f = Fixture::new();
     let origin = Origin::new(&f, "evil", EPOCH);
     let rev = origin.commit_files(&[("inside.txt", "ok\n")], EPOCH);
@@ -454,11 +409,6 @@ fn a_remote_symlink_entry_points_into_the_pinned_checkout() {
     );
     let link = fs_err::read_link(deployed.as_std_path()).expect("the target is a symbolic link");
     let link = Utf8PathBuf::from_path_buf(link).expect("utf8 link target");
-    // The engine records canonical paths, while `checkout` spells the cache
-    // directory the way the environment gives the state dir. Canonicalizing
-    // both keeps the comparison honest: otherwise it compares `/var/...` with
-    // `/private/var/...` on macOS, and a long path with an 8.3 short one on
-    // Windows.
     let expected = patina_core::canonicalize_path(&checkout(&f, "prompts", &rev))
         .expect("canonicalize the checkout directory");
     let link = patina_core::canonicalize_path(&link).expect("canonicalize the link target");
@@ -470,9 +420,6 @@ fn a_remote_symlink_entry_points_into_the_pinned_checkout() {
 
 #[test]
 fn a_patina_toml_inside_the_checkout_contributes_nothing() {
-    // Remote content is third-party input: mappings, hooks, and variables come
-    // only from manifests in the user's own repository. A hostile manifest in the
-    // checkout must be inert bytes.
     let f = Fixture::new();
     let origin = Origin::new(&f, "hostile", EPOCH);
     let rev = origin.commit_files(
@@ -502,8 +449,6 @@ fn a_patina_toml_inside_the_checkout_contributes_nothing() {
         "the hostile manifest must not break the apply; stderr: {}",
         String::from_utf8_lossy(&out.stderr)
     );
-    // Without this check the test would pass on a fixture that never wrote the
-    // hostile manifest.
     assert!(
         checkout(&f, "hostile", &rev).join("patina.toml").is_file(),
         "the fixture must place a patina.toml inside the checkout"
@@ -617,10 +562,6 @@ fn a_warm_cache_applies_fully_with_the_remote_unreachable() {
 
 #[test]
 fn a_checkout_holds_the_commit_bytes_even_under_autocrlf() {
-    // `core.autocrlf = true` is a common Windows setting. If it reached the
-    // checkout, the same pinned commit would deploy CRLF on one machine and LF
-    // on another, and hash differently in the journal. A checkout must contain
-    // the commit's bytes verbatim.
     let f = Fixture::new();
     let origin = Origin::new(&f, "crlf", EPOCH);
     let rev = origin.commit_files(&[("a.md", "one\ntwo\n")], EPOCH);
@@ -695,9 +636,6 @@ fn bumping_the_pin_re_points_the_link_and_rollback_restores_the_prior_checkout()
     write_lock(&f, "moving", &origin, &first_rev);
     assert_eq!(code(&f.apply(&["--yes"])), 0, "apply the first pin");
 
-    // Two applies inside one second would share a `<ts>.COMMIT`. The prior
-    // checkout would then be unreferenced and swept, and rollback would find a
-    // dangling link.
     wait_for_next_second();
 
     let second_rev = origin.commit_files(&[("a.md", "second\n")], EPOCH);
@@ -743,13 +681,10 @@ fn apply_prunes_a_checkout_no_journal_record_references() {
     write_lock(&f, "sweep", &origin, &rev);
     assert_eq!(code(&f.apply(&["--yes"])), 0, "priming apply");
 
-    // A checkout of a rev nothing was ever applied from is unreferenced by
-    // every journal record, so the post-apply sweep must remove it.
     let orphan = checkout(&f, "sweep", "cccccccccccccccccccccccccccccccccccccccc");
     fs_err::create_dir_all(orphan.as_std_path()).expect("mkdir orphan checkout");
     fs_err::write(orphan.join("a.md").as_std_path(), b"stale").expect("write orphan leaf");
 
-    // Force a non-no-op apply so the run reaches the post-commit sweep.
     fs_err::remove_file(f.home.join(".a.md").as_std_path()).expect("delete the deployed file");
     assert_eq!(code(&f.apply(&["--yes"])), 0, "second apply");
 

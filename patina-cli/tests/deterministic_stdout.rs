@@ -1,29 +1,16 @@
+//! Integration tests for `deterministic_stdout`.
 #![expect(
     clippy::expect_used,
-    reason = "integration tests use .expect() on fixture setup; allow-expect-in-tests covers #[cfg(test)] modules but not the helper functions in tests/*.rs integration crates."
+    reason = "Integration tests use .expect() for fixture setup outside #[cfg(test)] modules; allow-expect-in-tests does not cover integration-crate roots."
 )]
-
-//! Integration tests for deterministic `patina apply` stdout.
-//!
-//! Two consecutive `patina apply` invocations against
-//! an unchanged source repository produce byte-identical stdout in both
-//! `--json` and human modes. A wall-clock timestamp, PID, or random ID never
-//! reaches user-facing output. The journal `<ts>` filename is the only place a
-//! timestamp is permitted, and it never appears on stdout.
-//!
-//! Each test drives the real `patina` binary through [`common::Fixture`].
 
 mod common;
 
 use common::Fixture;
 use common::code;
 
-/// A fixture that exercises multiple modes and a multi-target entry, so
-/// determinism is proven on more than a trivial plan.
 fn rich_fixture() -> Fixture {
     let f = Fixture::new();
-    // A copy mode and a template mode in one module; module order is fixed
-    // by discovery's alphabetical sort, so two applies see the same plan.
     let editor = f.module(
         "editor",
         "[[file]]\nsource = \"config\"\ntarget = \"~/.editorconfig\"\nmode = \"copy\"\n",
@@ -40,9 +27,6 @@ fn rich_fixture() -> Fixture {
 
 #[test]
 fn json_apply_is_byte_identical_across_two_runs() {
-    // The repo is first converged with a priming apply, so the two measured
-    // runs both observe the same on-disk state before their stdout is
-    // compared.
     let f = rich_fixture();
 
     let prime = f.apply(&["--json", "--yes"]);
@@ -79,8 +63,6 @@ fn json_apply_is_byte_identical_across_two_runs() {
 
 #[test]
 fn human_apply_is_byte_identical_across_two_runs() {
-    // As in the `--json` variant, a priming apply converges the repo first, so
-    // the two measured runs share state.
     let f = rich_fixture();
 
     let prime = f.apply(&["--yes"]);
@@ -117,8 +99,6 @@ fn human_apply_is_byte_identical_across_two_runs() {
 
 #[test]
 fn fully_satisfied_applies_are_byte_identical_and_report_up_to_date() {
-    // A priming apply converges the repo first, so both measured runs are
-    // full no-ops against an already-satisfied state.
     let f = rich_fixture();
 
     assert_eq!(
@@ -145,10 +125,6 @@ fn fully_satisfied_applies_are_byte_identical_and_report_up_to_date() {
 
 #[test]
 fn multi_target_rows_preserve_input_declaration_order() {
-    // A multi-target [[file]] entry with `targets` declared in deliberately
-    // non-alphabetical order. Determinism is a stable function of inputs, not
-    // an alphabetized sort, so the plan rows must keep declared order (.codex
-    // before .claude).
     let f = Fixture::new();
     let agent = f.module(
         "agent",

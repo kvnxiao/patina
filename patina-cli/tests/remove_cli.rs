@@ -1,14 +1,8 @@
+//! Integration tests for `remove_cli`.
 #![expect(
     clippy::expect_used,
-    reason = "integration tests use .expect() on fixture setup and assertions; allow-expect-in-tests covers #[cfg(test)] modules but not the top level of a tests/*.rs integration crate."
+    reason = "Integration tests use .expect() for fixture setup and assertions outside #[cfg(test)] modules; allow-expect-in-tests does not cover integration-crate roots."
 )]
-
-//! Integration coverage for `patina remove`.
-//!
-//! Each test drives the real `patina` binary through [`common::Fixture`],
-//! applying a symlink module first so a committed `<ts>.COMMIT` record
-//! exists for `remove` to read. With no TTY, the path under test is the
-//! `--yes`-driven one.
 
 mod common;
 
@@ -16,9 +10,6 @@ use camino::Utf8Path;
 use common::Fixture;
 use common::code;
 
-/// Seed a `zsh` module whose `[[file]]` symlinks `~/.zshrc` to
-/// `<repo>/zsh/zshrc` (content `shell-config`), then `patina apply --yes` so
-/// a committed record exists. Returns the fixture with the applied symlink.
 fn applied_symlink_fixture() -> Fixture {
     let fx = Fixture::new();
     fx.module(
@@ -47,10 +38,6 @@ fn applied_symlink_fixture() -> Fixture {
     fx
 }
 
-/// `patina remove ~/.zshrc --yes` replaces the symlink with a regular file
-/// containing the last-applied content, removes the `[[file]]` entry, and
-/// leaves the repository source unchanged. A subsequent `patina status --json`
-/// no longer lists the target.
 #[test]
 fn remove_replaces_target_drops_entry_and_status_omits_it() {
     let fx = applied_symlink_fixture();
@@ -111,9 +98,6 @@ fn remove_replaces_target_drops_entry_and_status_omits_it() {
     );
 }
 
-/// `patina remove ~/.zshrc --purge --yes` deletes the target from
-/// disk entirely, removes the `[[file]]` entry, and leaves the repository
-/// source unchanged.
 #[test]
 fn remove_purge_deletes_target_and_drops_entry() {
     let fx = applied_symlink_fixture();
@@ -147,8 +131,6 @@ fn remove_purge_deletes_target_and_drops_entry() {
     );
 }
 
-/// Removing a path that is not currently managed exits 1, includes the path and
-/// every discovery source, and does not mutate anything.
 #[test]
 fn remove_unmanaged_path_exits_1() {
     let fx = applied_symlink_fixture();
@@ -181,8 +163,6 @@ fn remove_unmanaged_path_exits_1() {
     );
 }
 
-/// `remove --json --yes` exits 0 and writes a single JSON document to stdout
-/// with the removed target and the purge flag.
 #[test]
 fn remove_json_emits_document() {
     let fx = applied_symlink_fixture();
@@ -207,12 +187,10 @@ fn remove_json_emits_document() {
     );
 }
 
-/// Decode stderr to a lossless string for assertions.
 fn stderr(out: &std::process::Output) -> String {
     String::from_utf8_lossy(&out.stderr).into_owned()
 }
 
-/// Whether `path` is a symbolic link (without following it).
 fn is_symlink(path: &Utf8Path) -> bool {
     fs_err::symlink_metadata(path.as_std_path()).is_ok_and(|m| m.file_type().is_symlink())
 }

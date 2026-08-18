@@ -1,17 +1,8 @@
+//! Integration tests for `remote_cli`.
 #![expect(
     clippy::expect_used,
-    reason = "integration tests use .expect() on fixture setup; allow-expect-in-tests covers #[cfg(test)] modules but not the helper functions in tests/*.rs integration crates."
+    reason = "Integration tests use .expect() for fixture setup outside #[cfg(test)] modules; allow-expect-in-tests does not cover integration-crate roots."
 )]
-
-//! The `patina remote` command group, end to end.
-//!
-//! Origins are throwaway git repositories on the local filesystem, so the suite
-//! exercises the real `git` plumbing with no network. Fixtures set
-//! `min_age = "0s"` where a test needs a bump to be eligible immediately; the
-//! gate's own arithmetic is unit-tested in `patina_core::remote::gate`.
-//!
-//! See `docs/REMOTE_SOURCES.md` "Commands", "The update gate", and
-//! "Shell integration".
 
 mod common;
 
@@ -20,11 +11,8 @@ use common::Origin;
 use common::code;
 use common::git_in;
 
-/// A committer epoch far enough in the past that any age floor is satisfied.
 const OLD_EPOCH: i64 = 1_700_000_000;
 
-/// Declare a remote in the root manifest, optionally with a per-remote
-/// `min_age`, plus a module entry that sources from it.
 fn declare(f: &Fixture, name: &str, origin: &Origin, min_age: Option<&str>) {
     declare_only(f, name, origin, min_age);
     f.module(
@@ -36,7 +24,6 @@ fn declare(f: &Fixture, name: &str, origin: &Origin, min_age: Option<&str>) {
     );
 }
 
-/// Declare a remote in the root manifest without any entry selecting it.
 fn declare_only(f: &Fixture, name: &str, origin: &Origin, min_age: Option<&str>) {
     f.declare_remote(name, &origin.url(), Some("main"));
     let Some(value) = min_age else {
@@ -51,7 +38,6 @@ fn declare_only(f: &Fixture, name: &str, origin: &Origin, min_age: Option<&str>)
     .expect("write root manifest");
 }
 
-/// A validated remote name, for the cache paths the assertions read.
 fn remote_name(spelling: &str) -> patina_core::RemoteName {
     patina_core::RemoteName::parse(spelling).expect("a legal remote name")
 }
@@ -67,8 +53,6 @@ fn json_of(output: &std::process::Output) -> serde_json::Value {
 
 #[test]
 fn update_creates_the_first_pin_without_waiting_out_the_age_gate() {
-    // The commit is made "now" and the floor is the default 72 hours, so only
-    // the first-pin exemption can allow the bump.
     let f = Fixture::new();
     let origin = Origin::new(&f, "humanizer", OLD_EPOCH);
     let now = patina_core::current_epoch_seconds();
@@ -133,7 +117,6 @@ fn a_candidate_inside_its_cooldown_window_is_held_and_reports_when_it_is_eligibl
     assert_eq!(code(&f.run(&["remote", "update"], &[])), 0, "first pin");
     let pinned = lockfile(&f);
 
-    // A brand-new second commit cannot be a week old.
     origin.commit_files(
         &[("a.md", "second\n")],
         patina_core::current_epoch_seconds(),
@@ -189,8 +172,6 @@ fn a_rewritten_history_is_not_bumped_without_confirmation() {
     assert_eq!(code(&f.run(&["remote", "update"], &[])), 0, "first pin");
     let pinned = lockfile(&f);
 
-    // Replace `main` with an unrelated root commit: the shape a force-push
-    // leaves behind.
     git_in(
         &origin.dir,
         OLD_EPOCH,
@@ -199,7 +180,6 @@ fn a_rewritten_history_is_not_bumped_without_confirmation() {
     let rewritten = origin.commit_files(&[("a.md", "rewritten\n")], OLD_EPOCH);
     git_in(&origin.dir, OLD_EPOCH, &["branch", "-M", "main"]);
 
-    // The subprocess has no TTY, so the confirmation cannot be answered.
     let out = f.run(&["remote", "update"], &[]);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
@@ -318,9 +298,6 @@ fn check_reports_a_moved_upstream_and_writes_the_notice() {
 
 #[test]
 fn a_successful_update_clears_the_pending_notice() {
-    // Only `remote check` otherwise rewrites the notice files, and its hook
-    // form self-throttles for a day, so a bump that leaves them in place keeps
-    // announcing an update the user already accepted.
     let f = Fixture::new();
     let origin = Origin::new(&f, "humanizer", OLD_EPOCH);
     origin.commit_files(&[("a.md", "first\n")], OLD_EPOCH);
@@ -334,8 +311,6 @@ fn a_successful_update_clears_the_pending_notice() {
         "the fixture must start with a pending update"
     );
 
-    // `--yes`: the fixture commit is backdated against the pin's fresh
-    // `updated_at`, so the gate flags it and a bare update would hold.
     assert_eq!(code(&f.run(&["remote", "update", "--yes"], &[])), 0);
 
     assert!(
@@ -388,8 +363,6 @@ fn check_hook_is_silent_and_self_throttles() {
     let stamp = patina_core::remote::notice::last_check_epoch(&f.state_root());
     assert!(stamp.is_some(), "the hook must stamp its check");
 
-    // Inside the throttle window the second run skips the check, and the stamp
-    // stays untouched.
     assert_eq!(code(&f.run(&["remote", "check", "--hook"], &[])), 0);
     assert_eq!(
         patina_core::remote::notice::last_check_epoch(&f.state_root()),
@@ -430,9 +403,6 @@ fn prune_removes_an_unreferenced_checkout() {
 
 #[test]
 fn prune_removes_the_whole_cache_tree_of_an_undeclared_remote() {
-    // The reachability sweep only ever considers checkout directories, so a
-    // remote's own directory and its bare fetch repository would remain after
-    // the declaration is deleted.
     let f = Fixture::new();
     let origin = Origin::new(&f, "humanizer", OLD_EPOCH);
     origin.commit_files(&[("a.md", "first\n")], OLD_EPOCH);
@@ -515,8 +485,6 @@ fn a_preview_apply_reports_a_stale_pin_without_rewriting_the_lockfile() {
     fs_err::remove_dir_all(f.root.join("humanizer").as_std_path()).expect("remove the module");
     let before = lockfile(&f);
 
-    // Without `--yes` in a non-interactive shell this is a preview, and it
-    // must not write.
     let out = f.apply(&[]);
     assert_eq!(code(&out), 0, "a preview exits 0");
     assert_eq!(
@@ -533,8 +501,6 @@ fn a_preview_apply_reports_a_stale_pin_without_rewriting_the_lockfile() {
 
 #[test]
 fn update_pins_every_declaration_not_only_the_ones_in_use() {
-    // The committed lock has to be complete for every machine, so a remote no
-    // entry currently selects is still pinned here.
     let f = Fixture::new();
     let used = Origin::new(&f, "used", OLD_EPOCH);
     used.commit_files(&[("a.md", "first\n")], OLD_EPOCH);

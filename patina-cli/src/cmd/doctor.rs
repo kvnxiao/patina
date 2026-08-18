@@ -146,7 +146,7 @@ impl Level {
 #[derive(Debug, Clone)]
 #[expect(
     clippy::struct_excessive_bools,
-    reason = "each bool is an independent host-state fact gathered from a distinct source (the platform, the repository's declared modes, the OS-build query, the state-directory pointer, the PATH lookup for git), not a state machine that would be better modelled as an enum."
+    reason = "Each bool records a distinct host-state fact from the platform, repository declarations, OS-build query, state-directory pointer, or PATH lookup for git."
 )]
 pub struct Inputs {
     /// Whether the running host is Windows. Off Windows, no `DOC-WIN-*`

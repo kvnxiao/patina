@@ -1,24 +1,15 @@
-//! Integration coverage for the widened committed apply record: the
-//! `<state>/patina/journal/<ts>.COMMIT` sentinel records, per
-//! target, the canonical source path and, for content targets, a 32-byte
-//! `blake3` hash of the materialized bytes, behind a version envelope whose
-//! major is the journal's `FILE_MAJOR_VERSION` (held at `1` pre-release).
-//!
-//! Each test drives `patina apply --yes` through [`common::Fixture`], then
-//! decodes the COMMIT record from the isolated journal dir and asserts its
-//! provenance.
-
+//! Integration tests for `commit_record`.
 #![expect(
     clippy::expect_used,
-    reason = "integration tests use .expect() on fixture setup; allow-expect-in-tests covers #[cfg(test)] modules but not the helper functions in tests/*.rs integration crates."
+    reason = "Integration tests use .expect() for fixture setup outside #[cfg(test)] modules; allow-expect-in-tests does not cover integration-crate roots."
 )]
 #![expect(
     clippy::panic,
-    reason = "integration tests panic! on unexpected fixture/record shapes; allow-*-in-tests covers #[cfg(test)] modules but not the helper functions in tests/*.rs integration crates."
+    reason = "Integration tests use panic! for unexpected fixture or record shapes outside #[cfg(test)] modules; allow-*-in-tests does not cover integration-crate roots."
 )]
 #![expect(
     clippy::indexing_slicing,
-    reason = "the COMMIT envelope and the single-element commit-file vector are indexed only after their length is asserted immediately above; a bounds-check panic is acceptable test signal."
+    reason = "The COMMIT envelope and single-element commit-file vector are indexed after length assertions; a bounds-check panic remains a test failure."
 )]
 
 use camino::Utf8Path;
@@ -32,7 +23,6 @@ use patina_core::read_latest_commit;
 use std::process::Output;
 use tempfile::TempDir;
 
-/// A prepared fixture with an isolated repo, state dir, and home.
 struct Fixture {
     _temp: TempDir,
     root: Utf8PathBuf,
@@ -62,8 +52,6 @@ impl Fixture {
         }
     }
 
-    /// Write a module directory with the given `patina.toml` body, returning
-    /// its path so the test can drop source files beside the manifest.
     fn module(&self, name: &str, manifest: &str) -> Utf8PathBuf {
         let dir = self.root.join(name);
         fs_err::create_dir_all(&dir).expect("mkdir module");
@@ -94,13 +82,6 @@ impl Fixture {
         self.invoke("status", args)
     }
 
-    /// The per-machine journal directory the subprocess writes COMMIT
-    /// sentinels into. The resolved state root is platform-dependent:
-    /// Linux/Windows honour `XDG_STATE_HOME` / `LOCALAPPDATA` (→ `self.state`),
-    /// while macOS ignores both and uses `$HOME/Library/Application Support`
-    /// (→ `self.home`). To match the path the binary wrote the journal to,
-    /// resolve it from this fixture's own isolated env values, the same ones
-    /// `invoke` passes to the subprocess.
     fn journal_dir(&self) -> Utf8PathBuf {
         patina_core::state_dir::resolve_with_env(HostOs::current(), |name| match name {
             "XDG_STATE_HOME" | "LOCALAPPDATA" => Some(self.state.as_str().to_owned()),
@@ -111,14 +92,12 @@ impl Fixture {
         .join("journal")
     }
 
-    /// Decode the single COMMIT record produced by the last apply.
     fn commit_record(&self) -> ApplyRecord {
         read_latest_commit(self.journal_dir())
             .expect("read COMMIT record")
             .expect("an apply must have written a COMMIT record")
     }
 
-    /// The raw bytes of the single `<ts>.COMMIT` file in the journal dir.
     fn commit_bytes(&self) -> Vec<u8> {
         let mut commits: Vec<Utf8PathBuf> = fs_err::read_dir(self.journal_dir())
             .expect("read journal dir")
@@ -149,7 +128,6 @@ fn assert_applied(out: &Output) {
     );
 }
 
-/// The recorded entry whose target path ends with `suffix`.
 fn entry_for<'r>(record: &'r ApplyRecord, suffix: &str) -> &'r ExpectedTarget {
     record
         .targets
@@ -158,9 +136,6 @@ fn entry_for<'r>(record: &'r ApplyRecord, suffix: &str) -> &'r ExpectedTarget {
         .unwrap_or_else(|| panic!("no recorded target ending in `{suffix}`"))
 }
 
-/// The recorded blake3 hash of a content target. An entry that is not a
-/// `Content` variant panics. `ExpectedTarget` is `#[non_exhaustive]`, so the
-/// match needs a wildcard arm in this downstream crate.
 fn content_hash_of(entry: &ExpectedTarget) -> [u8; 32] {
     match entry {
         ExpectedTarget::Content { hash, .. } => *hash,
@@ -168,13 +143,7 @@ fn content_hash_of(entry: &ExpectedTarget) -> [u8; 32] {
     }
 }
 
-/// Canonicalize a path the way the engine does before recording it, so the
-/// test's expectation matches the recorded source byte-for-byte regardless
-/// of the platform's verbatim-prefix representation.
 fn canonical(path: &Utf8Path) -> String {
-    // `dunce::canonicalize` mirrors the engine's `canonicalize_path`. Both
-    // do a filesystem canonicalize with the Windows `\\?\` verbatim prefix
-    // stripped when the plain form is equivalent.
     let canon = dunce::canonicalize(path.as_std_path()).expect("canonicalize path");
     camino::Utf8PathBuf::from_path_buf(canon)
         .expect("canonical path is utf8")
@@ -266,8 +235,6 @@ fn two_applies_record_byte_identical_hash() {
     );
 }
 
-// The COMMIT file's first two bytes are the little-endian u16 major version,
-// and that value matches the journal's supported FILE_MAJOR_VERSION.
 #[test]
 fn commit_envelope_major_matches_supported() {
     let f = Fixture::new();
@@ -317,18 +284,9 @@ fn status_uses_recorded_blake3_for_drift() {
     );
 }
 
-// A committed apply over both `[[file]]` and `[[directory]]` table-arrays
-// uses one monotonic entry-index space. Every declared entry has a distinct
-// index, so a `[[file]]` entry never collides with a `[[directory]]` entry.
-// Targets sharing one declared entry share its index. The COMMIT version
-// envelope major stays the journal's supported major, with no version bump.
 #[test]
 fn directory_and_file_entries_get_distinct_indices_and_envelope_major_is_unchanged() {
     let f = Fixture::new();
-    // Two `[[file]]` entries and one `[[directory]]` entry, all copy-mode so
-    // no symlink elevation is needed and every target records as `Content`.
-    // The directory has two leaf files, so its single declared entry fans
-    // out to two targets that must share one entry index.
     let module = f.module(
         "m",
         concat!(
@@ -348,8 +306,6 @@ fn directory_and_file_entries_get_distinct_indices_and_envelope_major_is_unchang
 
     let record = f.commit_record();
 
-    // The `[[file]]` entries take indices 0 and 1, then the single
-    // `[[directory]]` entry's two leaves share one later index.
     let a = entry_for(&record, "/.a").entry();
     let b = entry_for(&record, "/.b").entry();
     let d_one = entry_for(&record, "/.d/one").entry();

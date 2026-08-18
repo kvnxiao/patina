@@ -1,4 +1,4 @@
-//! `patina-elevate`, a standalone Windows-only privilege helper.
+//! `patina-elevate`, a Windows-only privilege helper.
 //!
 //! `patina.exe` re-invokes this binary through `ShellExecuteEx` with the
 //! `runas` verb, raising exactly one UAC prompt. The helper runs the single
@@ -7,10 +7,9 @@
 //! `enable-developer-mode` sets the Developer Mode registry switch
 //! (`AllowDevelopmentWithoutDevLicense` under `AppModelUnlock` in `HKLM`) to
 //! `1`. `apply-defender-exclusions` reads a request file naming Windows
-//! Defender path exclusions to add and remove, re-validates every path, then
-//! applies them through the `Defender` PowerShell module and verifies the
-//! change with a mandatory re-read. The helper depends on no other workspace
-//! crate, so UAC has a smaller binary to gate.
+//! Defender path exclusions to add and remove, re-validates every path, applies
+//! them through the `Defender` PowerShell module, and verifies the change with
+//! a mandatory re-read. The helper has no workspace-crate dependency.
 //!
 //! ## Library and thin binary split
 //!
@@ -24,7 +23,7 @@
 //! |------|----------------------------------------------------------------|
 //! | 0    | The requested action succeeded.                                |
 //! | 1    | The action ran but failed (e.g. non-elevated → access denied, or a Defender write blocked by Tamper Protection). |
-//! | 2    | Argument parsing failed (unknown subcommand / usage). clap.    |
+//! | 2    | Argument parsing failed (unknown subcommand or usage error).   |
 
 use clap::CommandFactory;
 use clap::Parser;
@@ -45,7 +44,7 @@ pub struct Cli {
     pub command: Command,
 }
 
-/// Parse the process arguments into a [`Cli`], or print a usage error and exit.
+/// Parse process arguments or exit with a usage error.
 ///
 /// On [`ErrorKind::InvalidSubcommand`], writes clap's rendered error to
 /// stderr, appends a line listing the subcommands derived from the command
@@ -64,15 +63,14 @@ pub fn parse_or_exit() -> Cli {
     match Cli::try_parse() {
         Ok(cli) => cli,
         Err(error) if error.kind() == ErrorKind::InvalidSubcommand => {
-            // The workspace `disallowed-macros` gate targets the print
-            // macros, not raw handle writes; clap's own `Error::exit` writes
-            // through a locked stderr handle too.
+            // Raw handle writes are the only stderr path allowed by the
+            // workspace's `disallowed_macros` lint here.
             use std::io::Write as _;
             let mut stderr = std::io::stderr().lock();
             let listing = supported_subcommands();
             let rendered = write!(stderr, "{error}")
                 .and_then(|()| writeln!(stderr, "Supported subcommands: {listing}"));
-            // Exit 2 even if the stderr write failed; the usage error stands.
+            // The usage error still maps to exit 2 when stderr rejects the write.
             drop(rendered);
             std::process::exit(2);
         }
@@ -123,19 +121,13 @@ pub fn run(command: &Command) -> ExitCode {
     }
 }
 
-/// Map an action's result to an [`ExitCode`], writing the typed failure to
-/// stderr on the exit-1 path.
-///
-/// The helper has no `patina-core` dependency and therefore no `Reporter`, so
-/// the exit-1 line goes to stderr through a scoped `disallowed_macros`
-/// suppression.
 fn report_result<E: std::error::Error>(action: &str, result: Result<(), E>) -> ExitCode {
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             #[expect(
                 clippy::disallowed_macros,
-                reason = "helper has no Reporter; typed error to stderr is the documented exit-1 path"
+                reason = "The helper has no Reporter; write the typed error to stderr for exit 1."
             )]
             {
                 eprintln!("patina-elevate: {action} failed: {error}");

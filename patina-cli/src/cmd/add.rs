@@ -203,7 +203,7 @@ impl AddMode {
 /// not exist or cannot be copied; or the manifest read/write fails.
 #[expect(
     clippy::unused_async,
-    reason = "the subcommand dispatch in main.rs awaits every command uniformly; add's work is synchronous filesystem and lock I/O but keeps the async signature for parity."
+    reason = "The dispatch awaits every command; add performs synchronous filesystem and lock I/O but keeps the async signature."
 )]
 pub async fn run(
     args: &AddArgs,

@@ -1,24 +1,8 @@
+//! Integration tests for `clippy_disallowed_macros`.
 #![expect(
     clippy::expect_used,
-    reason = "integration tests use .expect() on fixture setup; allow-expect-in-tests covers #[cfg(test)] modules but not the helper functions in tests/*.rs integration crates."
+    reason = "Integration tests use .expect() for fixture setup outside #[cfg(test)] modules; allow-expect-in-tests does not cover integration-crate roots."
 )]
-
-//! Integration test for the workspace `disallowed-macros` clippy gate.
-//!
-//! The `output::Reporter` abstraction is the only sanctioned site
-//! for user-facing prints: `println!`, `eprintln!`, `print!`, and `eprint!`
-//! are denied everywhere else via the workspace `clippy.toml`'s
-//! `disallowed-macros` list. A fresh
-//! `println!("hi")` in a non-`output` file makes clippy fail with a
-//! `clippy::disallowed_macros` diagnostic that includes the offending file,
-//! while the `tracing`-style macros and a module-scoped
-//! `#[expect(clippy::disallowed_macros, ...)]` carve-out stay clean.
-//!
-//! Mutating the checked-in source tree would race with other parallel tests
-//! and risk leaving the tree dirty on failure. Each scenario therefore
-//! compiles a throwaway crate in a tempdir that reuses the real workspace
-//! `clippy.toml`, the artifact under test, so the assertion exercises the same
-//! config CI enforces.
 
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
@@ -26,9 +10,6 @@ use serde_json::Value;
 use std::process::Command;
 use tempfile::TempDir;
 
-/// Absolute path to the workspace `clippy.toml`, the artifact under test.
-/// `CARGO_MANIFEST_DIR` is the `patina-cli` crate dir; the workspace root is
-/// its parent.
 fn workspace_clippy_toml() -> Utf8PathBuf {
     let manifest_dir = Utf8Path::new(env!("CARGO_MANIFEST_DIR"));
     let root = manifest_dir
@@ -37,8 +18,6 @@ fn workspace_clippy_toml() -> Utf8PathBuf {
     root.join("clippy.toml")
 }
 
-/// A throwaway single-file crate that reuses the workspace `clippy.toml`, with
-/// `body` as the entire contents of `src/plan.rs`. Returns the crate root.
 fn scratch_crate(temp: &TempDir, body: &str) -> Utf8PathBuf {
     let root = Utf8Path::from_path(temp.path())
         .expect("utf8 temp path")
@@ -46,34 +25,20 @@ fn scratch_crate(temp: &TempDir, body: &str) -> Utf8PathBuf {
     fs_err::create_dir_all(root.join("src")).expect("mkdir src");
     fs_err::write(
         root.join("Cargo.toml"),
-        // A leaf crate, deliberately not part of the patina workspace
-        // (`[workspace]` makes it its own root), so clippy resolves the
-        // clippy.toml copied beside it rather than the repo's.
         "[package]\nname = \"scratch\"\nversion = \"0.0.0\"\nedition = \"2021\"\n\n[workspace]\n",
     )
     .expect("write Cargo.toml");
-    // Name the file `plan.rs` to mirror a realistic
-    // `patina-core/src/plan.rs`; the assertion checks that the diagnostic includes
-    // it.
     fs_err::write(root.join("src/plan.rs"), body).expect("write plan.rs");
-    // `pub mod` makes the fixture's `pub fn`s reachable as crate API. A
-    // private `mod` would make them dead code, so `-D warnings` would fail
-    // for that reason instead of the one under test.
     fs_err::write(root.join("src/lib.rs"), "pub mod plan;\n").expect("write lib.rs");
     let clippy_toml = fs_err::read_to_string(workspace_clippy_toml()).expect("read clippy.toml");
     fs_err::write(root.join("clippy.toml"), clippy_toml).expect("write scratch clippy.toml");
     root
 }
 
-/// Run `cargo clippy --message-format=json -- -D warnings` in `crate_root` and
-/// return `(success, disallowed_macros_files)` where the second element holds
-/// the `file_name` of every `clippy::disallowed_macros` diagnostic span.
 fn run_clippy(crate_root: &Utf8Path) -> (bool, Vec<String>) {
     let output = Command::new(env!("CARGO"))
         .args(["clippy", "--message-format=json", "--", "-D", "warnings"])
         .current_dir(crate_root)
-        // A fresh target dir under the tempdir keeps the run hermetic and lets
-        // the OS reclaim it with the tempdir.
         .env("CARGO_TARGET_DIR", crate_root.join("target").as_str())
         .output()
         .expect("spawn cargo clippy");
@@ -84,8 +49,6 @@ fn run_clippy(crate_root: &Utf8Path) -> (bool, Vec<String>) {
         let Ok(value) = serde_json::from_str::<Value>(line) else {
             continue;
         };
-        // Compiler messages carry `reason == "compiler-message"` and a nested
-        // `message.code.code` giving the lint that fired.
         if value.get("reason").and_then(Value::as_str) != Some("compiler-message") {
             continue;
         }
@@ -111,10 +74,6 @@ fn run_clippy(crate_root: &Utf8Path) -> (bool, Vec<String>) {
 
 #[test]
 fn each_raw_print_macro_outside_output_module_fails_clippy_for_the_file() {
-    // One use of each denied macro in a non-`output` file (here `plan.rs`,
-    // mirroring `patina-core/src/plan.rs`) makes clippy exit non-zero with
-    // one `disallowed_macros` diagnostic per use. A macro missing from the
-    // workspace list then shows up as the count dropping.
     let temp = TempDir::new().expect("tempdir");
     let crate_root = scratch_crate(
         &temp,
@@ -141,19 +100,9 @@ fn each_raw_print_macro_outside_output_module_fails_clippy_for_the_file() {
 
 #[test]
 fn tracing_macro_and_scoped_expect_stay_clean() {
-    // Two sibling scenarios share this fixture. A non-listed macro, here a
-    // `tracing`-style `info!` stubbed locally so the scratch crate needs no
-    // dependency, does not fire the lint. A module-scoped
-    // `#[expect(clippy::disallowed_macros, ...)]` carve-out, the same shape
-    // the `output` module and the lock_helper example use, suppresses it
-    // cleanly with no unfulfilled-expectation warning.
     let temp = TempDir::new().expect("tempdir");
     let crate_root = scratch_crate(
         &temp,
-        // `info!` is a local `macro_rules` stub, so a macro outside the
-        // disallowed list never fires the lint. The second fn puts the scoped
-        // expect over a genuine `println!`. That fulfils the expectation, so
-        // `-D warnings` raises no `unfulfilled_lint_expectations`.
         "macro_rules! info {\n    ($($t:tt)*) => {{ let _ = format!($($t)*); }};\n}\n\
          pub fn logged() {\n    info!(\"hi\");\n}\n\n\
          #[expect(clippy::disallowed_macros, reason = \"carve-out under test\")]\n\
