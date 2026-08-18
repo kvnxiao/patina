@@ -1,3 +1,5 @@
+//! Integration tests for executor modes.
+
 #![expect(
     clippy::expect_used,
     reason = "integration tests use .expect() on fixture setup; allow-expect-in-tests covers #[cfg(test)] modules but not the helper functions in tests/*.rs integration crates."
@@ -10,12 +12,6 @@
     clippy::cloned_ref_to_slice_refs,
     reason = "single-target fixtures read most clearly as a `&[target.clone()]` slice literal alongside the multi-target `&[t1, t2]` cases they sit beside."
 )]
-
-//! Integration coverage for the five file-mode executors. Each test drives
-//! the public [`materialize`] entry point against a real tempdir fixture.
-//! It asserts the materialized filesystem object matches the mode's
-//! contract: symlink readlink targets, byte content for copies, or
-//! rendered output for templates.
 
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
@@ -35,10 +31,6 @@ fn utf8_tempdir() -> (TempDir, Utf8PathBuf) {
     (td, canonical)
 }
 
-/// Read a link's target and canonicalize it. The contract is that the
-/// readlink target equals the canonical source. Canonicalizing both sides
-/// makes the assertion independent of the platform's readlink
-/// representation; Windows returns the verbatim `\\?\` form.
 fn read_link_canonical(target: &Utf8Path) -> Utf8PathBuf {
     let raw = fs_err::read_link(target.as_std_path()).expect("read_link target");
     let link_target = Utf8PathBuf::from_path_buf(raw).expect("link target is utf-8");
@@ -55,9 +47,6 @@ fn resolver() -> Resolver {
     Resolver::new(Builtins::for_tests())
 }
 
-/// A file source with `mode = "symlink"`, the default mode, materializes
-/// the target as a symlink. Its readlink target equals the canonical
-/// source path.
 #[test]
 fn symlink_mode_links_to_canonical_source() {
     let (_td, dir) = utf8_tempdir();
@@ -83,8 +72,6 @@ fn symlink_mode_links_to_canonical_source() {
     ));
 }
 
-/// A directory source under `symlink` mode produces one symlink per file
-/// at the mirrored target path. It creates no atomic directory symlink.
 #[test]
 fn symlink_mode_directory_source_walks_per_file() {
     let (_td, dir) = utf8_tempdir();
@@ -113,7 +100,6 @@ fn symlink_mode_directory_source_walks_per_file() {
         read_link_canonical(&target.join("nvim").join("init.lua")),
         canonical(&src.join("nvim").join("init.lua"))
     );
-    // The target directory itself is a real directory, not a single link.
     assert!(
         !fs_err::symlink_metadata(&target)
             .expect("target metadata")
@@ -122,8 +108,6 @@ fn symlink_mode_directory_source_walks_per_file() {
     );
 }
 
-/// `symlink-dir` materializes a single directory symlink
-/// at the target and does not walk into the source.
 #[test]
 fn symlink_dir_mode_creates_single_atomic_link() {
     let (_td, dir) = utf8_tempdir();
@@ -152,8 +136,6 @@ fn symlink_dir_mode_creates_single_atomic_link() {
     );
 }
 
-/// With a single target, `copy` mode materializes a regular file whose
-/// byte content equals the source.
 #[test]
 fn copy_mode_writes_byte_identical_file() {
     let (_td, dir) = utf8_tempdir();
@@ -182,8 +164,6 @@ fn copy_mode_writes_byte_identical_file() {
     );
 }
 
-/// `copy-tree` materializes a directory tree of regular
-/// files mirroring the source.
 #[test]
 fn copy_tree_mode_mirrors_directory() {
     let (_td, dir) = utf8_tempdir();
@@ -211,10 +191,6 @@ fn copy_tree_mode_mirrors_directory() {
     );
 }
 
-/// A `.tmpl` source renders through `MiniJinja` and materializes at the
-/// declared suffix-less target as a regular file. The target is declared
-/// without a `.tmpl` suffix, for example `source = "gitconfig.tmpl"` and
-/// `target = "~/.gitconfig"`. The executor writes to that target verbatim.
 #[test]
 fn template_render_mode_renders_to_declared_target() {
     let (_td, dir) = utf8_tempdir();
@@ -243,7 +219,6 @@ fn template_render_mode_renders_to_declared_target() {
         fs_err::read_to_string(&target).expect("read rendered"),
         "[user]\n    email = kevin@example.com"
     );
-    // The rendered output is a regular file, not a symlink.
     assert!(
         !fs_err::symlink_metadata(&target)
             .expect("target metadata")

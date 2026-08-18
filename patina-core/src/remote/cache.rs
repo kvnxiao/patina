@@ -60,7 +60,7 @@ pub fn bare_repo(state_dir: &Utf8Path, module: &RemoteName) -> Utf8PathBuf {
 
 /// `<state>/remotes/<module>/<rev>/`, the immutable checkout of one pinned
 /// rev.
-#[must_use = "the checkout directory is what entry sources resolve against"]
+#[must_use = "entry sources use the checkout directory"]
 pub fn checkout_dir(state_dir: &Utf8Path, module: &RemoteName, rev: &str) -> Utf8PathBuf {
     module_dir(state_dir, module).join(rev)
 }
@@ -86,7 +86,7 @@ pub fn last_check_path(state_dir: &Utf8Path) -> Utf8PathBuf {
 }
 
 /// Whether the checkout of `rev` for `module` is already materialized.
-#[must_use = "a warm checkout is what lets a plain apply run offline"]
+#[must_use = "a warm checkout lets a plain apply run offline"]
 pub fn checkout_present(state_dir: &Utf8Path, module: &RemoteName, rev: &str) -> bool {
     checkout_dir(state_dir, module, rev).is_dir()
 }

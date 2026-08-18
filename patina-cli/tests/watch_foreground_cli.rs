@@ -1,8 +1,5 @@
-// Both lints are triggered only from the `#[cfg(unix)] mod foreground` helper
-// methods below (their `.expect()` calls and the `&buf[..n]` read slice);
-// `allow-*-in-tests` covers `#[cfg(test)]` modules but not the helper methods
-// in tests/*.rs integration crates. On non-unix targets that module is absent,
-// so the expectation would be unfulfilled. Gate it to unix to match.
+//! Integration tests for watch foreground cli.
+
 #![cfg_attr(
     unix,
     expect(
@@ -12,34 +9,17 @@
     )
 )]
 
-//! Integration tests for `patina watch --foreground`. They cover signal
-//! handling and the `[watcher] debounce_ms` forward-compatible warning.
-//!
-//! The foreground watcher is a long-running process, so these tests cannot use
-//! the shared [`Fixture::run`] helper (which blocks on `Output` to completion).
-//! Instead they spawn the binary with piped stderr, drain stderr on a reader
-//! thread, send a real signal, and assert on the exit status and captured
-//! stderr. Signal-sending is POSIX-only (`kill(1)`), so the SIGINT / SIGTERM
-//! tests are `#[cfg(unix)]`; the debounce-warning test is cross-platform.
-
 mod common;
 
 use common::Fixture;
-// `code` and `Command` are used only by the `#[cfg(unix)] mod foreground`
-// (through its `use super::*`); they are unused on non-unix targets.
 #[cfg(unix)]
 use common::code;
 #[cfg(unix)]
 use std::process::Command;
 
-/// `patina watch` with neither a lifecycle subcommand nor `--foreground`
-/// reports the usage hint. When the root manifest declares the ignored
-/// `[watcher] debounce_ms` key, the forward-compatible warning precedes it.
-/// That path runs to completion, so the blocking `Fixture::run` helper is fine.
 #[test]
 fn debounce_ms_key_in_root_manifest_warns() {
     let f = Fixture::new();
-    // Append the ignored watcher knob to the root manifest the fixture wrote.
     let root_manifest = f.root.join("patina.toml");
     fs_err::write(
         &root_manifest,
@@ -54,15 +34,12 @@ fn debounce_ms_key_in_root_manifest_warns() {
         stderr.contains("debounce_ms"),
         "stderr must warn about the ignored debounce_ms key, got: {stderr}"
     );
-    // The 500ms window is hardcoded; the warning must include it.
     assert!(
         stderr.contains("500"),
         "the warning must include the fixed 500ms window, got: {stderr}"
     );
 }
 
-/// A root manifest without the `[watcher]` table does not raise the debounce
-/// warning.
 #[test]
 fn no_watcher_table_does_not_warn() {
     let f = Fixture::new();
@@ -83,24 +60,16 @@ mod foreground {
     use std::time::Duration;
     use std::time::Instant;
 
-    /// A spawned foreground watcher with a background stderr reader.
     struct Watcher {
         child: std::process::Child,
         stderr: Arc<Mutex<String>>,
     }
 
     impl Watcher {
-        /// Spawn `patina watch --foreground` against the fixture's isolated
-        /// repo / state / home, with `RUST_LOG=patina_core=info` and piped
-        /// stderr drained on a reader thread.
         fn spawn(f: &Fixture) -> Self {
             Self::spawn_with_log(f, "patina_core=info")
         }
 
-        /// Spawn the foreground watcher with an explicit `RUST_LOG` filter, so
-        /// a test that asserts on a debug-level event (e.g.
-        /// `lock_contention_skip`) can raise the watcher to
-        /// `patina_core=debug`.
         fn spawn_with_log(f: &Fixture, rust_log: &str) -> Self {
             let bin = env!("CARGO_BIN_EXE_patina");
             let mut child = Command::new(bin)
@@ -138,12 +107,10 @@ mod foreground {
             Self { child, stderr }
         }
 
-        /// The stderr captured so far.
         fn stderr_snapshot(&self) -> String {
             self.stderr.lock().expect("stderr lock").clone()
         }
 
-        /// Block until `needle` appears in stderr or `timeout` elapses.
         fn wait_for_stderr(&self, needle: &str, timeout: Duration) -> bool {
             let deadline = Instant::now() + timeout;
             while Instant::now() < deadline {
@@ -155,10 +122,6 @@ mod foreground {
             self.stderr_snapshot().contains(needle)
         }
 
-        /// The number of stderr *lines* containing `needle`. Counts log events
-        /// rather than raw substrings. A single structured event line repeats
-        /// its event name across its field names (`re_apply re_apply_id=…`), so
-        /// a substring count would over-count one event many times.
         fn count_event_lines(&self, needle: &str) -> usize {
             self.stderr_snapshot()
                 .lines()
@@ -166,7 +129,6 @@ mod foreground {
                 .count()
         }
 
-        /// Send a POSIX signal by name via `kill(1)` to the child's pid.
         fn signal(&self, name: &str) {
             let pid = self.child.id().to_string();
             let status = Command::new("kill")
@@ -176,9 +138,6 @@ mod foreground {
             assert!(status.success(), "kill -{name} {pid} failed");
         }
 
-        /// Wait for the child to exit, up to `timeout`. Returns the exit code.
-        /// A child still running at the deadline is killed, and the return is
-        /// `None`.
         fn wait_exit(&mut self, timeout: Duration) -> Option<i32> {
             let deadline = Instant::now() + timeout;
             while Instant::now() < deadline {
@@ -192,8 +151,6 @@ mod foreground {
         }
     }
 
-    /// Build a fixture with one applied symlink module so the watcher has a
-    /// committed journal to compute subscriptions from.
     fn applied_fixture() -> Fixture {
         let f = Fixture::new();
         let module = f.module(
@@ -216,8 +173,6 @@ mod foreground {
         let f = applied_fixture();
         let mut watcher = Watcher::spawn(&f);
 
-        // Wait until the loop has started before signalling, so the signal hits
-        // the select-loop rather than racing process startup.
         assert!(
             watcher.wait_for_stderr("watch_started", Duration::from_secs(5)),
             "watcher should log startup; stderr: {}",
@@ -269,8 +224,6 @@ mod foreground {
 
     #[test]
     fn logs_its_subscription_set_on_startup() {
-        // The subscription log includes the watched source path, so a harness
-        // can inspect it from stderr.
         let f = applied_fixture();
         let watcher = Watcher::spawn(&f);
 
@@ -280,22 +233,16 @@ mod foreground {
             watcher.stderr_snapshot()
         );
         let stderr = watcher.stderr_snapshot();
-        // The applied module's source `rc` is a watched source path; its path
-        // must appear in the logged subscription set.
         assert!(
             stderr.contains("rc"),
             "the logged subscription set must include the watched source `rc`; got: {stderr}"
         );
 
-        // Clean up the long-running child.
         let mut watcher = watcher;
         watcher.signal("TERM");
         let _exit = watcher.wait_exit(Duration::from_secs(2));
     }
 
-    /// Build a fixture with one applied copy-mode module so the watcher's
-    /// re-apply has a content target to re-materialize and the source is a
-    /// watched path a test can edit to trigger a re-apply.
     fn applied_copy_fixture() -> Fixture {
         let f = Fixture::new();
         let module = f.module(
@@ -313,7 +260,6 @@ mod foreground {
         f
     }
 
-    /// Count the live `<ts>.COMMIT` sentinels in the fixture's journal dir.
     fn commit_count(f: &Fixture) -> usize {
         let journal = f.state_root().join("journal");
         let Ok(entries) = fs_err::read_dir(journal.as_std_path()) else {
@@ -331,20 +277,6 @@ mod foreground {
 
     #[test]
     fn five_touches_within_the_debounce_window_coalesce_to_one_reapply() {
-        // The 500ms debounce window covers the whole burst, so a burst of
-        // writes to a watched source must coalesce into exactly one `re_apply`
-        // event.
-        //
-        // The five writes are issued back-to-back with no inter-write sleep,
-        // on purpose. An earlier revision slept 20ms between writes to mimic
-        // an editor's multi-event save. Under a loaded CI runner those sleeps
-        // stretched, since a 20ms `sleep` is a yield point that can be
-        // descheduled into hundreds of ms, spreading the burst across more
-        // than the 500ms window. It then split into several debounce batches
-        // and fired one re-apply per straggler, up to one per write, flaking
-        // the `== 1` assertion below. A bare `write` loop has no yield point,
-        // so the burst stays well inside one window regardless of scheduler
-        // load. Do not reintroduce a per-write sleep in this loop.
         let f = applied_copy_fixture();
         let watcher = Watcher::spawn(&f);
 
@@ -354,14 +286,12 @@ mod foreground {
             watcher.stderr_snapshot()
         );
 
-        // Five rapid writes to the watched source, back-to-back.
         let source = f.root.join("git").join("gitconfig");
         for i in 0..5 {
             fs_err::write(source.as_std_path(), format!("[user]\n  name = a{i}\n"))
                 .expect("rewrite source");
         }
 
-        // Wait for the single coalesced re-apply to fire and settle.
         assert!(
             watcher.wait_for_stderr("re_apply", Duration::from_secs(5)),
             "the coalesced burst should drive one re_apply; stderr: {}",
@@ -369,8 +299,6 @@ mod foreground {
         );
         std::thread::sleep(Duration::from_secs(1));
 
-        // The success event line is `patina_core: re_apply re_apply_id=…`; the
-        // trailing space distinguishes it from the `re_apply_failed` event.
         let reapplies = watcher.count_event_lines("patina_core: re_apply re_apply_id");
         assert_eq!(
             watcher.count_event_lines("re_apply_failed"),
@@ -392,9 +320,6 @@ mod foreground {
 
     #[test]
     fn a_parallel_cli_apply_triggers_a_journal_rescan() {
-        // A parallel `patina apply --yes` writes a new `.plan`/`.COMMIT`
-        // under the watched journal dir; the watcher logs a `journal_rescan`
-        // event and does not enter an unbounded re-apply loop.
         let f = applied_copy_fixture();
         let watcher = Watcher::spawn(&f);
 
@@ -404,20 +329,6 @@ mod foreground {
             watcher.stderr_snapshot()
         );
 
-        // This scenario models an external `patina apply` that commits new
-        // state while the watcher runs. The watcher must detect the new
-        // journal record under the watched journal dir and rescan. An
-        // unchanged re-apply is a full no-op that does not write a journal
-        // record, and no rescan follows one, so the parallel apply has to
-        // change committed state to produce the `.COMMIT` this scenario needs.
-        //
-        // Introduce a brand-new entry after the watcher has subscribed, so it
-        // falls outside the current subscription set. The parallel apply
-        // then performs a real Create and commits a fresh journal record, and
-        // the watcher reacts to that journal write rather than to the new
-        // source/target, a pair it is not yet watching. That isolates the loop
-        // guard's target behaviour: an external apply's commit triggering a
-        // journal rescan.
         let extra = f.module(
             "extra",
             "[[file]]\nsource = \"extra_src\"\ntarget = \"~/extra_out\"\nmode = \"copy\"\n",
@@ -433,9 +344,6 @@ mod foreground {
             watcher.stderr_snapshot()
         );
 
-        // After settling, the rescan count stays bounded. A single CLI apply
-        // drives a small, finite number of rescans, not a runaway loop. A
-        // runaway loop would push the count into the dozens.
         std::thread::sleep(Duration::from_secs(1));
         let rescans = watcher.count_event_lines("journal_rescan");
         assert!(
@@ -449,10 +357,6 @@ mod foreground {
         let _exit = watcher.wait_exit(Duration::from_secs(2));
     }
 
-    /// Count drift-cache entries whose target matches `needle`, or 0 when the
-    /// cache is absent / undecodable. Reads the on-disk cache through the
-    /// engine's own decoder so the assertion sees exactly what `patina
-    /// debug drift-cache` would.
     fn drift_entries_for(f: &Fixture, needle: &str) -> usize {
         let path = f.state_root().join("drift.cache");
         match patina_core::load_drift_cache_file(&path) {
@@ -467,23 +371,8 @@ mod foreground {
 
     #[test]
     fn an_external_target_edit_logs_drift_and_populates_the_cache() {
-        // This test covers the platform-independent, deterministic slice. A
-        // running watcher over an applied copy-mode `~/.gitconfig`, when the
-        // target is overwritten with bytes that hash differently, logs a
-        // `drift` event, records the divergence in `<state>/drift.cache` with
-        // the recorded and observed hashes, and `patina status` then reports
-        // the target DRIFTED from its own live re-hash.
-        //
-        // The notification count is asserted deterministically by the
-        // `patina-core` drift unit tests against the capture sink. The CLI
-        // binary always uses the real `notify-rust` sink, and a headless CI
-        // runner cannot capture that sink, so no count is assertable in this
-        // suite. This suite owns the observable on-disk and status
-        // side-effects instead.
         let f = applied_copy_fixture();
         let target = f.home.join(".gitconfig");
-        // The fixture applied the source bytes to the target. Capture them, so
-        // the overwrite written below differs from the recorded content.
         let applied = fs_err::read_to_string(target.as_std_path()).expect("read applied target");
 
         let watcher = Watcher::spawn(&f);
@@ -493,9 +382,6 @@ mod foreground {
             watcher.stderr_snapshot()
         );
 
-        // Overwrite the target out-of-band with content that hashes
-        // differently (H2 ≠ H1). Drift detection exists to catch exactly this
-        // kind of out-of-band change.
         let drifted = format!("{applied}; drifted = true\n");
         assert_ne!(drifted, applied, "the overwrite must change the bytes");
         fs_err::write(target.as_std_path(), &drifted).expect("overwrite target");
@@ -506,7 +392,6 @@ mod foreground {
             watcher.stderr_snapshot()
         );
 
-        // The drift cache records the divergence (the on-disk surface).
         let cache_populated = {
             let deadline = Instant::now() + Duration::from_secs(3);
             loop {
@@ -525,9 +410,6 @@ mod foreground {
             watcher.stderr_snapshot()
         );
 
-        // A re-apply would rewrite the divergent target back to source and
-        // re-trigger, so the watcher must not re-apply it. The `re_apply`
-        // event must be absent.
         assert_eq!(
             watcher.count_event_lines("patina_core: re_apply re_apply_id"),
             0,
@@ -535,8 +417,6 @@ mod foreground {
             watcher.stderr_snapshot()
         );
 
-        // `patina status --json` reports the target DRIFTED, derived
-        // from the live re-hash, independent of the cache.
         let status = f.run(&["status", "--json"], &[]);
         assert_eq!(
             code(&status),
@@ -547,8 +427,6 @@ mod foreground {
         let stdout = String::from_utf8_lossy(&status.stdout);
         let doc: serde_json::Value =
             serde_json::from_str(stdout.trim()).expect("status --json emits one JSON document");
-        // The `files` array contains an entry whose path ends with `.gitconfig`
-        // with `state = "drifted"`.
         let drifted_gitconfig = doc
             .get("files")
             .and_then(serde_json::Value::as_array)
@@ -576,12 +454,6 @@ mod foreground {
 
     #[test]
     fn a_watcher_reapply_commits_exactly_one_new_journal_record() {
-        // A single watched-source edit drives exactly one watcher re-apply.
-        // That re-apply commits exactly one new journal record on top of the
-        // fixture's initial apply (two COMMITs total). That pair is the
-        // deterministic, single-process slice of the two-committed-plans
-        // contract; the full concurrent-CLI race is exercised by the engine's
-        // `NonBlocking` unit tests.
         let f = applied_copy_fixture();
         assert_eq!(
             commit_count(&f),
@@ -596,13 +468,6 @@ mod foreground {
             watcher.stderr_snapshot()
         );
 
-        // The journal `<ts>` is keyed to whole-second granularity (the hoisted
-        // `current_timestamp`), so a re-apply landing in the same wall-clock
-        // second as the fixture apply would reuse its timestamp and overwrite
-        // the COMMIT rather than add a second one. Wait past the current second
-        // boundary before editing so the re-apply takes a distinct timestamp,
-        // the same separation a real user edit (≥500ms debounce after any prior
-        // apply) has in practice.
         std::thread::sleep(Duration::from_millis(1100));
 
         let source = f.root.join("git").join("gitconfig");
@@ -614,10 +479,6 @@ mod foreground {
             watcher.stderr_snapshot()
         );
 
-        // Poll for the new COMMIT rather than sleeping a fixed interval. The
-        // engine commits before it logs the `re_apply` event, so the COMMIT is
-        // already on disk, but polling absorbs scheduler jitter under parallel
-        // test load.
         let two_commits = {
             let deadline = Instant::now() + Duration::from_secs(3);
             loop {
@@ -631,9 +492,6 @@ mod foreground {
             }
         };
 
-        // The watcher held the lock for its own re-apply and committed one new
-        // record. Nothing competed for that lock, so the run never skipped on
-        // contention.
         assert_eq!(
             watcher.count_event_lines("lock_contention_skip"),
             0,

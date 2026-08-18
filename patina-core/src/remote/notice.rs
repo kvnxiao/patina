@@ -77,7 +77,7 @@ pub fn publish(
 ///
 /// An unreadable or empty notice reads as `None`: this is a notification, and
 /// failing a command over it would be worse than staying quiet.
-#[must_use = "the notice is what `patina status` and the shell snippets surface"]
+#[must_use = "`patina status` and shell snippets surface this notice"]
 pub fn read_notice(state_dir: &Utf8Path) -> Option<String> {
     let text = fs_err::read_to_string(cache::notice_path(state_dir).as_std_path()).ok()?;
     let trimmed = text.trim();
@@ -145,10 +145,9 @@ pub fn is_pending(pending: &BTreeSet<String>, remote: &RemoteName) -> bool {
 /// `pending` file and the prose `notice` to match, and clearing both when
 /// nothing remains.
 ///
-/// This is the notice side of a settled pin. Whoever bumps a pin, or finds it
-/// already at its tip, calls this, so a stale announcement never outlives the
-/// update it asked for. Only `remote check` otherwise rewrites these files,
-/// and its `--hook` form self-throttles for a day.
+/// Settling a pin updates the notice side. A stale announcement therefore does
+/// not outlive the update it requested. Only `remote check` otherwise rewrites
+/// these files, and its `--hook` form self-throttles for a day.
 ///
 /// A repo-behind notice is left in place. It outranks pending updates, because
 /// the user's next move is `git pull` regardless. Only a `check` can learn

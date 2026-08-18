@@ -1,14 +1,9 @@
+//! Integration tests for add cli.
+
 #![expect(
     clippy::expect_used,
     reason = "integration tests use .expect() on fixture setup and assertions; allow-expect-in-tests covers #[cfg(test)] modules but not the top level of a tests/*.rs integration crate."
 )]
-
-//! Integration coverage for `patina add`.
-//!
-//! Each test drives the real `patina` binary through [`common::Fixture`], so
-//! the paths covered here are the non-interactive ones: the missing-flag
-//! refusals, and a run that prompts for nothing. The TTY prompt branches are
-//! unit-tested in `cmd::add`.
 
 mod common;
 
@@ -25,9 +20,6 @@ use std::sync::Once;
 use std::time::Duration;
 use std::time::Instant;
 
-/// `patina add ~/.zshrc --module zsh --symlink --yes` copies the dotfile into
-/// `<repo>/zsh/zshrc` and writes a `[[file]]` entry. `apply` has not run, so
-/// the original target stays a regular file with the original bytes.
 #[test]
 fn add_copies_file_writes_entry_and_leaves_target() {
     let fx = Fixture::new();
@@ -73,7 +65,6 @@ fn add_copies_file_writes_entry_and_leaves_target() {
         Some("symlink")
     );
 
-    // `apply` has not run, and `add` on its own never materializes a target.
     assert!(zshrc.is_file(), "~/.zshrc must remain a regular file");
     assert!(!is_symlink(&zshrc), "~/.zshrc must not be a symlink yet");
     assert_eq!(
@@ -82,12 +73,6 @@ fn add_copies_file_writes_entry_and_leaves_target() {
     );
 }
 
-/// `add` leaves the file staged in the repo, the `[[file]]` entry written, and
-/// the target a regular file. `patina apply --yes` then materializes the target
-/// as a symbolic link whose readlink destination is the canonical path of
-/// `<repo>/zsh/zshrc`. Only that apply shows the entry `add` wrote is one the
-/// engine can deploy. The manifest text and the not-yet-a-symlink check do not
-/// establish that.
 #[test]
 fn add_then_apply_materializes_target_as_symlink() {
     let fx = Fixture::new();
@@ -126,8 +111,6 @@ fn add_then_apply_materializes_target_as_symlink() {
     );
 }
 
-/// Two mode flags produce a clap usage error (exit 2)
-/// and stderr includes the conflicting flags.
 #[test]
 fn add_two_mode_flags_is_a_usage_error() {
     let fx = Fixture::new();
@@ -147,8 +130,6 @@ fn add_two_mode_flags_is_a_usage_error() {
     );
 }
 
-/// In a non-TTY shell without `--module`, `add` exits 1 and identifies
-/// the missing `--module` flag.
 #[test]
 fn add_non_tty_without_module_exits_1() {
     let fx = Fixture::new();
@@ -170,8 +151,6 @@ fn add_non_tty_without_module_exits_1() {
     );
 }
 
-/// A path that is already managed exits 1 and identifies the owning
-/// module.
 #[test]
 fn add_already_managed_path_exits_1() {
     let fx = Fixture::new();
@@ -196,8 +175,6 @@ fn add_already_managed_path_exits_1() {
     assert!(zshrc.is_file(), "~/.zshrc must be untouched on refusal");
 }
 
-/// `add --json --yes` exits 0 and writes a single JSON document to stdout with
-/// the added target, its module, and its mode.
 #[test]
 fn add_json_emits_one_document_with_target_module_and_mode() {
     let fx = Fixture::new();
@@ -239,24 +216,12 @@ fn add_json_emits_one_document_with_target_module_and_mode() {
     );
 }
 
-/// A process holding the engine's exclusive lock blocks a
-/// concurrent `patina add` until it is released; `add` then completes
-/// successfully.
-///
-/// Process A is the `patina-core` `lock_helper` example. It acquires the
-/// exclusive lock at `<state>/lock`, the same path `patina add` resolves
-/// from the fixture env, and holds it for a fixed window. Process B is
-/// `patina add`, launched once A is observed to hold the lock. B must not
-/// finish before A releases the lock; its completion proves it waited.
 #[test]
 fn add_serializes_behind_a_held_exclusive_lock() {
     let fx = Fixture::new();
     let zshrc = fx.home.join(".zshrc");
     fs_err::write(zshrc.as_std_path(), "foo").expect("seed ~/.zshrc");
 
-    // The helper locks `<state_dir>/lock` directly; the CLI resolves its
-    // state dir from the fixture env, so point the helper at that same
-    // resolved directory.
     let state_dir = fx.state_root();
     fs_err::create_dir_all(state_dir.join("journal").as_std_path()).expect("mkdir journal");
 
@@ -268,8 +233,6 @@ fn add_serializes_behind_a_held_exclusive_lock() {
     wait_for_acquired(&mut holder);
     let released_after = Instant::now();
 
-    // Give it a generous lock timeout so it waits out the holder rather than
-    // timing out.
     let started = Instant::now();
     let out = fx.run(
         &["add", "~/.zshrc", "--module", "zsh", "--symlink", "--yes"],
@@ -285,9 +248,6 @@ fn add_serializes_behind_a_held_exclusive_lock() {
         "add must complete once the lock frees; stderr: {}",
         stderr(&out)
     );
-    // B cannot have completed before A released the lock, so it must have
-    // blocked for most of the hold window. Allow slack for process startup, but
-    // require that it waited a clear majority of the hold.
     assert!(
         waited >= Duration::from_secs(1),
         "add should have blocked on the held lock (waited {waited:?})"
@@ -304,21 +264,16 @@ fn add_serializes_behind_a_held_exclusive_lock() {
     );
 }
 
-/// Decode stderr to a lossless string for assertions.
 fn stderr(out: &std::process::Output) -> String {
     String::from_utf8_lossy(&out.stderr).into_owned()
 }
 
-/// Whether `path` is a symbolic link (without following it).
 fn is_symlink(path: &Utf8Path) -> bool {
     fs_err::symlink_metadata(path.as_std_path()).is_ok_and(|m| m.file_type().is_symlink())
 }
 
 static BUILD: Once = Once::new();
 
-/// Build the `patina-core` `lock_helper` example once into this test
-/// binary's target root so [`lock_helper_path`] can locate it under both
-/// plain `cargo test` and `cargo llvm-cov`.
 fn ensure_lock_helper_built() {
     BUILD.call_once(|| {
         let status = Command::new(env!("CARGO"))
@@ -338,8 +293,6 @@ fn ensure_lock_helper_built() {
     });
 }
 
-/// The cargo target root this test binary was built into, derived from the
-/// running test executable: `<target-root>/<profile>/deps/<test-exe>`.
 fn target_root() -> Utf8PathBuf {
     let test_exe = std::env::current_exe().expect("current test exe path");
     let root = test_exe
@@ -350,7 +303,6 @@ fn target_root() -> Utf8PathBuf {
     Utf8PathBuf::from_path_buf(root.to_owned()).expect("utf8 target root")
 }
 
-/// Locate the compiled `lock_helper` example next to this test binary.
 fn lock_helper_path() -> Utf8PathBuf {
     let test_exe = std::env::current_exe().expect("current test exe path");
     let deps_dir = test_exe.parent().expect("deps dir");
@@ -362,9 +314,6 @@ fn lock_helper_path() -> Utf8PathBuf {
     Utf8PathBuf::from_path_buf(helper).expect("utf8 helper path")
 }
 
-/// Spawn the lock holder. It acquires the exclusive lock at `<state>/lock`
-/// and holds it for `hold`. Nothing else holds the lock yet, so it acquires
-/// immediately despite its long acquisition timeout.
 fn spawn_holder(helper: &Utf8Path, state: &Utf8Path, hold: Duration) -> Child {
     Command::new(helper.as_std_path())
         .arg(state.as_str())
@@ -377,9 +326,6 @@ fn spawn_holder(helper: &Utf8Path, state: &Utf8Path, hold: Duration) -> Child {
         .expect("spawn lock_helper holder")
 }
 
-/// Block until the holder prints its `ACQUIRED` marker. That marker proves it
-/// holds the lock. Then drain the rest of its stdout in the background so it
-/// never blocks on a later write.
 fn wait_for_acquired(child: &mut Child) {
     let stdout = child.stdout.take().expect("holder stdout piped");
     let mut reader = BufReader::new(stdout);

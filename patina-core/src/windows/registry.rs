@@ -1,7 +1,7 @@
 //! Windows-only registry and process-token reads backing the Developer
 //! Mode capability (read side).
 //!
-//! This module is compiled only under `#[cfg(windows)]`; the
+//! The `#[cfg(windows)]` module supplies the registry reads. The
 //! cross-platform façade in the parent module routes here on Windows and
 //! returns stub values everywhere else, so non-Windows builds never
 //! resolve `winsafe` into the dependency graph.
@@ -52,8 +52,8 @@ fn win_err(call: &'static str, err: co::ERROR) -> WindowsError {
 /// Read the Developer Mode DWORD flag from `HKLM`.
 ///
 /// Returns `Ok(Some(value))` when the value exists and is a DWORD. Returns
-/// `Ok(None)` when the key or value is absent, which means Developer Mode was
-/// never toggled on this machine. Returns `Err` when the registry call itself
+/// `Ok(None)` when the key or value is absent; Developer Mode was never toggled
+/// on this machine. Returns `Err` when the registry call itself
 /// fails for a reason other than "not found".
 ///
 /// # Errors

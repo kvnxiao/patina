@@ -3,7 +3,7 @@
 //! The watcher owns `<state>/patina/logs/` and the rotating-log stack the
 //! watcher writes its metrics into. [`state_dir::resolve`]
 //! creates only `journal/` and `backups/`; it deliberately does not create
-//! `logs/`. This module fills that gap. [`build_file_appender`] lazily
+//! `logs/`. The logging layer fills that gap. [`build_file_appender`] lazily
 //! creates `<state>/patina/logs/` on first start and builds a daily-rotating
 //! [`tracing_appender::rolling::RollingFileAppender`] that keeps the seven
 //! most recent files.

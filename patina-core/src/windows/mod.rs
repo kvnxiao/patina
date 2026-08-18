@@ -3,7 +3,7 @@
 //!
 //! On Windows, an apply whose plan contains any `symlink` / `symlink-dir`
 //! operation only proceeds when the host can create symbolic links without
-//! elevation. That means Developer Mode is enabled, with the
+//! elevation. Developer Mode therefore must be enabled, with the
 //! `AllowDevelopmentWithoutDevLicense` registry flag set to `1`. An already
 //! elevated invoking process also satisfies it.
 //!
@@ -11,7 +11,7 @@
 //! reads of the registry flag, the process-token elevation check, and
 //! the OS-build query. The *orchestration* (the UAC prompt, the
 //! decline → exit-5 path, re-driving `execute_plan`) lives in
-//! `patina-cli`. This module is therefore the read side only: it exposes
+//! `patina-cli`. The module provides the read side: it exposes
 //! the typed queries plus the pure gate-decision function.
 //!
 //! Everything here compiles on every platform. The Windows-specific
@@ -202,7 +202,7 @@ pub fn is_unc_path(path: &Utf8Path) -> bool {
 /// Whether the resolved plan contains any operation that creates a
 /// symbolic link ([`FileMode::Symlink`] or [`FileMode::SymlinkDir`]).
 ///
-/// This is the predicate that gates the whole Developer Mode flow: only a
+/// Gate the whole Developer Mode flow: only a
 /// plan that creates symbolic links can require Developer Mode, so a plan
 /// of pure copies / renders never prompts.
 #[must_use = "the symlink predicate gates the Developer Mode flow"]
@@ -313,12 +313,10 @@ pub fn decide_symlink_gate(plan: &ResolvedPlan, probe: &impl DevModeProbe) -> Ga
 ///
 /// `ShellExecuteEx` is the only way to raise the UAC consent dialog without
 /// `unsafe`. It returns as soon as the shell has *created* the elevated helper
-/// process, not when that process exits. Waiting on the process would
-/// need its handle, which the safe wrapper discards. So a launcher can only
-/// learn what the helper did by observing its effect, and a single observation
-/// taken immediately after the launch races the helper's own startup: image
-/// load, runtime init, and argument parsing all happen after
-/// `ShellExecuteEx` has already returned. Both launch sites poll instead.
+/// process, not when that process exits. The safe wrapper discards the process
+/// handle, so launchers observe the helper's effect instead. A single
+/// observation races image load, runtime initialization, and argument parsing;
+/// both launch sites poll instead.
 ///
 /// Taking the observation as a closure keeps the interval and deadline
 /// arithmetic separable from whatever is being observed.

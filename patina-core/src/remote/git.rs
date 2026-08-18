@@ -133,7 +133,7 @@ pub(crate) fn is_full_sha(candidate: &str) -> bool {
 /// Read the commit SHA that `git_ref` (or the remote's default branch when
 /// `git_ref` is `None`) currently points at, without downloading any object.
 ///
-/// This is the only network call `patina remote check` makes.
+/// `patina remote check` makes only this network call.
 ///
 /// An annotated tag resolves to the commit it peels to, so a tag and a branch
 /// naming the same commit produce the same SHA.
@@ -209,8 +209,7 @@ pub fn ensure_bare_repo(git_dir: &Utf8Path) -> Result<(), GitError> {
 
 /// Whether `rev` is already present as a commit object in `git_dir`.
 ///
-/// This is the cache-warm test: a warm cache lets a plain `apply` run fully
-/// offline.
+/// A warm cache lets a plain `apply` run fully offline.
 ///
 /// # Errors
 ///
@@ -555,8 +554,8 @@ fn try_repo_differs_from_origin(repo_root: &Utf8Path) -> Option<bool> {
     // `origin/work` would incorrectly read as never behind. One spawn answers
     // both halves of the tracking configuration. `lstrip` reduces the
     // upstream to the branch name `ls-remote` takes. A branch tracking
-    // nothing falls back to its own name on `origin`, which is where a
-    // clone's branches live.
+    // A branch with no upstream falls back to its own name on `origin`, where a
+    // clone stores its branches.
     let tracking = in_repo(&[
         "for-each-ref",
         "--format=%(upstream:remotename)%09%(upstream:lstrip=3)",

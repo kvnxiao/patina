@@ -26,8 +26,7 @@ use camino::Utf8Path;
 /// flattened to its destination's bytes, and a directory is captured
 /// recursively.
 ///
-/// This writes only under `backups_dir`; it never touches the dotfiles
-/// repository.
+/// Write only under `backups_dir`; never touch the dotfiles repository.
 ///
 /// # Errors
 ///

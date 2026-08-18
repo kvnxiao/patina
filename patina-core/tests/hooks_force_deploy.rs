@@ -1,19 +1,9 @@
+//! Integration tests for hooks force deploy.
+
 #![expect(
     clippy::expect_used,
     reason = "integration tests use .expect() on fixture setup; allow-expect-in-tests covers #[cfg(test)] modules but not the helper functions in tests/*.rs integration crates."
 )]
-
-//! Integration coverage for the `--force-deploy` hook override.
-//!
-//! `--force-deploy` ([`ForceDeploy::Yes`]) overrides every hook in the
-//! invocation to behave as `must_succeed = false`. A non-zero exit can then
-//! only degrade to a warning. A `post_apply` failure under force-deploy
-//! classifies as [`HookOutcome::Warned`], so the orchestrator fires no
-//! rollback and the CLI exits 0.
-//!
-//! These tests also prove the hook command genuinely executes under
-//! force-deploy, so its filesystem side effect lands rather than the hook
-//! being skipped.
 
 use camino::Utf8PathBuf;
 use patina_core::ForceDeploy;
@@ -25,8 +15,6 @@ use patina_core::run_hook;
 use patina_core::state_dir::HostOs;
 use tempfile::TempDir;
 
-/// The host default shell name (`bash` on macOS / Linux, `pwsh` on
-/// Windows).
 fn default_shell() -> &'static str {
     match HostOs::current() {
         HostOs::Windows => "pwsh",
@@ -41,13 +29,8 @@ fn utf8_tempdir() -> (TempDir, Utf8PathBuf) {
     (td, canonical)
 }
 
-/// A command that creates `marker` and then exits non-zero, written in the
-/// host default shell's dialect. The side effect proves the hook ran. The
-/// non-zero exit is the failure `--force-deploy` must downgrade to a
-/// warning.
 fn touch_then_fail(marker: &Utf8PathBuf) -> String {
     if matches!(HostOs::current(), HostOs::Windows) {
-        // PowerShell: create the file, then exit 1.
         format!("New-Item -ItemType File -Force -Path '{marker}' | Out-Null; exit 1")
     } else {
         format!("touch '{marker}'; exit 1")
@@ -75,10 +58,7 @@ async fn force_deploy_downgrades_post_apply_failure_to_warning() {
     .await
     .expect("hook runs");
 
-    // The must_succeed=true failure degrades to a warning under
-    // force-deploy, so no rollback fires.
     assert_eq!(outcome, HookOutcome::Warned);
-    // The hook genuinely executed its side effect and was not skipped.
     assert!(
         marker.exists(),
         "force-deploy must still run the hook; marker {marker} should exist"
@@ -87,10 +67,6 @@ async fn force_deploy_downgrades_post_apply_failure_to_warning() {
 
 #[tokio::test]
 async fn same_hook_without_force_deploy_classifies_failed() {
-    // This test is the contrast case for the prior one. The identical
-    // fixture, without `--force-deploy`, keeps `must_succeed = true`, so
-    // the post_apply failure classifies as `Failed`, which triggers
-    // rollback and exit code 3.
     let (_td, dir) = utf8_tempdir();
     let marker = dir.join("hook-ran.marker");
     let entry = HookEntry {
@@ -116,8 +92,6 @@ async fn same_hook_without_force_deploy_classifies_failed() {
 
 #[tokio::test]
 async fn force_deploy_leaves_succeeding_hook_succeeded() {
-    // Force-deploy only downgrades failures; a zero-exit hook is still
-    // Succeeded under force-deploy.
     let entry = HookEntry {
         event: HookEvent::PreApply,
         command: "exit 0".to_owned(),

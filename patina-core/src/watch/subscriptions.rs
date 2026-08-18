@@ -19,9 +19,8 @@
 //! source path above. Only the source side of a symlink entry appears in the
 //! set.
 //!
-//! This module is the pure mapping from record to path set; it does no
-//! `notify` wiring. The foreground watcher hands the computed set to
-//! the debouncer.
+//! Map records to path sets. The foreground watcher handles `notify` wiring
+//! and hands the computed set to the debouncer.
 //!
 //! [`read_latest_commit`]: crate::read_latest_commit
 

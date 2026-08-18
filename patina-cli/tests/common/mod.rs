@@ -7,14 +7,6 @@
     reason = "this shared fixture module is included by several integration-test crates via `mod common;`; each crate uses a subset of the helpers, so methods unused by one crate would be flagged dead there but are live in another. `allow` (not `expect`) because the set of used helpers differs per including crate, so no single expectation is fulfilled everywhere."
 )]
 
-//! Shared test fixture for the CLI integration suites.
-//!
-//! Each test builds a self-contained tempdir dotfiles repository and points
-//! `PATINA_REPO` at it. The per-machine state directory and the home
-//! directory are isolated under the same tempdir, so a run never touches the
-//! developer's real `$HOME`. The binary runs as a subprocess, so its stdin is
-//! never a TTY and every suite exercises the non-interactive path.
-
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
 use patina_core::HostOs;
@@ -22,17 +14,19 @@ use std::process::Command;
 use std::process::Output;
 use tempfile::TempDir;
 
-/// A prepared fixture with an isolated repo and state dir, ready to invoke
-/// `patina apply` against.
+/// Provide an isolated repository, home, and state directory.
 pub struct Fixture {
     _temp: TempDir,
+    /// Repository root.
     pub root: Utf8PathBuf,
+    /// Home directory.
     pub home: Utf8PathBuf,
+    /// State directory.
     pub state: Utf8PathBuf,
 }
 
 impl Fixture {
-    /// Build a fixture with a root manifest and an empty home/state tree.
+    /// Create an isolated repository fixture.
     pub fn new() -> Self {
         let temp = TempDir::new().expect("tempdir");
         let root = Utf8Path::from_path(temp.path())
@@ -54,8 +48,7 @@ impl Fixture {
         }
     }
 
-    /// Append a `[[remote]]` declaration to the root manifest. The root
-    /// manifest is the only place a remote is declared.
+    /// Append a remote declaration to the root manifest.
     pub fn declare_remote(&self, name: &str, url: &str, git_ref: Option<&str>) {
         let manifest = self.root.join("patina.toml");
         let existing = fs_err::read_to_string(&manifest).expect("read root manifest");
@@ -64,8 +57,7 @@ impl Fixture {
         fs_err::write(&manifest, body).expect("write root manifest");
     }
 
-    /// Write a module directory with the given `patina.toml` body and an
-    /// optional source file.
+    /// Write a module manifest and return its path.
     pub fn module(&self, name: &str, manifest: &str) -> Utf8PathBuf {
         let dir = self.root.join(name);
         fs_err::create_dir_all(&dir).expect("mkdir module");
@@ -73,9 +65,7 @@ impl Fixture {
         dir
     }
 
-    /// The per-machine state-directory root the subprocess will resolve,
-    /// computed from this fixture's own isolated env values (not the
-    /// process environment) so concurrent tests never collide.
+    /// Resolve the fixture's state directory.
     pub fn state_root(&self) -> Utf8PathBuf {
         patina_core::state_dir::resolve_with_env(HostOs::current(), |name| match name {
             "XDG_STATE_HOME" | "LOCALAPPDATA" => Some(self.state.as_str().to_owned()),
@@ -85,10 +75,7 @@ impl Fixture {
         .expect("resolve fixture state dir")
     }
 
-    /// Invoke `patina` with an arbitrary `args` vector. Repo, state, and home
-    /// are isolated the same way every subcommand requires. The caller
-    /// supplies the subcommand and its flags as the leading elements of
-    /// `args`; extra environment pairs are layered on last.
+    /// Run `patina` with extra environment variables.
     pub fn run(&self, args: &[&str], extra: &[(&str, &str)]) -> Output {
         let bin = env!("CARGO_BIN_EXE_patina");
         let mut cmd = Command::new(bin);
@@ -97,11 +84,6 @@ impl Fixture {
             .env("HOME", self.home.as_str())
             .env("USERPROFILE", self.home.as_str())
             .env("XDG_STATE_HOME", self.state.as_str())
-            // Windows resolves the state dir from `LOCALAPPDATA`. Isolate it
-            // per test so parallel tests never share one journal, lock, or
-            // backup tree. A shared tree would let one test's
-            // crash-recovery pass reverse another test's just-applied
-            // files.
             .env("LOCALAPPDATA", self.state.as_str())
             .env_remove("PATINA_PROFILE");
         for (k, v) in extra {
@@ -110,10 +92,7 @@ impl Fixture {
         cmd.output().expect("spawn patina")
     }
 
-    /// Invoke `patina` with `args` and a working directory of `cwd`. Repo,
-    /// state, and home are isolated the same way [`Fixture::run`] does.
-    /// Commands whose behaviour depends on the process CWD use this (e.g.
-    /// `doctor --fix` records the CWD as the default repository).
+    /// Run `patina` from a working directory with extra environment variables.
     pub fn run_in(&self, cwd: &Utf8Path, args: &[&str], extra: &[(&str, &str)]) -> Output {
         let bin = env!("CARGO_BIN_EXE_patina");
         let mut cmd = Command::new(bin);
@@ -131,9 +110,7 @@ impl Fixture {
         cmd.output().expect("spawn patina")
     }
 
-    /// Invoke `patina apply` with `args`. Repo, state, and home are isolated,
-    /// and extra environment pairs are layered on last. Delegates to
-    /// [`Fixture::run`] with `apply` prepended.
+    /// Run `patina apply` with extra environment variables.
     pub fn apply_with_env(&self, args: &[&str], extra: &[(&str, &str)]) -> Output {
         let mut full = Vec::with_capacity(args.len() + 1);
         full.push("apply");
@@ -141,33 +118,31 @@ impl Fixture {
         self.run(&full, extra)
     }
 
-    /// Invoke `patina apply` with `args` and no extra environment.
+    /// Run `patina apply`.
     pub fn apply(&self, args: &[&str]) -> Output {
         self.apply_with_env(args, &[])
     }
 }
 
-/// The numeric exit code. A signalled process has none, and the expect panics.
+/// Return the process exit code.
 pub fn code(output: &Output) -> i32 {
     output.status.code().expect("process exited with a code")
 }
 
-/// Create a file symlink with the right platform primitive.
 #[cfg(unix)]
+/// Create a file symlink using the host platform.
 pub fn symlink_file(source: &Utf8Path, link: &Utf8Path) {
     std::os::unix::fs::symlink(source.as_std_path(), link.as_std_path()).expect("create symlink");
 }
 
-/// Create a file symlink with the right platform primitive.
 #[cfg(windows)]
+/// Create a file symlink using the host platform.
 pub fn symlink_file(source: &Utf8Path, link: &Utf8Path) {
     std::os::windows::fs::symlink_file(source.as_std_path(), link.as_std_path())
         .expect("create symlink");
 }
 
-/// Run `git` in `cwd` with a pinned identity and committer/author date,
-/// independent of the developer's global git config, so fixture commits have
-/// stable, clock-independent SHAs.
+/// Run `git` with deterministic identity and timestamps.
 pub fn git_in(cwd: &Utf8Path, epoch: i64, args: &[&str]) -> String {
     let date = format!("{epoch} +0000");
     let output = Command::new("git")
@@ -191,13 +166,14 @@ pub fn git_in(cwd: &Utf8Path, epoch: i64, args: &[&str]) -> String {
     String::from_utf8_lossy(&output.stdout).trim().to_owned()
 }
 
-/// A throwaway origin repository living outside the dotfiles repo, so module
-/// discovery never sees it.
+/// Provide a throwaway git origin.
 pub struct Origin {
+    /// Origin repository path.
     pub dir: Utf8PathBuf,
 }
 
 impl Origin {
+    /// Create an origin in the fixture home directory.
     pub fn new(f: &Fixture, name: &str, epoch: i64) -> Self {
         let dir = f.home.join(".origins").join(name);
         fs_err::create_dir_all(dir.as_std_path()).expect("mkdir origin");
@@ -205,15 +181,12 @@ impl Origin {
         Self { dir }
     }
 
-    /// The origin path spelled for embedding in a TOML basic string. On
-    /// Windows a native path's backslashes would read as escape sequences,
-    /// but git accepts the forward-slash form of a Windows path.
+    /// Return the origin path in URL form.
     pub fn url(&self) -> String {
         self.dir.as_str().replace('\\', "/")
     }
 
-    /// Write `files` into the origin and commit them at `epoch`. Returns the
-    /// commit SHA.
+    /// Write files to the origin and commit them.
     pub fn commit_files(&self, files: &[(&str, &str)], epoch: i64) -> String {
         for (path, body) in files {
             let full = self.dir.join(path);

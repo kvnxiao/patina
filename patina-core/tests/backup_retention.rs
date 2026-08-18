@@ -1,19 +1,9 @@
+//! Integration tests for backup retention.
+
 #![expect(
     clippy::expect_used,
     reason = "integration tests use .expect() on fixture setup; allow-expect-in-tests covers #[cfg(test)] modules but not the helper functions in tests/*.rs integration crates."
 )]
-
-//! Integration coverage for count-based backup retention.
-//!
-//! These tests drive the `patina_core::backups::gc_retain` entry point
-//! directly. Each test stages an on-disk backup tree and asserts retention
-//! converges to the expected shape. Each test maps to one retention bullet:
-//!
-//! - 15 historical cycles plus a successful apply prune down to exactly 10,
-//!   keeping the newest.
-//! - a failed apply triggers no GC: a caller that never commits never calls
-//!   `gc_retain`, so its historical cycles plus the partial attempt all
-//!   survive.
 
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
@@ -22,7 +12,6 @@ use patina_core::backups::gc_retain;
 use patina_core::prune_cycles;
 use tempfile::TempDir;
 
-/// A staged backup tree under a state directory.
 struct Scene {
     _temp: TempDir,
     backups: Utf8PathBuf,
@@ -43,9 +32,6 @@ impl Scene {
         }
     }
 
-    /// Create timestamped cycle directories named so they sort
-    /// chronologically, each holding one backed-up file so removal must
-    /// recurse. Returns the names in chronological order.
     fn seed_cycles(&self, count: usize) -> Vec<String> {
         let mut names = Vec::with_capacity(count);
         for i in 0..count {
@@ -93,12 +79,8 @@ fn a_successful_apply_prunes_to_exactly_ten_keeping_the_newest() {
 
 #[test]
 fn a_failed_apply_leaves_historical_backups_untouched() {
-    // An apply that fails before COMMIT never runs GC, because the failed
-    // attempt's caller short-circuits before the commit that would trigger
-    // it. The test models that by not calling gc_retain at all.
     let scene = Scene::new();
     let historical = scene.seed_cycles(3);
-    // A partial backup directory the failed attempt wrote before crashing.
     let partial = "202699T120000Z";
     fs_err::create_dir_all(scene.backups.join(partial).join("home")).expect("partial attempt dir");
 
@@ -114,10 +96,6 @@ fn a_failed_apply_leaves_historical_backups_untouched() {
 
 #[test]
 fn pruned_backup_cycles_drop_their_commit_sentinels_in_lockstep() {
-    // Retention removes the oldest backup cycle directories. The matching
-    // journal COMMIT sentinels must be dropped alongside them. Otherwise
-    // `patina rollback` could walk back to a commit whose backups are gone,
-    // and delete an overwrite target it can no longer restore.
     let scene = Scene::new();
     let names = scene.seed_cycles(11);
     let journal = scene
@@ -126,8 +104,6 @@ fn pruned_backup_cycles_drop_their_commit_sentinels_in_lockstep() {
         .expect("backups has a parent")
         .join("journal");
     fs_err::create_dir_all(&journal).expect("create journal dir");
-    // One COMMIT sentinel per seeded backup cycle. Pruning keys on the
-    // filename, not the sentinel body.
     for ts in &names {
         fs_err::write(journal.join(format!("{ts}.COMMIT")), b"record").expect("commit sentinel");
     }

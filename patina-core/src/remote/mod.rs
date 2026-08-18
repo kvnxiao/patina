@@ -116,7 +116,7 @@ impl RemoteError {
     /// fix has to satisfy that pin. A failure that is not a `git` failure, a
     /// cache write for instance, already names its own path and passes
     /// through.
-    #[must_use = "the restated error is what the user sees"]
+    #[must_use = "show the restated error to the user"]
     pub fn into_cold_cache(self, name: &str, rev: &str) -> Self {
         match *self.0 {
             RemoteRepr::Git(source) => RemoteRepr::ColdCache {

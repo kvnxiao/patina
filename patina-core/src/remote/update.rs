@@ -1,10 +1,9 @@
 //! Producer-side orchestration: enumerate the repository's remotes, check them
 //! against upstream, and propose pin bumps through the update gate.
 //!
-//! The split here is deliberate. This module does the network work and computes
-//! a [`Proposal`] per remote; it never prompts and never prints. Deciding what
-//! to do with a [`GateOutcome::NeedsConfirmation`] belongs to the CLI, which
-//! owns the TTY. [`accept`] is the only function that writes a pin.
+//! Compute a [`Proposal`] per remote without prompting or printing. Deciding
+//! what to do with a [`GateOutcome::NeedsConfirmation`] belongs to the CLI,
+//! which owns the TTY. [`accept`] is the only function that writes a pin.
 //!
 //! See `docs/REMOTE_SOURCES.md` "Commands" and "The update gate".
 
@@ -44,7 +43,7 @@ impl RemoteView {
 /// Everything the `patina remote` commands operate over.
 #[derive(Debug)]
 pub struct RemoteInventory {
-    /// Canonical repository root; the lockfile sits directly inside it.
+    /// Canonical repository root; the lockfile resides directly inside it.
     pub repo_root: Utf8PathBuf,
     /// Per-machine state directory, which holds the cache and notice files.
     pub state_dir: Utf8PathBuf,

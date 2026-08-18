@@ -1,15 +1,9 @@
+//! Integration tests for apply idempotency.
+
 #![expect(
     clippy::expect_used,
     reason = "integration tests use .expect() on fixtures and asserted output; allow-expect-in-tests covers #[cfg(test)] modules but not the helper functions in tests/*.rs integration crates."
 )]
-
-//! Re-apply idempotency across every [`FileMode`](patina_core::FileMode). A
-//! second `patina apply` over an unchanged source must converge (exit 0) and
-//! must never mutate a repository source. The guarantee has been broken before,
-//! so it is asserted directly. The default `Symlink` mode can delete the source
-//! (see `symlink_reapply.rs`), and an executor that does not clear the
-//! pre-existing link makes the atomic `SymlinkDir` mode fail with `EEXIST` on
-//! re-apply. This suite locks the guarantee for every mode so neither recurs.
 
 mod common;
 
@@ -18,8 +12,6 @@ use camino::Utf8PathBuf;
 use common::Fixture;
 use common::code;
 
-/// Read a symlink's target and canonicalize it so the assertion is independent
-/// of the platform's `readlink` representation.
 fn read_link_canonical(target: &Utf8Path) -> Utf8PathBuf {
     let raw = fs_err::read_link(target.as_std_path()).expect("read_link target");
     let link_target = Utf8PathBuf::from_path_buf(raw).expect("link target is utf-8");
@@ -32,8 +24,6 @@ fn canonical(path: &Utf8Path) -> Utf8PathBuf {
     path.canonicalize_utf8().expect("canonicalize path")
 }
 
-/// Assert a repository source is still a regular file holding `bytes`, so the
-/// apply did not delete, relink, or rewrite it.
 fn assert_source_file(source: &Utf8Path, bytes: &[u8]) {
     let meta = fs_err::symlink_metadata(source.as_std_path()).expect("stat source");
     assert!(
@@ -49,7 +39,6 @@ fn assert_source_file(source: &Utf8Path, bytes: &[u8]) {
 
 #[test]
 fn dir_symlink_re_apply_is_idempotent() {
-    // Focused regression for the atomic `[[directory]] mode = "symlink"` case.
     let f = Fixture::new();
     let module = f.module(
         "cfg",
@@ -67,8 +56,6 @@ fn dir_symlink_re_apply_is_idempotent() {
         String::from_utf8_lossy(&first.stderr)
     );
 
-    // An executor that does not clear the existing directory link fails this
-    // second apply with EEXIST (os error 183).
     let second = f.apply(&["--yes"]);
     assert_eq!(
         code(&second),
@@ -94,8 +81,6 @@ fn dir_symlink_re_apply_is_idempotent() {
 
 #[test]
 fn all_file_modes_re_apply_preserves_sources() {
-    // One module exercising every mode: per-file symlink, file copy, template
-    // render, symlink-tree, atomic directory symlink, and recursive copy.
     let f = Fixture::new();
     let manifest = r#"
 [[file]]
@@ -152,7 +137,6 @@ mode = "copy"
         String::from_utf8_lossy(&second.stderr)
     );
 
-    // Every repository source is preserved byte-for-byte across the re-apply.
     assert_source_file(&m.join("f_sym"), b"sym-src");
     assert_source_file(&m.join("f_copy"), b"copy-src");
     assert_source_file(&m.join("t.tmpl"), b"os={{ patina.os }}\n");

@@ -1,13 +1,13 @@
 //! Windows Defender path-exclusion derivation, diffing, validation, and the
 //! per-machine ledger: the pure, cross-platform layer.
 //!
-//! An antivirus exclusion is a permanent blind spot. This feature previews
+//! An antivirus exclusion is a permanent blind spot. The feature previews
 //! every exclusion, asks for consent before applying it, and records it so it
-//! can be reversed. This module owns the parts that decide *which* exact
+//! can be reversed. The module decides *which* exact
 //! paths Patina would exclude and *how* a run reconciles the current
 //! Defender state against that set.
-//! All of it is IO-free and hostable on any platform, so the derivation and
-//! diff logic is unit-testable on Linux CI with no real Defender in the loop.
+//! The layer performs no I/O. Its derivation and diff logic run on Linux CI
+//! without a live Defender instance.
 //!
 //! The Windows-only side lives at the bottom of this file behind
 //! `#[cfg(windows)]`. It reads the live exclusion list through
@@ -41,13 +41,13 @@
 //!
 //! # Who can see the live exclusion list
 //!
-//! Only an elevated process can. `Get-MpPreference` does not fail for an
-//! unelevated caller. It exits `0` and returns the string
+//! An unelevated process cannot read the live list. `Get-MpPreference` does not
+//! fail for that caller. It exits `0` and returns the string
 //! `"N/A: Must be an administrator to view exclusions"` in place of
-//! `ExclusionPath`. Treating that as a one-element path list makes every
-//! desired exclusion look absent, and every verification look failed. The read
-//! is therefore modelled as [`CurrentExclusions`], which distinguishes a real
-//! list from a withheld one.
+//! `ExclusionPath`. Treating this placeholder as a one-element path list makes
+//! every desired exclusion look absent, and every verification look failed. The
+//! read is therefore modelled as [`CurrentExclusions`], which distinguishes a
+//! real list from a withheld one.
 //!
 //! Two consequences shape the rest of the feature:
 //!
@@ -55,7 +55,7 @@
 //!   withheld, [`DefenderLedger`] (Patina's own record of what it applied) is
 //!   the only available stand-in for what is present. It is weaker than the
 //!   live list, because an exclusion deleted by hand in the Defender UI goes
-//!   unnoticed. It does keep an unchanged re-run a no-op, which a
+//!   unnoticed. The fallback keeps an unchanged re-run a no-op, while a
 //!   `desired`-is-everything fallback would not.
 //! - **Verification happens in the elevated helper, not here.** The helper is
 //!   the only party that can re-read the list, so it writes its verdict to a
@@ -87,9 +87,9 @@ const REQUEST_FILENAME: &str = "defender-request.txt";
 /// The basename of the result file the elevated helper writes and the
 /// unprivileged CLI polls for, under the resolved state directory.
 ///
-/// Duplicated verbatim in `patina-elevate`, which cannot depend on
-/// `patina-core`, so the two sides of the receipt protocol agree by hand. Keep
-/// them in sync along with the verdict tokens below.
+/// The value must match the copy in `patina-elevate`; that helper cannot depend
+/// on `patina-core`. Keep both values synchronized with the verdict tokens
+/// below.
 const RESULT_FILENAME: &str = "defender-result.txt";
 
 /// The request-line prefix (character plus one space) marking a path to add.
@@ -150,13 +150,12 @@ impl ExclusionKind {
     }
 }
 
-/// One desired Defender path exclusion: the resolved absolute path plus the
-/// kind that path represents.
+/// One desired Defender path exclusion: a resolved absolute path and its kind.
 ///
 /// Equality, ordering, and hashing use a **normalized key**: case-folded,
 /// separators unified, trailing separator stripped. Two exclusions that differ
 /// only in letter case or a trailing separator therefore compare equal and
-/// collapse in a set. That is the guard that keeps re-runs from churning. The
+/// collapse in a set. This equality guard keeps re-runs from churning. The
 /// stored `path` keeps its original casing for
 /// display and for the eventual add/remove call.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -213,7 +212,7 @@ impl Ord for Exclusion {
 /// Normalize a path into the comparison key used for exclusion identity.
 ///
 /// Forward slashes are unified to backslashes, trailing separators stripped,
-/// and the result ASCII-lowercased. That is the folding Windows itself applies
+/// and the result ASCII-lowercased. This matches the folding Windows applies
 /// when it matches an excluded path. It is also the exact set of differences
 /// `Get-MpPreference` may introduce when it echoes a path back. ASCII
 /// case-folding (not full Unicode) matches how the Windows filesystem compares
@@ -376,7 +375,7 @@ impl ExclusionClassifier {
     }
 
     /// Classify one desired exclusion.
-    #[must_use = "the state is what the listing renders"]
+    #[must_use = "the listing renders this state"]
     pub fn classify(&self, exclusion: &Exclusion) -> ExclusionState {
         let key = exclusion.key();
         let recorded = self.recorded.contains(&key);
@@ -444,12 +443,12 @@ impl DefenderDiff {
 /// in for what is present, so `to_add` = `desired - ledger` and `to_remove` =
 /// `ledger - desired`. Removals stay ledger-anchored, so the never-touch-a-
 /// user-added-exclusion guarantee holds either way. The `current` anchor is
-/// lost, which only means a removal may be sent for a path already gone,
-/// and `Remove-MpPreference` treats that as a no-op.
+/// lost; a removal may target a path already gone, and
+/// `Remove-MpPreference` treats that request as a no-op.
 ///
 /// The identity case (desired equals the present set, ledger equals desired)
-/// yields an empty diff under both readings. That is the idempotency
-/// guarantee re-runs depend on. Deriving `to_add` from the ledger rather
+/// yields an empty diff under both readings. Re-runs depend on that idempotency
+/// guarantee. Deriving `to_add` from the ledger rather
 /// than from `desired` outright preserves that guarantee when the list is
 /// withheld. The alternative would re-propose every exclusion on every run
 /// and raise a UAC prompt each time.
@@ -530,8 +529,8 @@ pub enum ExclusionPathError {
 /// `%ProgramFiles(x86)%`, and any drive root as a stand-in for
 /// `%SystemDrive%`.
 ///
-/// This runs in the unprivileged CLI **and** is independently re-enforced in
-/// the elevated helper (the actual trust boundary).
+/// The unprivileged CLI runs this check, and the elevated helper re-enforces it
+/// as the actual trust boundary.
 ///
 /// # Errors
 ///
@@ -542,9 +541,9 @@ pub fn validate_exclusion_path(path: &Utf8Path) -> Result<(), ExclusionPathError
 
 /// The env-derived system-directory denylist for the running process.
 ///
-/// Off Windows every variable is unset, so this is empty and only the
-/// structural checks in [`validate_exclusion_path_with`] apply. That keeps
-/// the structural rejections testable on Linux CI.
+/// Off Windows every variable is unset, so the list is empty and only the
+/// structural checks in [`validate_exclusion_path_with`] apply. Linux CI can
+/// therefore test those rejections without Windows environment variables.
 fn system_dir_denylist() -> Vec<Utf8PathBuf> {
     SYSTEM_DIR_ENV_VARS
         .iter()
@@ -1608,8 +1607,8 @@ mod tests {
 
     #[test]
     fn receipt_yields_none_for_anything_unrecognized() {
-        // `None` means "no verdict yet", which keeps the launcher polling. An
-        // empty or truncated file must land here rather than being read as a
+        // `None` means "no verdict yet"; the launcher keeps polling. An empty
+        // or truncated file must land here rather than being read as a
         // verdict the helper never wrote.
         for not_a_verdict in ["", "\n", "applie", "garbage line", "APPLIED"] {
             assert_eq!(

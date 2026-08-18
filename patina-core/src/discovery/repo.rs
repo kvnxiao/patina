@@ -191,8 +191,8 @@ pub fn default_repo_pointer_path(state_dir: &Utf8Path) -> Utf8PathBuf {
 ///
 /// Backs `doctor`'s missing-pointer finding (an info-level note
 /// suggesting `doctor --fix` when a repository already resolves, or
-/// `patina init` when none does). This is a plain existence check on
-/// [`default_repo_pointer_path`]; it does not read or validate the file.
+/// `patina init` when none does). The check only tests whether
+/// [`default_repo_pointer_path`] exists; it does not read or validate the file.
 ///
 /// # Examples
 ///

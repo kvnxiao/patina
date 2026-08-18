@@ -1,14 +1,9 @@
+//! Integration tests for ignore lists.
+
 #![expect(
     clippy::expect_used,
     reason = "integration tests use .expect() on fixtures and asserted output; allow-expect-in-tests covers #[cfg(test)] modules but not the helper functions in tests/*.rs integration crates."
 )]
-
-//! Tree-mode entries filter their source walk through gitignore-syntax
-//! `ignore` lists, declared repo-wide in the root manifest and per-entry on a
-//! `[[directory]]`.
-//!
-//! Each test drives the real CLI over a fixture repo and asserts on what
-//! materializes at the target, on the consent diff, and on `--json`.
 
 mod common;
 
@@ -16,7 +11,6 @@ use camino::Utf8Path;
 use common::Fixture;
 use common::code;
 
-/// Overwrite the fixture's root manifest with a repo-wide `ignore` list.
 fn set_repo_ignore(f: &Fixture, patterns: &[&str]) {
     let list = patterns
         .iter()
@@ -45,8 +39,6 @@ fn assert_applied(out: &std::process::Output) {
 
 #[test]
 fn an_ignored_directory_contributes_no_leaves_including_nested_ones() {
-    // `__pycache__/` matches a directory. The nested `mod.pyc` is the real
-    // check: a pattern matched only against leaf names would still deploy it.
     let f = Fixture::new();
     let module = f.module(
         "py",
@@ -94,8 +86,6 @@ fn a_repo_wide_pattern_reaches_an_entry_declaring_no_list() {
 
 #[test]
 fn an_entry_negation_overrides_a_repo_wide_pattern() {
-    // Ordering is the invariant: the entry list is appended after the
-    // repo-wide one, and gitignore matching is last-match-wins.
     let f = Fixture::new();
     set_repo_ignore(&f, &["*.pyc"]);
     let module = f.module(
@@ -142,8 +132,6 @@ fn matching_folds_case_on_every_platform() {
     );
 }
 
-/// Deploy a `.pyc` leaf, then add the pattern that excludes it. Returns the
-/// fixture with the manifest already rewritten, ready for the second apply.
 fn fixture_with_a_newly_ignored_deployed_leaf() -> Fixture {
     let f = Fixture::new();
     let manifest =
@@ -172,8 +160,6 @@ fn fixture_with_a_newly_ignored_deployed_leaf() -> Fixture {
 fn a_newly_ignored_deployed_leaf_is_reaped_and_the_diff_includes_the_reason() {
     let f = fixture_with_a_newly_ignored_deployed_leaf();
 
-    // No `--yes`: a non-interactive apply is preview-only, so this is the
-    // consent diff the user would read before confirming.
     let preview = f.apply(&[]);
     let body = stdout_of(&preview);
     assert!(
@@ -228,8 +214,6 @@ fn the_json_reaped_array_carries_the_target_and_the_reason() {
 
 #[test]
 fn re_applying_over_a_source_holding_ignored_paths_is_a_byte_identical_no_op() {
-    // Generated files sitting in the source tree must not make the plan report
-    // work on every run.
     let f = Fixture::new();
     let module = f.module(
         "py",
@@ -242,8 +226,6 @@ fn re_applying_over_a_source_holding_ignored_paths_is_a_byte_identical_no_op() {
 
     assert_applied(&f.apply(&["--yes"]));
 
-    // Simulate running the deployed script: the interpreter drops a cache
-    // beside the source, inside the repository.
     fs_err::create_dir_all(src.join("__pycache__")).expect("mkdir cache");
     fs_err::write(src.join("__pycache__").join("run.pyc"), b"\x00").expect("write pyc");
 
@@ -263,8 +245,6 @@ fn re_applying_over_a_source_holding_ignored_paths_is_a_byte_identical_no_op() {
     );
 }
 
-/// A fixture whose `py` module deploys `scripts/` as a tree that excludes
-/// `*.pyc`, with the module directory returned for staging the added path.
 fn fixture_with_a_pyc_excluding_tree() -> (Fixture, camino::Utf8PathBuf) {
     let f = Fixture::new();
     let module = f.module(
@@ -369,8 +349,6 @@ fn doctor_reports_targets_a_new_pattern_stranded() {
     );
 }
 
-/// Deploy a leaf nested inside a directory, then add the pattern that excludes
-/// the directory. Returns the fixture ready for the second apply.
 fn fixture_with_a_newly_ignored_directory() -> Fixture {
     let f = Fixture::new();
     let manifest =
@@ -401,8 +379,6 @@ fn fixture_with_a_newly_ignored_directory() -> Fixture {
 
 #[test]
 fn a_leaf_under_a_newly_ignored_directory_is_reaped() {
-    // The reap partitions an unfiltered walk, so it has to decide a leaf by its
-    // ancestors, the way the filtered walk does (`ignore_rules::prunes`).
     let f = fixture_with_a_newly_ignored_directory();
 
     let out = f.apply(&["--json"]);
@@ -442,8 +418,6 @@ fn a_leaf_under_a_newly_ignored_directory_is_reaped() {
 
 #[test]
 fn a_negation_the_walk_cannot_reach_does_not_strand_a_deployed_leaf() {
-    // `build/` prunes at the directory, so the walk never descends to see
-    // `!build/keep.txt`. The reap has to read the pair the same way.
     let f = Fixture::new();
     let manifest = "[[directory]]\nsource = \"out\"\ntarget = \"~/out\"\nmode = \"symlink-tree\"\n";
     let module = f.module("gen", manifest);
@@ -469,8 +443,6 @@ fn a_negation_the_walk_cannot_reach_does_not_strand_a_deployed_leaf() {
 
 #[test]
 fn an_entry_whose_every_leaf_is_ignored_settles_instead_of_re_prompting() {
-    // The symlink-tree and copy-tree executors create leaf directories on
-    // demand, so an all-ignored entry never creates its target.
     let f = Fixture::new();
     let module = f.module(
         "py",

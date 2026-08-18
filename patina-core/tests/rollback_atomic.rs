@@ -1,20 +1,10 @@
+//! Integration tests for rollback atomic.
+
 #![expect(
     clippy::expect_used,
     clippy::panic,
     reason = "integration tests use .expect()/panic! on fixtures; allow-expect-in-tests covers #[cfg(test)] modules but not the helper functions in tests/*.rs integration crates."
 )]
-
-//! Per-`[[file]]`-entry atomic rollback coverage.
-//!
-//! A multi-target `[[file]]` entry reverts as a unit: when restoring one
-//! target fails, every target the entry already reverted is rolled forward
-//! to its post-apply state and `RollbackError::RollbackPartial` is returned,
-//! so the entry is left atomically post-apply with no partial restore.
-//!
-//! The failure is injected without privileges: the second target's parent
-//! directory is replaced by a *regular file*, so the restore's
-//! `create_dir_all(parent)` fails with a deterministic, cross-platform IO
-//! error, the harness's stand-in for a "permission error".
 
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
@@ -25,7 +15,6 @@ use patina_core::rollback::RevertTarget;
 use patina_core::rollback::replay_entry;
 use tempfile::TempDir;
 
-/// A `Create` revert target for `path` (no backup → delete on revert).
 fn create(path: &Utf8Path) -> RevertTarget<'_> {
     RevertTarget {
         target: path.as_str(),
@@ -33,7 +22,6 @@ fn create(path: &Utf8Path) -> RevertTarget<'_> {
     }
 }
 
-/// An `Update` revert target for `path` (backup → restore on revert).
 fn update(path: &Utf8Path) -> RevertTarget<'_> {
     RevertTarget {
         target: path.as_str(),
@@ -61,8 +49,6 @@ fn env() -> Env {
     }
 }
 
-/// Stash an "original" backup for `target` under `<backups>/<ts>/` so the
-/// revert treats the target as a pre-existing overwrite to restore.
 fn write_backup(backups: &Utf8Path, ts: &str, target: &Utf8Path, bytes: &[u8]) {
     let path = mirror_backup_path(backups, ts, target);
     fs_err::create_dir_all(path.parent().expect("backup parent")).expect("mkdir backup parent");
@@ -74,14 +60,10 @@ fn failed_second_target_rolls_the_first_forward_and_reports_partial() {
     let e = env();
     let ts = "20260528T120000Z";
 
-    // Target 1: a normal pre-existing overwrite that can be reverted.
     let t1 = e.root.join("first");
     fs_err::write(&t1, "post-apply-1").expect("write t1 post-apply");
     write_backup(&e.backups, ts, &t1, b"original-1");
 
-    // Target 2: also a recorded overwrite (a backup exists), but its parent
-    // directory is occupied by a regular file, so restoring it fails when
-    // the revert tries to create the parent chain.
     let blocked_parent = e.root.join("blocked");
     fs_err::write(&blocked_parent, "i am a file, not a dir").expect("occupy parent path");
     let t2 = blocked_parent.join("second");
@@ -94,8 +76,6 @@ fn failed_second_target_rolls_the_first_forward_and_reports_partial() {
         other => panic!("expected RollbackPartial for entry 3, got {other:?}"),
     }
 
-    // Target 1 is reverted, then rolled forward. It ends at its post-apply
-    // state, not the pre-apply backup, so there is no partial restore.
     assert_eq!(
         fs_err::read_to_string(&t1).expect("read t1 after abort"),
         "post-apply-1",
@@ -105,8 +85,6 @@ fn failed_second_target_rolls_the_first_forward_and_reports_partial() {
 
 #[test]
 fn fully_revertible_multi_target_entry_succeeds() {
-    // This is the happy-path counterpart. When every target reverts cleanly,
-    // the entry returns Ok and both reach their pre-apply state.
     let e = env();
     let ts = "20260528T120000Z";
 

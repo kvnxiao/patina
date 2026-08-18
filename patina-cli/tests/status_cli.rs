@@ -1,14 +1,10 @@
+//! Integration tests for status cli.
+
 #![expect(
     clippy::expect_used,
     clippy::panic,
     reason = "integration tests use .expect()/panic! on fixtures and asserted JSON; allow-*-in-tests covers #[cfg(test)] modules but not the helper functions in tests/*.rs integration crates."
 )]
-
-//! Integration tests for the `patina status` CLI surface.
-//!
-//! Each test applies a [`common::Fixture`] repository (`patina apply --yes`),
-//! optionally perturbs a materialized target, then runs
-//! `patina status --json` and asserts the classification.
 
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
@@ -16,7 +12,6 @@ use std::process::Command;
 use std::process::Output;
 use tempfile::TempDir;
 
-/// A prepared fixture with an isolated repo, state dir, and home.
 struct Fixture {
     _temp: TempDir,
     root: Utf8PathBuf,
@@ -46,7 +41,6 @@ impl Fixture {
         }
     }
 
-    /// Write a module directory with the given `patina.toml` body.
     fn module(&self, name: &str, manifest: &str) -> Utf8PathBuf {
         let dir = self.root.join(name);
         fs_err::create_dir_all(&dir).expect("mkdir module");
@@ -54,8 +48,6 @@ impl Fixture {
         dir
     }
 
-    /// Remove a module directory so the current plan no longer manages its
-    /// targets (used to exercise ORPHANED classification).
     fn remove_module(&self, name: &str) {
         fs_err::remove_dir_all(self.root.join(name)).expect("remove module");
     }
@@ -105,8 +97,6 @@ fn counter(doc: &serde_json::Value, key: &str) -> u64 {
         .unwrap_or_else(|| panic!("missing counter `{key}` in {doc}"))
 }
 
-/// Find the `files[]` entry whose path ends with `suffix` and return its
-/// `state`.
 fn state_for(doc: &serde_json::Value, suffix: &str) -> String {
     let files = doc
         .get("files")
@@ -197,8 +187,6 @@ fn multi_target_entry_reports_one_entry_per_target() {
 
     assert_eq!(code(&f.apply(&["--yes"])), 0);
 
-    // Overwrite only the codex target so it drifts; the claude one stays
-    // clean.
     fs_err::write(f.home.join(".codex").join("agent.toml"), "name = changed\n")
         .expect("overwrite codex target");
 
@@ -241,8 +229,6 @@ fn removed_entry_with_surviving_target_reports_orphaned() {
     fs_err::write(module.join("oldconfig"), "legacy\n").expect("write source");
 
     assert_eq!(code(&f.apply(&["--yes"])), 0);
-    // Drop the module so the current plan no longer manages ~/.oldconfig,
-    // but leave the materialized file in place.
     f.remove_module("old");
     assert!(
         f.home.join(".oldconfig").exists(),

@@ -1,15 +1,15 @@
 //! The `enable-developer-mode` action: set the Developer Mode registry switch
 //! to `1`.
 //!
-//! The registry write is `#[cfg(windows)]`-gated, and every other host returns
-//! [`DevModeError::NotWindows`] without touching the registry, to keep the
-//! dispatch exercisable by the cross-platform tests.
+//! `#[cfg(windows)]` gates the registry write. Other hosts return
+//! [`DevModeError::NotWindows`] without touching the registry, and the
+//! cross-platform tests exercise dispatch on those hosts.
 //!
 //! ## Duplicated constants
 //!
-//! The registry key path and value name below are copied verbatim from
-//! `patina-core::windows::registry`, which this helper must not depend on.
-//! Keep the sites in sync by hand.
+//! The registry key path and value name below must match
+//! `patina-core::windows::registry`; this helper cannot depend on that module.
+//! Keep both definitions synchronized.
 
 use std::fmt;
 

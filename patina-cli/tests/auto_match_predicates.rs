@@ -1,49 +1,25 @@
+//! Integration tests for auto match predicates.
+
 #![expect(
     clippy::expect_used,
     reason = "integration tests use .expect() on fixture setup and assertions; allow-expect-in-tests covers #[cfg(test)] modules but not the top level of a tests/*.rs integration crate."
 )]
-
-//! One shared `MiniJinja` engine evaluates every `when` site, including
-//! `[[auto_match]]` profile rules.
-//!
-//! These end-to-end tests drive `PATINA_REPO=<tempdir> patina apply` over
-//! fixture repos and assert these behaviours:
-//!
-//! - An `[[auto_match]]` rule matching the host's `patina.os` resolves its
-//!   profile.
-//! - A `[[file]]` `when` using an operator other than `==`, here `!=`,
-//!   evaluates true and materializes its target.
-//! - A `[[file]]` `when` misspelling a built-in (`patina.oss`) fails the apply
-//!   with a typed error that includes the variable.
-//! - An `[[auto_match]]` `when` referencing `patina.profile` (unresolved during
-//!   profile resolution) fails with a typed undefined-variable error that
-//!   includes it, rather than silently failing to match.
 
 mod common;
 
 use common::Fixture;
 use common::code;
 
-/// The OS family string the engine's `patina.os` built-in resolves to on
-/// this host (`"macos"`, `"linux"`, or `"windows"`). `std::env::consts::OS`
-/// matches the value `normalized_os` returns on the three supported
-/// platforms, so a `when` built from it is deterministically true here.
 fn current_os_family() -> &'static str {
     std::env::consts::OS
 }
 
-/// Overwrite the fixture's root manifest body (replacing the default
-/// `[patina]\nroot = true\n`). Used to declare `[[auto_match]]` rules,
-/// which only the root manifest carries.
 fn write_root(f: &Fixture, body: &str) {
     fs_err::write(f.root.join("patina.toml"), body).expect("write root manifest");
 }
 
 #[test]
 fn auto_match_rule_on_os_resolves_its_profile() {
-    // An `[[auto_match]]` rule whose `when` matches the host's
-    // `patina.os` selects profile `p`. The `--json` envelope's `profile`
-    // field is the observable resolution result.
     let f = Fixture::new();
     write_root(
         &f,
@@ -73,9 +49,6 @@ fn auto_match_rule_on_os_resolves_its_profile() {
 
 #[test]
 fn file_inequality_predicate_materializes_target() {
-    // A `[[file]]` `when` using `!=` evaluates true and materializes the
-    // target. An evaluator narrowed back to single equality would raise
-    // `UnsupportedPredicate` on this entry.
     let f = Fixture::new();
     let module = f.module(
         "shell",
@@ -99,8 +72,6 @@ fn file_inequality_predicate_materializes_target() {
 
 #[test]
 fn file_misspelled_builtin_fails_and_includes_the_variable() {
-    // A `[[file]]` `when` misspelling `patina.os` as `patina.oss` accesses
-    // an undefined variable.
     let f = Fixture::new();
     let module = f.module(
         "shell",
@@ -128,9 +99,6 @@ fn file_misspelled_builtin_fails_and_includes_the_variable() {
 
 #[test]
 fn auto_match_referencing_patina_profile_fails_and_includes_it() {
-    // An `[[auto_match]]` `when` referencing `patina.profile` accesses a
-    // variable that profile resolution itself computes and has not yet
-    // resolved, rather than the rule silently failing to match.
     let f = Fixture::new();
     write_root(
         &f,

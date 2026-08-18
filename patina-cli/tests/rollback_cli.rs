@@ -1,13 +1,9 @@
+//! Integration tests for rollback cli.
+
 #![expect(
     clippy::expect_used,
     reason = "integration tests use .expect() on fixtures and asserted output; allow-expect-in-tests covers #[cfg(test)] modules but not the helper functions in tests/*.rs integration crates."
 )]
-
-//! Integration tests for the `patina rollback` CLI surface.
-//!
-//! Each test applies a [`common::Fixture`] repository (`patina apply --yes`),
-//! then runs `patina rollback --yes` and asserts the filesystem returns to
-//! its pre-apply state with a `<ts>.ROLLED_BACK` sentinel in the journal.
 
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
@@ -15,7 +11,6 @@ use std::process::Command;
 use std::process::Output;
 use tempfile::TempDir;
 
-/// A prepared fixture: an isolated repo + state dir + home.
 struct Fixture {
     _temp: TempDir,
     root: Utf8PathBuf,
@@ -75,12 +70,6 @@ impl Fixture {
         self.invoke("rollback", args)
     }
 
-    /// The journal directory under the isolated state dir. The resolved state
-    /// root is platform-dependent: Linux/Windows honour `XDG_STATE_HOME` /
-    /// `LOCALAPPDATA` (→ `self.state`), while macOS ignores both and uses
-    /// `$HOME/Library/Application Support` (→ `self.home`). Search the shared
-    /// tempdir root (the common parent of `state`, `home`, and the repo) so
-    /// the `journal` directory is found wherever the resolver placed it.
     fn journal_dir(&self) -> Utf8PathBuf {
         let temp_root = self
             .state
@@ -90,7 +79,6 @@ impl Fixture {
     }
 }
 
-/// Recursively find the first directory named `name` under `root`.
 fn find_dir_named(root: &Utf8Path, name: &str) -> Option<Utf8PathBuf> {
     let mut stack = vec![root.to_owned()];
     while let Some(dir) = stack.pop() {
@@ -108,7 +96,6 @@ fn find_dir_named(root: &Utf8Path, name: &str) -> Option<Utf8PathBuf> {
     None
 }
 
-/// Whether the journal contains a `<ts>.ROLLED_BACK` sentinel.
 fn has_rolled_back_sentinel(journal: &Utf8Path) -> bool {
     fs_err::read_dir(journal)
         .expect("read journal dir")
@@ -135,11 +122,6 @@ fn assert_applied(out: &Output) {
 
 #[test]
 fn rollback_restores_an_unmanaged_file_overwritten_by_a_copy() {
-    // The consent + always-backup guarantee for content mode: a pre-existing
-    // *unmanaged* regular file overwritten by a copy-mode apply is first backed
-    // up, so `rollback --yes` restores its original bytes byte-for-byte. The
-    // non-tree, content-mode companion to
-    // `rollback_restores_a_regular_file_replaced_by_a_symlink`.
     let f = Fixture::new();
     let module = f.module(
         "shell",
@@ -147,11 +129,9 @@ fn rollback_restores_an_unmanaged_file_overwritten_by_a_copy() {
     );
     fs_err::write(module.join("rc"), "managed-content\n").expect("write source");
 
-    // ~/.rc pre-exists as an unmanaged regular file Patina did not create.
     let target = f.home.join(".rc");
     fs_err::write(&target, "user-original\n").expect("seed pre-existing unmanaged file");
 
-    // Apply overwrites it (with consent via --yes), backing up the original.
     assert_applied(&f.apply(&["--yes"]));
     assert_eq!(
         fs_err::read_to_string(&target).expect("read after apply"),
@@ -179,11 +159,6 @@ fn rollback_restores_an_unmanaged_file_overwritten_by_a_copy() {
 
 #[test]
 fn rollback_deletes_a_symlink_target_and_writes_the_sentinel() {
-    // Fresh-creation leg: a ~/.zshrc materialized as a symlink with
-    // no pre-existing file, rolled back, is removed (the link had no backup)
-    // and a ROLLED_BACK sentinel is written. The pre-existing-regular-file →
-    // symlink → restore-to-regular-file leg is exercised end-to-end by
-    // `rollback_restores_a_regular_file_replaced_by_a_symlink`.
     let f = Fixture::new();
     let module = f.module(
         "zsh",
@@ -221,11 +196,6 @@ fn rollback_deletes_a_symlink_target_and_writes_the_sentinel() {
 
 #[test]
 fn rollback_restores_a_regular_file_replaced_by_a_symlink() {
-    // A pre-existing ~/.zshrc with
-    // content "original" is replaced by apply with a symlink (the symlink
-    // executor backs up then clears the pre-existing file before linking);
-    // `rollback --yes` restores it to a regular file with content "original"
-    // and writes a ROLLED_BACK sentinel.
     let f = Fixture::new();
     let module = f.module(
         "zsh",
@@ -296,7 +266,6 @@ fn rollback_with_no_prior_apply_exits_one_and_includes_no_prior_apply() {
         "shell",
         "[[file]]\nsource = \"rc\"\ntarget = \"~/.rc\"\nmode = \"copy\"\n",
     );
-    // No apply run; roll back against a fresh state directory.
     let out = f.rollback(&["--yes"]);
     assert_eq!(code(&out), 1, "no prior apply must exit 1");
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -308,10 +277,6 @@ fn rollback_with_no_prior_apply_exits_one_and_includes_no_prior_apply() {
 
 #[test]
 fn multi_target_copy_entry_rolls_back_to_pre_apply_state() {
-    // A [[file]] copy entry with two targets, one pre-existing
-    // (~/.claude/agent.toml = "old") and one fresh (~/.codex/agent.toml), is
-    // rolled back so the pre-existing target is restored to "old" and the
-    // fresh one is deleted, with a ROLLED_BACK sentinel written.
     let f = Fixture::new();
     let module = f.module(
         "agent",
@@ -320,7 +285,6 @@ fn multi_target_copy_entry_rolls_back_to_pre_apply_state() {
     );
     fs_err::write(module.join("agent.toml"), "new").expect("write source");
 
-    // Only the claude target is pre-created, with "old"; codex does not exist.
     let claude = f.home.join(".claude").join("agent.toml");
     let codex = f.home.join(".codex").join("agent.toml");
     fs_err::create_dir_all(claude.parent().expect("claude parent")).expect("mkdir claude");

@@ -1,16 +1,9 @@
+//! Integration tests for debug journal cli.
+
 #![expect(
     clippy::expect_used,
     reason = "integration tests use .expect() on fixtures; allow-expect-in-tests covers #[cfg(test)] modules but not the helper functions in tests/*.rs integration crates."
 )]
-
-//! Integration tests for the `patina debug journal <path>` CLI surface.
-//!
-//! The subcommand decodes a binary `<ts>.plan` file and renders it. A
-//! committed apply deletes its plan file at commit, so these tests write a
-//! plan file directly through the public `Plan::encode` API (the same bytes
-//! the engine fsyncs before mutating) and point the CLI at it. That exercises
-//! the whole path: read the file, check the version envelope, decode the
-//! body, render to stdout.
 
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
@@ -22,7 +15,6 @@ use std::process::Command;
 use std::process::Output;
 use tempfile::TempDir;
 
-/// Write `bytes` to `<dir>/<ts>.plan` and return the path.
 fn write_plan(dir: &Utf8Path, ts: &str, bytes: &[u8]) -> Utf8PathBuf {
     let path = dir.join(format!("{ts}.plan"));
     fs_err::write(&path, bytes).expect("write plan file");
@@ -40,8 +32,6 @@ fn code(output: &Output) -> i32 {
 
 #[test]
 fn decodes_a_plan_and_prints_its_modes_and_targets() {
-    // A plan declaring symlink and copy operations renders with the
-    // matching mode words and at least one absolute target on stdout.
     let temp = TempDir::new().expect("tempdir");
     let dir = Utf8Path::from_path(temp.path()).expect("utf8 tempdir");
     let plan = Plan::new(vec![
@@ -81,9 +71,6 @@ fn missing_path_exits_one_and_includes_the_path_on_stderr() {
 
 #[test]
 fn newer_version_envelope_exits_one_and_includes_both_versions() {
-    // A plan whose envelope major is `u16::MAX` is refused by a binary that
-    // supports a lower major. It exits 1, and stderr includes both versions
-    // plus the word "version".
     let temp = TempDir::new().expect("tempdir");
     let dir = Utf8Path::from_path(temp.path()).expect("utf8 tempdir");
     let plan = Plan::new(vec![PlannedOperation::copy(

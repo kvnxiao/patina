@@ -1,6 +1,6 @@
 //! Repository and module discovery for Patina.
 //!
-//! This module covers two adjacent concerns that share a parser for
+//! Two adjacent concerns share a parser for
 //! the root `patina.toml`'s `[patina]` table:
 //!
 //! - [`repo`] resolves the dotfiles repository root from the `PATINA_REPO`

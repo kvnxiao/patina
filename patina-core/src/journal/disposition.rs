@@ -44,10 +44,9 @@ pub enum Disposition {
 impl Disposition {
     /// The stable lowercase word for this disposition.
     ///
-    /// This is the single mapping site for the three words. The same
-    /// values become the `--json` plan entry's `state` field. The human
-    /// diff, the machine output, and any future surface read from here
-    /// rather than re-spelling the `match`.
+    /// Map each disposition to the word used by the `--json` plan entry's
+    /// `state` field. The human diff and machine output read from here rather
+    /// than re-spelling the `match`.
     ///
     /// # Examples
     ///
