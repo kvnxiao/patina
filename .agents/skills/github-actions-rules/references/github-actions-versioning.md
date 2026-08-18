@@ -73,6 +73,5 @@ contract is that they track the named Rust channel.
 
 ## Reciprocal expectation
 
-When you encounter a deprecated-action warning in CI logs, fix it
-that turn rather than queuing it. The whole point of this rule is to
-keep the deprecation backlog at zero.
+When CI logs a deprecated-action warning, fix it during that run rather
+than queuing it. This rule keeps the deprecation backlog at zero.

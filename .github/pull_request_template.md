@@ -1,10 +1,10 @@
 <!--
-Fill out this template so reviewers, human or agent, can verify the change.
+Complete this template so reviewers can verify the change.
 -->
 
 ## Summary
 
-<!-- One-paragraph description of what this PR changes and why. -->
+<!-- Describe what this PR changes and why in one paragraph. -->
 
 ## Related issue / design
 
@@ -27,13 +27,13 @@ If any criteria are NOT addressed by this PR, explain why and what follow-up is 
 
 ## Notable decisions
 
-<!-- Call out any architectural or design decisions reviewers should know about. -->
+<!-- List architectural or design decisions reviewers should know about. -->
 
 - [ ] No notable design decisions in this change.
 
 ## Documentation
 
-New and existing docs both have to stay current. Confirm each:
+New and existing docs must stay current. Confirm each:
 
 - [ ] User-facing docs (`docs/USER_GUIDE.md`) reflect any user-observable change (CLI flags, config schema, output format, install/setup steps).
 - [ ] Architecture doc (`docs/ARCHITECTURE.md`) reflects any module / data-flow / abstraction change.
@@ -57,8 +57,7 @@ If a checkbox doesn't apply (no observable change in that area), state that expl
 
 ## Reviewer notes
 
-<!-- Anything reviewers should pay extra attention to: tricky logic, places
-     to push back, alternatives to discuss, etc. -->
+<!-- List tricky logic, places to challenge, and alternatives to discuss. -->
 
 ---
 

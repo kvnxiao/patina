@@ -1,11 +1,11 @@
-# Allow .expect() in test code; production code must still use ? + typed errors.
+# Allow `.expect()` in test code; production code must use `?` with typed errors.
 allow-expect-in-tests = true
 
 # Raw print macros are denied workspace-wide. User-facing output must
-# route through the `output::Reporter` abstraction in `patina-cli`; everything
-# else logs via `tracing`. The `tracing` macros stay permitted because they emit
-# structured events, not user output. A site that legitimately needs a raw print
-# (the `lock_helper` test-harness example) carries a scoped
+# route through the `output::Reporter` abstraction in `patina-cli`; other code
+# logs through `tracing`. The `tracing` macros remain permitted because they
+# emit structured events, not user output. The `lock_helper` test-harness
+# example carries a scoped
 # `#[expect(clippy::disallowed_macros, reason = "...")]`.
 disallowed-macros = [
     "std::println",

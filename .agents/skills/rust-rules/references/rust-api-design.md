@@ -48,7 +48,7 @@ date.with()
 
 ## Don't derive `Eq`/`Ord`/`PartialEq` reflexively
 
-A derived `PartialEq` compares field-by-field. That is often wrong: two values can be semantically equal with different representations.
+A derived `PartialEq` compares field-by-field. Field-by-field equality is often wrong: two values can be semantically equal with different representations.
 
 ```rust
 // Bad: derived PartialEq makes 2.hours() != 120.minutes() despite equal duration.

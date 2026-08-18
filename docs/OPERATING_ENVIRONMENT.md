@@ -1,10 +1,8 @@
 # Operating environment
 
-Where Patina stores its per-machine state, and the two environment
-problems it leaves to you in v1.0: a state directory or repository
-sitting on a cloud-sync mount, and a `systemd --user` watcher that dies
-with your login session. Read them here rather than meeting them through
-degraded apply behaviour.
+Patina stores per-machine state in the locations below. In v1.0, keep the
+state directory and repository off cloud-sync mounts, and use
+`systemd --user` lingering when the watcher must survive logout.
 
 ---
 
@@ -39,9 +37,9 @@ patina/
 
 **Patina does not detect cloud-sync directories in v1.0.** Nothing warns
 you, nothing refuses, and `patina doctor` says nothing either. Every
-detection strategy is incomplete or intrusive: a hardcoded list of
-provider names rots, while process inspection and filesystem xattr
-probing reach further into your machine than a dotfile manager should.
+detection strategy is incomplete or intrusive: a hardcoded provider
+list becomes stale, while process inspection and filesystem xattr probing
+inspect more of the machine than Patina requires.
 
 You are responsible for keeping the **per-machine state directory**
 and your **dotfiles repository** off the following kinds of mounts:
@@ -70,7 +68,7 @@ version, or delay files in ways Patina cannot observe:
   `LockFileEx`) is not well-defined on cloud-mounted filesystems;
   two `patina apply` invocations could interleave.
 
-The repository fails a different way. On Windows a long-running upload
+The repository has a separate failure mode. On Windows a long-running upload
 holds the source file open with exclusive sharing semantics, racing
 `patina apply`'s reads.
 
@@ -83,14 +81,13 @@ Pick a local-disk directory for both:
 mkdir -p ~/dotfiles
 git clone <your repo> ~/dotfiles
 
-# Windows (Powershell)
+# Windows (PowerShell)
 New-Item -ItemType Directory -Path C:\Users\<you>\dotfiles -Force
 git clone <your repo> C:\Users\<you>\dotfiles
 ```
 
-The state directory is already on local disk by default per the
-table above; you'd have to override `XDG_STATE_HOME` to move it onto
-a cloud-sync mount.
+The state directory is on local disk by default. Moving it to a cloud-sync
+mount requires overriding `XDG_STATE_HOME`.
 
 ---
 
@@ -103,9 +100,9 @@ login session ends. If you SSH into a server, run
 session.
 
 **Patina does not invoke `loginctl enable-linger` for you in v1.0.** The
-main `patina` process runs unprivileged and never prompts for sudo, and
-survive-logout behaviour is not worth breaking that invariant for the
-minority who need it. A `--linger` flag is a v1.1 candidate.
+main `patina` process runs unprivileged and never prompts for sudo. Users
+who need the watcher to survive logout must enable lingering separately. A
+`--linger` flag is a v1.1 candidate.
 
 ### When you need lingering
 

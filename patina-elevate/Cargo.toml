@@ -17,29 +17,15 @@ name = "patina-elevate"
 required-features = ["windows"]
 
 [features]
-# Gates the `[[bin]]` above through its `required-features`. Off by default, so
-# a plain `cargo build --release` does not emit a `patina-elevate` artifact on
-# macOS/Linux (`tests/artifact_absence.rs`). `just build` and `just install`
-# turn it on with `--features windows` when the host is Windows. The feature
-# has no dependency of its own: the target table below resolves `winsafe`
-# on every Windows target, so the cfg gate and the feature gate coincide.
 windows = []
 
 [dependencies]
-# To keep its trust surface small, the helper depends on no other workspace
-# crate.
 clap = { workspace = true }
 
-# `winsafe` supplies the registry write
-# (`AppModelUnlock\AllowDevelopmentWithoutDevLicense`) from its `advapi`
-# feature, with `kernel` for the base handle types. `taskschd` stays off. The
-# per-target declaration keeps `winsafe` out of a non-Windows build's graph.
 [target.'cfg(windows)'.dependencies]
 winsafe = { workspace = true }
 
 [dev-dependencies]
-# `artifact_absence.rs` drives a real `cargo build --release` and parses its
-# `--message-format=json` output.
 serde_json = { workspace = true }
 tempfile = { workspace = true }
 

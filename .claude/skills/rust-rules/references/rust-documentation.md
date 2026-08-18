@@ -81,7 +81,7 @@ For a substantial module, follow a three-part skeleton: an **Overview** (bullete
 
 ## Crate Root as Cookbook and Spec
 
-The crate root is where a new user lands. Make it earn that:
+New users land at the crate root. Make it useful:
 
 - List what the crate supports, and explicitly what it does **not**, linking each gap to a tracking issue.
 - State the panic policy ("APIs that panic by design are few and clearly documented as such").

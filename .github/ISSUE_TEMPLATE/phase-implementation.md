@@ -20,7 +20,7 @@ assignees: []
 - [ ] <prerequisite work item X complete>
 - [ ] <prerequisite work item Y complete>
 
-Pick this issue up only once every prerequisite above is complete.
+Pick up this issue after all listed prerequisites are complete.
 
 ## Deliverables
 
@@ -36,7 +36,7 @@ Pick this issue up only once every prerequisite above is complete.
 
 ## Implementer notes
 
-<!-- Anything specific to this implementation attempt. Worth filling in when:
+<!-- Record details specific to this implementation attempt. Fill this in when:
      - A previous attempt was rolled back.
      - Open questions need resolving first.
      - Manual validation steps need scheduling. -->

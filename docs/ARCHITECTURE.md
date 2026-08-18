@@ -1,8 +1,7 @@
 # Patina architecture
 
-This document orients contributors to how Patina is built: the crate
-boundaries, the on-disk journal format, the phases an `apply` moves
-through, and the recovery primitives that make a mid-apply crash safe.
+Patina's crate boundaries, on-disk journal format, `apply` phases, and
+recovery primitives define the architecture for a mid-apply crash.
 
 ## Engine layers
 
@@ -55,7 +54,7 @@ flowchart TD
   `patina-core` or `patina-cli`) and performs one elevated action under a
   single UAC prompt: toggling the Developer Mode registry flag, or
   applying a set of Windows Defender path exclusions. It is gated behind a
-  `windows` Cargo feature, so a non-Windows build produces no such
+  `windows` Cargo feature, so a non-Windows build produces no helper
   artifact.
 
   The helper also *verifies* its own work, because it is the only part of
@@ -81,8 +80,8 @@ run reads to converge the filesystem.
 The plan file and the commit record are encoded with `postcard`; the
 progress cursor is a raw fixed-width byte log. `postcard` promises no
 wire-format stability across versions, so every journal opens with a
-version envelope. A future Patina can then detect and reject a journal it
-cannot decode, rather than misread it. See the product north star's
+version envelope. A later Patina binary can then reject a journal it
+cannot decode instead of misreading it. See the product north star's
 Known unknowns note in AGENTS.md.
 
 ```mermaid
@@ -111,10 +110,10 @@ The root manifest declares each remote once as a `[[remote]]` table; a
 managed entry naming one resolves its source against a checkout of that
 repository rather than against its own module directory. Pins are global
 and checkouts are local. The planner's remote registry reads the lockfile
-on the first entry that selects any remote. It materializes a checkout
-on the first entry that selects that remote, and memoizes both. A remote
-that no active entry names therefore costs neither a read nor a fetch. The
-subsystem lives under `patina-core/src/remote/`:
+when an active entry first selects a remote. It materializes and memoizes
+that remote's checkout on first selection. An unselected remote therefore
+requires neither a read nor a fetch. The subsystem lives under
+`patina-core/src/remote/`:
 
 - The **`git`** module wraps the `git` binary on `PATH` via
   `std::process::Command`. Patina links no git library, so a user's SSH
@@ -134,10 +133,10 @@ subsystem lives under `patina-core/src/remote/`:
   candidate tip may become a pin, so every branch is unit-testable
   without a clock, a network, or a repository.
 
-The sweep reads every journal commit sentinel on disk and keeps any
-checkout one of them still names, because rollback walks back through
-older records. Where the sweep cannot decode a sentinel, it suspends
-rather than stranding a rollback.
+The sweep reads every journal commit sentinel on disk and keeps each
+checkout named by at least one sentinel, because rollback walks back
+through older records. When the sweep cannot decode a sentinel, it
+suspends instead of stranding a rollback.
 
 `docs/REMOTE_SOURCES.md` is the normative behavioural spec.
 
@@ -181,10 +180,10 @@ sequenceDiagram
 
 ### Tree enumeration and `ignore`
 
-Every phase of a tree-mode entry enumerates its leaves through one
-function: plan-time classification, target-collision claims, the
-executors, the committed journal record, and the managed-target set
-`status` and the orphan reap consult all call `apply::walk_files`. It
+Every tree-mode phase enumerates leaves through `apply::walk_files`:
+plan-time classification, target-collision claims, the executors, the
+committed journal record, and the managed-target set used by `status` and
+the orphan reap all call it. It
 takes a compiled matcher and prunes ignored directories during descent
 rather than filtering a flat result list. Pruning at descent skips reading
 inside `__pycache__`, and it drops the nested `__pycache__/x.pyc` too. A
@@ -217,11 +216,11 @@ the on-disk format is unchanged.
 ## Recovery
 
 A `kill -9` mid-apply leaves the filesystem in either the pre-apply or
-the post-apply state. That crash-safety guarantee covers process
-termination, where the page cache survives. Backups are copied but not
+the post-apply state. This crash-safety guarantee covers process
+termination while the page cache survives. Backups are copied but not
 `fsync`ed before an overwrite. Power loss or a kernel panic mid-apply
-can therefore leave an overwrite durable while its backup is not, a
-genuinely intermediate state. Full power-loss durability (atomic
+can therefore leave an overwrite durable while its backup is not, an
+intermediate state. Full power-loss durability (atomic
 temp+rename target writes plus `fsync` of backups and parent
 directories) is a post-1.0 hardening item.
 
@@ -230,7 +229,7 @@ journal envelope and converges deterministically:
 
 - A plan with no terminal sentinel is an orphan: an apply killed after
   the journal became durable but before it committed. Recovery reverses
-  it backward to the pre-apply state, deciding per operation from the
+  it to the pre-apply state, deciding per operation from the
   recorded disposition and whether a backup exists. An `Unchanged`
   target is left alone. A target with a backup is restored from it. A
   target with no backup was a fresh creation, so it is deleted. The

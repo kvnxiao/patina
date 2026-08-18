@@ -13,49 +13,24 @@ homepage = "https://github.com/kvnxiao/patina"
 readme = "README.md"
 
 [workspace.dependencies]
-# Terminal styling for user-facing output (diff +/- lines, prompts, warnings,
-# errors). `anstyle` defines the styles; `anstream` writes through an
-# auto-stream that strips ANSI when the stream is not a terminal (or
-# `--color never` / `NO_COLOR`) and enables Windows VT. Both crates, and their
-# whole transitive stack, already resolve in the tree via clap's `color`
-# feature, so adding them as direct deps introduces no new crates and clears
-# `cargo deny` at no marginal cost.
 anstream = "1.0"
 anstyle = "1.0"
 anyhow = "1.0"
 blake3 = "1.5"
 camino = { version = "1.1", features = ["serde1"] }
 clap = { version = "4.5", features = ["derive"] }
-# Strips Windows' `\\?\` verbatim path prefix from canonicalized paths where
-# the plain form is equivalent. De-facto standard (Cargo, rustup, ripgrep all
-# depend on it); zero dependencies; identity on non-Windows targets.
 dunce = "1.0"
 fs-err = "3.0"
 fs2 = "0.4"
-# Gitignore-syntax matching for tree-mode entry `ignore` lists. Only the
-# `gitignore::Gitignore` matcher is used, built from in-memory pattern lines;
-# the crate's parallel directory walker stays unused, because `walk_files` is
-# the enumeration contract every phase already agrees on. Chosen over
-# `globset` (which `ignore` wraps) for last-match-wins ordering and `!`
-# negation, so a per-entry pattern can override a repo-wide one.
+# Tree-mode `ignore` lists use Gitignore ordering and `!` negation.
 ignore = "0.4"
-# Snapshot testing (dev-only). The diff renderer's golden-output test
-# (unchanged targets omit their per-entry block and a single
-# summary count line is printed) asserts against a committed snapshot so a
-# regression in the human diff body shows as a reviewable snapshot diff.
-# `default-features = false` drops the optional colour/glob/redaction extras
-# we do not use, keeping the dev dep graph minimal at this add gate.
+# Disable optional features unrelated to snapshot testing.
 insta = { version = "1.43", default-features = false }
 jiff = "0.2"
 minijinja = "2.20"
 notify = "8.2"
 notify-debouncer-full = "0.7"
-# Desktop drift notifications. The emit path sits behind an
-# internal `NotificationSink` trait so headless CI drives a capture sink; only
-# the production sink touches `notify-rust`. `default-features` left on:
-# the crate's per-OS backend (zbus/DBus on Linux, mac-notification-sys on
-# macOS, WinRT on Windows) is the feature set we need, and its transitive
-# stack clears `cargo deny check` at this dep-add gate.
+# Keep default features for the required per-OS notification backends.
 notify-rust = "4.17"
 postcard = { version = "1.1", default-features = false, features = ["use-std"] }
 serde = { version = "1.0", features = ["derive"] }
@@ -69,26 +44,13 @@ toml = "1.1"
 toml_edit = "0.25"
 tracing = "0.1"
 tracing-appender = "0.2"
-# NFC folding for the target-collision comparison key: APFS is
-# normalization-insensitive, so two targets differing only in NFC/NFD spelling
-# are one file on macOS. One transitive dep (`tinyvec`), against ~14 and
-# embedded data for `icu_normalizer`.
+# NFC folding makes target-collision checks match macOS-equivalent spellings.
 unicode-normalization = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-# Host identity (hostname / username) via OS syscalls, not the unreliable
-# `$HOSTNAME` / `$USER` env vars: those are unset under non-login shells and
-# the systemd/launchd watcher services Patina ships.
+# Read host identity through OS APIs; watcher services may omit shell
+# environment variables.
 whoami = "2.1"
-# Windows-only: registry (Developer Mode flag) + process-token elevation
-# read. `advapi` covers registry + tokens; `kernel` covers the
-# base handle types. `taskschd` is deliberately NOT enabled. That surface
-# belongs to the watcher service install, and enabling an unused
-# feature now violates the enable-only-needed-features rule.
-# 0.0.28 is the floor. Earlier releases only tolerate ERROR_INSUFFICIENT_BUFFER
-# from the sizing call in `GetTokenInformation`, but the fixed-size
-# `TokenElevation` class answers with ERROR_BAD_LENGTH instead, so the elevation
-# read behind `is_elevated` failed on every call. Because that error is treated
-# as "not elevated", every elevated process was reported as unelevated.
+# Require 0.0.28 for `TokenElevation` reads.
 winsafe = { version = "0.0.28", features = ["advapi", "kernel"] }
 
 [workspace.lints.rust]
@@ -96,16 +58,12 @@ unsafe_code = "forbid"
 missing_docs = "warn"
 
 [workspace.lints.clippy]
-# Groups (broad coverage)
 all = { level = "deny", priority = -1 }
 pedantic = { level = "deny", priority = -1 }
 cargo = { level = "deny", priority = -1 }
 
-# Cargo group escape hatch: multiple versions inflate compile time but are
-# rarely actionable for transitive deps; tighten once the dep graph stabilises.
+# Allow multiple transitive versions while the dependency graph stabilizes.
 multiple_crate_versions = "allow"
-
-# Restriction lints, opt-in individually.
 
 # Don't panic
 unwrap_used = "deny"
