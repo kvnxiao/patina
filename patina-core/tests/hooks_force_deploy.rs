@@ -87,9 +87,8 @@ async fn force_deploy_downgrades_post_apply_failure_to_warning() {
 
 #[tokio::test]
 async fn same_hook_without_force_deploy_classifies_failed() {
-    // This test is the contrast case for the prior one. The identical
-    // fixture, without `--force-deploy`, keeps `must_succeed = true`, so
-    // the post_apply failure classifies as `Failed`, which triggers
+    // The identical fixture without `--force-deploy` keeps `must_succeed = true`,
+    // so the post_apply failure classifies as `Failed`, which triggers
     // rollback and exit code 3.
     let (_td, dir) = utf8_tempdir();
     let marker = dir.join("hook-ran.marker");

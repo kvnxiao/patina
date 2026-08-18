@@ -105,7 +105,7 @@ fn failed_second_target_rolls_the_first_forward_and_reports_partial() {
 
 #[test]
 fn fully_revertible_multi_target_entry_succeeds() {
-    // This is the happy-path counterpart. When every target reverts cleanly,
+    // The all-clean counterpart succeeds when every target reverts cleanly;
     // the entry returns Ok and both reach their pre-apply state.
     let e = env();
     let ts = "20260528T120000Z";

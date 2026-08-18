@@ -9,7 +9,7 @@
 //! `paths::expand_tilde` helpers, and the discovery-layer wiring. A
 //! repository root resolved through a relative `PATINA_REPO` must come
 //! back canonical and absolute. The full `patina apply --yes --json`
-//! surface lands later. The library-level property proved here is that
+//! surface runs later. The library-level property proved here is that
 //! the `repo_root` value that surface will report is already canonical
 //! and absolute, with no `.` or `..` segments, at the point it is
 //! produced.
@@ -96,7 +96,7 @@ fn nonexistent_leaf_under_existing_parent_resolves_through_parent_symlinks() {
 
 #[test]
 fn expand_tilde_then_canonicalize_yields_home_relative_absolute() {
-    // This test covers the user-input `~` variant: it expands against a
+    // The user-input `~` variant expands against a
     // concrete home, then canonicalizes. The home tempdir exists but the
     // leaf does not, so this exercises the lexical-fallback branch under
     // an existing parent.

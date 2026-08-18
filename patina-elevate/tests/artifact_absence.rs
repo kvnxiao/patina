@@ -3,7 +3,7 @@
 //!
 //! Scanning the shared `target/release/` directory would race concurrent
 //! builds and could match a stale artifact left by an earlier
-//! `--features windows` run. This test drives `cargo build --release
+//! `--features windows` run. The test drives `cargo build --release
 //! --message-format=json` in a hermetic target dir and reads the set of
 //! executables Cargo reports emitting.
 //!

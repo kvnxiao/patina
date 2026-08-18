@@ -25,9 +25,9 @@ pub(crate) const MANIFEST_FILENAME: &str = "patina.toml";
 /// hatch every non-mutating subcommand uses.
 ///
 /// `quiet` suppresses the warning for the one surface that must leave stderr
-/// clean, the `remote check --hook` prompt path. That path times out while an
-/// apply holds the exclusive lock, so without `quiet` every new shell would
-/// print the warning until the apply finishes.
+/// clean, the `remote check --hook` prompt path. The prompt path times out
+/// while an apply holds the exclusive lock, so without `quiet` every new shell
+/// would print the warning until the apply finishes.
 pub(crate) fn shared_lock(
     lock_path: &camino::Utf8Path,
     quiet: bool,

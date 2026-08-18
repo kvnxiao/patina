@@ -6,7 +6,7 @@
 //! Integration coverage for the plan journal.
 //!
 //! These tests drive the `patina_core::journal` module directly. Each
-//! proves one load-bearing property:
+//! checks one journal invariant:
 //!
 //! - the fsync shape: a single up-front plan fsync paired with a directory
 //!   fsync, with no per-operation progress fsync.

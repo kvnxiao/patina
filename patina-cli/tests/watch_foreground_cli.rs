@@ -35,7 +35,8 @@ use std::process::Command;
 /// `patina watch` with neither a lifecycle subcommand nor `--foreground`
 /// reports the usage hint. When the root manifest declares the ignored
 /// `[watcher] debounce_ms` key, the forward-compatible warning precedes it.
-/// That path runs to completion, so the blocking `Fixture::run` helper is fine.
+/// The warning path runs to completion, so the blocking `Fixture::run` helper
+/// is sufficient.
 #[test]
 fn debounce_ms_key_in_root_manifest_warns() {
     let f = Fixture::new();
@@ -404,7 +405,7 @@ mod foreground {
             watcher.stderr_snapshot()
         );
 
-        // This scenario models an external `patina apply` that commits new
+        // An external `patina apply` commits new
         // state while the watcher runs. The watcher must detect the new
         // journal record under the watched journal dir and rescan. An
         // unchanged re-apply is a full no-op that does not write a journal
@@ -415,8 +416,8 @@ mod foreground {
         // falls outside the current subscription set. The parallel apply
         // then performs a real Create and commits a fresh journal record, and
         // the watcher reacts to that journal write rather than to the new
-        // source/target, a pair it is not yet watching. That isolates the loop
-        // guard's target behaviour: an external apply's commit triggering a
+        // source/target, a pair it is not yet watching. The setup isolates the
+        // loop guard's target behaviour: an external apply's commit triggering a
         // journal rescan.
         let extra = f.module(
             "extra",
@@ -467,7 +468,7 @@ mod foreground {
 
     #[test]
     fn an_external_target_edit_logs_drift_and_populates_the_cache() {
-        // This test covers the platform-independent, deterministic slice. A
+        // The test covers the platform-independent, deterministic slice. A
         // running watcher over an applied copy-mode `~/.gitconfig`, when the
         // target is overwritten with bytes that hash differently, logs a
         // `drift` event, records the divergence in `<state>/drift.cache` with
@@ -577,7 +578,7 @@ mod foreground {
     #[test]
     fn a_watcher_reapply_commits_exactly_one_new_journal_record() {
         // A single watched-source edit drives exactly one watcher re-apply.
-        // That re-apply commits exactly one new journal record on top of the
+        // The re-apply commits exactly one new journal record on top of the
         // fixture's initial apply (two COMMITs total). That pair is the
         // deterministic, single-process slice of the two-committed-plans
         // contract; the full concurrent-CLI race is exercised by the engine's

@@ -24,11 +24,9 @@
 //!
 //! # Outcome semantics
 //!
-//! The outcome is a *classification*, not an action: this module never
-//! itself aborts the apply, rolls back, or writes to the user's terminal.
-//! It returns a [`HookOutcome`] and lets the orchestrator (which owns the
-//! journal, the rollback machinery, and the `output::Reporter` surface)
-//! decide. The mapping the orchestrator applies:
+//! The outcome is a *classification*, not an action. Return a [`HookOutcome`];
+//! the orchestrator owns the journal, rollback machinery, and
+//! `output::Reporter` surface and decides what to do with it:
 //!
 //! - [`HookOutcome::Succeeded`]: the hook exited zero; proceed.
 //! - [`HookOutcome::Warned`]: the hook exited non-zero but degraded to a
@@ -41,9 +39,9 @@
 //!   [`HookEvent`](crate::config::HookEvent) on the originating [`HookEntry`]
 //!   tells the orchestrator which.
 //!
-//! `--force-deploy` ([`ForceDeploy::Yes`]) overrides every hook in the
-//! invocation to behave as `must_succeed = false`, so a non-zero exit can
-//! only ever degrade to [`HookOutcome::Warned`].
+//! `--force-deploy` ([`ForceDeploy::Yes`]) treats every hook as
+//! `must_succeed = false`. A non-zero exit then maps to
+//! [`HookOutcome::Warned`].
 
 use crate::config::HookEntry;
 use crate::state_dir::HostOs;

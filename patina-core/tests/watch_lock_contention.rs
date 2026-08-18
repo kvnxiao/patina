@@ -9,7 +9,7 @@
 //! self-acquires the exclusive advisory lock with a single non-blocking
 //! attempt. On contention, it returns having mutated nothing.
 //!
-//! This test holds the exclusive lock in the test process, exactly as a
+//! The test process holds the exclusive lock, exactly as a
 //! concurrent CLI `apply` or `rollback` would in another process. It drives
 //! `run_reapply` in the `reapply_probe` child. It asserts the child reports
 //! `SKIPPED` and creates no target. It then releases the lock, re-runs the

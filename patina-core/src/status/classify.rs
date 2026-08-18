@@ -4,8 +4,8 @@
 //! expectation for one target and whether the *current* repository plan
 //! still manages that target, it reads the live filesystem and returns the
 //! [`TargetState`]. The status module ([`super`]) owns the journal read and
-//! the current-plan computation, so IO orchestration stays out of this
-//! function. This function owns the four-way comparison of CLEAN / DRIFTED /
+//! the current-plan computation, so IO orchestration stays out of the
+//! classifier. The classifier owns the four-way comparison of CLEAN / DRIFTED /
 //! MISSING / ORPHANED.
 
 use crate::journal::ExpectedTarget;

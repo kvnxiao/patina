@@ -25,7 +25,7 @@ pub const DEFAULT_MIN_AGE: Duration = Duration::from_hours(72);
 /// cache, a table key in the committed lockfile, the `remote = "..."` an entry
 /// selects it by, and the argument every `patina remote` verb takes. Two
 /// spellings a case-insensitive filesystem cannot keep apart are therefore one
-/// remote, and this type is where that rule lives: equality, ordering, and
+/// remote. This type defines that rule: equality, ordering, and
 /// hashing all run over [`RemoteName::key`], so a map keyed by this type
 /// cannot hold one remote twice. [`Display`](std::fmt::Display) renders the
 /// authored spelling, and messages and the lockfile keep that same spelling.
@@ -79,7 +79,7 @@ impl RemoteName {
     }
 
     /// The authored spelling.
-    #[must_use = "the display spelling is what messages and the lockfile key carry"]
+    #[must_use = "messages and the lockfile key use the display spelling"]
     pub fn as_str(&self) -> &str {
         &self.display
     }
@@ -373,11 +373,10 @@ fn reject_leading_dash(key: &'static str, value: &str) -> Result<(), RemoteConfi
 /// Parse a `<whole number><unit>` duration, where the unit is one of `s`, `m`,
 /// `h`, or `d`.
 ///
-/// This parser is hand-rolled: the accepted grammar is four suffixes over an
-/// integer, and it covers every duration format Patina supports. Compound
-/// forms (`1h30m`), fractions (`1.5h`), signs, and a bare number with no unit
-/// are all rejected, so a typo surfaces as an error rather than a silently
-/// different window.
+/// Parse an integer with one of four duration suffixes. Compound forms
+/// (`1h30m`), fractions (`1.5h`), signs, and a bare number with no unit are all
+/// rejected, so a typo surfaces as an error rather than a silently different
+/// window.
 ///
 /// # Errors
 ///

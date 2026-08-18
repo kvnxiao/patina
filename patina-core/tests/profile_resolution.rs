@@ -66,7 +66,7 @@ fn env_var_resolves_to_work_when_no_other_sources_match() {
 /// The harness pins `Builtins::hostname` to `CHK-host` directly (the
 /// public field is mutable; `Builtins::current`
 /// reads `$HOSTNAME` from the process environment, which is not
-/// reliably exported on Unix). This isolates the test from the host's
+/// reliably exported on Unix). The setup isolates the test from the host's
 /// real hostname.
 #[test]
 fn auto_match_on_hostname_resolves_to_desktop() {

@@ -183,8 +183,8 @@ fn non_windows_write_failure_surfaces_without_retry_event() {
 ///
 /// Symlink creation is one of the file writes the retry policy guards. The
 /// forward-apply symlink executor (`apply::symlink::create_symlink`) routes
-/// its OS primitive through `with_sharing_violation_retry`. This test pins
-/// that wiring by driving a real `FileMode::Symlink` apply into a
+/// its OS primitive through `with_sharing_violation_retry`. Drive that wiring
+/// with a real `FileMode::Symlink` apply into a
 /// non-writable directory; the symlink `create` call fails with EACCES, the
 /// closest portable analogue to the Windows `FILE_SHARE_NONE` scenario. The
 /// wrapper is a pass-through off Windows, so the error must surface

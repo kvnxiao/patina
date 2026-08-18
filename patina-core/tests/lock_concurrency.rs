@@ -18,9 +18,9 @@
 //!   exclusive lock, past its test-parameterised cap, exits with the code
 //!   reserved for lock timeout. It prints a `TIMEOUT` message to stderr.
 //! - **OS release on abnormal death.** A process that aborts while holding the
-//!   lock leaves the lock free, and the next acquirer gets in cleanly. This is
-//!   the invariant that justifies relying on `Drop` and the OS rather than an
-//!   explicit unlock.
+//!   lock leaves the lock free, and the next acquirer gets in cleanly. The
+//!   invariant justifies relying on `Drop` and the OS rather than an explicit
+//!   unlock.
 //!
 //! These tests drive the `patina_core::lock` primitive directly through the
 //! `lock_helper` example process.

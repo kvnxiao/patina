@@ -43,7 +43,7 @@ pub fn current_timestamp() -> String {
 /// let now = patina_core::clock::current_epoch_seconds();
 /// assert!((1_577_836_800..4_102_444_800).contains(&now));
 /// ```
-#[must_use = "the epoch is what the update gate compares committer times against"]
+#[must_use = "the update gate compares committer times against the epoch"]
 pub fn current_epoch_seconds() -> i64 {
     jiff::Timestamp::now().as_second()
 }

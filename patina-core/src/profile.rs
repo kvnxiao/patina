@@ -43,7 +43,7 @@
 //! not a silent non-match. The undefined-access error and the short-circuit
 //! carve-out both fall out of routing through the shared engine. Under the
 //! carve-out, a variable on a not-taken `and` / `or` branch is never accessed
-//! and does not error. This module adds no evaluator of its own.
+//! and does not error. The profile layer adds no evaluator of its own.
 //!
 //! [`state_dir`]: crate::state_dir
 
@@ -184,9 +184,9 @@ pub enum ProfileError {
 /// file exists but cannot be read. Returns [`ProfileError::Predicate`] when
 /// an `[[auto_match]]` rule's `when` expression fails to evaluate. The
 /// common case is a variable undefined in the built-ins-only context: a
-/// misspelled built-in, a user-defined variable, or `patina.profile`. That is
-/// a typed error naming the variable, not a silent non-match. When predicates
-/// evaluate cleanly
+/// misspelled built-in, a user-defined variable, or `patina.profile`. The
+/// result is a typed error naming the variable, not a silent non-match. When
+/// predicates evaluate cleanly
 /// to `false`, the function continues to the next rule and ultimately to
 /// the fallback.
 ///

@@ -33,8 +33,8 @@ fn current_os_family() -> &'static str {
 }
 
 /// Assert that the apply did not write a `*.plan` or `*.COMMIT` journal file.
-/// That is the plan-time-failure guarantee: a mismatched entry mutates
-/// nothing. The journal directory is `<state>/patina/journal`. A plan-phase
+/// A plan-time failure leaves a mismatched entry untouched. The journal
+/// directory is `<state>/patina/journal`. A plan-phase
 /// failure may leave it absent entirely, and that absence is itself proof that
 /// nothing was flushed.
 fn assert_no_journal_artifacts(f: &Fixture) {

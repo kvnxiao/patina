@@ -174,8 +174,8 @@ fn ancestry_distinguishes_a_fast_forward_from_a_rewrite() {
     let rewritten = f.commit("a.txt", "rewritten\n", BASE_EPOCH + 120);
 
     let bare = f.bare();
-    // The pin arrives the way a consumer's cold cache fills it, shallow and
-    // by exact SHA. The candidates arrive the way the update path fetches
+    // The cold-cache path fetches the pin shallowly by exact SHA. The candidates
+    // use the update path's fetch shape,
     // them, with the history needed to answer the ancestry question.
     git::fetch_commit(&bare, f.origin.as_str(), &first, Some("main")).expect("fetch the pin");
     git::fetch_history(&bare, f.origin.as_str(), Some("main")).expect("fetch the descendant");

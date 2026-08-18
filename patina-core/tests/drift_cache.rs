@@ -71,8 +71,8 @@ fn newer_major_load_is_refused_naming_both_versions() {
 fn drift_cache_major_is_independent_of_the_journal_major() {
     // The two formats version independently. A regression that made the
     // drift cache validate against the journal's major would break the
-    // moment the two diverge. This test pins that a cache encoded at the
-    // drift-cache major decodes against that major, independent of the
+    // moment the two diverge. Decode a cache encoded at the drift-cache major
+    // against that major, independent of the
     // journal's `FILE_MAJOR_VERSION`. The two majors currently coincide at
     // 1 pre-release, so asserting inequality between the constants would
     // only gate their values, not the coupling behaviour.

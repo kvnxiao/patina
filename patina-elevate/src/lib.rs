@@ -10,7 +10,7 @@
 //! Defender path exclusions to add and remove, re-validates every path, then
 //! applies them through the `Defender` PowerShell module and verifies the
 //! change with a mandatory re-read. The helper depends on no other workspace
-//! crate, so UAC has a smaller binary to gate.
+//! crate, so the UAC prompt gates a binary with no workspace dependencies.
 //!
 //! ## Library and thin binary split
 //!

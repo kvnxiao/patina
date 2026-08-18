@@ -32,9 +32,7 @@ fn current_os_family() -> &'static str {
     std::env::consts::OS
 }
 
-/// Overwrite the fixture's root manifest body (replacing the default
-/// `[patina]\nroot = true\n`). Used to declare `[[auto_match]]` rules,
-/// which only the root manifest carries.
+/// Overwrite the fixture's root manifest body with `[[auto_match]]` rules.
 fn write_root(f: &Fixture, body: &str) {
     fs_err::write(f.root.join("patina.toml"), body).expect("write root manifest");
 }
