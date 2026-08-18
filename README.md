@@ -2,7 +2,7 @@
 
 [![codecov](https://codecov.io/gh/kvnxiao/patina/branch/main/graph/badge.svg)](https://codecov.io/gh/kvnxiao/patina/tree/main)
 
-Your dotfiles, oxidized to perfection.
+Your dotfiles, managed across machines.
 
 `patina` is a dotfile manager written in Rust. One centralized git
 repository drives macOS, Linux, and Windows. Most targets are symbolic
@@ -75,10 +75,10 @@ accept `--yes` to skip the prompt.
 
 ## Design
 
-`patina` is built spec-first. We write requirements and acceptance
-scenarios for every slice before implementing it, then review the code
-against them. See [`AGENTS.md`](AGENTS.md) for the product north star
-and the contributor workflow.
+`patina` follows a spec-first workflow. Requirements and acceptance
+scenarios are written before implementation, and the code is reviewed
+against them. See [`AGENTS.md`](AGENTS.md) for the product north star and
+the contributor workflow.
 
 ## Contributing
 

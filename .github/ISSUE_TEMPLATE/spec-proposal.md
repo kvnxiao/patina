@@ -8,12 +8,12 @@ assignees: []
 
 ## Problem
 
-<!-- What problem are you proposing to solve? What does Patina do today, and
-     where does that fall short? Name a scenario you have hit. -->
+<!-- Describe the problem, Patina's current behavior, and the gap. Name a
+     concrete scenario. -->
 
 ## Proposed scope
 
-<!-- What this proposal covers, and what it deliberately leaves out. -->
+<!-- State what this proposal covers and deliberately leaves out. -->
 
 **In scope:**
 
@@ -25,8 +25,8 @@ assignees: []
 
 ## Why now
 
-<!-- What prompts this proposal now: user pain, technical debt, or a
-     feature that just shipped and unblocked it. -->
+<!-- State what prompts this proposal now: user pain, technical debt, or a
+     recently shipped feature that unblocked it. -->
 
 ## Dependencies
 
@@ -35,11 +35,12 @@ assignees: []
 
 ## Alternatives considered
 
-<!-- Approaches you weighed and provisionally rejected, with the reason. -->
+<!-- List the approaches you considered, rejected, and the reason for each
+     rejection. -->
 
 ## Open questions
 
-<!-- Things you'd want feedback on before the design is drafted. -->
+<!-- List the questions that need answers before drafting the design. -->
 
 ---
 

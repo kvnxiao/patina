@@ -7,7 +7,7 @@ description: "Cargo dependency management; caret ranges with a committed Cargo.l
 
 ## Default to Caret/Semver Ranges
 
-For both libraries and applications, declare dependencies with caret/semver ranges (Cargo's default for unprefixed versions). A committed `Cargo.lock` is what guarantees reproducibility, not exact-pin specs in `Cargo.toml`.
+For both libraries and applications, declare dependencies with caret/semver ranges (Cargo's default for unprefixed versions). A committed `Cargo.lock` guarantees reproducibility; exact-pin specs in `Cargo.toml` do not.
 
 ```toml
 [dependencies]
@@ -75,4 +75,4 @@ cargo machete
 
 ## Single-Source the MSRV
 
-Declare `rust-version` once in `[package]` (or `[workspace.package]`) and have CI read the MSRV from there, for example by installing the toolchain from the declared `rust-version` and running `cargo check`. Don't also hard-code the version number in CI YAML; a second copy drifts out of sync.
+Declare `rust-version` once in `[package]` (or `[workspace.package]`) and have CI read the MSRV from that field, for example by installing the toolchain from the declared `rust-version` and running `cargo check`. Don't also hard-code the version number in CI YAML; a second copy drifts out of sync.

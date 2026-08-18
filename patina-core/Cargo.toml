@@ -46,14 +46,14 @@ tracing-subscriber = { workspace = true }
 unicode-normalization = { workspace = true }
 whoami = { workspace = true }
 
-# Developer Mode / elevation reads + the one-time UAC launch, and
-# the watcher Scheduled Task. Windows-only so non-Windows
-# builds never resolve `winsafe` into the graph. On top of the workspace
-# `advapi` + `kernel` (registry + token reads), this crate also needs
-# `shell` for `ShellExecuteEx` (the `runas` launch of `patina-elevate.exe`)
-# and `taskschd` for the HKCU-scoped, non-elevated watcher Scheduled Task
-# (`ITaskService` register / delete). The helper crate needs neither, so the
-# features are added here per-crate rather than at the workspace level.
+# Windows-only features support Developer Mode and elevation reads, the
+# one-time UAC launch, and the watcher Scheduled Task. Non-Windows builds do
+# not resolve `winsafe` into the graph. In addition to the workspace's
+# `advapi` and `kernel` features for registry and token reads, this crate needs
+# `shell` for `ShellExecuteEx` (the `runas` launch of
+# `patina-elevate.exe`) and `taskschd` for the HKCU-scoped, non-elevated
+# watcher Scheduled Task (`ITaskService` register / delete). The helper crate
+# needs neither feature, so these features remain crate-local.
 [target.'cfg(windows)'.dependencies]
 winsafe = { workspace = true, features = ["shell", "taskschd"] }
 

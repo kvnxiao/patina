@@ -1,6 +1,6 @@
 # Patina agent guide
 
-Patina is a cross-platform dotfile manager written in Rust. This file orients LLM agents to the codebase. **Read this first before doing any work.**
+Patina is a cross-platform dotfile manager written in Rust. **Read this file before doing any work.**
 
 ---
 
@@ -24,7 +24,7 @@ V1.0 is complete when a user can:
 - **Preview safely.** Diff-and-prompt by default; non-interactive shells fall through to plan-only.
 - **Recover.** `patina status` reports drift; `patina rollback` restores pre-apply state; `patina debug journal` decodes the binary journal post-mortem.
 - **Bootstrap.** `init`, `add`, `remove`, `promote`, `doctor` cover repo setup and migration; Windows symlink elevation via Developer Mode or UAC.
-- **Watch.** A background service reapplies on source changes and surfaces files modified outside Patina.
+- **Watch.** A background service reapplies on source changes and reports files modified outside Patina.
 - **Consume remote sources.** The root manifest declares each third-party git repository as a `[[remote]]`. Any entry deploys from a pinned checkout of one with `remote = "<name>"`. `patina.lock` is the committed statement every machine converges to, and `patina remote list` / `check` / `update` / `prune` manage it. Normative spec: `docs/REMOTE_SOURCES.md`.
 
 ### Quality bar
@@ -60,31 +60,31 @@ If the user asks for one of these, the answer is "not in v1.0". Surface it as a 
 ### Known unknowns
 
 - **`postcard` wire-format stability.** Mitigated by the journal version envelope.
-- **`fs2` advisory lock semantics.** Patina papers over POSIX `flock(2)` against Windows `LockFileEx` for single-CLI and watcher↔CLI coordination.
-- **`tokio` file I/O remains `spawn_blocking`-backed** in v1.0; we accept the cost.
+- **`fs2` advisory lock semantics.** Patina handles the POSIX `flock(2)` and Windows `LockFileEx` differences for single-CLI and watcher↔CLI coordination.
+- **`tokio` file I/O remains `spawn_blocking`-backed** in v1.0.
 - **MiniJinja strict-undefined** (including the Jinja2 `{% else %}` empty-string rule) is acceptable.
 - **Power-loss / kernel-panic durability.** Backups are not fsync'd before an overwrite. Process termination (`kill -9`, page cache intact) therefore converges on the next run; a power cut can leave the overwrite durable and its backup not. Full never-intermediate durability under power loss (atomic temp+rename target writes plus fsync of backups and parent dirs) is a post-1.0 hardening item.
 - **Per-machine state directory must not live on cloud-sync paths** (iCloud / OneDrive / Dropbox / Box / Google Drive / Syncthing). Patina does not detect cloud-sync paths in v1.0; the constraint is documented only.
-- **Committer timestamps are self-reported.** The update gate's future / backdating / age checks stop untargeted, fast-moving compromises. A patient attacker who backdates commits deliberately can still get past these checks. The diff-and-prompt loop is the hard boundary.
-- **Fetching a bare SHA needs server cooperation.** A server with `uploadpack.allowReachableSHA1InWant` off refuses the specced shallow fetch by exact SHA. `remote::git::fetch_commit` then falls back to a shallow fetch of the tracked ref, and re-checks that the pin arrived.
+- **Committer timestamps are self-reported.** The update gate's future / backdating / age checks stop untargeted, fast-moving compromises. An attacker who deliberately backdates commits can still pass these checks. The diff-and-prompt loop is the hard boundary.
+- **Fetching a bare SHA needs server cooperation.** A server with `uploadpack.allowReachableSHA1InWant` off refuses the specified shallow fetch by exact SHA. `remote::git::fetch_commit` then falls back to a shallow fetch of the tracked ref, and re-checks that the pin arrived.
 - **Journal timestamps have one-second resolution.** Two applies inside one second share a `<ts>.COMMIT`, collapsing the older record. The remote cache's reachability sweep depends on those records.
 
 ---
 
 ## Always use these Skills
 
-The full engineering rulebook ships as Skills in this repository.
+The full engineering rulebook is in the Skills in this repository.
 
 - **Use the `rust-rules` Skill** before writing or reviewing **any** Rust code.
 - **Use the `github-actions-rules` Skill** before authoring or editing anything under `.github/workflows/`.
 
-Each Skill's body lists the reference docs for the task at hand.
+Each Skill's body lists the reference documents for its task.
 
 ---
 
 ## Hard rules: never
 
-Violating any of these is grounds for the next reviewer turn to reject the work outright.
+The next review rejects any violation of these rules.
 
 - **Never `unwrap()`, ever.** Use `?` with proper error types in production; use `.expect("descriptive message")` in tests.
 - **Never `expect()` in production code.** Allowed only in tests (`clippy.toml` sets `allow-expect-in-tests = true`). See the `rust-rules` Skill's error-handling reference.
@@ -98,12 +98,12 @@ Violating any of these is grounds for the next reviewer turn to reject the work 
 
 ## Code conventions
 
-Patina-specific additions and crate choices layered on the `rust-rules` Skill. Where these conflict with a Skill rule, the Skill wins; update this file.
+These Patina-specific rules extend the `rust-rules` Skill with crate choices. When they conflict with a Skill rule, the Skill wins; update this file.
 
 - **On-disk format version (pre-release no-bump policy):** the `postcard` binary formats (journal plan, committed apply record, watch drift cache) share one major-version envelope, `FILE_MAJOR_VERSION` in `patina-core/src/journal/plan.rs`. **Hold the major at `1` until v1.0.** Pre-release has no shipped state to preserve, so breaking layout changes keep major `1` with no migration; an older binary then refuses a newer file (`decode_envelope` rejects `found > supported`). Bump the major once, at the v1.0 boundary, where it becomes a real compatibility contract.
 - **CLI output:** human-readable by default with color where appropriate, JSON when `--json` is set. Use the `output::Reporter` abstraction, not direct prints.
 - **Tests:** integration tests use `tempfile::TempDir` for repo fixtures. Snapshot tests use `insta`.
-- **Diagrams in docs:** prefer Mermaid (` ```mermaid ` fenced blocks) over ASCII when either works, because it renders on GitHub and diffs cleanly per-node. Keep ASCII only for what Mermaid can't express: directory trees with inline comments, exact-byte layouts, terminal output.
+- **Diagrams in docs:** prefer Mermaid (` ```mermaid ` fenced blocks) when it can express the diagram. GitHub renders Mermaid and diffs it per node. Use ASCII for directory trees with inline comments, exact-byte layouts, and terminal output.
 
 ---
 

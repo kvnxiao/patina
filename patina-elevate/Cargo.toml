@@ -17,12 +17,12 @@ name = "patina-elevate"
 required-features = ["windows"]
 
 [features]
-# Gates the `[[bin]]` above through its `required-features`. Off by default, so
-# a plain `cargo build --release` does not emit a `patina-elevate` artifact on
+# `[[bin]]` requires this feature. With it disabled, a plain
+# `cargo build --release` does not emit a `patina-elevate` artifact on
 # macOS/Linux (`tests/artifact_absence.rs`). `just build` and `just install`
 # turn it on with `--features windows` when the host is Windows. The feature
 # has no dependency of its own: the target table below resolves `winsafe`
-# on every Windows target, so the cfg gate and the feature gate coincide.
+# on Windows targets, so the cfg gate and the feature gate coincide.
 windows = []
 
 [dependencies]
