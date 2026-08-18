@@ -19,11 +19,10 @@ may still shift before a tagged release.
 
 ## Install
 
-No prebuilt binaries yet. Build from source with a current Rust toolchain
-(MSRV 1.95):
+Install from crates.io with a current Rust toolchain (MSRV 1.95):
 
 ```sh
-cargo install --path patina-cli --locked
+cargo install patina --locked
 patina --version
 ```
 

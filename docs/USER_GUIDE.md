@@ -8,11 +8,11 @@ output, or byte copy.
 
 ## Installation
 
-Patina is a single binary. Build it from source with a current Rust
+Patina is a single binary. Install it from crates.io with a current Rust
 toolchain:
 
 ```sh
-cargo install --path patina-cli --locked
+cargo install patina --locked
 ```
 
 This installs the `patina` binary onto your `PATH`. Verify it:

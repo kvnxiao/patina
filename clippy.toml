@@ -2,7 +2,7 @@
 allow-expect-in-tests = true
 
 # Raw print macros are denied workspace-wide. User-facing output must
-# route through the `output::Reporter` abstraction in `patina-cli`; other code
+# route through the `output::Reporter` abstraction in `patina`; other code
 # logs through `tracing`. The `tracing` macros remain permitted because they
 # emit structured events, not user output. The `lock_helper` test-harness
 # example carries a scoped

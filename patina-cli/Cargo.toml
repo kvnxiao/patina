@@ -1,5 +1,5 @@
 [package]
-name = "patina-cli"
+name = "patina"
 description = "Command-line interface for the patina cross-platform dotfile manager."
 version.workspace = true
 edition.workspace = true
