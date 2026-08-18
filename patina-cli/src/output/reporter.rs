@@ -1,5 +1,5 @@
 //! The `output::Reporter` abstraction: the only sanctioned site for
-//! user-facing output in `patina-cli`.
+//! user-facing output in `patina`.
 //!
 //! Every byte the CLI prints for the user goes through a [`Reporter`]: the
 //! rendered diff, the JSON envelope, prompt text, and warnings. `tracing` logs

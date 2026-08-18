@@ -14,7 +14,7 @@ fn workspace_root_path(file: &str) -> Utf8PathBuf {
     let manifest_dir = Utf8Path::new(env!("CARGO_MANIFEST_DIR"));
     let root = manifest_dir
         .parent()
-        .expect("patina-cli has a workspace-root parent");
+        .expect("patina package has a workspace-root parent");
     root.join(file)
 }
 
