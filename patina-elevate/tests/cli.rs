@@ -1,26 +1,21 @@
 //! Process-level integration tests for the `patina-elevate` binary.
 //!
-//! These tests assert the real exit codes the spawned process produces.
-//! The library's unit tests cover the arg-parsing contract in-process; here
-//! it is proven end-to-end through `clap`'s own `Error::exit`.
+//! These assert the exit codes the spawned process produces, where the
+//! library's unit tests cover the parsing contract in-process.
 //!
-//! The binary is built only when the `windows` feature is enabled. When it
-//! is absent (a plain `cargo test` on any host without `--features
-//! windows`), the process-spawning tests no-op. Run them with
+//! The binary exists only under the `windows` feature. Without it the
+//! process-spawning tests no-op; run them with
 //! `cargo test -p patina-elevate --features windows`.
 
 use std::process::Command;
 
 /// Path to the built `patina-elevate` binary, or `None` when the bin was not
-/// built (the `windows` feature was off, so Cargo skipped it).
+/// built.
 ///
 /// Cargo sets `CARGO_BIN_EXE_patina-elevate` at compile time even when the
-/// bin's `required-features` (`windows`) are off and the bin was never
-/// produced. The compile-time env var alone is therefore not a reliable
-/// "was it built" signal. This function therefore guards on the file
-/// actually existing on disk. Otherwise a plain `cargo test` (no
-/// `--features windows`) would spawn a non-existent path and panic,
-/// instead of no-opping as intended.
+/// bin's `required-features` are off and no binary was produced, so the guard
+/// is the file existing on disk. Without it a plain `cargo test` would spawn a
+/// non-existent path and panic instead of no-opping.
 fn elevate_bin() -> Option<&'static str> {
     let path = option_env!("CARGO_BIN_EXE_patina-elevate")?;
     std::path::Path::new(path).exists().then_some(path)
@@ -28,9 +23,6 @@ fn elevate_bin() -> Option<&'static str> {
 
 #[test]
 fn unknown_subcommand_exits_2() {
-    // The process surfaces the clap usage error as exit code 2.
-    // `parse_or_exit` appends the supported-subcommand listing to that
-    // error's stderr.
     let Some(bin) = elevate_bin() else {
         return;
     };
@@ -52,9 +44,6 @@ fn unknown_subcommand_exits_2() {
 
 #[test]
 fn help_lists_the_supported_subcommand() {
-    // The usage surface lists `enable-developer-mode` so a
-    // mis-invoking caller can discover the correct subcommand. `--help` is
-    // where clap enumerates subcommands; it exits 0.
     let Some(bin) = elevate_bin() else {
         return;
     };
@@ -73,10 +62,6 @@ fn help_lists_the_supported_subcommand() {
 #[cfg(not(windows))]
 #[test]
 fn enable_developer_mode_off_windows_exits_1() {
-    // On a non-Windows build the registry write does not exist, so the action
-    // takes the typed NotWindows failure path, exiting 1 with a message on
-    // stderr. (On Windows this path instead performs the real write, covered
-    // by the `#[ignore]` host test below.)
     let Some(bin) = elevate_bin() else {
         return;
     };
@@ -96,11 +81,9 @@ fn enable_developer_mode_off_windows_exits_1() {
     );
 }
 
-/// An elevated `patina-elevate.exe enable-developer-mode` sets the
-/// registry flag to `1` and exits `0`. Gated `#[cfg(windows)]` `#[ignore]`
-/// because CI is not Windows and the path needs a real UAC accept against a
-/// machine whose Developer Mode is OFF. Neither is available in automation.
-/// Run by hand on an elevated Windows shell with `--ignored`.
+/// An elevated `patina-elevate.exe enable-developer-mode` sets the registry
+/// flag to `1` and exits `0`. Run it by hand from an elevated Windows shell
+/// with `--ignored`.
 #[cfg(windows)]
 #[test]
 #[ignore = "needs an elevated Windows host with Developer Mode OFF and a real UAC accept"]
@@ -116,24 +99,20 @@ fn enable_developer_mode_elevated_sets_flag_and_exits_0() {
         "an elevated enable-developer-mode must exit 0; stderr: {}",
         String::from_utf8_lossy(&out.stderr)
     );
-    // Re-read the flag through the same key the helper wrote to.
     let flag =
         read_dev_mode_flag().expect("read AllowDevelopmentWithoutDevLicense after the write");
     assert_eq!(flag, Some(1), "the Developer Mode flag must read back as 1");
 }
 
-/// The elevated `apply-defender-exclusions` action adds a path exclusion.
-/// Its mandatory re-read confirms the write took, so the process exits `0`
-/// and records `applied`. A follow-up removal clears the exclusion again.
-/// Gated `#[cfg(windows)]` `#[ignore]` because it needs an elevated Windows
-/// host with an active, unmanaged Defender, which CI does not provide. On a
-/// Tamper-Protected or policy-managed host the add instead exits `1` and
-/// records `blocked`, since the re-read shows the exclusion never appeared.
-/// Run by hand on an elevated Windows shell with `--ignored`.
+/// The elevated `apply-defender-exclusions` action adds a path exclusion, and
+/// its mandatory re-read confirms the write, so the process exits `0` and
+/// records `applied`. A follow-up removal clears the exclusion again. On a
+/// Tamper-Protected or policy-managed host the add exits `1` and records
+/// `blocked` instead. Run it by hand from an elevated Windows shell with
+/// `--ignored`.
 ///
-/// The result file is asserted alongside the exit code, because the CLI
-/// reads the result file, not the exit code. `ShellExecuteEx` gives the
-/// launcher no way to collect a child's status.
+/// The result file is asserted alongside the exit code: the launching CLI
+/// reads the result file and cannot collect the child's status.
 #[cfg(windows)]
 #[test]
 #[ignore = "needs an elevated Windows host with an active, unmanaged Defender"]
@@ -181,17 +160,13 @@ fn apply_defender_exclusions_adds_then_removes_a_path() {
     );
 }
 
-/// A request the helper refuses records `failed`, not `blocked`. The
-/// launching CLI must not tell the user Defender rejected a change Defender
-/// never saw.
+/// A request the helper refuses records `failed`, not `blocked`. The launching
+/// CLI must not tell the user Defender rejected a change Defender never saw.
 ///
-/// This test needs no elevation and no Defender. The path is rejected by
-/// the helper's own validator before any cmdlet runs. Unlike the test
-/// above, this one runs unattended in CI on Windows.
-///
-/// It skips when the helper binary is absent, like the argument-parsing
-/// tests above. The bin exists only under `--features windows`, and CI's
-/// per-OS test leg runs a bare `cargo test --workspace`.
+/// The helper's own validator rejects the path before any cmdlet runs, so this
+/// test needs neither elevation nor Defender and runs unattended on the
+/// Windows CI leg. It skips when the helper binary is absent, since that leg
+/// runs a bare `cargo test --workspace`.
 #[cfg(windows)]
 #[test]
 fn a_refused_path_is_recorded_as_failed_not_blocked() {
@@ -200,7 +175,6 @@ fn a_refused_path_is_recorded_as_failed_not_blocked() {
     };
     let dir = tempfile::tempdir().expect("create a temp dir for the request");
     let request = dir.path().join("request.txt");
-    // A drive root is refused by the validator, so the run never reaches Defender.
     std::fs::write(&request, "A C:\\\n").expect("write the request file");
 
     let output = Command::new(bin)
@@ -223,8 +197,8 @@ fn a_refused_path_is_recorded_as_failed_not_blocked() {
     );
 }
 
-/// Read the Developer Mode DWORD back out for the assertion above.
-/// Duplicated read (the helper must not depend on `patina-core`).
+/// Read the Developer Mode DWORD back out. Duplicated read: the helper must
+/// not depend on `patina-core`.
 #[cfg(windows)]
 fn read_dev_mode_flag() -> Result<Option<u32>, Box<dyn std::error::Error>> {
     use winsafe::co;
