@@ -1,13 +1,9 @@
+//! Integration tests for add directory.
+
 #![expect(
     clippy::expect_used,
     reason = "integration tests use .expect() on fixture setup and assertions; allow-expect-in-tests covers #[cfg(test)] modules but not the top level of a tests/*.rs integration crate."
 )]
-
-//! Integration coverage for how `patina add` picks the table-array by source
-//! kind. A file source writes a `[[file]]` entry, a directory source writes a
-//! `[[directory]]` entry, and the mode flags are kind-checked.
-//!
-//! Each test drives the real `patina` binary through [`common::Fixture`].
 
 mod common;
 
@@ -15,20 +11,16 @@ use camino::Utf8Path;
 use common::Fixture;
 use common::code;
 
-/// Decode stderr to a lossless string for assertions.
 fn stderr(out: &std::process::Output) -> String {
     String::from_utf8_lossy(&out.stderr).into_owned()
 }
 
-/// Parse a module manifest into a TOML value.
 fn manifest_value(fx: &Fixture, module: &str) -> toml::Value {
     let manifest = fx.root.join(module).join("patina.toml");
     let body = fs_err::read_to_string(manifest.as_std_path()).expect("read module manifest");
     toml::from_str(&body).expect("module manifest parses")
 }
 
-/// `patina add F --module m` on a regular file writes a `[[file]]` table-array
-/// entry, and does not write a `[[directory]]` entry.
 #[test]
 fn add_file_writes_file_table_and_no_directory_table() {
     let fx = Fixture::new();
@@ -62,8 +54,6 @@ fn add_file_writes_file_table_and_no_directory_table() {
     );
 }
 
-/// `patina add D --module m --symlink-tree` on a directory writes a
-/// `[[directory]]` entry with `mode = "symlink-tree"` and no `[[file]]`.
 #[test]
 fn add_directory_symlink_tree_writes_directory_table_with_mode() {
     let fx = Fixture::new();
@@ -117,9 +107,6 @@ fn add_directory_symlink_tree_writes_directory_table_with_mode() {
     );
 }
 
-/// A `[[directory]]` entry written by `add` is applyable. A follow-up
-/// `patina apply` materializes the symlink-tree leaves. Only that second apply
-/// shows the entry can be deployed; correct manifest text alone does not.
 #[test]
 fn add_directory_then_apply_materializes_leaf_symlinks() {
     let fx = Fixture::new();
@@ -148,9 +135,6 @@ fn add_directory_then_apply_materializes_leaf_symlinks() {
     );
 }
 
-/// `--symlink-tree` on a regular file source is rejected with a typed error
-/// that includes the flag and the file source kind. The manifest is left
-/// unwritten.
 #[test]
 fn add_symlink_tree_on_a_file_is_rejected() {
     let fx = Fixture::new();
@@ -174,16 +158,12 @@ fn add_symlink_tree_on_a_file_is_rejected() {
         stderr.contains("--symlink-tree") && stderr.contains("file"),
         "stderr must include --symlink-tree and the file kind, got: {stderr}"
     );
-    // The kind check runs before staging, so the module manifest is never
-    // written.
     assert!(
         !fx.root.join("m").join("patina.toml").exists(),
         "no manifest should be written on a kind-mismatch refusal"
     );
 }
 
-/// `--template` on a directory source is rejected with a typed
-/// error that includes the flag and the directory source kind.
 #[test]
 fn add_template_on_a_directory_is_rejected() {
     let fx = Fixture::new();
@@ -202,8 +182,6 @@ fn add_template_on_a_directory_is_rejected() {
     );
 }
 
-/// `--copy` on a directory source writes a `[[directory]]` entry
-/// with `mode = "copy"` (a recursive copy), never a `[[file]]`.
 #[test]
 fn add_copy_on_a_directory_writes_directory_copy() {
     let fx = Fixture::new();
@@ -229,7 +207,6 @@ fn add_copy_on_a_directory_writes_directory_copy() {
     );
 }
 
-/// Whether `path` is a symbolic link (without following it).
 fn is_symlink(path: &Utf8Path) -> bool {
     fs_err::symlink_metadata(path.as_std_path()).is_ok_and(|m| m.file_type().is_symlink())
 }

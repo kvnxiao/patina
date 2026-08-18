@@ -1,3 +1,5 @@
+//! Integration tests for promote cli.
+
 #![expect(
     clippy::expect_used,
     reason = "integration tests use .expect() on fixture setup and assertions; allow-expect-in-tests covers #[cfg(test)] modules but not the top level of a tests/*.rs integration crate."
@@ -6,13 +8,6 @@
     clippy::panic,
     reason = "integration tests panic! on unexpected fixture/record shapes; allow-*-in-tests covers #[cfg(test)] modules but not the helper functions in tests/*.rs integration crates."
 )]
-
-//! Integration coverage for `patina promote`.
-//!
-//! Each test drives the real `patina` binary through [`common::Fixture`],
-//! applying a module first so a committed `<ts>.COMMIT` record exists for
-//! `promote` to read. With no TTY, the path under test is the `--yes`-driven
-//! one.
 
 mod common;
 
@@ -25,9 +20,6 @@ use patina_core::HostOs;
 use patina_core::content_hash;
 use patina_core::read_latest_commit;
 
-/// Seed a `git` module whose `[[file]]` copies `~/.gitconfig` from
-/// `<repo>/git/gitconfig` (content `OLD_GITCONFIG`), then `patina apply --yes`
-/// so a committed copy-mode record exists. Returns the applied fixture.
 const OLD_GITCONFIG: &str = "[user]\nemail = old@example.com";
 const NEW_GITCONFIG: &str = "[user]\nemail = new@example.com";
 
@@ -59,17 +51,12 @@ fn applied_copy_fixture() -> Fixture {
     fx
 }
 
-/// Promoting an externally-edited copy-mode target copies the new
-/// bytes back into the repository source, the latest journal record's expected
-/// hash for the target equals the blake3 hash of the new bytes, and a
-/// subsequent `patina status` reports the target CLEAN.
 #[test]
 fn promote_copy_target_rewrites_source_and_rejournals() {
     let fx = applied_copy_fixture();
     let gitconfig = fx.home.join(".gitconfig");
     let source = fx.root.join("git").join("gitconfig");
 
-    // The user edits the target outside Patina.
     fs_err::write(gitconfig.as_std_path(), NEW_GITCONFIG).expect("overwrite target");
 
     let out = fx.run(&["promote", "~/.gitconfig", "--yes"], &[]);
@@ -126,8 +113,6 @@ fn promote_copy_target_rewrites_source_and_rejournals() {
     );
 }
 
-/// Promoting a template-rendered target does not mutate anything. It includes
-/// the `.tmpl` source and the word `template` on stderr, and exits 1.
 #[test]
 fn promote_template_target_refuses() {
     let fx = Fixture::new();
@@ -161,7 +146,6 @@ fn promote_template_target_refuses() {
         "stderr must include the .tmpl source and the word template, got: {stderr}"
     );
 
-    // The template source is unchanged.
     assert_eq!(
         fs_err::read_to_string(source.as_std_path()).expect("read template source"),
         before,
@@ -169,8 +153,6 @@ fn promote_template_target_refuses() {
     );
 }
 
-/// Promoting a symbolic-link target does not mutate anything. It includes the
-/// target, explains that a symlink shares content with its source, and exits 1.
 #[test]
 fn promote_symlink_target_refuses() {
     let fx = Fixture::new();
@@ -208,7 +190,6 @@ fn promote_symlink_target_refuses() {
         "stderr must include the target and explain symlink targets share their source, got: {stderr}"
     );
 
-    // The target is still a symlink, and the source is unchanged.
     assert!(
         is_symlink(&zshrc),
         "~/.zshrc must still be a symlink after a refused promote"
@@ -220,7 +201,6 @@ fn promote_symlink_target_refuses() {
     );
 }
 
-/// Promoting a path that is not managed exits 1 without mutating anything.
 #[test]
 fn promote_unmanaged_path_exits_1() {
     let fx = applied_copy_fixture();
@@ -246,8 +226,6 @@ fn promote_unmanaged_path_exits_1() {
     );
 }
 
-/// `promote --json --yes` exits 0 and writes a single JSON document to stdout
-/// with the promoted target and its repository source.
 #[test]
 fn promote_json_emits_document() {
     let fx = applied_copy_fixture();
@@ -276,9 +254,6 @@ fn promote_json_emits_document() {
     );
 }
 
-/// Decode the single COMMIT record the last apply produced. To reach the path
-/// the subprocess wrote under, resolve the journal directory from this
-/// fixture's isolated env.
 fn commit_record(fx: &Fixture) -> ApplyRecord {
     let journal_dir =
         patina_core::state_dir::resolve_with_env(HostOs::current(), |name| match name {
@@ -293,7 +268,6 @@ fn commit_record(fx: &Fixture) -> ApplyRecord {
         .expect("an apply must have written a COMMIT record")
 }
 
-/// The recorded entry whose target path ends with `suffix`.
 fn entry_for<'r>(record: &'r ApplyRecord, suffix: &str) -> &'r ExpectedTarget {
     record
         .targets
@@ -302,9 +276,6 @@ fn entry_for<'r>(record: &'r ApplyRecord, suffix: &str) -> &'r ExpectedTarget {
         .unwrap_or_else(|| panic!("no recorded target ending in `{suffix}`"))
 }
 
-/// The recorded blake3 hash of a content target. `ExpectedTarget` is
-/// `#[non_exhaustive]`, so the match needs a wildcard arm in this downstream
-/// crate.
 fn content_hash_of(entry: &ExpectedTarget) -> [u8; 32] {
     match entry {
         ExpectedTarget::Content { hash, .. } => *hash,
@@ -312,12 +283,10 @@ fn content_hash_of(entry: &ExpectedTarget) -> [u8; 32] {
     }
 }
 
-/// Decode stderr to a lossless string for assertions.
 fn stderr(out: &std::process::Output) -> String {
     String::from_utf8_lossy(&out.stderr).into_owned()
 }
 
-/// Whether `path` is a symbolic link (without following it).
 fn is_symlink(path: &Utf8Path) -> bool {
     fs_err::symlink_metadata(path.as_std_path()).is_ok_and(|m| m.file_type().is_symlink())
 }

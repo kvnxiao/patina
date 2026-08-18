@@ -1,13 +1,4 @@
-//! Integration scenarios for the single strict-undefined
-//! `MiniJinja` environment shared between `.tmpl` rendering and `when`
-//! predicate evaluation.
-//!
-//! These tests exercise the public surface of `patina_core::template`.
-//! The apply pipeline wires the end-to-end `patina apply --yes`
-//! exit-code-1 surface. These tests prove the plan-computation-level
-//! behaviour that surface depends on. An undefined reference in a
-//! template body or a `when` predicate produces a typed error whose
-//! `Display` names the offending variable.
+//! Integration tests for template strict.
 
 use patina_core::Builtins;
 use patina_core::Resolver;
@@ -18,10 +9,6 @@ fn resolver() -> Resolver {
     Resolver::new(Builtins::for_tests())
 }
 
-/// At the plan-computation level, a `gitconfig.tmpl` body referencing
-/// `{{ user_email }}` with no `user_email` in any layer fails with a typed
-/// error naming the variable. The CLI maps this to exit 1 with the name on
-/// stderr.
 #[test]
 fn template_with_undefined_variable_fails_naming_it() {
     let body = "[user]\nemail = {{ user_email }}";
@@ -38,14 +25,6 @@ fn template_with_undefined_variable_fails_naming_it() {
     );
 }
 
-/// A `when` expression `patina.os == 'macos' and missing_var`
-/// with no `missing_var` in context produces a typed error whose Display
-/// contains `missing_var`.
-///
-/// `and` short-circuits, so the undefined operand is only reached when the
-/// left side is true. To exercise the undefined path on any test
-/// host, the left operand is pinned to the host's own `patina.os` value so
-/// the predicate always reaches `missing_var`.
 #[test]
 fn when_predicate_with_undefined_variable_fails_naming_it() {
     let resolver = resolver();
@@ -64,10 +43,6 @@ fn when_predicate_with_undefined_variable_fails_naming_it() {
     );
 }
 
-/// A bare undefined `when`
-/// predicate (no short-circuit guard) is reported as an undefined-variable
-/// error rather than silently treated as `false`. This guards the
-/// `coerce_when_result` undefined-result path directly.
 #[test]
 fn bare_undefined_when_predicate_is_an_error_not_false() {
     let err = TemplateEngine::new()
@@ -79,9 +54,6 @@ fn bare_undefined_when_predicate_is_an_error_not_false() {
     );
 }
 
-/// The `{% else %}` carve-out, inherited from Jinja2, lets an undefined
-/// reference reached only through the untaken branch render the fallback
-/// without firing strict-undefined.
 #[test]
 fn else_block_undefined_renders_fallback_without_error() {
     let body = "{% if defined %}{{ undefined_var }}{% else %}fallback{% endif %}";
@@ -91,9 +63,6 @@ fn else_block_undefined_renders_fallback_without_error() {
     assert_eq!(out, "fallback");
 }
 
-/// The same `MiniJinja` environment instance backs
-/// both `.tmpl` rendering and `when` evaluation. Cloning the engine shares
-/// the single `Arc<Environment>`. Both call paths use that one instance.
 #[test]
 fn render_and_when_share_one_environment_instance() {
     let engine = TemplateEngine::new();
@@ -118,8 +87,6 @@ fn render_and_when_share_one_environment_instance() {
     );
 }
 
-/// A defined user variable renders through under strict-undefined. The
-/// executor relies on this happy path.
 #[test]
 fn defined_variable_renders_through() {
     let resolver = resolver()
@@ -131,8 +98,6 @@ fn defined_variable_renders_through() {
     assert_eq!(out, "email = kevin@example.com");
 }
 
-/// A `when` predicate referencing only defined built-ins evaluates to its
-/// boolean truth value rather than erroring.
 #[test]
 fn when_predicate_over_defined_builtins_evaluates() {
     let resolver = resolver();

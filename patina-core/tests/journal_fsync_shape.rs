@@ -1,21 +1,9 @@
+//! Integration tests for journal fsync shape.
+
 #![expect(
     clippy::expect_used,
     reason = "integration tests use .expect() on fixture setup; allow-expect-in-tests covers #[cfg(test)] modules but not the helper functions in tests/*.rs integration crates."
 )]
-
-//! Integration coverage for the plan journal.
-//!
-//! These tests drive the `patina_core::journal` module directly. Each
-//! checks one journal invariant:
-//!
-//! - the fsync shape: a single up-front plan fsync paired with a directory
-//!   fsync, with no per-operation progress fsync.
-//! - the crash-window state: a flushed plan is durable before the first
-//!   mutation, with no COMMIT sentinel until the run commits.
-//! - the version-envelope scenario: a newer-version plan is refused with a
-//!   typed error naming both versions.
-//! - the cleanup scenario: committing deletes the plan and progress files,
-//!   leaving only the COMMIT sentinel.
 
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
@@ -34,9 +22,6 @@ use patina_core::journal::Syncer;
 use std::cell::RefCell;
 use tempfile::TempDir;
 
-/// A `Syncer` that issues the real fsyncs, so durability still holds for
-/// the crash-window assertions. It records every `(kind, path)` it was
-/// asked to sync, so the test can assert the exact fsync shape.
 #[derive(Default)]
 struct RecordingSyncer {
     calls: RefCell<Vec<(SyncKind, Utf8PathBuf)>>,
@@ -53,7 +38,6 @@ impl RecordingSyncer {
         self.calls.borrow().clone()
     }
 
-    /// How many file-fsyncs targeted a path ending in `suffix`.
     fn file_syncs_with_suffix(&self, suffix: &str) -> usize {
         self.calls
             .borrow()
@@ -68,8 +52,6 @@ impl Syncer for RecordingSyncer {
         self.calls
             .borrow_mut()
             .push((SyncKind::File, path.to_owned()));
-        // Opens a write handle without truncating, because Windows
-        // FlushFileBuffers needs write access; this mirrors OsSyncer.
         let file = fs_err::OpenOptions::new().write(true).open(path)?;
         file.sync_all()
     }
@@ -78,9 +60,6 @@ impl Syncer for RecordingSyncer {
         self.calls
             .borrow_mut()
             .push((SyncKind::Dir, path.to_owned()));
-        // A best-effort real directory fsync. On Windows, opening a
-        // directory handle may fail; that matches OsSyncer's platform
-        // handling.
         if let Ok(dir) = fs_err::File::open(path) {
             drop(dir.sync_all());
         }
@@ -121,7 +100,6 @@ fn three_op_apply_fsyncs_plan_dir_commit_but_never_progress() {
     let mut journal = Journal::flush_plan_and_fsync(&dir, "20260528T120000Z", &plan, &syncer)
         .expect("flush plan");
 
-    // Simulates the executor loop recording progress after each operation.
     for i in 0..plan.len() {
         journal
             .record_progress(u32::try_from(i).expect("index fits in u32"))
@@ -174,8 +152,6 @@ fn after_flush_plan_exists_with_no_commit_sentinel() {
         "/home/u/.gitconfig",
         Disposition::Create,
     )]);
-    // This simulates the crash window. It flushes, then drops the handle
-    // without recording progress or committing, as if SIGKILL'd here.
     let handle = Journal::flush_plan_and_fsync(&dir, "20260528T130000Z", &plan, &syncer)
         .expect("flush plan");
     drop(handle);
@@ -198,8 +174,6 @@ fn after_flush_plan_exists_with_no_commit_sentinel() {
         "no COMMIT sentinel exists in the crash window before commit"
     );
 
-    // The plan bytes on disk decode back to the same plan, which proves the
-    // flush is durable, not a partial write.
     let bytes = fs_err::read(dir.join("20260528T130000Z.plan")).expect("read plan");
     assert_eq!(
         Plan::decode(&bytes).expect("decode plan"),
@@ -208,19 +182,14 @@ fn after_flush_plan_exists_with_no_commit_sentinel() {
     );
 }
 
-// Version-envelope scenario: a plan with envelope `u16::MAX` is refused on
-// a binary compiled for major version 1.
 #[test]
 fn newer_major_version_is_refused_with_both_versions_named() {
-    // Build a byte buffer with a poisoned envelope: u16::MAX followed by
-    // an otherwise-valid postcard body.
     let plan = Plan::new(vec![PlannedOperation::symlink(
         "a",
         "/b",
         Disposition::Create,
     )]);
     let mut bytes = plan.encode().expect("encode plan");
-    // Overwrite the 2-byte little-endian version envelope at offset 0.
     let envelope = bytes
         .get_mut(..2)
         .expect("encoded plan has a 2-byte envelope");
@@ -250,9 +219,6 @@ fn newer_major_version_is_refused_with_both_versions_named() {
     );
 }
 
-// Cleanup scenario: after a successful commit, the prior run's
-// .plan and .progress are gone and only the COMMIT sentinel remains. A
-// subsequent flush adds new plan files alongside the surviving sentinel.
 #[test]
 fn commit_deletes_plan_and_progress_leaving_only_commit_sentinel() {
     let temp = TempDir::new().expect("create tempdir");
@@ -284,7 +250,6 @@ fn commit_deletes_plan_and_progress_leaving_only_commit_sentinel() {
         "COMMIT sentinel survives"
     );
 
-    // A subsequent apply writes a fresh plan beside the surviving sentinel.
     let next = Journal::flush_plan_and_fsync(&dir, "20260528T150000Z", &plan, &syncer)
         .expect("flush second plan");
     assert!(
@@ -299,8 +264,6 @@ fn commit_deletes_plan_and_progress_leaving_only_commit_sentinel() {
     drop(next);
 }
 
-// The encoded plan is byte-identical for the same operations. The
-// timestamp lives only in the filename, not in the body.
 #[test]
 fn same_plan_encodes_to_identical_bytes() {
     let a = three_op_plan().encode().expect("encode a");

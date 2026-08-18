@@ -1,13 +1,4 @@
-//! The root `[[remote]]` registry, per-entry remote selection, and the trust
-//! boundary the pair draws.
-//!
-//! A remote is declared once in the root manifest and named by any entry that
-//! wants its bytes. Each declaration is validated and named. A module
-//! manifest may not declare a remote of its own. An entry that names a
-//! remote gets no implicit `.tmpl` template render, because third-party
-//! bytes are never handed to `MiniJinja`; its local neighbours in the same
-//! manifest still render. See `docs/REMOTE_SOURCES.md` "The remote registry"
-//! and "Trust boundaries".
+//! Integration tests for config remote.
 
 use patina_core::FileMode;
 use patina_core::parse_module_config_str;
@@ -123,18 +114,12 @@ fn an_entry_naming_a_remote_carries_the_name() {
 
 #[test]
 fn an_entry_declaring_a_blank_remote_is_rejected() {
-    // Silently reading `remote = ""` as "local" would resolve the source
-    // against the wrong tree. Omitting the key, not writing a blank string,
-    // is how an entry stays local.
     parse_module_config_str("[[file]]\nsource = \"a\"\nremote = \"  \"\ntarget = \"~/.a\"\n")
         .expect_err("a blank `remote` must be rejected");
 }
 
 #[test]
 fn the_template_policy_is_per_entry_within_one_module() {
-    // Both entries sit in one manifest. The local `.tmpl` source renders,
-    // and the remote-sourced one stays plain bytes under its defaulted
-    // mode. A module-wide policy could not produce both outcomes.
     let config = parse_module_config_str(
         "[[file]]\nsource = \"gitconfig.tmpl\"\ntarget = \"~/.gitconfig\"\n\n\
          [[file]]\nsource = \"prompts/agent.tmpl\"\nremote = \"humanizer\"\n\
@@ -151,9 +136,6 @@ fn the_template_policy_is_per_entry_within_one_module() {
 
 #[test]
 fn a_remote_sourced_tmpl_may_declare_an_explicit_mode() {
-    // The implicit-template rule forbids `mode` beside a local `.tmpl` source.
-    // Without an implicit render, there is nothing for an explicit mode to
-    // conflict with.
     let config = parse_module_config_str(
         "[[file]]\nsource = \"a.tmpl\"\nremote = \"r\"\ntarget = \"~/.a\"\nmode = \"copy\"\n",
     )

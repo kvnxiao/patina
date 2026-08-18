@@ -1,9 +1,9 @@
+//! Integration tests for config hook entry.
+
 #![expect(
     clippy::indexing_slicing,
     reason = "integration tests use direct [0] indexing for assertion-only fixture inspection where the vector length is already asserted immediately above; bounds-check panics would be acceptable test signal anyway."
 )]
-
-//! Integration tests for the `[[hook]]` table-array schema.
 
 use patina_core::ConfigParseError;
 use patina_core::HookEvent;
@@ -70,8 +70,6 @@ command = "echo hi"
 
 #[test]
 fn rejects_on_drift_event_listing_accepted_values() {
-    // `on_drift` is a v1.0 non-goal, so it is rejected the same way as
-    // `on_change`.
     let toml = r#"
 [[hook]]
 event = "on_drift"
@@ -86,8 +84,6 @@ command = "echo hi"
 
 #[test]
 fn preserves_when_expression_verbatim() {
-    // The `when` expression is stored raw here, not compiled through
-    // MiniJinja.
     let toml = r#"
 [[hook]]
 event = "pre_apply"
@@ -103,8 +99,6 @@ when = "patina.os == 'macos'"
 
 #[test]
 fn preserves_shell_verbatim() {
-    // The shell string is stored verbatim here; it is not checked against
-    // PATH.
     let toml = r#"
 [[hook]]
 event = "post_apply"

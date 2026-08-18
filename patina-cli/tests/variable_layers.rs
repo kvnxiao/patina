@@ -1,25 +1,15 @@
+//! Integration tests for variable layers.
+
 #![expect(
     clippy::expect_used,
     reason = "the root_manifest_with helper is a free fn at the integration-crate root, not inside a #[cfg(test)] module, so allow-expect-in-tests does not cover it; fixture setup panicking on failure is the intended test behaviour."
 )]
-
-//! Apply planning populates the repo-shared and
-//! active-profile variable layers.
-//!
-//! Each test drives `PATINA_REPO=<tempdir> patina apply --yes` over a
-//! fixture repo whose root `patina.toml` declares `[variables]` (and, for
-//! the profile case, `[profiles.<name>.variables]`), and asserts the value
-//! that renders into a module's `.tmpl` target. These are the only sites
-//! that exercise the repo-shared and per-profile layers; the per-module
-//! and CLI layers are covered by `apply_cli.rs`.
 
 mod common;
 
 use common::Fixture;
 use common::code;
 
-/// Overwrite the fixture's root manifest with one that keeps the root
-/// marker and adds the given trailing TOML (variable / profile tables).
 fn root_manifest_with(f: &Fixture, trailing: &str) {
     let body = format!("[patina]\nroot = true\n\n{trailing}");
     fs_err::write(f.root.join("patina.toml"), body).expect("rewrite root manifest");
@@ -52,9 +42,6 @@ fn root_variable_renders_into_module_template() {
 
 #[test]
 fn active_profile_variable_shadows_repo_shared() {
-    // With profile `work` active, a key present in both the root
-    // `[variables]` table and `[profiles.work.variables]` resolves to the
-    // profile's value.
     let f = Fixture::new();
     root_manifest_with(
         &f,
@@ -83,9 +70,6 @@ fn active_profile_variable_shadows_repo_shared() {
 
 #[test]
 fn per_module_variable_beats_repo_shared() {
-    // A key present in both the root `[variables]` table and a module's
-    // `[variables]` table resolves to the module value, unchanged from the
-    // documented precedence order.
     let f = Fixture::new();
     root_manifest_with(&f, "[variables]\neditor = \"nvim\"\n");
     let module = f.module(
@@ -112,9 +96,6 @@ fn per_module_variable_beats_repo_shared() {
 
 #[test]
 fn no_profile_selects_no_per_profile_table() {
-    // The no-profile fallback (empty profile name) does not select a
-    // per-profile table. A `[profiles.work.variables]` override is inert when
-    // `work` is not the active profile, so the repo-shared value renders.
     let f = Fixture::new();
     root_manifest_with(
         &f,
@@ -126,8 +107,6 @@ fn no_profile_selects_no_per_profile_table() {
     );
     fs_err::write(module.join("editor.tmpl"), "editor = {{ editor }}\n").expect("write tmpl");
 
-    // `Fixture::run` / `apply` already `env_remove("PATINA_PROFILE")`, so this
-    // run has no active profile.
     let out = f.apply(&["--yes"]);
 
     assert_eq!(

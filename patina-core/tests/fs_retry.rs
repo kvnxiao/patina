@@ -1,9 +1,5 @@
-// Every test and helper below is unix-only because they drive failures
-// through `PermissionsExt`. The retry path for Windows is covered by the
-// `#[cfg(windows)]` unit tests in `patina_core::apply::retry`. On non-unix
-// targets, the imports and helpers are unused by design, so this silences
-// the dead-code / unused-import lints there. The crate doc still satisfies
-// `missing_docs` on every platform.
+//! Integration tests for fs retry.
+
 #![cfg_attr(
     not(unix),
     allow(
@@ -16,25 +12,6 @@
     clippy::expect_used,
     reason = "integration tests use .expect() on fixture setup; allow-expect-in-tests covers #[cfg(test)] modules but not the helper functions in tests/*.rs integration crates."
 )]
-
-//! Integration coverage for the Windows `ERROR_SHARING_VIOLATION`
-//! retry-with-backoff wrapper.
-//!
-//! The wrapper's retry path is Windows-only. It exercises a
-//! `FILE_SHARE_NONE` hold that has no portable equivalent, so the
-//! retry-then-succeed scenario and the 10-second-hold re-raise scenario
-//! cannot run deterministically on this macOS/Linux dev host. This file
-//! covers the cross-platform contract instead. On a non-Windows host, an
-//! ordinary write failure surfaces on the first attempt, and no
-//! `fs_write_retry` `tracing` event is emitted.
-//!
-//! The contract is asserted at two of the three engine write sites the
-//! wrapper guards: the byte-copy site and the forward-apply symlink site.
-//! A regression that drops the wrapper from either path is caught here.
-//! The unit tests gated behind `#[cfg(windows)]` in
-//! `patina-core::apply::retry` exercise the Windows-only retry behaviour.
-//! The symlink site routes through that same wrapper, so this file adds no
-//! new Windows-specific logic to cover.
 
 use camino::Utf8PathBuf;
 use patina_core::Builtins;
@@ -62,12 +39,6 @@ fn resolver() -> Resolver {
     Resolver::new(Builtins::for_tests())
 }
 
-/// A minimal `tracing` subscriber that records the `message` field of every
-/// event into a shared buffer. The retry wrapper emits its event as
-/// `tracing::debug!(..., "fs_write_retry")`, so the literal `fs_write_retry`
-/// arrives as the event's `message`. Recording event messages lets the test
-/// assert presence or absence of the retry event without pulling in
-/// `tracing-subscriber`.
 #[derive(Clone)]
 struct RecordingSubscriber {
     messages: Arc<Mutex<Vec<String>>>,
@@ -89,8 +60,6 @@ impl tracing::field::Visit for MessageVisitor<'_> {
 
 impl Subscriber for RecordingSubscriber {
     fn enabled(&self, _metadata: &Metadata<'_>) -> bool {
-        // All events are enabled so the filter cannot exclude a stray retry
-        // event and produce a false "no retry happened" result.
         true
     }
 
@@ -114,14 +83,6 @@ impl Subscriber for RecordingSubscriber {
     fn exit(&self, _span: &span::Id) {}
 }
 
-/// On a non-Windows host, an ordinary write failure surfaces on the first
-/// attempt, and the `tracing` log contains no `fs_write_retry` event.
-///
-/// The test makes the parent directory non-writable, so the byte-copy
-/// write fails with the OS's normal permission error, the closest portable
-/// analogue to the Windows `FILE_SHARE_NONE` scenario. The retry wrapper is
-/// a pass-through off Windows, so the error must surface immediately with
-/// no `fs_write_retry` event recorded.
 #[cfg(unix)]
 #[test]
 fn non_windows_write_failure_surfaces_without_retry_event() {
@@ -131,8 +92,6 @@ fn non_windows_write_failure_surfaces_without_retry_event() {
     let source = dir.join("source.txt");
     fs_err::write(&source, b"payload").expect("write source");
 
-    // The target sits inside a directory stripped of write permission. The
-    // copy's write into it fails with EACCES, an ordinary I/O error.
     let locked_dir = dir.join("locked");
     fs_err::create_dir(&locked_dir).expect("create locked dir");
     let target = locked_dir.join("dest.txt");
@@ -158,7 +117,6 @@ fn non_windows_write_failure_surfaces_without_retry_event() {
         )
     });
 
-    // Restore write permission so the tempdir can be cleaned up.
     let mut restore = fs_err::metadata(&locked_dir)
         .expect("locked dir metadata for restore")
         .permissions();
@@ -177,20 +135,6 @@ fn non_windows_write_failure_surfaces_without_retry_event() {
     );
 }
 
-/// At the forward-apply symlink site, a symlink whose creation fails with
-/// an ordinary I/O error surfaces on the first attempt with no
-/// `fs_write_retry` event off Windows.
-///
-/// Symlink creation is one of the file writes the retry policy guards. The
-/// forward-apply symlink executor (`apply::symlink::create_symlink`) routes
-/// its OS primitive through `with_sharing_violation_retry`. Drive that wiring
-/// with a real `FileMode::Symlink` apply into a
-/// non-writable directory; the symlink `create` call fails with EACCES, the
-/// closest portable analogue to the Windows `FILE_SHARE_NONE` scenario. The
-/// wrapper is a pass-through off Windows, so the error must surface
-/// immediately with no retry event. The parent directory already exists,
-/// so the failure originates at the wrapped `create_symlink` call, not at
-/// `ensure_parent`.
 #[cfg(unix)]
 #[test]
 fn non_windows_symlink_failure_surfaces_without_retry_event() {
@@ -200,9 +144,6 @@ fn non_windows_symlink_failure_surfaces_without_retry_event() {
     let source = dir.join("source.txt");
     fs_err::write(&source, b"payload").expect("write source");
 
-    // The symlink target lives inside a directory stripped of write
-    // permission. Creating any entry there, including a symlink, fails
-    // with EACCES, an ordinary I/O error and not ERROR_SHARING_VIOLATION.
     let locked_dir = dir.join("locked");
     fs_err::create_dir(&locked_dir).expect("create locked dir");
     let target = locked_dir.join("link");
@@ -228,7 +169,6 @@ fn non_windows_symlink_failure_surfaces_without_retry_event() {
         )
     });
 
-    // Restore write permission so the tempdir can be cleaned up.
     let mut restore = fs_err::metadata(&locked_dir)
         .expect("locked dir metadata for restore")
         .permissions();

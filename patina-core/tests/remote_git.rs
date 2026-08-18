@@ -1,15 +1,9 @@
+//! Integration tests for remote git.
+
 #![expect(
     clippy::expect_used,
     reason = "integration tests use .expect() on fixture setup; allow-expect-in-tests covers #[cfg(test)] modules but not the helper functions in tests/*.rs integration crates."
 )]
-
-//! The `git` subprocess layer, driven against throwaway origin repositories.
-//!
-//! Every fixture is a real git repository built in a `TempDir` with the real
-//! `git` binary and fetched over the local filesystem, so the suite exercises
-//! the actual subprocess plumbing without touching the network.
-//!
-//! See `docs/REMOTE_SOURCES.md` "The remote cache".
 
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
@@ -19,17 +13,12 @@ use patina_core::remote::git;
 use std::process::Command;
 use tempfile::TempDir;
 
-/// A fixed committer epoch the ancestry / age assertions are written against.
 const BASE_EPOCH: i64 = 1_700_000_000;
 
-/// The remote every fixture caches under.
 fn module() -> RemoteName {
     RemoteName::parse("m").expect("a legal remote name")
 }
 
-/// Run `git` in `cwd` with a pinned identity and committer/author date, so the
-/// commits the fixtures produce have stable, clock-independent SHAs and do not
-/// depend on the developer's global git config.
 fn git_in(cwd: &Utf8Path, epoch: i64, args: &[&str]) -> String {
     let date = format!("{epoch} +0000");
     let output = Command::new("git")
@@ -53,7 +42,6 @@ fn git_in(cwd: &Utf8Path, epoch: i64, args: &[&str]) -> String {
     String::from_utf8_lossy(&output.stdout).trim().to_owned()
 }
 
-/// A throwaway origin repository plus an isolated state directory.
 struct Fixture {
     _temp: TempDir,
     origin: Utf8PathBuf,
@@ -82,8 +70,6 @@ impl Fixture {
         }
     }
 
-    /// Write `path` inside the origin with `body`, commit it, and return the
-    /// resulting commit SHA.
     fn commit(&self, path: &str, body: &str, epoch: i64) -> String {
         let full = self.origin.join(path);
         if let Some(parent) = full.parent() {
@@ -124,8 +110,6 @@ fn fetch_by_exact_sha_then_checkout_materializes_the_tree() {
 
 #[test]
 fn a_second_ensure_checkout_is_a_no_op_and_needs_no_remote() {
-    // This property lets a plain `apply` work offline against a warm cache.
-    // The test deletes the origin, so any fetch attempt would fail.
     let f = Fixture::new();
     let sha = f.commit("a.txt", "one\n", BASE_EPOCH);
     cache::ensure_checkout(&f.state, &module(), f.origin.as_str(), Some("main"), &sha)
@@ -164,8 +148,6 @@ fn ancestry_distinguishes_a_fast_forward_from_a_rewrite() {
     let f = Fixture::new();
     let first = f.commit("a.txt", "one\n", BASE_EPOCH);
     let second = f.commit("a.txt", "two\n", BASE_EPOCH + 60);
-    // A second root commit on an orphan branch shares no history with `first`,
-    // which is the shape a force-push leaves behind.
     git_in(
         &f.origin,
         BASE_EPOCH + 120,
@@ -174,9 +156,6 @@ fn ancestry_distinguishes_a_fast_forward_from_a_rewrite() {
     let rewritten = f.commit("a.txt", "rewritten\n", BASE_EPOCH + 120);
 
     let bare = f.bare();
-    // The cold-cache path fetches the pin shallowly by exact SHA. The candidates
-    // use the update path's fetch shape,
-    // them, with the history needed to answer the ancestry question.
     git::fetch_commit(&bare, f.origin.as_str(), &first, Some("main")).expect("fetch the pin");
     git::fetch_history(&bare, f.origin.as_str(), Some("main")).expect("fetch the descendant");
     git::fetch_history(&bare, f.origin.as_str(), Some("rewritten")).expect("fetch the orphan");
@@ -250,8 +229,6 @@ fn has_commit_reports_cache_warmth() {
 
 #[test]
 fn a_repository_reports_whether_it_matches_its_origin() {
-    // This selects which notice `patina remote check` writes, so it must
-    // distinguish a clone that is level with its origin from one that is not.
     let f = Fixture::new();
     f.commit("a.txt", "one\n", BASE_EPOCH);
 
@@ -275,9 +252,6 @@ fn a_repository_reports_whether_it_matches_its_origin() {
 
 #[test]
 fn a_branch_tracking_a_differently_named_upstream_is_still_compared() {
-    // A work branch tracking `origin/main` must be checked against `main`, not
-    // a nonexistent `origin/<work branch>`. That ref returns nothing from
-    // `ls-remote` and would read as never behind.
     let f = Fixture::new();
     f.commit("a.txt", "one\n", BASE_EPOCH);
 
@@ -307,9 +281,6 @@ fn a_branch_tracking_a_differently_named_upstream_is_still_compared() {
 
 #[test]
 fn a_branch_tracking_nothing_falls_back_to_its_own_name_on_origin() {
-    // Without tracking configuration there is no upstream to read, and a
-    // clone's branches live on `origin` under their own names. The fallback
-    // must keep comparing, or such a branch would silently never report.
     let f = Fixture::new();
     f.commit("a.txt", "one\n", BASE_EPOCH);
     git_in(&f.origin, BASE_EPOCH, &["branch", "solo"]);
@@ -347,8 +318,6 @@ fn a_branch_tracking_nothing_falls_back_to_its_own_name_on_origin() {
 
 #[test]
 fn a_directory_that_is_not_a_git_repository_reports_no_difference() {
-    // The check is notify-only, so an unanswerable question must read as "not
-    // behind" rather than failing a command or spamming a shell prompt.
     let f = Fixture::new();
     let plain = f.state.join("not-a-repo");
     fs_err::create_dir_all(plain.as_std_path()).expect("mkdir plain dir");

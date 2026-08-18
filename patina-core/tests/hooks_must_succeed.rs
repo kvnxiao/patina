@@ -1,8 +1,4 @@
-//! Integration coverage for hook `must_succeed` semantics.
-//!
-//! These exercise the public `patina_core::apply::hooks` surface against
-//! the real host shell: shells resolve up front, `when` predicates filter,
-//! and a hook command's exit status classifies into a [`HookOutcome`].
+//! Integration tests for hooks must succeed.
 
 use patina_core::ForceDeploy;
 use patina_core::HookError;
@@ -17,9 +13,6 @@ use patina_core::state_dir::HostOs;
 use patina_core::variables::Builtins;
 use patina_core::variables::Resolver;
 
-/// Build a `must_succeed = true` hook pinned to the host's default shell.
-/// This guarantees the command runs under a shell present on the test
-/// host.
 fn hook_on_default_shell(event: HookEvent, command: &str) -> HookEntry {
     HookEntry {
         event,
@@ -30,8 +23,6 @@ fn hook_on_default_shell(event: HookEvent, command: &str) -> HookEntry {
     }
 }
 
-/// The host default shell name (`bash` on macOS / Linux, `pwsh` on
-/// Windows). `exit N` is valid in both, so commands stay portable.
 fn default_shell() -> &'static str {
     match HostOs::current() {
         HostOs::Windows => "pwsh",
@@ -43,16 +34,12 @@ fn resolver() -> Resolver {
     Resolver::new(Builtins::for_tests())
 }
 
-/// Whether `c` is safe inside a single-quoted `MiniJinja` string literal:
-/// no backslash (escape lead-in) and no single quote (delimiter).
 fn is_clean_literal_char(c: char) -> bool {
     c != '\\' && c != '\''
 }
 
 #[tokio::test]
 async fn pre_apply_failure_with_must_succeed_classifies_failed() {
-    // The orchestrator maps this `Failed` classification to exit code 2
-    // and runs no file op.
     let hooks = vec![hook_on_default_shell(HookEvent::PreApply, "exit 1")];
     let resolved = resolve_shells(&hooks, HostOs::current()).expect("shells resolve");
     let outcome = run_hook(
@@ -62,8 +49,6 @@ async fn pre_apply_failure_with_must_succeed_classifies_failed() {
     .await
     .expect("hook runs");
     assert_eq!(outcome, HookOutcome::Failed);
-    // The entry carries the command and event so the orchestrator can
-    // report them on stderr.
     assert_eq!(
         resolved.first().expect("one resolved hook").entry.command,
         "exit 1"
@@ -76,9 +61,6 @@ async fn pre_apply_failure_with_must_succeed_classifies_failed() {
 
 #[tokio::test]
 async fn post_apply_failure_with_must_succeed_classifies_failed() {
-    // A `post_apply` failure under `must_succeed = true` triggers rollback
-    // and maps to exit code 3. The event on the entry tells the
-    // orchestrator this is the post-apply branch.
     let hooks = vec![hook_on_default_shell(HookEvent::PostApply, "exit 1")];
     let resolved = resolve_shells(&hooks, HostOs::current()).expect("shells resolve");
     let outcome = run_hook(
@@ -124,8 +106,6 @@ async fn non_must_succeed_failure_only_warns() {
 
 #[test]
 fn unresolved_explicit_shell_errors_before_any_hook_runs() {
-    // `resolve_shells` errors before producing any runnable hook, so the
-    // orchestrator never spawns a command or touches a file.
     let entry = HookEntry {
         event: HookEvent::PreApply,
         command: "exit 0".to_owned(),
@@ -161,22 +141,8 @@ fn when_predicate_filters_out_non_matching_host() {
 
 #[test]
 fn when_predicate_runs_on_matching_env_var() {
-    // `when = "patina.env.CI == 'true'"` evaluates against the live
-    // process environment. The workspace forbids `unsafe`, so the test
-    // cannot mutate the environment to inject `CI`. Instead, it picks an
-    // env var already set in the process and compares it against that
-    // var's live value. This exercises the same `patina.env.*` lookup the
-    // `CI` scenario relies on: a `when` predicate referencing a set env var
-    // resolves to that var's value, and the hook runs when it matches.
-    //
-    // The chosen var needs a bare-identifier name and a value free of
-    // backslashes and single quotes, so it embeds as a clean MiniJinja
-    // string literal.
     let (name, value) = std::env::vars()
         .find(|(k, v)| {
-            // The name must be a bare identifier so `patina.env.NAME`
-            // parses as dotted access; Windows has names like
-            // `ProgramFiles(x86)` that would not parse this way.
             !k.is_empty()
                 && k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
                 && !v.is_empty()

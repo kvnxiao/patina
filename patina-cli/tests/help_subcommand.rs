@@ -1,6 +1,4 @@
-//! The `--help` flag works on the root command and on every subcommand, so the
-//! auto-generated `patina help` subcommand is redundant.
-//! `disable_help_subcommand` turns it off.
+//! Integration tests for help subcommand.
 
 mod common;
 
@@ -9,11 +7,6 @@ use common::code;
 
 #[test]
 fn help_subcommand_is_rejected() {
-    // `disable_help_subcommand` does not propagate in derive mode, so every
-    // level that owns subcommands sets it and every level is checked here.
-    // clap then treats `help` as an unknown argument and exits 2 (usage error).
-    // `defender` sets it too and is absent from this loop: it is
-    // `#[cfg(windows)]`, and CI is not Windows.
     let f = Fixture::new();
 
     for args in [
@@ -34,8 +27,6 @@ fn help_subcommand_is_rejected() {
     }
 }
 
-/// `patina --help` prints the usage line and the subcommand list, so the flag
-/// covers what the disabled `help` subcommand would have printed.
 #[test]
 fn help_flag_prints_usage_and_the_subcommand_list() {
     let f = Fixture::new();
@@ -53,10 +44,6 @@ fn help_flag_prints_usage_and_the_subcommand_list() {
         stdout.contains("Usage:"),
         "`patina --help` must print a usage line: {stdout}"
     );
-    // Named subcommands rather than a non-emptiness check: a renderer that
-    // printed the usage line alone would still be non-empty. `defender` is
-    // omitted because it is Windows-only, and `debug` because it is hidden
-    // from the summary.
     for subcommand in ["init", "apply", "status", "remote", "watch"] {
         assert!(
             stdout.contains(subcommand),

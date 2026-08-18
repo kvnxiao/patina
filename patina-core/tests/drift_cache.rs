@@ -1,7 +1,4 @@
-//! Integration coverage for the drift-cache format, exercised against the
-//! crate's public API surface. It covers the round-trip through the atomic
-//! write, refusal of a newer major version, independence from the
-//! journal's major version, and the rename-based write guarantee.
+//! Integration tests for drift cache.
 
 use camino::Utf8Path;
 use patina_core::DRIFT_CACHE_MAJOR_VERSION;
@@ -69,13 +66,6 @@ fn newer_major_load_is_refused_naming_both_versions() {
 
 #[test]
 fn drift_cache_major_is_independent_of_the_journal_major() {
-    // The two formats version independently. A regression that made the
-    // drift cache validate against the journal's major would break the
-    // moment the two diverge. Decode a cache encoded at the drift-cache major
-    // against that major, independent of the
-    // journal's `FILE_MAJOR_VERSION`. The two majors currently coincide at
-    // 1 pre-release, so asserting inequality between the constants would
-    // only gate their values, not the coupling behaviour.
     let cache = sample();
     let bytes = cache.encode().expect("encode");
     assert_eq!(
@@ -97,11 +87,6 @@ fn atomic_write_replaces_via_rename_leaving_no_staging_tempfile() {
     let second = sample();
     write_drift_cache(&path, &second).expect("write second");
 
-    // No leftover staging file exists beside the destination after a
-    // successful rename. The destination holds the second cache in full;
-    // the rename never truncated it in place. The test scans the whole
-    // directory rather than one expected name, so it cannot pass merely
-    // because the staging name changed.
     let leftovers: Vec<String> = fs_err::read_dir(dir)
         .expect("read the cache directory")
         .filter_map(|entry| Some(entry.ok()?.file_name().to_string_lossy().into_owned()))

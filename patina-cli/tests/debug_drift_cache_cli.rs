@@ -1,15 +1,9 @@
+//! Integration tests for debug drift cache cli.
+
 #![expect(
     clippy::expect_used,
     reason = "integration tests use .expect() on fixtures; allow-expect-in-tests covers #[cfg(test)] modules but not the helper functions in tests/*.rs integration crates."
 )]
-
-//! Integration tests for the `patina debug drift-cache <path>` CLI surface.
-//!
-//! The subcommand decodes a binary `drift.cache` file and renders it. These
-//! tests write a cache file directly through the public `DriftCache::encode`
-//! API (the same bytes the watcher atomically renames into place) and point
-//! the CLI at it. That exercises the whole path: read the file, check the
-//! version envelope, decode the body, render to stdout.
 
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
@@ -20,7 +14,6 @@ use std::process::Command;
 use std::process::Output;
 use tempfile::TempDir;
 
-/// Write `bytes` to `<dir>/drift.cache` and return the path.
 fn write_cache(dir: &Utf8Path, bytes: &[u8]) -> Utf8PathBuf {
     let path = dir.join("drift.cache");
     fs_err::write(&path, bytes).expect("write drift cache file");
@@ -38,8 +31,6 @@ fn code(output: &Output) -> i32 {
 
 #[test]
 fn decodes_a_drift_cache_and_prints_version_timestamp_path_and_hashes() {
-    // A populated drift cache renders with `version:`, the bound journal
-    // timestamp, the target path, and the expected and actual hashes.
     let temp = TempDir::new().expect("tempdir");
     let dir = Utf8Path::from_path(temp.path()).expect("utf8 tempdir");
     let entry = DriftEntry::new("/home/u/.gitconfig", [0xab; 32], [0xcd; 32], 1_700_000_000);
@@ -89,9 +80,6 @@ fn missing_path_exits_one_and_includes_the_path_on_stderr() {
 
 #[test]
 fn newer_version_envelope_exits_one_and_includes_both_versions() {
-    // A cache whose envelope major is `u16::MAX` is refused by a binary
-    // that supports a lower major. It exits 1, and stderr includes both
-    // versions plus the word "version".
     let temp = TempDir::new().expect("tempdir");
     let dir = Utf8Path::from_path(temp.path()).expect("utf8 tempdir");
     let cache = DriftCache::new("20260528T120000Z", vec![]);
