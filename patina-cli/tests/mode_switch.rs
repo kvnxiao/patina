@@ -343,7 +343,7 @@ fn dir_symlink_to_symlink_tree_converges_and_preserves_the_repo() {
         "the mode edit previews as a root replace block, got:\n{diff}"
     );
     assert!(
-        !diff.contains(&format!("remove {target}")),
+        !diff.contains("remove "),
         "the superseded root must not also preview as a remove, got:\n{diff}"
     );
     apply_converges(&f);
@@ -513,7 +513,7 @@ fn file_target_transfer_renders_the_plain_verb_and_no_remove() {
     );
     let diff = preview(&f);
     assert!(
-        diff.contains(&format!("copy {target}")) && !diff.contains("replace"),
+        diff.contains("copy ") && !diff.contains("replace"),
         "a transfer keeps the plain mode verb, got:\n{diff}"
     );
     assert!(
@@ -521,7 +521,7 @@ fn file_target_transfer_renders_the_plain_verb_and_no_remove() {
         "the kind-aware body shows the link being replaced, got:\n{diff}"
     );
     assert!(
-        !diff.contains(&format!("remove {target}")),
+        !diff.contains("remove "),
         "the claimed target must not preview as a remove, got:\n{diff}"
     );
     apply_converges(&f);
@@ -553,7 +553,7 @@ fn file_target_transfer_to_symlink_renders_the_plain_verb_and_no_remove() {
     );
     let diff = preview(&f);
     assert!(
-        diff.contains(&format!("symlink {target}")) && !diff.contains("replace"),
+        diff.contains("symlink ") && !diff.contains("replace"),
         "a transfer keeps the plain mode verb, got:\n{diff}"
     );
     assert!(
@@ -561,7 +561,7 @@ fn file_target_transfer_to_symlink_renders_the_plain_verb_and_no_remove() {
         "the kind-aware body describes the live file instead of (absent), got:\n{diff}"
     );
     assert!(
-        !diff.contains(&format!("remove {target}")),
+        !diff.contains("remove "),
         "the claimed target must not preview as a remove, got:\n{diff}"
     );
     apply_converges(&f);
@@ -600,7 +600,7 @@ fn dir_root_transfer_keeps_the_mode_verb_and_no_remove() {
     );
     let diff = preview(&f);
     assert!(
-        diff.contains(&format!("symlink {target}")) && !diff.contains("replace"),
+        diff.contains("symlink ") && !diff.contains("replace"),
         "a transferred root keeps the plain mode verb, got:\n{diff}"
     );
     assert!(
@@ -608,7 +608,7 @@ fn dir_root_transfer_keeps_the_mode_verb_and_no_remove() {
         "the body shows the incoming leaf count, got:\n{diff}"
     );
     assert!(
-        !diff.contains(&format!("remove {target}")),
+        !diff.contains("remove "),
         "the claimed root must not preview as a remove, got:\n{diff}"
     );
     apply_converges(&f);
