@@ -194,6 +194,21 @@ pub enum ExecutorError {
         path: Utf8PathBuf,
     },
 
+    /// A directory between a tree target's root and one of its leaves is a
+    /// symbolic link. Tree modes keep intermediate target directories real;
+    /// classifying or writing a leaf through a foreign link would read and
+    /// delete entries at the link's destination, so both refuse first.
+    #[error(
+        "the directory {path} inside the tree target {root} is a symbolic \
+         link; remove the link and re-run `patina apply`"
+    )]
+    InteriorSymlink {
+        /// The declared tree target root.
+        root: Utf8PathBuf,
+        /// The interior directory occupied by a symbolic link.
+        path: Utf8PathBuf,
+    },
+
     /// The render executor was handed a source that does not carry the
     /// `.tmpl` suffix. Templating is keyed off the source suffix, so the
     /// engine should never classify a non-`.tmpl` source as a render; this
@@ -335,6 +350,41 @@ fn clear_foreign_entry(target: &Utf8Path) -> Result<(), ExecutorError> {
     }
 }
 
+/// Verify that no directory between `root` and any leaf in `relatives` is a
+/// symbolic link, returning [`ExecutorError::InteriorSymlink`] naming the
+/// outermost offender.
+///
+/// Each caller passes the leaves whose paths it is about to traverse:
+/// plan-time classification every walked leaf, the executors the leaves
+/// selected for writing. The root itself and the ancestors above it are out
+/// of scope; the engine gates the root separately, and links above the root
+/// are the user's filesystem layout.
+fn verify_interior_dirs_real<'a>(
+    root: &Utf8Path,
+    relatives: impl IntoIterator<Item = &'a Utf8PathBuf>,
+) -> Result<(), ExecutorError> {
+    // The set dedupes prefixes shared between leaves and iterates in
+    // component order ("sub" before "sub/deep"), so the error names the
+    // outermost link and no stat resolves through an unchecked ancestor.
+    // A failed stat passes: an absent path is not a link, and an
+    // unreachable one fails the leaf operation with its own error.
+    let prefixes: std::collections::BTreeSet<&Utf8Path> = relatives
+        .into_iter()
+        .flat_map(|relative| relative.ancestors().skip(1))
+        .filter(|prefix| !prefix.as_str().is_empty())
+        .collect();
+    for prefix in prefixes {
+        let dir = root.join(prefix);
+        if fs_err::symlink_metadata(&dir).is_ok_and(|meta| meta.file_type().is_symlink()) {
+            return Err(ExecutorError::InteriorSymlink {
+                root: root.to_path_buf(),
+                path: dir,
+            });
+        }
+    }
+    Ok(())
+}
+
 /// Remove the entry at `target` and fold the failure into
 /// [`ExecutorError::Io`] under the target's path. Every executor clears a
 /// target through this seam.
@@ -462,6 +512,31 @@ mod tests {
         assert_eq!(record.materialization, Materialization::Copy);
         assert_eq!(record.target, target);
         assert_eq!(fs_err::read(&target).expect("read copied file"), b"payload");
+    }
+
+    #[test]
+    fn verify_interior_dirs_real_names_the_outermost_link_and_skips_root_leaves() {
+        let (_td, dir) = utf8_tempdir();
+        let root = dir.join("root");
+        let elsewhere = dir.join("elsewhere");
+        fs_err::create_dir_all(elsewhere.join("deep")).expect("mkdir elsewhere");
+        fs_err::create_dir_all(&root).expect("mkdir root");
+        crate::test_util::symlink_dir(&elsewhere, &root.join("sub"));
+
+        let leaves = [
+            Utf8PathBuf::from("top.txt"),
+            Utf8PathBuf::from("sub/deep/a.txt"),
+            Utf8PathBuf::from("sub/deep/b.txt"),
+        ];
+        let err = verify_interior_dirs_real(&root, leaves.iter())
+            .expect_err("a symlinked interior directory must be refused");
+        assert!(
+            matches!(&err, ExecutorError::InteriorSymlink { path, .. } if *path == root.join("sub")),
+            "the outermost link is named, not the deeper prefix, got: {err:?}"
+        );
+
+        verify_interior_dirs_real(&root, std::iter::once(&Utf8PathBuf::from("top.txt")))
+            .expect("a leaf at the root has no interior directories");
     }
 
     #[test]

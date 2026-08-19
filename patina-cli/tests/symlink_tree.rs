@@ -125,6 +125,57 @@ fn symlink_tree_backs_up_pre_existing_leaf_and_replaces_it_with_a_link() {
 }
 
 #[test]
+fn apply_refuses_a_foreign_symlink_planted_inside_a_managed_tree() {
+    let f = Fixture::new();
+    let module = f.module(
+        "cfg",
+        "[[directory]]\nsource = \"d\"\ntarget = \"~/d\"\nmode = \"symlink-tree\"\n",
+    );
+    let src = module.join("d");
+    fs_err::create_dir_all(src.join("sub")).expect("mkdir sub");
+    fs_err::write(src.join("sub").join("b.conf"), b"repo bytes").expect("write b");
+
+    let first = f.apply(&["--yes"]);
+    assert_eq!(
+        code(&first),
+        0,
+        "first apply must succeed; stderr: {}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+
+    // Replace the real interior directory with a link into the repository:
+    // a leaf write through it would delete and re-link the repo's own file.
+    let interior = f.home.join("d").join("sub");
+    fs_err::remove_dir_all(interior.as_std_path()).expect("clear interior dir");
+    common::symlink_dir(&src.join("sub"), &interior);
+
+    let second = f.apply(&["--yes"]);
+    assert_ne!(
+        code(&second),
+        0,
+        "an apply over a symlinked interior directory must fail"
+    );
+    let stderr = String::from_utf8_lossy(&second.stderr);
+    assert!(
+        stderr.contains("is a symbolic link; remove the link"),
+        "stderr must name the refusal: {stderr}"
+    );
+    let leaf = src.join("sub").join("b.conf");
+    assert!(
+        fs_err::symlink_metadata(leaf.as_std_path())
+            .expect("stat repo leaf")
+            .file_type()
+            .is_file(),
+        "the repository source leaf must survive as a regular file"
+    );
+    assert_eq!(
+        fs_err::read(leaf.as_std_path()).expect("read repo leaf"),
+        b"repo bytes",
+        "no write may reach the repository through the planted link"
+    );
+}
+
+#[test]
 fn symlink_tree_skips_empty_source_subdirectory() {
     let f = Fixture::new();
     let module = f.module(

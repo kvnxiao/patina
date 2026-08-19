@@ -87,6 +87,10 @@ pub(super) fn copy_tree(
     let relative_files = super::walk_files(source, rules)?;
     let mut records = Vec::new();
     for target in targets {
+        super::verify_interior_dirs_real(
+            target,
+            relative_files.iter().filter(|rel| write.includes(rel)),
+        )?;
         for rel in &relative_files {
             if !write.includes(rel) {
                 continue;
@@ -337,6 +341,45 @@ mod tests {
             fs_err::read(src.join("a.txt")).expect("read source leaf"),
             b"a-bytes",
             "the source leaf is untouched"
+        );
+    }
+
+    #[test]
+    fn copy_tree_refuses_to_write_through_a_symlinked_interior_directory() {
+        let (_td, dir) = utf8_tempdir();
+        let src = dir.join("src");
+        fs_err::create_dir_all(src.join("sub")).expect("mkdir src sub");
+        fs_err::write(src.join("sub").join("a.txt"), b"new").expect("write source leaf");
+        let victim = dir.join("victim");
+        fs_err::create_dir_all(&victim).expect("mkdir victim");
+        fs_err::write(victim.join("a.txt"), b"victim bytes").expect("write victim leaf");
+        let target = dir.join("dest");
+        fs_err::create_dir_all(&target).expect("mkdir target");
+        crate::test_util::symlink_dir(&victim, &target.join("sub"));
+
+        let err = copy_tree(
+            &src,
+            std::slice::from_ref(&target),
+            LeafWrite::All,
+            &crate::ignore_rules::none(),
+        )
+        .expect_err("a symlinked interior directory must be refused");
+
+        assert!(
+            matches!(&err, ExecutorError::InteriorSymlink { path, .. } if *path == target.join("sub")),
+            "the typed error names the interior link, got: {err:?}"
+        );
+        assert_eq!(
+            fs_err::read(victim.join("a.txt")).expect("read victim leaf"),
+            b"victim bytes",
+            "no write may reach the link's destination"
+        );
+        assert!(
+            fs_err::symlink_metadata(target.join("sub"))
+                .expect("stat interior")
+                .file_type()
+                .is_symlink(),
+            "the foreign link is left in place"
         );
     }
 

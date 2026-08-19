@@ -207,6 +207,22 @@ plan-time flag; on a symlinked root the plan did not consent to replace
 typed `TreeTargetIsSymlink` error before any leaf write, and the next
 apply re-plans with consent.
 
+A symbolic link *between* a tree root and its leaves is refused
+outright. Tree modes keep intermediate target directories real and
+have no consent flow for replacing one: plan-time classification and
+the leaf-walking executors run the same interior check
+(`InteriorSymlink`) on each target before touching its leaves, and
+the error names the link for the user to remove. The check derives its
+prefixes from the walked leaves, so an entry that deliberately places a
+`symlink-dir` target inside another tree's target keeps working when
+the tree's `ignore` excludes that subtree. Ancestors above the declared
+root stay out of scope: a symlinked `~/.config` is the user's
+filesystem layout, and single-target writes resolve through it. The
+gate covers planning and leaf writes only; the orphan reap,
+`patina rollback`, and crash recovery revert recorded target paths
+without it, so a link planted after an apply can still redirect those
+single-path operations (see the Known unknowns note in AGENTS.md).
+
 Backup and restore take a symbolic link's Windows flavour from the
 link's own file type (`fsx::symlink_dir_flavor`), never from a stat of
 its destination: a dangling directory link has no destination to stat,

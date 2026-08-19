@@ -257,6 +257,16 @@ diff keeps the plain mode verb with the same kind-aware body: a `copy` or
 content diff read through the link, and a `symlink` over a live regular
 file shows the file's size descriptor rather than `(absent)`.
 
+A symbolic link found *inside* a managed tree, between the declared
+target directory and its files, fails the apply with an error naming
+the link. Patina keeps those intermediate directories real and never
+writes through a link planted there; remove the link and re-run
+`patina apply`. Do not add an `ignore` pattern instead: the
+previously deployed files under the link become removable orphans, and
+the removal resolves through the link. A symlink in the path *above*
+the declared target (say a linked `~/.config`) is fine and resolves as
+usual.
+
 On a terminal the diff is colorized: green additions, red removals, bold
 entry headers, styled warnings and errors. The confirmation prompt is
 colorized too: a green affirmative `y` and a red default `N`, each set

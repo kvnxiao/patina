@@ -1265,8 +1265,10 @@ impl Provenance {
 /// # Errors
 ///
 /// Returns an [`EngineError`] when a copy/copy-tree leaf's source cannot be
-/// read to hash it, a tree source cannot be walked, or a template source
-/// cannot be read or rendered.
+/// read to hash it, a tree source cannot be walked, a directory between a
+/// tree root and one of its leaves is a symbolic link
+/// ([`ExecutorError::InteriorSymlink`](crate::apply::ExecutorError::InteriorSymlink)),
+/// or a template source cannot be read or rendered.
 fn classify_entry(
     mode: FileMode,
     source: &Utf8Path,
@@ -1393,6 +1395,7 @@ fn classify_target(
     // time; classify each leaf at its mirrored target path. A missing source
     // yields no leaves (the entry would have failed source validation first).
     let relative_files = crate::apply::walk_files(source, rules)?;
+    crate::apply::verify_interior_dirs_real(target, relative_files.iter())?;
     let mut leaves = Vec::with_capacity(relative_files.len());
     let mut all_unchanged = true;
     for relative in relative_files {
@@ -3678,6 +3681,38 @@ mod tests {
             states,
             vec![Disposition::Create, Disposition::Create],
             "every source leaf is planned as a fresh write"
+        );
+    }
+
+    #[test]
+    fn symlinked_interior_directory_fails_tree_classification() {
+        let (_td, dir) = utf8_tempdir();
+        let source = dir.join("srcdir");
+        fs_err::create_dir_all(source.join("sub")).expect("mkdir source");
+        fs_err::write(source.join("sub").join("a.conf"), b"a").expect("write a");
+        // The link points at the source's own subdirectory, so classifying
+        // through it would reach the repository.
+        let target = dir.join("out");
+        fs_err::create_dir_all(&target).expect("mkdir target");
+        make_symlink(&source.join("sub"), &target.join("sub"));
+
+        let err = classify_target(
+            FileMode::CopyTree,
+            &source,
+            &target,
+            None,
+            &crate::ignore_rules::none(),
+            &Provenance::default(),
+        )
+        .expect_err("classification must refuse the interior link");
+
+        assert!(
+            matches!(
+                &err,
+                EngineError::Executor(crate::apply::ExecutorError::InteriorSymlink { path, .. })
+                    if *path == target.join("sub")
+            ),
+            "the typed error names the interior link, got: {err:?}"
         );
     }
 
