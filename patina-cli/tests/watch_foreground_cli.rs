@@ -384,10 +384,25 @@ mod foreground {
 
         let drifted = format!("{applied}; drifted = true\n");
         assert_ne!(drifted, applied, "the overwrite must change the bytes");
-        fs_err::write(target.as_std_path(), &drifted).expect("overwrite target");
-
+        // On macOS, FSEvents arms its stream asynchronously after `watch()`
+        // returns, so a single write landing in the startup gap is lost, not
+        // delayed. Drift detection is idempotent over repeated identical
+        // writes (no re-apply, no journal write), so re-write until the
+        // armed stream observes one.
+        let drift_logged = {
+            let deadline = Instant::now() + Duration::from_secs(15);
+            loop {
+                fs_err::write(target.as_std_path(), &drifted).expect("overwrite target");
+                if watcher.wait_for_stderr("drift", Duration::from_secs(1)) {
+                    break true;
+                }
+                if Instant::now() >= deadline {
+                    break false;
+                }
+            }
+        };
         assert!(
-            watcher.wait_for_stderr("drift", Duration::from_secs(5)),
+            drift_logged,
             "the external edit must log a drift event; stderr: {}",
             watcher.stderr_snapshot()
         );
