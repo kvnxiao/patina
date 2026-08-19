@@ -180,10 +180,7 @@ pub(super) fn dir_symlink(
         // `materialize`, so whatever is here, a real directory or a foreign
         // symlink, is already stashed and rollback can restore it; the removal
         // only clears the path the new link will occupy. Mirrors `link_file`.
-        crate::fsx::remove_entry(target).map_err(|source| ExecutorError::Io {
-            path: target.to_path_buf(),
-            source,
-        })?;
+        super::remove_entry_at(target)?;
         create_symlink(source, target, LinkKind::Directory)?;
         records.push(CompletionRecord::symlink(
             source.to_path_buf(),
@@ -204,10 +201,7 @@ pub(super) fn dir_symlink(
 /// removal here only clears the path the new link will occupy.
 fn link_file(source: &Utf8Path, target: &Utf8Path) -> Result<CompletionRecord, ExecutorError> {
     ensure_parent(target)?;
-    crate::fsx::remove_entry(target).map_err(|source| ExecutorError::Io {
-        path: target.to_path_buf(),
-        source,
-    })?;
+    super::remove_entry_at(target)?;
     create_symlink(source, target, LinkKind::File)?;
     Ok(CompletionRecord::symlink(
         source.to_path_buf(),

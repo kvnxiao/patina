@@ -55,6 +55,13 @@ pub struct RevertTarget<'a> {
 /// actually mutates. For a tree leaf the `Update` restore reads the
 /// whole-tree backup at the leaf's mirror path.
 ///
+/// A leaf whose backup mirror path passes through a symbolic link stashed in
+/// this cycle's backup tree belongs to a replaced tree root: the apply
+/// removed a whole-directory link and materialized leaves in its place. The
+/// root is reverted as the unit (the live directory removed, the stashed
+/// link cloned back) and the leaf is never reverted individually — a leaf
+/// path under the restored link would resolve into the repository.
+///
 /// # Errors
 ///
 /// - [`RollbackError::RollbackPartial`] when a target's revert fails; the entry
@@ -70,11 +77,19 @@ pub fn replay_entry(
     // Unchanged targets were neither written nor backed up, so they are
     // left wholly out of the reversal, with no snapshot and no revert. Only
     // Create/Update targets enter the atomic snapshot/roll-forward region.
-    let to_revert: Vec<&str> = targets
+    // A leaf under a replaced root folds into that root, so the link is
+    // restored once and no leaf is reverted through it.
+    let mut to_revert: Vec<Utf8PathBuf> = Vec::new();
+    for revert in targets
         .iter()
         .filter(|t| t.disposition != Disposition::Unchanged)
-        .map(|t| t.target)
-        .collect();
+    {
+        let target = Utf8PathBuf::from(revert.target);
+        let unit = replaced_root_ancestor(backups_dir, timestamp, &target).unwrap_or(target);
+        if !to_revert.contains(&unit) {
+            to_revert.push(unit);
+        }
+    }
     if to_revert.is_empty() {
         return Ok(());
     }
@@ -131,15 +146,47 @@ enum SnapshotState {
     Absent,
 }
 
+/// The shallowest strict ancestor of `target` that a consented root
+/// replacement left split: its backup mirror in this cycle is the stashed
+/// whole-directory link, and its live counterpart is a real directory of
+/// materialized leaves. `None` when no ancestor matches.
+///
+/// Such an ancestor reverts as the unit. A leaf beneath it must never
+/// revert individually: the leaf's own mirror path traverses the stashed
+/// link into the repository, and after the root link is restored the live
+/// leaf path would too. Ancestors are probed shallowest-first, and the
+/// probe stops at the first stashed link (a deeper mirror path would
+/// traverse it). The live-kind requirement keeps an ordinary stashed link
+/// from folding unrelated targets beneath it: after a plain re-link, the
+/// live counterpart is still a symlink, not a materialized directory.
+pub(crate) fn replaced_root_ancestor(
+    backups_dir: &Utf8Path,
+    timestamp: &str,
+    target: &Utf8Path,
+) -> Option<Utf8PathBuf> {
+    let ancestors: Vec<&Utf8Path> = target.ancestors().skip(1).collect();
+    for ancestor in ancestors.into_iter().rev() {
+        if ancestor.as_str().is_empty() {
+            continue;
+        }
+        let backup = mirror_backup_path(backups_dir, timestamp, ancestor);
+        if fs_err::symlink_metadata(&backup).is_ok_and(|meta| meta.file_type().is_symlink()) {
+            let live_is_real_dir = fs_err::symlink_metadata(ancestor)
+                .is_ok_and(|meta| meta.is_dir() && !meta.file_type().is_symlink());
+            return live_is_real_dir.then(|| ancestor.to_path_buf());
+        }
+    }
+    None
+}
+
 /// Snapshot every target's current on-disk state into `stage`, returning one
 /// [`Snapshot`] per target in order.
-fn snapshot_targets(stage: &Utf8Path, targets: &[&str]) -> std::io::Result<Vec<Snapshot>> {
+fn snapshot_targets(stage: &Utf8Path, targets: &[Utf8PathBuf]) -> std::io::Result<Vec<Snapshot>> {
     let mut snapshots = Vec::with_capacity(targets.len());
     for (index, target) in targets.iter().enumerate() {
-        let target = Utf8PathBuf::from(*target);
-        let captured = match fs_err::symlink_metadata(&target) {
+        let captured = match fs_err::symlink_metadata(target) {
             Ok(meta) if meta.file_type().is_symlink() => {
-                let raw = fs_err::read_link(&target)?;
+                let raw = fs_err::read_link(target)?;
                 let link = Utf8PathBuf::from_path_buf(raw).map_err(|bad| {
                     std::io::Error::new(
                         std::io::ErrorKind::InvalidData,
@@ -153,12 +200,12 @@ fn snapshot_targets(stage: &Utf8Path, targets: &[&str]) -> std::io::Result<Vec<S
                 // root) is staged by recursive copy so it can be rolled
                 // forward verbatim.
                 let staged = stage.join(format!("{index}.dir"));
-                crate::fsx::copy_tree(&target, &staged)?;
+                crate::fsx::copy_tree(target, &staged)?;
                 SnapshotState::File(staged)
             }
             Ok(_) => {
                 let staged = stage.join(format!("{index}.file"));
-                fs_err::copy(&target, &staged)?;
+                fs_err::copy(target, &staged)?;
                 SnapshotState::File(staged)
             }
             // A target whose parent is not a directory reports `ENOTDIR`
@@ -179,7 +226,7 @@ fn snapshot_targets(stage: &Utf8Path, targets: &[&str]) -> std::io::Result<Vec<S
             Err(err) => return Err(err),
         };
         snapshots.push(Snapshot {
-            target,
+            target: target.clone(),
             state: captured,
         });
     }
@@ -417,6 +464,76 @@ mod tests {
             fs_err::read(&unchanged).expect("read untouched"),
             b"satisfied",
             "the Unchanged target must be left in place"
+        );
+    }
+
+    use crate::test_util::symlink_dir;
+
+    #[test]
+    fn replaced_tree_root_reverts_as_the_link_and_leaves_the_repo_untouched() {
+        // Post-apply state of a consented `symlink → tree` switch: the root is
+        // a real directory of materialized leaves, the backup tree stashed the
+        // pre-apply whole-directory link at the root's mirror path, and the
+        // commit recorded the leaves (Create, no per-leaf backup). Reverting a
+        // leaf individually would resolve its backup path through the stashed
+        // link and delete the repository's own file; the root must revert as
+        // the unit.
+        let e = env();
+        let ts = "TS";
+        let repo_src = e.root.join("srcdir");
+        fs_err::create_dir_all(&repo_src).expect("mkdir repo source");
+        fs_err::write(repo_src.join("a.conf"), b"repo bytes").expect("write repo leaf");
+
+        let root = e.root.join("out");
+        fs_err::create_dir_all(&root).expect("mkdir live root");
+        fs_err::write(root.join("a.conf"), b"repo bytes").expect("write live leaf");
+
+        let root_backup = mirror_backup_path(&e.backups, ts, &root);
+        fs_err::create_dir_all(root_backup.parent().expect("backup parent"))
+            .expect("mkdir backup tree");
+        symlink_dir(&repo_src, &root_backup);
+
+        let leaf = root.join("a.conf");
+        replay_entry(0, &[create(&leaf)], &e.backups, ts).expect("revert the entry");
+
+        let meta = fs_err::symlink_metadata(&root).expect("stat reverted root");
+        assert!(
+            meta.file_type().is_symlink(),
+            "the root must revert to the pre-apply whole-directory link"
+        );
+        assert_eq!(
+            fs_err::read_link(&root).expect("readlink reverted root"),
+            repo_src.as_std_path(),
+            "the restored link points at the repository source"
+        );
+        assert_eq!(
+            fs_err::read(repo_src.join("a.conf")).expect("read repo leaf"),
+            b"repo bytes",
+            "the repository leaf survives byte-for-byte"
+        );
+    }
+
+    #[test]
+    fn a_stashed_link_whose_live_counterpart_is_still_a_symlink_does_not_fold() {
+        // An ordinary drifted whole-directory link: the cycle stashed the
+        // link and the apply re-linked it, so the live counterpart is still
+        // a symlink, not a materialized tree. Targets beneath it must keep
+        // reverting individually rather than folding into the ancestor.
+        let e = env();
+        let ts = "TS";
+        let repo_src = e.root.join("srcdir");
+        fs_err::create_dir_all(&repo_src).expect("mkdir repo source");
+        let root = e.root.join("out");
+        symlink_dir(&repo_src, &root);
+        let root_backup = mirror_backup_path(&e.backups, ts, &root);
+        fs_err::create_dir_all(root_backup.parent().expect("backup parent"))
+            .expect("mkdir backup tree");
+        symlink_dir(&repo_src, &root_backup);
+
+        assert_eq!(
+            replaced_root_ancestor(&e.backups, ts, &root.join("a.conf")),
+            None,
+            "a live symlink root is not a replaced root"
         );
     }
 

@@ -318,6 +318,33 @@ fn ensure_parent(target: &Utf8Path) -> Result<(), ExecutorError> {
     Ok(())
 }
 
+/// Remove a symbolic link or directory occupying `target` before a content
+/// write; a regular file (or an absent path) is left for the in-place
+/// overwrite.
+///
+/// A content write through `fs_err::copy` / `fs_err::write` follows a
+/// symlink at the target: without the removal, the bytes are written at the
+/// link's destination — a repository source file, or a file freshly created
+/// at a dangling link's destination — while the target stays a link. The
+/// engine backs the target up before `materialize` runs, so whatever is
+/// cleared here is already stashed for rollback.
+fn clear_foreign_entry(target: &Utf8Path) -> Result<(), ExecutorError> {
+    match fs_err::symlink_metadata(target) {
+        Ok(meta) if meta.file_type().is_symlink() || meta.is_dir() => remove_entry_at(target),
+        _ => Ok(()),
+    }
+}
+
+/// Remove the entry at `target` and fold the failure into
+/// [`ExecutorError::Io`] under the target's path. Every executor clears a
+/// target through this seam.
+fn remove_entry_at(target: &Utf8Path) -> Result<(), ExecutorError> {
+    crate::fsx::remove_entry(target).map_err(|source| ExecutorError::Io {
+        path: target.to_path_buf(),
+        source,
+    })
+}
+
 /// Walk `root` and collect every regular file `rules` does not ignore, as a
 /// path relative to `root`, in deterministic sorted order. The same source tree
 /// therefore produces the same record sequence across runs and platforms.

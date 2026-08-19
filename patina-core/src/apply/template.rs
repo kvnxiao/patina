@@ -13,6 +13,7 @@
 
 use super::CompletionRecord;
 use super::ExecutorError;
+use super::clear_foreign_entry;
 use super::ensure_parent;
 use super::with_sharing_violation_retry;
 use crate::template::Engine;
@@ -52,6 +53,7 @@ pub(super) fn render(
     let mut records = Vec::with_capacity(targets.len());
     for target in targets {
         ensure_parent(target)?;
+        clear_foreign_entry(target)?;
         with_sharing_violation_retry(|| fs_err::write(target, rendered.as_bytes())).map_err(
             |err| ExecutorError::Io {
                 path: target.clone(),
@@ -122,6 +124,130 @@ mod tests {
                 .expect("t1 metadata")
                 .file_type()
                 .is_symlink()
+        );
+    }
+
+    #[test]
+    fn render_replaces_a_symlink_target_with_a_regular_file() {
+        // Without the clear, `fs_err::write` follows the link and the
+        // rendered output is written at the link's destination while the
+        // target stays a symlink.
+        let (_td, dir) = utf8_tempdir();
+        let source = dir.join("rc.tmpl");
+        fs_err::write(&source, b"name = {{ who }}").expect("write template");
+        let linked = dir.join("elsewhere");
+        fs_err::write(&linked, b"foreign bytes").expect("write link destination");
+        let target = dir.join("rc");
+        crate::test_util::symlink_file(&linked, &target);
+
+        render(
+            &source,
+            std::slice::from_ref(&target),
+            &Engine::new(),
+            &resolver_with("who", "kevin"),
+        )
+        .expect("render over a symlink");
+
+        assert!(
+            fs_err::symlink_metadata(&target)
+                .expect("stat target")
+                .file_type()
+                .is_file(),
+            "the target must become a regular file"
+        );
+        assert_eq!(fs_err::read(&target).expect("read target"), b"name = kevin");
+        assert_eq!(
+            fs_err::read(&linked).expect("read link destination"),
+            b"foreign bytes",
+            "the link's destination is untouched"
+        );
+    }
+
+    #[test]
+    fn render_over_a_dangling_symlink_writes_the_target_not_the_link_destination() {
+        // The `symlink → template` repro: the entry's source was renamed to
+        // `.tmpl`, so the old link dangles; the render must not create a file
+        // inside the repo module at the dead link's destination.
+        let (_td, dir) = utf8_tempdir();
+        let source = dir.join("rc.tmpl");
+        fs_err::write(&source, b"static body").expect("write template");
+        let ghost = dir.join("module").join("rc");
+        fs_err::create_dir_all(ghost.parent().expect("ghost parent")).expect("mkdir");
+        fs_err::write(&ghost, b"x").expect("write ghost");
+        let target = dir.join("out");
+        crate::test_util::symlink_file(&ghost, &target);
+        fs_err::remove_file(&ghost).expect("dangle the target link");
+
+        render(
+            &source,
+            std::slice::from_ref(&target),
+            &Engine::new(),
+            &resolver_with("who", "kevin"),
+        )
+        .expect("render over a dangling symlink");
+
+        assert!(
+            fs_err::symlink_metadata(&target)
+                .expect("stat target")
+                .file_type()
+                .is_file(),
+            "the target must become a regular file"
+        );
+        assert_eq!(fs_err::read(&target).expect("read target"), b"static body");
+        assert!(
+            !ghost.exists(),
+            "no file may appear at the dead link's destination"
+        );
+    }
+
+    #[test]
+    fn render_clears_a_directory_target() {
+        let (_td, dir) = utf8_tempdir();
+        let source = dir.join("rc.tmpl");
+        fs_err::write(&source, b"static body").expect("write template");
+        let target = dir.join("out");
+        fs_err::create_dir_all(target.join("inner")).expect("mkdir target dir");
+
+        render(
+            &source,
+            std::slice::from_ref(&target),
+            &Engine::new(),
+            &resolver_with("who", "kevin"),
+        )
+        .expect("render over a directory");
+
+        assert!(
+            fs_err::symlink_metadata(&target)
+                .expect("stat target")
+                .file_type()
+                .is_file(),
+            "the directory is cleared and the render written at the path"
+        );
+        assert_eq!(fs_err::read(&target).expect("read target"), b"static body");
+    }
+
+    #[test]
+    fn render_overwrites_a_regular_file_in_place() {
+        let (_td, dir) = utf8_tempdir();
+        let source = dir.join("rc.tmpl");
+        fs_err::write(&source, b"static body").expect("write template");
+        let target = dir.join("out");
+        fs_err::write(&target, b"old").expect("write target");
+        let alias = dir.join("alias");
+        fs_err::hard_link(&target, &alias).expect("hard-link the target");
+
+        render(
+            &source,
+            std::slice::from_ref(&target),
+            &Engine::new(),
+            &resolver_with("who", "kevin"),
+        )
+        .expect("render over a regular file");
+
+        assert_eq!(
+            fs_err::read(&alias).expect("read alias"),
+            b"static body",
+            "the hard-linked alias sees the new bytes, so the inode was reused"
         );
     }
 

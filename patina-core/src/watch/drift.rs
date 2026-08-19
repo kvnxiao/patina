@@ -203,6 +203,12 @@ pub fn handle_target_events(
             continue;
         }
 
+        // The entry kind is part of the match, the same rule that the status
+        // seam (`status::classify::content_matches`) applies: a symlink or
+        // directory where a regular file is expected is drift even when a
+        // read through it returns matching bytes.
+        let is_regular_file = fs_err::symlink_metadata(content.target.as_std_path())
+            .is_ok_and(|meta| meta.file_type().is_file());
         let live = match fs_err::read(content.target.as_std_path()) {
             Ok(bytes) => bytes,
             Err(error) => {
@@ -218,7 +224,7 @@ pub fn handle_target_events(
         };
 
         let actual_hash = content_hash(&live);
-        if actual_hash == content.expected_hash {
+        if is_regular_file && actual_hash == content.expected_hash {
             outcomes.push(DriftOutcome::Clean);
             continue;
         }
@@ -387,6 +393,50 @@ mod tests {
         assert_eq!(entry.expected_hash, h1, "expected hash is the recorded H1");
         assert_eq!(entry.actual_hash, h2, "actual hash is the observed H2");
         assert_ne!(entry.expected_hash, entry.actual_hash);
+    }
+
+    /// A symlink where a copy-mode file is expected is drift to the watcher,
+    /// matching status's Drifted for the identical live state: the entry kind
+    /// is part of the match even when the link's referent hashes equal.
+    #[test]
+    fn symlink_where_copy_expected_is_drift_matching_status() {
+        let (_temp, dir) = temp_state();
+        let referent = write_target(&dir, "source", b"payload");
+        let target = dir.join(".gitconfig");
+        crate::test_util::symlink_file(&referent, &target);
+        let expected_hash = content_hash(b"payload");
+        let content = ContentTarget {
+            target: target.clone(),
+            expected_hash,
+        };
+        let sink = CaptureSink::default();
+
+        let outcomes = handle_target_events(
+            std::slice::from_ref(&content),
+            std::slice::from_ref(&target),
+            &dir,
+            "20260528T120000Z",
+            1_716_897_600,
+            &sink,
+        );
+
+        assert_eq!(
+            outcomes,
+            vec![DriftOutcome::Notified],
+            "the watcher must not read Clean through the link"
+        );
+        let record = crate::journal::ExpectedTarget::Content {
+            target: target.as_str().to_owned(),
+            source: referent.as_str().to_owned(),
+            hash: expected_hash,
+            entry: 0,
+            disposition: crate::journal::Disposition::Create,
+        };
+        assert_eq!(
+            crate::status::classify::classify(&record, true),
+            crate::status::classify::TargetState::Drifted,
+            "status classifies the same live state Drifted"
+        );
     }
 
     /// A second drift detection on the same target within the

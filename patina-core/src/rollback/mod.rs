@@ -55,6 +55,7 @@ use crate::lock::exclusive_timeout;
 use crate::state_dir::resolve as resolve_state_dir;
 use camino::Utf8Path;
 pub use replay::RevertTarget;
+pub(crate) use replay::replaced_root_ancestor;
 pub use replay::replay_entry;
 use thiserror::Error;
 

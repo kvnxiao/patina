@@ -112,11 +112,14 @@ pub(crate) fn symlink_matches(target: &Utf8Path, desired: &str) -> bool {
 /// `status` and the plan-time classifier (for copy/copy-tree and template
 /// targets) both read through this function as their one definition of
 /// matching content, so "Unchanged" coincides exactly with status's
-/// "Clean". An unreadable target (absent, a directory, or a dangling
-/// link) is not a match.
+/// "Clean". A target that is not a regular file (a symlink, a directory,
+/// or an absent path) is not a match, even when a read through a live
+/// symlink would return matching bytes.
 #[must_use = "the comparison result drives the Clean/Unchanged classification"]
 pub(crate) fn content_matches(target: &Utf8Path, desired: &[u8; 32]) -> bool {
-    matches!(fs_err::read(target), Ok(bytes) if content_hash(&bytes) == *desired)
+    let is_regular_file =
+        fs_err::symlink_metadata(target).is_ok_and(|meta| meta.file_type().is_file());
+    is_regular_file && matches!(fs_err::read(target), Ok(bytes) if content_hash(&bytes) == *desired)
 }
 
 #[cfg(test)]
@@ -190,6 +193,41 @@ mod tests {
         };
         // A non-existent path is Missing regardless of link expectation.
         assert_eq!(classify(&expected, true), TargetState::Missing);
+    }
+
+    #[test]
+    fn content_match_rejects_a_symlink_whose_referent_hashes_equal() {
+        let (_td, dir) = utf8_tempdir();
+        let source = dir.join("src");
+        fs_err::write(&source, b"payload").expect("write source");
+        let target = dir.join("link");
+        crate::test_util::symlink_file(&source, &target);
+
+        assert!(
+            !content_matches(&target, &content_hash(b"payload")),
+            "a symlink is never a content match, even when its referent's bytes hash equal"
+        );
+
+        let expected = ExpectedTarget::Content {
+            target: target.as_str().to_owned(),
+            source: source.as_str().to_owned(),
+            hash: content_hash(b"payload"),
+            entry: 0,
+            disposition: Disposition::Update,
+        };
+        assert_eq!(classify(&expected, true), TargetState::Drifted);
+    }
+
+    #[test]
+    fn content_match_rejects_a_directory() {
+        let (_td, dir) = utf8_tempdir();
+        let target = dir.join("subdir");
+        fs_err::create_dir_all(&target).expect("mkdir target");
+
+        assert!(
+            !content_matches(&target, &content_hash(b"")),
+            "a directory is never a content match"
+        );
     }
 
     #[test]
