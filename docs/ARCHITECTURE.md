@@ -178,6 +178,35 @@ sequenceDiagram
    formalized exit-code funnel. Mutations and read-only commands
    coordinate through an advisory file lock.
 
+### Target kind and mode edits
+
+The target's entry kind is part of the "matches" definition. The shared
+content comparison (`status::classify::content_matches`) requires a
+regular file at the target before reading it, so a symlink whose
+referent's bytes hash equal is drift, not a match. Plan-time
+classification and `patina status` read through that one seam, and the
+watcher's drift handler applies the same regular-file rule, so a `mode`
+edit on an existing entry is planned as an `Update` everywhere instead
+of silently reading as satisfied through the stale entry.
+
+The diff's `replace` verb is journal-provenance-gated. Planning reads
+the latest committed record once and maps each recorded target to its
+`(kind, source)`. A target whose live kind flips is a `replace` only
+when the record holds the same target from the same canonical source
+under a different kind: a `mode` edit on one entry. A target claimed by
+a different entry (a different source) keeps the plain mode verb with a
+kind-aware body.
+
+A symbolic link at a tree-mode target's root is never walked through:
+leaf paths under the link resolve into the link's destination, which is
+the entry's own source. The classifier enumerates the source leaves
+instead, marks every leaf `Create`, and flags the root for replacement
+(`replace_root`). The executor removes a symlinked root only under that
+plan-time flag; on a symlinked root the plan did not consent to replace
+(a plan stale against the live filesystem), the apply aborts with the
+typed `TreeTargetIsSymlink` error before any leaf write, and the next
+apply re-plans with consent.
+
 ### Tree enumeration and `ignore`
 
 Every tree-mode phase enumerates leaves through `apply::walk_files`:
@@ -244,7 +273,14 @@ journal envelope and converges deterministically:
 journal and restores the recorded pre-apply bytes. Afterwards the
 filesystem matches the pre-apply state in content and entry kind (file,
 symlink, or directory). Mode and timestamp bits are excluded, as are
-files the user touched outside Patina. `patina status` reports drift
+files the user touched outside Patina. A replaced tree root reverts as a
+unit: when a recorded leaf's backup mirror path passes through a
+symbolic link stashed in the cycle's backup tree (and the live
+counterpart is the materialized directory), rollback restores that
+ancestor link and never reverts a leaf through it, because a leaf path
+under the restored link would resolve into the repository. The
+in-process reversal after a failed `post_apply` hook applies the same
+fold. `patina status` reports drift
 between the declared end-state and the live filesystem. The per-machine
 state directory for the journal, backups, lock, and drift cache uses
 OS-appropriate locations and must not live on a cloud-sync mount. See

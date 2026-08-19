@@ -228,6 +228,35 @@ Re-running `patina apply` against unchanged source is a no-op: the same
 plan, no writes, and byte-identical stdout. Patina never overwrites a
 file it does not own without taking a backup first.
 
+### Changing an entry's mode
+
+Editing an entry's `mode` (say `symlink` to `copy`, or a `[[directory]]`
+`symlink` to `symlink-tree`) converges in one apply, and a second apply
+is a no-op. The target's entry kind is part of what apply compares, so a
+symlink where a copy is now declared is planned as work even when the
+linked bytes match.
+
+A mode edit on an existing entry previews as a `replace` block naming
+both kinds:
+
+```text
+replace /home/u/.zshrc (symlink -> file)
+  - (symlink -> /repo/zsh/zshrc)
+  + (text, 27 bytes)
+```
+
+A whole-directory `symlink` switched to a tree mode replaces the root as
+one block, `replace <target> (symlink -> tree)`, with the leaf count on
+the inserted side and no per-leaf blocks.
+
+The `replace` verb means the last committed apply materialized the same
+target from the same source under a different kind. When a deleted
+entry's target is claimed by a different entry (a different source), the
+diff keeps the plain mode verb with the same kind-aware body: a `copy` or
+`render` over a live symlink shows `- (symlink -> <link>)` rather than a
+content diff read through the link, and a `symlink` over a live regular
+file shows the file's size descriptor rather than `(absent)`.
+
 On a terminal the diff is colorized: green additions, red removals, bold
 entry headers, styled warnings and errors. The confirmation prompt is
 colorized too: a green affirmative `y` and a red default `N`, each set
@@ -441,7 +470,9 @@ than skipping the scan, the lower-risk choice where it applies.
 `patina watch` runs a per-user background watcher. It re-applies your
 configuration when the source repository changes and reports drift when
 a managed target is edited outside Patina. Its default path needs neither
-admin nor sudo.
+admin nor sudo. The re-apply runs the whole resolved plan without a
+prompt, so a pending `mode` edit converges on the next watched-source
+change or the next interactive `patina apply`, whichever comes first.
 
 The lifecycle subcommands manage a background service registered with
 your OS supervisor:

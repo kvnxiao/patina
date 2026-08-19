@@ -68,6 +68,7 @@ If the user asks for one of these, the answer is "not in v1.0". Surface it as a 
 - **Committer timestamps are self-reported.** The update gate's future / backdating / age checks stop untargeted, fast-moving compromises. An attacker who deliberately backdates commits can still pass these checks. The diff-and-prompt loop is the hard boundary.
 - **Fetching a bare SHA needs server cooperation.** A server with `uploadpack.allowReachableSHA1InWant` off refuses the specified shallow fetch by exact SHA. `remote::git::fetch_commit` then falls back to a shallow fetch of the tracked ref, and re-checks that the pin arrived.
 - **Journal timestamps have one-second resolution.** Two applies inside one second share a `<ts>.COMMIT`, collapsing the older record. The remote cache's reachability sweep depends on those records.
+- **The Held-path reap window is documented, not mitigated.** `patina remove` / `promote` re-journal one target under a caller-held lock with no prompt. A mid-execute failure after the promotion write but before its COMMIT leaves the prior record authoritative, so the next apply's reap can delete the just-promoted file. Its bytes are backed up before removal, so `patina rollback` recovers them.
 
 ---
 
