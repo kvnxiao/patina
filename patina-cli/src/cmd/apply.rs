@@ -464,8 +464,10 @@ fn json_envelope(resolved: &ResolvedPlan, reaped: &[Orphan], result: &str) -> St
 /// A single-target mode (empty `leaves`) yields one row carrying the target's
 /// own disposition label. A tree mode yields one row per materialized leaf.
 /// Each row sets that leaf's path, under the declared target, and its
-/// per-leaf disposition label. The human diff renderer uses the same expansion,
-/// so the two surfaces agree on what an entry expands to.
+/// per-leaf disposition label. The human diff renderer uses the same
+/// expansion, with one divergence: a consented root replacement renders as
+/// one human block, while the rows here stay per leaf (`state: "create"`)
+/// to keep the `--json` schema stable.
 fn plan_rows(
     op: &patina_core::ResolvedOperation,
     target: &camino::Utf8Path,

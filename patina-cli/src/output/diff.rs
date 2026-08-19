@@ -71,12 +71,34 @@ pub fn render(resolved: &ResolvedPlan, orphans: &[Orphan]) -> Result<String, Str
     let mut unchanged = 0usize;
     for op in &resolved.operations {
         for (target, disposition) in op.targets.iter().zip(&op.dispositions) {
+            // A symlinked tree root renders as one replacement block: the
+            // link on the deleted side, the leaf count on the inserted side.
+            // Per-leaf blocks would each read a path through the link, so
+            // they are suppressed for the op.
+            if disposition.replace_root {
+                render_root_replacement(
+                    &mut out,
+                    op.mode,
+                    target,
+                    disposition.mode_change,
+                    disposition.leaves.len(),
+                    &styles,
+                );
+                continue;
+            }
             if disposition.leaves.is_empty() {
                 if disposition.aggregate == Disposition::Unchanged {
                     unchanged += 1;
                 } else {
                     render_leaf(
-                        &mut out, op.mode, &op.source, target, &engine, vars, &styles,
+                        &mut out,
+                        op.mode,
+                        &op.source,
+                        target,
+                        disposition.mode_change,
+                        &engine,
+                        vars,
+                        &styles,
                     )?;
                 }
             } else {
@@ -93,6 +115,7 @@ pub fn render(resolved: &ResolvedPlan, orphans: &[Orphan]) -> Result<String, Str
                             op.mode,
                             &leaf_source,
                             &leaf_target,
+                            leaf.mode_change,
                             &engine,
                             vars,
                             &styles,
@@ -117,35 +140,104 @@ pub fn render(resolved: &ResolvedPlan, orphans: &[Orphan]) -> Result<String, Str
     Ok(out)
 }
 
+/// The header verb for a mode's plain (non-`replace`) block.
+fn mode_verb(mode: FileMode) -> &'static str {
+    match mode {
+        FileMode::Symlink | FileMode::SymlinkDir | FileMode::SymlinkTree => "symlink",
+        FileMode::Copy | FileMode::CopyTree => "copy",
+        FileMode::TemplateRender => "render",
+    }
+}
+
+/// Render the one-block preview of a symlinked tree root's replacement: the
+/// whole-directory link on the deleted side, the materialized leaf count on
+/// the inserted side.
+///
+/// The header carries the `replace` verb only for a provenance-confirmed
+/// mode edit; a transferred directory target keeps the plain mode verb with
+/// the same body.
+fn render_root_replacement(
+    out: &mut String,
+    mode: FileMode,
+    target: &Utf8Path,
+    mode_change: bool,
+    leaf_count: usize,
+    styles: &Styles,
+) {
+    let header = if mode_change {
+        format!("replace {target} (symlink -> tree)")
+    } else {
+        format!("{} {target}", mode_verb(mode))
+    };
+    let current = match current_link_target(target) {
+        Some(link) => format!("(symlink -> {link})"),
+        None => read_for_diff(target).describe(),
+    };
+    let noun = if leaf_count == 1 { "file" } else { "files" };
+    paint_line(out, styles.header, "", &header);
+    paint_line(out, styles.delete, "  - ", &current);
+    paint_line(
+        out,
+        styles.insert,
+        "  + ",
+        &format!("(tree, {leaf_count} {noun})"),
+    );
+}
+
 /// Render one block for a `(mode, source, target)` triple into `out`. Shared
 /// by the single-target path and the tree-mode per-leaf path so a drifted
 /// leaf renders the same block shape as a single-target entry of the same
 /// mode.
+///
+/// `mode_change` selects the `replace` header for a provenance-confirmed
+/// mode edit. Independently of it, a target whose live entry kind differs
+/// from what the mode writes renders kind-aware placeholder bodies: a
+/// content header over a live symlink shows the link rather than a content
+/// diff read through it, and a symlink header over a live regular file or
+/// directory shows `(text, N bytes)` / `(directory)` rather than
+/// `(absent)`.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one block needs the op triple, the replace-verb flag, the \
+              template engine/resolver, and the palette; threading a struct \
+              here would only move the same fields behind a name."
+)]
 fn render_leaf(
     out: &mut String,
     mode: FileMode,
     source: &Utf8Path,
     target: &Utf8Path,
+    mode_change: bool,
     engine: &TemplateEngine,
     vars: &Resolver,
     styles: &Styles,
 ) -> Result<(), String> {
     match mode {
         FileMode::Symlink | FileMode::SymlinkDir | FileMode::SymlinkTree => {
-            let current = current_link_target(target);
-            paint_line(out, styles.header, "", &format!("symlink {target}"));
-            paint_line(
-                out,
-                styles.delete,
-                "  - ",
-                current.as_deref().unwrap_or("(absent)"),
-            );
-            paint_line(out, styles.insert, "  + ", source.as_str());
+            let header = if mode_change {
+                format!("replace {target} (file -> symlink)")
+            } else {
+                format!("symlink {target}")
+            };
+            let target_is_dir =
+                || fs_err::symlink_metadata(target.as_std_path()).is_ok_and(|meta| meta.is_dir());
+            let current = match current_link_target(target) {
+                Some(link) => link,
+                None if target_is_dir() => "(directory)".to_owned(),
+                None => read_for_diff(target).describe(),
+            };
+            let new = if mode_change {
+                format!("(symlink -> {source})")
+            } else {
+                source.as_str().to_owned()
+            };
+            paint_line(out, styles.header, "", &header);
+            paint_line(out, styles.delete, "  - ", &current);
+            paint_line(out, styles.insert, "  + ", &new);
         }
         FileMode::Copy | FileMode::CopyTree => {
             let new = read_for_diff(source);
-            let current = read_for_diff(target);
-            content_diff(out, &format!("copy {target}"), &current, &new, styles);
+            render_content_block(out, "copy", target, mode_change, &new, styles);
         }
         FileMode::TemplateRender => {
             let body = fs_err::read_to_string(source)
@@ -153,17 +245,43 @@ fn render_leaf(
             let rendered = engine
                 .render(&body, vars)
                 .map_err(|e| format!("failed to render template {source}: {e}"))?;
-            let current = read_for_diff(target);
-            content_diff(
-                out,
-                &format!("render {target}"),
-                &current,
-                &DiffContent::Text(rendered),
-                styles,
-            );
+            let new = DiffContent::Text(rendered);
+            render_content_block(out, "render", target, mode_change, &new, styles);
         }
     }
     Ok(())
+}
+
+/// Render a content-mode (`copy` / `render`) block, kind-aware at the
+/// target.
+///
+/// A live symlink at the target is never line-diffed: reading through it would
+/// diff the linked file's bytes while the entry being replaced is the link.
+/// The block shows the link on the deleted side and the incoming content's
+/// descriptor on the inserted side, under the `replace` header when the
+/// kind flip is a provenance-confirmed mode edit. Any other target renders
+/// the ordinary content diff.
+fn render_content_block(
+    out: &mut String,
+    verb: &str,
+    target: &Utf8Path,
+    mode_change: bool,
+    new: &DiffContent,
+    styles: &Styles,
+) {
+    if let Some(link) = current_link_target(target) {
+        let header = if mode_change {
+            format!("replace {target} (symlink -> file)")
+        } else {
+            format!("{verb} {target}")
+        };
+        paint_line(out, styles.header, "", &header);
+        paint_line(out, styles.delete, "  - ", &format!("(symlink -> {link})"));
+        paint_line(out, styles.insert, "  + ", &new.describe());
+        return;
+    }
+    let current = read_for_diff(target);
+    content_diff(out, &format!("{verb} {target}"), &current, new, styles);
 }
 
 /// Render one `remove <target> (<reason>)` block for an orphan the reap phase
@@ -507,6 +625,237 @@ mod tests {
         assert!(
             !out.contains("(absent)"),
             "an absent target paired with text must line-diff, not use the placeholder, got:\n{out}"
+        );
+    }
+
+    #[cfg(unix)]
+    fn make_symlink(source: &Utf8Path, link: &Utf8Path) {
+        std::os::unix::fs::symlink(source.as_std_path(), link.as_std_path())
+            .expect("create symlink");
+    }
+
+    #[cfg(windows)]
+    fn make_symlink(source: &Utf8Path, link: &Utf8Path) {
+        if source.is_dir() {
+            std::os::windows::fs::symlink_dir(source.as_std_path(), link.as_std_path())
+                .expect("create dir symlink");
+        } else {
+            std::os::windows::fs::symlink_file(source.as_std_path(), link.as_std_path())
+                .expect("create file symlink");
+        }
+    }
+
+    fn leaf_block(
+        mode: patina_core::FileMode,
+        source: &Utf8Path,
+        target: &Utf8Path,
+        mode_change: bool,
+    ) -> String {
+        let mut out = String::new();
+        render_leaf(
+            &mut out,
+            mode,
+            source,
+            target,
+            mode_change,
+            &TemplateEngine::new(),
+            &Resolver::new(patina_core::Builtins::current()),
+            &Styles::plain(),
+        )
+        .expect("render block");
+        out
+    }
+
+    #[test]
+    fn mode_change_copy_over_a_live_symlink_renders_the_replace_block() {
+        let (_td, dir) = tempdir();
+        let source = dir.join("rc");
+        fs_err::write(&source, "new text\n").expect("write source");
+        let target = dir.join("out");
+        make_symlink(&source, &target);
+
+        let out = leaf_block(patina_core::FileMode::Copy, &source, &target, true);
+
+        assert!(
+            out.contains(&format!("replace {target} (symlink -> file)")),
+            "the header carries the replace verb and the arrow, got:\n{out}"
+        );
+        assert!(
+            out.contains(&format!("  - (symlink -> {source})")),
+            "the deleted side is the link placeholder, got:\n{out}"
+        );
+        assert!(
+            out.contains("  + (text, 9 bytes)"),
+            "the inserted side is the incoming content's descriptor, got:\n{out}"
+        );
+        assert!(
+            !out.contains("new text"),
+            "no content is diffed through the link, got:\n{out}"
+        );
+    }
+
+    #[test]
+    fn mode_change_symlink_over_a_live_file_renders_the_replace_block() {
+        let (_td, dir) = tempdir();
+        let source = dir.join("rc");
+        fs_err::write(&source, "repo text\n").expect("write source");
+        let target = dir.join("out");
+        fs_err::write(&target, "live text\n").expect("write live file");
+
+        let out = leaf_block(patina_core::FileMode::Symlink, &source, &target, true);
+
+        assert!(
+            out.contains(&format!("replace {target} (file -> symlink)")),
+            "the header carries the replace verb and the arrow, got:\n{out}"
+        );
+        assert!(
+            out.contains("  - (text, 10 bytes)"),
+            "the deleted side is the live file's descriptor, got:\n{out}"
+        );
+        assert!(
+            out.contains(&format!("  + (symlink -> {source})")),
+            "the inserted side is the link placeholder, got:\n{out}"
+        );
+    }
+
+    #[test]
+    fn root_replacement_renders_one_replace_block_with_the_tree_arrow() {
+        let (_td, dir) = tempdir();
+        let source = dir.join("srcdir");
+        fs_err::create_dir_all(&source).expect("mkdir source");
+        let target = dir.join("out");
+        make_symlink(&source, &target);
+
+        let mut out = String::new();
+        render_root_replacement(
+            &mut out,
+            patina_core::FileMode::SymlinkTree,
+            &target,
+            true,
+            2,
+            &Styles::plain(),
+        );
+
+        assert!(
+            out.contains(&format!("replace {target} (symlink -> tree)")),
+            "the header carries the replace verb and the tree arrow, got:\n{out}"
+        );
+        assert!(
+            out.contains(&format!("  - (symlink -> {source})")),
+            "the deleted side is the whole-directory link, got:\n{out}"
+        );
+        assert!(
+            out.contains("  + (tree, 2 files)"),
+            "the inserted side is the leaf count, got:\n{out}"
+        );
+    }
+
+    #[test]
+    fn transferred_root_keeps_the_mode_verb_with_the_same_body() {
+        let (_td, dir) = tempdir();
+        let source = dir.join("srcdir");
+        fs_err::create_dir_all(&source).expect("mkdir source");
+        let target = dir.join("out");
+        make_symlink(&source, &target);
+
+        let mut out = String::new();
+        render_root_replacement(
+            &mut out,
+            patina_core::FileMode::CopyTree,
+            &target,
+            false,
+            1,
+            &Styles::plain(),
+        );
+
+        assert!(
+            out.contains(&format!("copy {target}")) && !out.contains("replace"),
+            "a transfer keeps the plain mode verb, got:\n{out}"
+        );
+        assert!(
+            out.contains(&format!("  - (symlink -> {source})")),
+            "the body still shows the link being replaced, got:\n{out}"
+        );
+        assert!(
+            out.contains("  + (tree, 1 file)"),
+            "the body still shows the leaf count, got:\n{out}"
+        );
+    }
+
+    #[test]
+    fn transferred_copy_over_a_live_symlink_keeps_the_verb_with_a_kind_aware_body() {
+        let (_td, dir) = tempdir();
+        let linked = dir.join("elsewhere");
+        fs_err::write(&linked, "linked bytes\n").expect("write link destination");
+        let source = dir.join("rc");
+        fs_err::write(&source, "new text\n").expect("write source");
+        let target = dir.join("out");
+        make_symlink(&linked, &target);
+
+        let out = leaf_block(patina_core::FileMode::Copy, &source, &target, false);
+
+        assert!(
+            out.contains(&format!("copy {target}")) && !out.contains("replace"),
+            "a transfer keeps the plain mode verb, got:\n{out}"
+        );
+        assert!(
+            out.contains(&format!("  - (symlink -> {linked})")),
+            "the deleted side is the link placeholder, got:\n{out}"
+        );
+        assert!(
+            !out.contains("linked bytes"),
+            "no content is diffed through the link, got:\n{out}"
+        );
+    }
+
+    #[test]
+    fn symlink_header_over_a_live_file_describes_it_instead_of_absent() {
+        let (_td, dir) = tempdir();
+        let source = dir.join("rc");
+        fs_err::write(&source, "repo text\n").expect("write source");
+        let target = dir.join("out");
+        fs_err::write(&target, "live text\n").expect("write live file");
+
+        let out = leaf_block(patina_core::FileMode::Symlink, &source, &target, false);
+
+        assert!(
+            out.contains(&format!("symlink {target}")),
+            "the plain header keeps the mode verb, got:\n{out}"
+        );
+        assert!(
+            out.contains("  - (text, 10 bytes)"),
+            "the live regular file renders its descriptor, got:\n{out}"
+        );
+        assert!(
+            !out.contains("(absent)"),
+            "a present file must not read as absent, got:\n{out}"
+        );
+
+        let absent = leaf_block(
+            patina_core::FileMode::Symlink,
+            &source,
+            &dir.join("missing"),
+            false,
+        );
+        assert!(
+            absent.contains("  - (absent)"),
+            "an absent target still renders (absent), got:\n{absent}"
+        );
+    }
+
+    #[test]
+    fn symlink_header_over_a_live_directory_renders_the_directory_descriptor() {
+        let (_td, dir) = tempdir();
+        let source = dir.join("srcdir");
+        fs_err::create_dir_all(&source).expect("mkdir source");
+        let target = dir.join("out");
+        fs_err::create_dir_all(&target).expect("mkdir live directory target");
+
+        let out = leaf_block(patina_core::FileMode::SymlinkDir, &source, &target, false);
+
+        assert!(
+            out.contains("  - (directory)"),
+            "a live directory renders its own descriptor, not (unreadable), got:\n{out}"
         );
     }
 
