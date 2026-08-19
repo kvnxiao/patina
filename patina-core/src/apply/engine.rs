@@ -162,6 +162,18 @@ pub struct TargetDisposition {
     /// relative to the declared target directory; empty for single-target
     /// modes.
     pub leaves: Vec<LeafDisposition>,
+    /// Whether a tree target root is a symbolic link that the executor must
+    /// remove before writing leaves. The executor refuses a symlinked root
+    /// unless this flag is set, so a stale plan cannot write through the link.
+    /// This flag exists only in memory; [`PlannedOperation`] records only the
+    /// aggregate.
+    pub replace_root: bool,
+    /// Whether the latest committed apply materialized this target from the
+    /// same source under a different entry kind (a `mode` edit on the same
+    /// entry). The diff renders such a target as a `replace` block; a
+    /// target claimed from a deleted entry with a different source keeps
+    /// the plain mode verb.
+    pub mode_change: bool,
 }
 
 /// One materialized leaf of a tree-mode target with its plan-time
@@ -174,6 +186,10 @@ pub struct LeafDisposition {
     pub relative: Utf8PathBuf,
     /// How this leaf relates to the live filesystem.
     pub disposition: Disposition,
+    /// Whether the latest committed apply materialized this leaf from the
+    /// same source under a different entry kind (a `copy` ↔ `symlink-tree`
+    /// mode edit). See [`TargetDisposition::mode_change`].
+    pub mode_change: bool,
 }
 
 /// One resolved operation: the durable [`PlannedOperation`] paired with
@@ -329,6 +345,7 @@ pub fn plan(
         repo_ignore,
     } = build_planning_context(&request.cli_overrides)?;
     let mut registry = RemoteRegistry::new(&remotes, &repo_root, &state_dir, CachePolicy::Fetch);
+    let provenance = Provenance::read(&state_dir.join("journal"))?;
 
     // Resolve every managed entry into its canonical source/targets, kept
     // in two ordered buckets, `[[file]]` entries and `[[directory]]`
@@ -366,6 +383,7 @@ pub fn plan(
                 &engine,
                 &resolver,
                 &repo_ignore,
+                &provenance,
             )?);
         }
         for entry in &config.directories {
@@ -377,6 +395,7 @@ pub fn plan(
                 &engine,
                 &resolver,
                 &repo_ignore,
+                &provenance,
             )?);
         }
 
@@ -862,14 +881,16 @@ fn insert_managed_targets(
     // next apply, and the reap pass would delete it (`copy-tree`'s journal
     // hashing would then fail on the just-reaped file).
     if matches!(entry.mode, FileMode::SymlinkTree | FileMode::CopyTree) {
+        let root_keys: Vec<Utf8PathBuf> = entry
+            .targets
+            .iter()
+            .map(|target| manage_key(&expand_tilde(target, home)))
+            .collect();
+        managed.tree_roots.extend(root_keys.iter().cloned());
         let Some(source_root) = origin.source_root.as_deref() else {
             if let Some(remote) = origin.remote.as_ref() {
                 managed.unmaterialized_remotes.insert(remote.clone());
-                for target in &entry.targets {
-                    managed
-                        .indeterminate_roots
-                        .insert(manage_key(&expand_tilde(target, home)));
-                }
+                managed.indeterminate_roots.extend(root_keys);
             }
             return;
         };
@@ -1110,6 +1131,12 @@ fn assemble_plan_operations(
 /// canonicalized. A `when`-false entry (which returns `Ok(None)` here
 /// before `resolve_entry` is ever called) is never canonicalized or
 /// validated.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the per-entry gate needs the entry, module, remote registry, \
+              and planning-context handles that resolution reads; a struct \
+              would only move the same fields behind a name."
+)]
 fn gate_and_resolve_entry(
     entry: &ManagedEntry,
     module: &crate::discovery::ModuleHandle,
@@ -1118,6 +1145,7 @@ fn gate_and_resolve_entry(
     engine: &Engine,
     resolver: &Resolver,
     repo_ignore: &[String],
+    provenance: &Provenance,
 ) -> Result<Option<ResolvedEntry>, EngineError> {
     if let Some(expr) = entry.when.as_deref()
         && !engine.eval_when(expr, resolver)?
@@ -1135,29 +1163,59 @@ fn gate_and_resolve_entry(
         engine,
         resolver,
         repo_ignore,
+        provenance,
     )?))
 }
 
-/// Classify each declared target of one resolved entry against live
-/// filesystem state at plan time.
-///
-/// Single-target modes classify the target directly. Tree modes
-/// (`copy-tree`, `symlink-tree`) enumerate the source leaves with
-/// [`walk_files`](crate::apply::walk_files) and classify each leaf, then
-/// fold the per-leaf results into the per-op aggregate:
-/// `Create` if the target directory is absent, otherwise `Unchanged` iff
-/// every leaf is `Unchanged`, otherwise `Update`. The per-leaf dispositions
-/// ride along on each [`TargetDisposition`] for the execute write-skip
-/// and the per-leaf reporting.
-///
-/// A template target is classified against its freshly rendered output,
-/// rendered once here through `engine` / `resolver`.
-///
-/// # Errors
-///
-/// Returns an [`EngineError`] when a copy/copy-tree leaf's source cannot be
-/// read to hash it, a tree source cannot be walked, or a template source
-/// cannot be read or rendered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RecordedKind {
+    Symlink,
+    Content,
+}
+
+impl RecordedKind {
+    fn of_mode(mode: FileMode) -> Self {
+        match mode {
+            FileMode::Symlink | FileMode::SymlinkDir | FileMode::SymlinkTree => Self::Symlink,
+            FileMode::Copy | FileMode::CopyTree | FileMode::TemplateRender => Self::Content,
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+struct Provenance {
+    targets: BTreeMap<Utf8PathBuf, (RecordedKind, String)>,
+}
+
+impl Provenance {
+    fn read(journal_dir: &Utf8Path) -> Result<Self, EngineError> {
+        let Some(record) = crate::journal::read_latest_commit(journal_dir)? else {
+            return Ok(Self::default());
+        };
+        let mut targets = BTreeMap::new();
+        for expected in &record.targets {
+            let kind = match expected {
+                ExpectedTarget::Symlink { .. } => RecordedKind::Symlink,
+                ExpectedTarget::Content { .. } => RecordedKind::Content,
+            };
+            targets.insert(
+                crate::status::manage_key(Utf8Path::new(expected.target())),
+                (kind, crate::paths::simplified_str(expected.source())),
+            );
+        }
+        Ok(Self { targets })
+    }
+
+    fn mode_change(&self, target: &Utf8Path, kind: RecordedKind, source: &Utf8Path) -> bool {
+        self.targets
+            .get(&crate::status::manage_key(target))
+            .is_some_and(|(recorded_kind, recorded_source)| {
+                *recorded_kind != kind
+                    && *recorded_source == crate::paths::simplified_str(source.as_str())
+            })
+    }
+}
+
 fn classify_entry(
     mode: FileMode,
     source: &Utf8Path,
@@ -1165,6 +1223,7 @@ fn classify_entry(
     engine: &Engine,
     resolver: &Resolver,
     rules: &ignore::gitignore::Gitignore,
+    provenance: &Provenance,
 ) -> Result<Vec<TargetDisposition>, EngineError> {
     // Render a template source once; reuse the bytes to classify every
     // target (the executor likewise renders once per entry).
@@ -1184,9 +1243,20 @@ fn classify_entry(
             target,
             rendered.as_deref(),
             rules,
+            provenance,
         )?);
     }
     Ok(dispositions)
+}
+
+fn target_kind_flips(mode: FileMode, target: &Utf8Path) -> bool {
+    let Ok(meta) = fs_err::symlink_metadata(target) else {
+        return false;
+    };
+    match RecordedKind::of_mode(mode) {
+        RecordedKind::Symlink => !meta.file_type().is_symlink(),
+        RecordedKind::Content => !meta.file_type().is_file(),
+    }
 }
 
 /// Classify one declared target: a single-target leaf, or a whole tree
@@ -1197,15 +1267,21 @@ fn classify_target(
     target: &Utf8Path,
     rendered: Option<&str>,
     rules: &ignore::gitignore::Gitignore,
+    provenance: &Provenance,
 ) -> Result<TargetDisposition, EngineError> {
     use crate::apply::classify::classify_leaf;
 
     if !matches!(mode, FileMode::CopyTree | FileMode::SymlinkTree) {
         // Single-target mode: one classification, no leaves.
         let disposition = classify_leaf(mode, source, target, rendered.map(str::as_bytes))?;
+        let mode_change = disposition == Disposition::Update
+            && target_kind_flips(mode, target)
+            && provenance.mode_change(target, RecordedKind::of_mode(mode), source);
         return Ok(TargetDisposition {
             aggregate: disposition,
             leaves: Vec::new(),
+            replace_root: false,
+            mode_change,
         });
     }
 
@@ -1218,7 +1294,7 @@ fn classify_target(
     // "materializes nothing". Both executors create leaf directories on demand,
     // so an entry whose every leaf is ignored leaves the target absent. Calling
     // that a Create would re-prompt with the same empty plan on every apply.
-    if fs_err::symlink_metadata(target).is_err() {
+    let Ok(root_meta) = fs_err::symlink_metadata(target) else {
         let aggregate = if crate::apply::walk_files(source, rules)?.is_empty() {
             Disposition::Unchanged
         } else {
@@ -1227,6 +1303,26 @@ fn classify_target(
         return Ok(TargetDisposition {
             aggregate,
             leaves: Vec::new(),
+            replace_root: false,
+            mode_change: false,
+        });
+    };
+
+    if root_meta.file_type().is_symlink() {
+        let leaves: Vec<LeafDisposition> = crate::apply::walk_files(source, rules)?
+            .into_iter()
+            .map(|relative| LeafDisposition {
+                relative,
+                disposition: Disposition::Create,
+                mode_change: false,
+            })
+            .collect();
+        let mode_change = provenance.mode_change(target, RecordedKind::Content, source);
+        return Ok(TargetDisposition {
+            aggregate: Disposition::Update,
+            leaves,
+            replace_root: true,
+            mode_change,
         });
     }
 
@@ -1234,6 +1330,7 @@ fn classify_target(
     // time; classify each leaf at its mirrored target path. A missing source
     // yields no leaves (the entry would have failed source validation first).
     let relative_files = crate::apply::walk_files(source, rules)?;
+    crate::apply::verify_interior_dirs_real(target, relative_files.iter())?;
     let mut leaves = Vec::with_capacity(relative_files.len());
     let mut all_unchanged = true;
     for relative in relative_files {
@@ -1243,9 +1340,13 @@ fn classify_target(
         if disposition != Disposition::Unchanged {
             all_unchanged = false;
         }
+        let mode_change = disposition == Disposition::Update
+            && target_kind_flips(mode, &leaf_target)
+            && provenance.mode_change(&leaf_target, RecordedKind::of_mode(mode), &leaf_source);
         leaves.push(LeafDisposition {
             relative,
             disposition,
+            mode_change,
         });
     }
 
@@ -1256,7 +1357,12 @@ fn classify_target(
     } else {
         Disposition::Update
     };
-    Ok(TargetDisposition { aggregate, leaves })
+    Ok(TargetDisposition {
+        aggregate,
+        leaves,
+        replace_root: false,
+        mode_change: false,
+    })
 }
 
 /// Canonicalize one managed entry's source and resolve its targets under
@@ -1280,6 +1386,12 @@ fn classify_target(
 /// A classification read or template render failure surfaces as
 /// [`EngineError::Classify`], [`EngineError::Journal`], or
 /// [`EngineError::Template`].
+#[expect(
+    clippy::too_many_arguments,
+    reason = "resolution needs the entry, origin, module name, and \
+              planning-context handles that classification reads; a struct \
+              would only move the same fields behind a name."
+)]
 fn resolve_entry(
     entry: &ManagedEntry,
     origin: &EntryOrigin,
@@ -1288,6 +1400,7 @@ fn resolve_entry(
     engine: &Engine,
     resolver: &Resolver,
     repo_ignore: &[String],
+    provenance: &Provenance,
 ) -> Result<ResolvedEntry, EngineError> {
     let root = match (origin.source_root.as_deref(), origin.remote.as_ref()) {
         (Some(root), _) => root,
@@ -1367,6 +1480,7 @@ fn resolve_entry(
         engine,
         resolver,
         &ignore_rules,
+        provenance,
     )?;
     Ok(ResolvedEntry {
         mode: entry.mode,
@@ -1494,32 +1608,17 @@ fn planned_operation(
     }
 }
 
-/// Materialize one declared target according to its plan-time disposition,
-/// upholding the write-and-backup skip.
+/// Materialize one target after backing up any pre-existing entry.
 ///
-/// - **Aggregate `Unchanged`**: the target (single-target or whole tree)
-///   matches desired state, so it is neither backed up nor written. No
-///   [`CompletionRecord`] is produced; the commit records it from the resolved
-///   plan instead.
-/// - **Single-target `Create` / `Update`**: back up the pre-existing target (a
-///   no-op for an absent `Create` target, since [`backup_before_overwrite`]
-///   only stashes something that exists), then materialize it.
-/// - **Tree `Create` / `Update`**: back up the target directory as a unit (a
-///   whole-directory backup, which captures every leaf's prior bytes), then
-///   (re)write only the leaves whose per-leaf disposition is not `Unchanged`. A
-///   `Create` aggregate carries no per-leaf entries, so every leaf is written
-///   ([`LeafWrite::All`]); an `Update` aggregate writes only the drifted leaves
-///   ([`LeafWrite::Only`]), leaving clean leaves' inode/mtime untouched.
-///
-/// # Errors
-///
-/// Returns an [`EngineError`] when a backup or an executor write fails.
+/// Tree updates write only non-`Unchanged` leaves unless `replace_root` is
+/// set; that branch removes the backed-up root and writes every leaf. A
+/// symlinked root is rejected when `replace_root` is not set.
 #[expect(
     clippy::too_many_arguments,
-    reason = "the per-target write-skip needs the op's mode/source, the \
-              target and its plan-time disposition, the backup tree + \
-              timestamp, and the template engine/resolver; threading a \
-              struct here would only move the same fields behind a name."
+    reason = "the per-target write-skip needs the operation mode, source, \
+              target, disposition, backup tree, timestamp, template engine, \
+              resolver, and rules; a struct would only move the same fields \
+              behind a name."
 )]
 fn materialize_target(
     mode: FileMode,
@@ -1558,6 +1657,23 @@ fn materialize_target(
     // drifted leaves. A Create aggregate has no per-leaf entries (the target
     // dir is absent), so write every leaf.
     backup_before_overwrite(backups_dir, timestamp, target)?;
+    // Keep the backup before removing a consented root. Without plan-time
+    // consent, refuse before a leaf write can follow the link.
+    if fs_err::symlink_metadata(target).is_ok_and(|meta| meta.file_type().is_symlink()) {
+        if !disposition.replace_root {
+            return Err(EngineError::TreeTargetIsSymlink {
+                target: target.to_path_buf(),
+            });
+        }
+        remove_target(target)?;
+        return Ok(materialize_tree(
+            mode,
+            source,
+            target,
+            LeafWrite::All,
+            rules,
+        )?);
+    }
     if disposition.aggregate == Disposition::Create {
         return Ok(materialize_tree(
             mode,
@@ -2231,6 +2347,13 @@ fn detect_orphans(journal_dir: &Utf8Path) -> Result<Vec<Orphan>, EngineError> {
             // status to handle. Never reaped.
             continue;
         }
+        // A prior whole-directory `symlink` apply records the tree target root,
+        // while tree mode manages only its leaves. Skip that root because the
+        // consented replacement handles it; listing it would add a duplicate
+        // `remove` block that the reap never performs.
+        if managed.tree_roots.contains(&key) {
+            continue;
+        }
         // The current plan dropped this target. Only act on one that is still
         // on disk; an already-gone orphan needs no work.
         let Ok(meta) = fs_err::symlink_metadata(&target) else {
@@ -2322,11 +2445,12 @@ async fn run_hook_phase_collecting(
     Ok(None)
 }
 
-/// Reverse every completed materialization to the pre-apply state.
+/// Reverse completed materializations to the pre-apply state.
 ///
-/// A target that had a backup is restored from it; a freshly created
-/// target (no backup) is removed. This mirrors crash recovery's reversal
-/// rule, applied in-process when a `post_apply` hook fails.
+/// Restore backed-up entries with [`crate::fsx::clone_entry`] so their kinds,
+/// including dangling symlinks, are preserved. When a leaf backup path passes
+/// through a stashed root link, restore that root as one unit; restoring the
+/// leaf through the link would reach the repository.
 fn reverse_completed(
     completed: &[(u32, CompletionRecord)],
     backups_dir: &Utf8Path,
@@ -2334,25 +2458,23 @@ fn reverse_completed(
 ) -> Result<(), EngineError> {
     use crate::journal::mirror_backup_path;
 
-    // Reverse in inverse order so later operations are undone first.
+    let mut units: Vec<Utf8PathBuf> = Vec::new();
     for (_entry, record) in completed.iter().rev() {
-        let backup = mirror_backup_path(backups_dir, timestamp, &record.target);
-        if backup.exists() {
-            // The target pre-existed; restore the original bytes.
-            if let Some(parent) = record.target.parent()
-                && !parent.as_str().is_empty()
-            {
-                fs_err::create_dir_all(parent).map_err(|source| {
-                    EngineError::Journal(crate::journal::JournalError::Filesystem(source))
-                })?;
-            }
-            remove_target(&record.target)?;
-            fs_err::copy(&backup, &record.target).map_err(|source| {
+        let unit = crate::rollback::replaced_root_ancestor(backups_dir, timestamp, &record.target)
+            .unwrap_or_else(|| record.target.clone());
+        if !units.contains(&unit) {
+            units.push(unit);
+        }
+    }
+    for target in &units {
+        let backup = mirror_backup_path(backups_dir, timestamp, target);
+        if crate::fsx::entry_present(&backup) {
+            crate::fsx::clone_entry(&backup, target).map_err(|source| {
                 EngineError::Journal(crate::journal::JournalError::Filesystem(source))
             })?;
         } else {
             // Freshly created; delete it.
-            remove_target(&record.target)?;
+            remove_target(target)?;
         }
     }
     Ok(())
@@ -2427,6 +2549,8 @@ mod tests {
             .map(|_| TargetDisposition {
                 aggregate: Disposition::Create,
                 leaves: Vec::new(),
+                replace_root: false,
+                mode_change: false,
             })
             .collect();
         ResolvedEntry {
@@ -3087,6 +3211,7 @@ mod tests {
             &engine,
             &resolver,
             &crate::ignore_rules::none(),
+            &Provenance::default(),
         )
         .expect("classify entry");
         dispositions
@@ -3141,6 +3266,7 @@ mod tests {
             &engine,
             &resolver,
             &crate::ignore_rules::none(),
+            &Provenance::default(),
         )
         .expect("classify template");
         assert_eq!(
@@ -3214,6 +3340,7 @@ mod tests {
             &engine,
             &resolver,
             &crate::ignore_rules::none(),
+            &Provenance::default(),
         )
         .expect("classify copy-tree");
         let tree = dispositions.first().expect("one disposition per target");
@@ -3259,6 +3386,7 @@ mod tests {
             &engine,
             &resolver,
             &crate::ignore_rules::none(),
+            &Provenance::default(),
         )
         .expect("classify copy-tree");
         let tree = dispositions.first().expect("one disposition per target");
@@ -3291,11 +3419,456 @@ mod tests {
             &engine,
             &resolver,
             &crate::ignore_rules::none(),
+            &Provenance::default(),
         )
         .expect("classify copy-tree");
         assert_eq!(
             dispositions.first().expect("one disposition").aggregate,
             Disposition::Unchanged,
+        );
+    }
+
+    fn write_commit(journal_dir: &Utf8Path, ts: &str, record: &ApplyRecord) {
+        fs_err::create_dir_all(journal_dir).expect("mkdir journal");
+        fs_err::write(
+            journal_dir.join(format!("{ts}{}", crate::journal::COMMIT_SUFFIX)),
+            record.encode().expect("encode record"),
+        )
+        .expect("write commit sentinel");
+    }
+
+    fn record_with(targets: Vec<ExpectedTarget>) -> ApplyRecord {
+        ApplyRecord::new(
+            LastApply {
+                at: "2026-08-19T12:00:00Z".to_owned(),
+                user: "u".to_owned(),
+                host: "h".to_owned(),
+            },
+            targets,
+        )
+    }
+
+    #[test]
+    fn provenance_flags_a_same_source_kind_flip_and_nothing_else() {
+        let (_td, dir) = utf8_tempdir();
+        let journal = dir.join("journal");
+        let target = dir.join("out");
+        let source = dir.join("repo").join("rc");
+        write_commit(
+            &journal,
+            TS,
+            &record_with(vec![ExpectedTarget::Symlink {
+                target: target.as_str().to_owned(),
+                link_target: source.as_str().to_owned(),
+                entry: 0,
+                disposition: Disposition::Create,
+            }]),
+        );
+        let provenance = Provenance::read(&journal).expect("read provenance");
+
+        assert!(
+            provenance.mode_change(&target, RecordedKind::Content, &source),
+            "the same target and source under a flipped kind is a mode edit"
+        );
+        assert!(
+            !provenance.mode_change(&target, RecordedKind::Symlink, &source),
+            "the recorded kind itself is not a flip"
+        );
+        assert!(
+            !provenance.mode_change(
+                &target,
+                RecordedKind::Content,
+                &dir.join("repo").join("rc.tmpl")
+            ),
+            "a different source is a transfer, not a mode edit"
+        );
+        assert!(
+            !provenance.mode_change(&dir.join("elsewhere"), RecordedKind::Content, &source),
+            "an unrecorded target has no provenance"
+        );
+    }
+
+    #[test]
+    fn single_target_kind_flip_with_provenance_classifies_update_with_mode_change() {
+        let (_td, dir) = utf8_tempdir();
+        let source = dir.join("rc");
+        fs_err::write(&source, b"payload").expect("write source");
+        let target = dir.join("out");
+        make_symlink(&source, &target);
+
+        let journal = dir.join("journal");
+        write_commit(
+            &journal,
+            TS,
+            &record_with(vec![ExpectedTarget::Symlink {
+                target: target.as_str().to_owned(),
+                link_target: source.as_str().to_owned(),
+                entry: 0,
+                disposition: Disposition::Create,
+            }]),
+        );
+        let provenance = Provenance::read(&journal).expect("read provenance");
+
+        let disposition = classify_target(
+            FileMode::Copy,
+            &source,
+            &target,
+            None,
+            &crate::ignore_rules::none(),
+            &provenance,
+        )
+        .expect("classify");
+
+        assert_eq!(
+            disposition.aggregate,
+            Disposition::Update,
+            "a symlink where a copy is declared is drift, not a satisfied target"
+        );
+        assert!(disposition.mode_change, "same source, flipped kind");
+    }
+
+    #[test]
+    fn symlinked_tree_root_classifies_update_with_replace_root_and_never_walks_the_link() {
+        let (_td, dir) = utf8_tempdir();
+        let source = dir.join("srcdir");
+        fs_err::create_dir_all(source.join("sub")).expect("mkdir source");
+        fs_err::write(source.join("a.conf"), b"a").expect("write a");
+        fs_err::write(source.join("sub").join("b.conf"), b"b").expect("write b");
+        let target = dir.join("out");
+        make_symlink(&source, &target);
+
+        let disposition = classify_target(
+            FileMode::CopyTree,
+            &source,
+            &target,
+            None,
+            &crate::ignore_rules::none(),
+            &Provenance::default(),
+        )
+        .expect("classify");
+
+        assert_eq!(
+            disposition.aggregate,
+            Disposition::Update,
+            "a symlinked root must plan work, not read Unchanged through the link"
+        );
+        assert!(
+            disposition.replace_root,
+            "the root replacement is a plan fact"
+        );
+        assert!(
+            !disposition.mode_change,
+            "no committed record confirms a mode edit"
+        );
+        let states: Vec<Disposition> = disposition
+            .leaves
+            .iter()
+            .map(|leaf| leaf.disposition)
+            .collect();
+        assert_eq!(
+            states,
+            vec![Disposition::Create, Disposition::Create],
+            "every source leaf is planned as a fresh write"
+        );
+    }
+
+    #[test]
+    fn symlinked_interior_directory_fails_tree_classification() {
+        let (_td, dir) = utf8_tempdir();
+        let source = dir.join("srcdir");
+        fs_err::create_dir_all(source.join("sub")).expect("mkdir source");
+        fs_err::write(source.join("sub").join("a.conf"), b"a").expect("write a");
+        let target = dir.join("out");
+        fs_err::create_dir_all(&target).expect("mkdir target");
+        make_symlink(&source.join("sub"), &target.join("sub"));
+
+        let err = classify_target(
+            FileMode::CopyTree,
+            &source,
+            &target,
+            None,
+            &crate::ignore_rules::none(),
+            &Provenance::default(),
+        )
+        .expect_err("classification must refuse the interior link");
+
+        assert!(
+            matches!(
+                &err,
+                EngineError::Executor(crate::apply::ExecutorError::InteriorSymlink { path, .. })
+                    if *path == target.join("sub")
+            ),
+            "the typed error names the interior link, got: {err:?}"
+        );
+    }
+
+    #[test]
+    fn tree_leaf_kind_flip_with_provenance_sets_leaf_mode_change() {
+        let (_td, dir) = utf8_tempdir();
+        let source = dir.join("srcdir");
+        fs_err::create_dir_all(&source).expect("mkdir source");
+        fs_err::write(source.join("a.conf"), b"a").expect("write a");
+        let target = dir.join("out");
+        fs_err::create_dir_all(&target).expect("mkdir target");
+        make_symlink(&source.join("a.conf"), &target.join("a.conf"));
+
+        let journal = dir.join("journal");
+        write_commit(
+            &journal,
+            TS,
+            &record_with(vec![ExpectedTarget::Symlink {
+                target: target.join("a.conf").as_str().to_owned(),
+                link_target: source.join("a.conf").as_str().to_owned(),
+                entry: 0,
+                disposition: Disposition::Create,
+            }]),
+        );
+        let provenance = Provenance::read(&journal).expect("read provenance");
+
+        let disposition = classify_target(
+            FileMode::CopyTree,
+            &source,
+            &target,
+            None,
+            &crate::ignore_rules::none(),
+            &provenance,
+        )
+        .expect("classify");
+
+        assert_eq!(disposition.aggregate, Disposition::Update);
+        assert!(!disposition.replace_root, "the root is a real directory");
+        let leaf = disposition.leaves.first().expect("one leaf");
+        assert_eq!(leaf.disposition, Disposition::Update);
+        assert!(leaf.mode_change, "same leaf source, flipped leaf kind");
+    }
+
+    #[test]
+    fn unconsented_symlinked_tree_root_errors_before_any_leaf_write() {
+        let (_td, dir) = utf8_tempdir();
+        let source = dir.join("srcdir");
+        fs_err::create_dir_all(&source).expect("mkdir source");
+        fs_err::write(source.join("a.conf"), b"repo bytes").expect("write a");
+        let target = dir.join("out");
+        make_symlink(&source, &target);
+        let backups = dir.join("backups");
+
+        let disposition = TargetDisposition {
+            aggregate: Disposition::Update,
+            leaves: vec![LeafDisposition {
+                relative: Utf8PathBuf::from("a.conf"),
+                disposition: Disposition::Create,
+                mode_change: false,
+            }],
+            replace_root: false,
+            mode_change: false,
+        };
+        let err = materialize_target(
+            FileMode::SymlinkTree,
+            &source,
+            &target,
+            &disposition,
+            &backups,
+            TS,
+            &Engine::new(),
+            &Resolver::new(Builtins::for_tests()),
+            &crate::ignore_rules::none(),
+        )
+        .expect_err("a symlinked root without consent must refuse");
+
+        assert!(
+            matches!(&err, EngineError::TreeTargetIsSymlink { target: t } if *t == target),
+            "the typed error names the target, got: {err:?}"
+        );
+        assert!(
+            fs_err::symlink_metadata(&target)
+                .expect("stat target")
+                .file_type()
+                .is_symlink(),
+            "the live link is left in place"
+        );
+        assert_eq!(
+            fs_err::read(source.join("a.conf")).expect("read source leaf"),
+            b"repo bytes",
+            "no leaf write reached the repository through the link"
+        );
+    }
+
+    #[test]
+    fn consented_symlinked_tree_root_is_replaced_with_a_real_tree() {
+        let (_td, dir) = utf8_tempdir();
+        let source = dir.join("srcdir");
+        fs_err::create_dir_all(&source).expect("mkdir source");
+        fs_err::write(source.join("a.conf"), b"repo bytes").expect("write a");
+        let target = dir.join("out");
+        make_symlink(&source, &target);
+        let backups = dir.join("backups");
+
+        let disposition = TargetDisposition {
+            aggregate: Disposition::Update,
+            leaves: vec![LeafDisposition {
+                relative: Utf8PathBuf::from("a.conf"),
+                disposition: Disposition::Create,
+                mode_change: true,
+            }],
+            replace_root: true,
+            mode_change: true,
+        };
+        let records = materialize_target(
+            FileMode::CopyTree,
+            &source,
+            &target,
+            &disposition,
+            &backups,
+            TS,
+            &Engine::new(),
+            &Resolver::new(Builtins::for_tests()),
+            &crate::ignore_rules::none(),
+        )
+        .expect("a consented root replacement materializes");
+
+        assert_eq!(records.len(), 1, "every source leaf is written");
+        let meta = fs_err::symlink_metadata(&target).expect("stat target");
+        assert!(
+            meta.is_dir() && !meta.file_type().is_symlink(),
+            "the root is a real directory after the replacement"
+        );
+        assert_eq!(
+            fs_err::read(target.join("a.conf")).expect("read leaf"),
+            b"repo bytes"
+        );
+        assert_eq!(
+            fs_err::read(source.join("a.conf")).expect("read source leaf"),
+            b"repo bytes",
+            "the repository source survives byte-for-byte"
+        );
+        let stashed = crate::journal::mirror_backup_path(&backups, TS, &target);
+        assert!(
+            fs_err::symlink_metadata(&stashed)
+                .expect("stat stashed root")
+                .file_type()
+                .is_symlink(),
+            "the pre-apply link is stashed for rollback"
+        );
+    }
+
+    #[test]
+    fn reverse_completed_restores_symlink_dangling_symlink_and_directory_backups() {
+        let (_td, dir) = utf8_tempdir();
+        let backups = dir.join("backups");
+
+        let link_dest = dir.join("dest");
+        fs_err::write(&link_dest, b"dest").expect("write dest");
+        let link_target = dir.join("was-link");
+        fs_err::write(&link_target, b"apply wrote a file here").expect("write post-apply file");
+        let link_backup = crate::journal::mirror_backup_path(&backups, TS, &link_target);
+        fs_err::create_dir_all(link_backup.parent().expect("backup parent")).expect("mkdir");
+        make_symlink(&link_dest, &link_backup);
+
+        let dangling_target = dir.join("was-dangling");
+        fs_err::write(&dangling_target, b"apply wrote a file here").expect("write post-apply file");
+        let dangling_backup = crate::journal::mirror_backup_path(&backups, TS, &dangling_target);
+        fs_err::create_dir_all(dangling_backup.parent().expect("backup parent")).expect("mkdir");
+        let ghost = dir.join("ghost");
+        fs_err::write(&ghost, b"x").expect("write ghost");
+        make_symlink(&ghost, &dangling_backup);
+        fs_err::remove_file(&ghost).expect("dangle the backup link");
+
+        let dir_target = dir.join("was-dir");
+        make_symlink(&link_dest, &dir_target);
+        let dir_backup = crate::journal::mirror_backup_path(&backups, TS, &dir_target);
+        fs_err::create_dir_all(dir_backup.join("sub")).expect("mkdir dir backup");
+        fs_err::write(dir_backup.join("sub").join("keep.conf"), b"keep").expect("write keep");
+
+        let completed = vec![
+            (
+                0,
+                CompletionRecord {
+                    source: dir.join("src"),
+                    target: link_target.clone(),
+                    materialization: Materialization::Copy,
+                },
+            ),
+            (
+                1,
+                CompletionRecord {
+                    source: dir.join("src"),
+                    target: dangling_target.clone(),
+                    materialization: Materialization::Copy,
+                },
+            ),
+            (
+                2,
+                CompletionRecord {
+                    source: dir.join("src"),
+                    target: dir_target.clone(),
+                    materialization: Materialization::Symlink {
+                        link_target: link_dest.clone(),
+                    },
+                },
+            ),
+        ];
+        reverse_completed(&completed, &backups, TS).expect("reverse the completed writes");
+
+        assert!(
+            fs_err::symlink_metadata(&link_target)
+                .expect("stat reverted link target")
+                .file_type()
+                .is_symlink(),
+            "a symlink backup restores as a symlink"
+        );
+        assert!(
+            fs_err::symlink_metadata(&dangling_target)
+                .expect("stat reverted dangling target")
+                .file_type()
+                .is_symlink(),
+            "a dangling-link backup still restores the link"
+        );
+        let meta = fs_err::symlink_metadata(&dir_target).expect("stat reverted dir target");
+        assert!(
+            meta.is_dir() && !meta.file_type().is_symlink(),
+            "a directory backup restores as a directory"
+        );
+        assert_eq!(
+            fs_err::read(dir_target.join("sub").join("keep.conf")).expect("read restored leaf"),
+            b"keep"
+        );
+    }
+
+    #[test]
+    fn reverse_completed_folds_replaced_root_leaves_into_the_root_link() {
+        let (_td, dir) = utf8_tempdir();
+        let backups = dir.join("backups");
+        let repo_src = dir.join("srcdir");
+        fs_err::create_dir_all(&repo_src).expect("mkdir repo source");
+        fs_err::write(repo_src.join("a.conf"), b"repo bytes").expect("write repo leaf");
+
+        let root = dir.join("out");
+        fs_err::create_dir_all(&root).expect("mkdir live root");
+        fs_err::write(root.join("a.conf"), b"repo bytes").expect("write live leaf");
+        let root_backup = crate::journal::mirror_backup_path(&backups, TS, &root);
+        fs_err::create_dir_all(root_backup.parent().expect("backup parent"))
+            .expect("mkdir backup tree");
+        make_symlink(&repo_src, &root_backup);
+
+        let completed = vec![(
+            0,
+            CompletionRecord {
+                source: repo_src.join("a.conf"),
+                target: root.join("a.conf"),
+                materialization: Materialization::Copy,
+            },
+        )];
+        reverse_completed(&completed, &backups, TS).expect("reverse the replacement");
+
+        let meta = fs_err::symlink_metadata(&root).expect("stat reverted root");
+        assert!(
+            meta.file_type().is_symlink(),
+            "the root reverts to the pre-apply whole-directory link"
+        );
+        assert_eq!(
+            fs_err::read(repo_src.join("a.conf")).expect("read repo leaf"),
+            b"repo bytes",
+            "the repository leaf survives"
         );
     }
 
@@ -3311,6 +3884,8 @@ mod tests {
             dispositions: vec![TargetDisposition {
                 aggregate: Disposition::Unchanged,
                 leaves: Vec::new(),
+                replace_root: false,
+                mode_change: false,
             }],
             module: "m".to_owned(),
             declared_source: Utf8PathBuf::from("config"),

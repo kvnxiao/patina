@@ -70,6 +70,16 @@ pub struct ManagedTargets {
     /// Declared target roots ([`manage_key`] form) of tree-mode entries whose
     /// remote checkout is not materialized on this machine.
     pub indeterminate_roots: BTreeSet<Utf8PathBuf>,
+    /// Declared target directories ([`manage_key`] form) of every tree-mode
+    /// entry. A tree entry manages its leaves, not the directory itself, so
+    /// these keys are absent from [`targets`](Self::targets). Orphan detection
+    /// skips a root-level record left by a prior whole-directory `symlink`
+    /// apply, allowing tree materialization to replace it without listing it
+    /// for removal. [`governs`](Self::governs) skips these keys intentionally:
+    /// until the replacing apply commits, `status` reports the superseded root
+    /// record as `ORPHANED` because the recorded whole-directory link is no
+    /// longer managed.
+    pub tree_roots: BTreeSet<Utf8PathBuf>,
     /// The remotes whose checkouts those roots are waiting on, for reporting.
     pub unmaterialized_remotes: BTreeSet<String>,
     /// Target keys ([`manage_key`] form) of leaves that exist in a source tree

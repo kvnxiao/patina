@@ -228,6 +228,45 @@ Re-running `patina apply` against unchanged source is a no-op: the same
 plan, no writes, and byte-identical stdout. Patina never overwrites a
 file it does not own without taking a backup first.
 
+### Changing an entry's mode
+
+Editing an entry's `mode` from `symlink` to `copy`, or a `[[directory]]`
+entry from `symlink` to `symlink-tree`, converges in one apply; the next
+apply is a no-op. `patina apply` compares the target's entry kind as well
+as its content, so a symlink where a copy is declared is planned as work
+even when the linked bytes match.
+
+A mode edit on an existing entry previews as a `replace` block naming
+both kinds:
+
+```text
+replace /home/u/.zshrc (symlink -> file)
+  - (symlink -> /repo/zsh/zshrc)
+  + (text, 27 bytes)
+```
+
+A whole-directory `symlink` switched to a tree mode replaces the root as
+one block, `replace <target> (symlink -> tree)`, with the leaf count on
+the inserted side and no per-leaf blocks.
+
+The `replace` verb identifies a mode edit when the last committed apply
+materialized the same target from the same source under a different kind.
+When a deleted entry's target is claimed by a different entry from a
+different source, the diff keeps the plain mode verb and uses a kind-aware
+body. A `copy` or `render` over a live symlink shows
+`- (symlink -> <link>)` rather than a content diff read through the link.
+A `symlink` over a live regular file shows the file's size descriptor
+rather than `(absent)`.
+
+When a symbolic link is inside a managed tree, between the declared
+target directory and its files, Patina stops the apply with an error
+naming the link. Patina keeps those intermediate directories real and
+never writes through a link planted there; remove the link and re-run
+`patina apply`. Do not hide the link with an `ignore` pattern: previously
+deployed files under the link become removable orphans, and the removal
+resolves through the link. A symlink in the path *above* the declared
+target (say a linked `~/.config`) is fine and resolves as usual.
+
 On a terminal the diff is colorized: green additions, red removals, bold
 entry headers, styled warnings and errors. The confirmation prompt is
 colorized too: a green affirmative `y` and a red default `N`, each set
@@ -441,7 +480,10 @@ than skipping the scan, the lower-risk choice where it applies.
 `patina watch` runs a per-user background watcher. It re-applies your
 configuration when the source repository changes and reports drift when
 a managed target is edited outside Patina. Its default path needs neither
-admin nor sudo.
+admin nor sudo. The watcher reapplies the whole resolved plan without a
+prompt. A pending `mode` edit therefore converges on the next
+watched-source change or the next interactive `patina apply`, whichever
+comes first.
 
 The lifecycle subcommands manage a background service registered with
 your OS supervisor:

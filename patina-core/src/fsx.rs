@@ -120,7 +120,7 @@ pub(crate) fn clone_entry(from: &Utf8Path, to: &Utf8Path) -> std::io::Result<()>
     }
     let file_type = meta.file_type();
     if file_type.is_symlink() {
-        symlink_to(&read_link_utf8(from)?, to)
+        symlink_to(&read_link_utf8(from)?, to, symlink_dir_flavor(file_type))
     } else if file_type.is_dir() {
         copy_tree(from, to)
     } else {
@@ -154,35 +154,63 @@ pub(crate) fn copy_tree(src: &Utf8Path, dst: &Utf8Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Read whether `file_type` marks a symlink as directory-flavoured.
+#[cfg(windows)]
+pub(crate) fn symlink_dir_flavor(file_type: std::fs::FileType) -> bool {
+    use std::os::windows::fs::FileTypeExt as _;
+    file_type.is_symlink_dir()
+}
+
+/// Read whether `file_type` marks a symlink as directory-flavoured.
+/// Unix has one link kind, so this always returns `false`.
+#[cfg(unix)]
+pub(crate) fn symlink_dir_flavor(_file_type: std::fs::FileType) -> bool {
+    false
+}
+
 /// Create a symbolic link at `target` pointing at `link`, dispatching to the
 /// platform-appropriate primitive.
 ///
-/// On Windows the link flavour must match the destination kind, so a
-/// directory destination uses a directory link and everything else a file
-/// link; Unix has a single `symlink` call.
+/// On Windows the link flavour must match the destination kind, and the
+/// caller supplies it from the original link's own file type
+/// ([`symlink_dir_flavor`]). Deriving it here from a stat of `link` would
+/// misflavour a dangling directory link as a file link, because the
+/// destination is absent. Unix has a single `symlink` call and ignores the
+/// flavour.
 ///
 /// # Errors
 ///
 /// Returns the underlying [`std::io::Error`] when the link cannot be created.
 #[cfg(unix)]
-pub(crate) fn symlink_to(link: &Utf8Path, target: &Utf8Path) -> std::io::Result<()> {
+pub(crate) fn symlink_to(
+    link: &Utf8Path,
+    target: &Utf8Path,
+    _dir_flavor: bool,
+) -> std::io::Result<()> {
     crate::apply::with_sharing_violation_retry(|| fs_err::os::unix::fs::symlink(link, target))
 }
 
 /// Create a symbolic link at `target` pointing at `link`, dispatching to the
 /// platform-appropriate primitive.
 ///
-/// On Windows the link flavour must match the destination kind, so a
-/// directory destination uses a directory link and everything else a file
-/// link; Unix has a single `symlink` call.
+/// On Windows the link flavour must match the destination kind, and the
+/// caller supplies it from the original link's own file type
+/// ([`symlink_dir_flavor`]). Deriving it here from a stat of `link` would
+/// misflavour a dangling directory link as a file link, because the
+/// destination is absent. Unix has a single `symlink` call and ignores the
+/// flavour.
 ///
 /// # Errors
 ///
 /// Returns the underlying [`std::io::Error`] when the link cannot be created.
 #[cfg(windows)]
-pub(crate) fn symlink_to(link: &Utf8Path, target: &Utf8Path) -> std::io::Result<()> {
+pub(crate) fn symlink_to(
+    link: &Utf8Path,
+    target: &Utf8Path,
+    dir_flavor: bool,
+) -> std::io::Result<()> {
     crate::apply::with_sharing_violation_retry(|| {
-        if fs_err::symlink_metadata(link).is_ok_and(|meta| meta.is_dir()) {
+        if dir_flavor {
             fs_err::os::windows::fs::symlink_dir(link, target)
         } else {
             fs_err::os::windows::fs::symlink_file(link, target)
@@ -374,6 +402,27 @@ mod tests {
             fs_err::read_link(&to).expect("read clone link"),
             std::path::Path::new("/some/where/original"),
             "the cloned link must point at the same target"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn clone_entry_preserves_the_dir_flavour_of_a_dangling_directory_link() {
+        use std::os::windows::fs::FileTypeExt as _;
+        let (_td, dir) = utf8_tempdir();
+        let dest = dir.join("dest_dir");
+        fs_err::create_dir_all(&dest).expect("mkdir dest");
+        let from = dir.join("link");
+        make_dir_symlink(&dest, &from);
+        fs_err::remove_dir(&dest).expect("dangle the link");
+        let to = dir.join("backup-of-link");
+
+        clone_entry(&from, &to).expect("clone dangling dir link");
+
+        let meta = fs_err::symlink_metadata(&to).expect("stat clone");
+        assert!(
+            meta.file_type().is_symlink_dir(),
+            "a dangling directory link must be cloned dir-flavoured"
         );
     }
 

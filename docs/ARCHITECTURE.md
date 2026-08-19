@@ -178,6 +178,58 @@ sequenceDiagram
    formalized exit-code funnel. Mutations and read-only commands
    coordinate through an advisory file lock.
 
+### Target kind and mode edits
+
+The target's entry kind is part of the "matches" definition. The shared
+content comparison (`status::classify::content_matches`) requires a
+regular file at the target before reading it, so a symlink whose
+referent's bytes hash equal is drift, not a match. Plan-time
+classification and `patina status` use that seam. The watcher's drift
+handler applies the same regular-file rule. `patina apply` therefore
+plans a mode edit as an `Update`, while `patina status` reports `Drifted`,
+instead of reading through the stale entry as if it were satisfied.
+
+The diff's `replace` verb is journal-provenance-gated. Planning reads
+the latest committed record once and maps each recorded target to its
+`(kind, source)`. A target whose live kind flips is a `replace` only
+when the record holds the same target from the same source identity
+under a different kind: a `mode` edit on one entry. A target claimed by
+a different entry (a different source) keeps the plain mode verb with a
+kind-aware body.
+
+A symbolic link at a tree-mode target's root is never walked through:
+leaf paths under the link resolve into its destination, which can be the
+repository's source. The classifier enumerates the source leaves
+instead, marks every leaf `Create`, and flags the root for replacement
+(`replace_root`). The executor removes a symlinked root only under that
+plan-time flag. When the plan is stale relative to the live filesystem,
+the apply aborts with the typed `TreeTargetIsSymlink` error before any
+leaf write, and the next apply re-plans with consent.
+
+A symbolic link *between* a tree root and its leaves is refused
+outright. Tree modes keep intermediate target directories real and
+have no consent flow for replacing one: plan-time classification and
+the leaf-walking executors run the same interior check
+(`InteriorSymlink`) on each target before touching its leaves, and
+the error names the link for the user to remove. The check derives its
+prefixes from the walked leaves, so an entry that deliberately places a
+`symlink-dir` target inside another tree's target keeps working when
+the tree's `ignore` excludes that subtree. Ancestors above the declared
+root stay out of scope: a symlinked `~/.config` is the user's
+filesystem layout, and single-target writes resolve through it. The
+gate covers planning and leaf writes only; the orphan reap,
+`patina rollback`, and crash recovery revert recorded target paths
+without it, so a link planted after an apply can still redirect those
+single-path operations (see the Known unknowns note in AGENTS.md).
+
+Backup and restore preserve a symbolic link's Windows flavour from the
+link's own file type (`fsx::symlink_dir_flavor`), not from a stat of its
+destination. A dangling directory link has no destination to stat, and
+restoring it with file flavour would lose its directory-link flavour when
+the destination returns. `fsx::clone_entry` (backup, crash recovery,
+rollback) and the in-process rollback snapshot both pass the flavour to
+`fsx::symlink_to`.
+
 ### Tree enumeration and `ignore`
 
 Every tree-mode phase enumerates leaves through `apply::walk_files`:
@@ -244,7 +296,14 @@ journal envelope and converges deterministically:
 journal and restores the recorded pre-apply bytes. Afterwards the
 filesystem matches the pre-apply state in content and entry kind (file,
 symlink, or directory). Mode and timestamp bits are excluded, as are
-files the user touched outside Patina. `patina status` reports drift
+files the user touched outside Patina. A replaced tree root reverts as a
+unit: when a recorded leaf's backup mirror path passes through a
+symbolic link stashed in the cycle's backup tree (and the live
+counterpart is the materialized directory), rollback restores that
+ancestor link and never reverts a leaf through it, because a leaf path
+under the restored link would resolve into the repository. The
+in-process reversal after a failed `post_apply` hook applies the same
+fold. `patina status` reports drift
 between the declared end-state and the live filesystem. The per-machine
 state directory for the journal, backups, lock, and drift cache uses
 OS-appropriate locations and must not live on a cloud-sync mount. See

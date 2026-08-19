@@ -1106,6 +1106,8 @@ mod tests {
                 .map(|_| TargetDisposition {
                     aggregate: Disposition::Create,
                     leaves: Vec::new(),
+                    replace_root: false,
+                    mode_change: false,
                 })
                 .collect(),
             entry_index: 0,

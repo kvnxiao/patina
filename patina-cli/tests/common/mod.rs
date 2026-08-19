@@ -142,6 +142,18 @@ pub fn symlink_file(source: &Utf8Path, link: &Utf8Path) {
         .expect("create symlink");
 }
 
+#[cfg(unix)]
+pub fn symlink_dir(source: &Utf8Path, link: &Utf8Path) {
+    std::os::unix::fs::symlink(source.as_std_path(), link.as_std_path())
+        .expect("create dir symlink");
+}
+
+#[cfg(windows)]
+pub fn symlink_dir(source: &Utf8Path, link: &Utf8Path) {
+    std::os::windows::fs::symlink_dir(source.as_std_path(), link.as_std_path())
+        .expect("create dir symlink");
+}
+
 /// Run `git` with deterministic identity and timestamps.
 pub fn git_in(cwd: &Utf8Path, epoch: i64, args: &[&str]) -> String {
     let date = format!("{epoch} +0000");

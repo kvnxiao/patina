@@ -200,16 +200,20 @@ pub fn is_unc_path(path: &Utf8Path) -> bool {
 }
 
 /// Whether the resolved plan contains any operation that creates a
-/// symbolic link ([`FileMode::Symlink`] or [`FileMode::SymlinkDir`]).
+/// symbolic link ([`FileMode::Symlink`], [`FileMode::SymlinkDir`], or
+/// per-leaf [`FileMode::SymlinkTree`]).
 ///
 /// Gate the whole Developer Mode flow: only a
 /// plan that creates symbolic links can require Developer Mode, so a plan
 /// of pure copies / renders never prompts.
 #[must_use = "the symlink predicate gates the Developer Mode flow"]
 pub fn plan_has_symlink_op(plan: &ResolvedPlan) -> bool {
-    plan.operations
-        .iter()
-        .any(|op| matches!(op.mode, FileMode::Symlink | FileMode::SymlinkDir))
+    plan.operations.iter().any(|op| {
+        matches!(
+            op.mode,
+            FileMode::Symlink | FileMode::SymlinkDir | FileMode::SymlinkTree
+        )
+    })
 }
 
 /// The host-state inputs the symlink-elevation gate decision needs.
@@ -374,6 +378,8 @@ mod tests {
             dispositions: vec![crate::apply::engine::TargetDisposition {
                 aggregate: crate::journal::Disposition::Create,
                 leaves: Vec::new(),
+                replace_root: false,
+                mode_change: false,
             }],
             entry_index: 0,
             ignore_rules: crate::ignore_rules::none(),
@@ -423,6 +429,7 @@ mod tests {
     fn plan_predicate_detects_symlink_modes_only() {
         assert!(plan_has_symlink_op(&plan(vec![op(FileMode::Symlink)])));
         assert!(plan_has_symlink_op(&plan(vec![op(FileMode::SymlinkDir)])));
+        assert!(plan_has_symlink_op(&plan(vec![op(FileMode::SymlinkTree)])));
         assert!(plan_has_symlink_op(&plan(vec![
             op(FileMode::Copy),
             op(FileMode::SymlinkDir),
