@@ -62,6 +62,7 @@ pub(super) fn per_file_symlink(
         // them under every target.
         let relative_files = super::walk_files(source, rules)?;
         for target in targets {
+            super::verify_interior_dirs_real(target, relative_files.iter())?;
             for rel in &relative_files {
                 let file_source = source.join(rel);
                 let file_target = target.join(rel);
@@ -130,6 +131,10 @@ pub(super) fn tree_symlink(
     let relative_files = super::walk_files(source, rules)?;
     let mut records = Vec::with_capacity(targets.len() * relative_files.len());
     for target in targets {
+        super::verify_interior_dirs_real(
+            target,
+            relative_files.iter().filter(|rel| write.includes(rel)),
+        )?;
         for rel in &relative_files {
             if !write.includes(rel) {
                 continue;
@@ -180,10 +185,7 @@ pub(super) fn dir_symlink(
         // `materialize`, so whatever is here, a real directory or a foreign
         // symlink, is already stashed and rollback can restore it; the removal
         // only clears the path the new link will occupy. Mirrors `link_file`.
-        crate::fsx::remove_entry(target).map_err(|source| ExecutorError::Io {
-            path: target.to_path_buf(),
-            source,
-        })?;
+        super::remove_entry_at(target)?;
         create_symlink(source, target, LinkKind::Directory)?;
         records.push(CompletionRecord::symlink(
             source.to_path_buf(),
@@ -204,10 +206,7 @@ pub(super) fn dir_symlink(
 /// removal here only clears the path the new link will occupy.
 fn link_file(source: &Utf8Path, target: &Utf8Path) -> Result<CompletionRecord, ExecutorError> {
     ensure_parent(target)?;
-    crate::fsx::remove_entry(target).map_err(|source| ExecutorError::Io {
-        path: target.to_path_buf(),
-        source,
-    })?;
+    super::remove_entry_at(target)?;
     create_symlink(source, target, LinkKind::File)?;
     Ok(CompletionRecord::symlink(
         source.to_path_buf(),
@@ -552,6 +551,43 @@ mod tests {
         assert_eq!(
             read_link_canonical(&leaf),
             canonical(&src_dir.join("a.conf"))
+        );
+    }
+
+    #[test]
+    fn tree_symlink_refuses_to_link_through_a_symlinked_interior_directory() {
+        let (_td, dir) = utf8_tempdir();
+        let src_dir = dir.join("d");
+        fs_err::create_dir_all(src_dir.join("sub")).expect("mkdir sub");
+        fs_err::write(src_dir.join("sub").join("a.conf"), b"repo bytes").expect("write leaf");
+        let target = dir.join("dest");
+        fs_err::create_dir_all(&target).expect("mkdir target");
+        crate::test_util::symlink_dir(&src_dir.join("sub"), &target.join("sub"));
+
+        let err = tree_symlink(
+            &src_dir,
+            std::slice::from_ref(&target),
+            LeafWrite::All,
+            &crate::ignore_rules::none(),
+        )
+        .expect_err("a symlinked interior directory must be refused");
+
+        assert!(
+            matches!(&err, ExecutorError::InteriorSymlink { path, .. } if *path == target.join("sub")),
+            "the typed error names the interior link, got: {err:?}"
+        );
+        let leaf = src_dir.join("sub").join("a.conf");
+        assert!(
+            fs_err::symlink_metadata(&leaf)
+                .expect("stat source leaf")
+                .file_type()
+                .is_file(),
+            "the repository source leaf must survive as a regular file"
+        );
+        assert_eq!(
+            fs_err::read(&leaf).expect("read source leaf"),
+            b"repo bytes",
+            "no clear or link may reach the repository through the link"
         );
     }
 

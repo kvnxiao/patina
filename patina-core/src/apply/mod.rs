@@ -194,6 +194,20 @@ pub enum ExecutorError {
         path: Utf8PathBuf,
     },
 
+    /// A tree-mode target contains a symbolic link between its root and a
+    /// leaf. Plan-time classification and execution reject the leaf before
+    /// reading or deleting the link's destination.
+    #[error(
+        "the directory {path} inside the tree target {root} is a symbolic \
+         link; remove the link and re-run `patina apply`"
+    )]
+    InteriorSymlink {
+        /// The declared tree target root.
+        root: Utf8PathBuf,
+        /// The interior directory occupied by a symbolic link.
+        path: Utf8PathBuf,
+    },
+
     /// The render executor was handed a source that does not carry the
     /// `.tmpl` suffix. Templating is keyed off the source suffix, so the
     /// engine should never classify a non-`.tmpl` source as a render; this
@@ -318,6 +332,54 @@ fn ensure_parent(target: &Utf8Path) -> Result<(), ExecutorError> {
     Ok(())
 }
 
+/// Remove a symlink or directory before a content write and leave regular
+/// files in place for in-place overwrite.
+///
+/// Content writes follow a symlink at the target, so the engine backs up the
+/// target before this helper removes it for rollback.
+fn clear_foreign_entry(target: &Utf8Path) -> Result<(), ExecutorError> {
+    match fs_err::symlink_metadata(target) {
+        Ok(meta) if meta.file_type().is_symlink() || meta.is_dir() => remove_entry_at(target),
+        _ => Ok(()),
+    }
+}
+
+/// Verify that no directory between `root` and a leaf in `relatives` is a
+/// symbolic link, returning [`ExecutorError::InteriorSymlink`] for the
+/// outermost offender.
+///
+/// Plan-time classification passes every walked leaf; executors pass only
+/// leaves selected for writing. The root and its ancestors are out of scope:
+/// the engine gates the root separately, and links above it are the user's
+/// filesystem layout.
+fn verify_interior_dirs_real<'a>(
+    root: &Utf8Path,
+    relatives: impl IntoIterator<Item = &'a Utf8PathBuf>,
+) -> Result<(), ExecutorError> {
+    let prefixes: std::collections::BTreeSet<&Utf8Path> = relatives
+        .into_iter()
+        .flat_map(|relative| relative.ancestors().skip(1))
+        .filter(|prefix| !prefix.as_str().is_empty())
+        .collect();
+    for prefix in prefixes {
+        let dir = root.join(prefix);
+        if fs_err::symlink_metadata(&dir).is_ok_and(|meta| meta.file_type().is_symlink()) {
+            return Err(ExecutorError::InteriorSymlink {
+                root: root.to_path_buf(),
+                path: dir,
+            });
+        }
+    }
+    Ok(())
+}
+
+fn remove_entry_at(target: &Utf8Path) -> Result<(), ExecutorError> {
+    crate::fsx::remove_entry(target).map_err(|source| ExecutorError::Io {
+        path: target.to_path_buf(),
+        source,
+    })
+}
+
 /// Walk `root` and collect every regular file `rules` does not ignore, as a
 /// path relative to `root`, in deterministic sorted order. The same source tree
 /// therefore produces the same record sequence across runs and platforms.
@@ -435,6 +497,31 @@ mod tests {
         assert_eq!(record.materialization, Materialization::Copy);
         assert_eq!(record.target, target);
         assert_eq!(fs_err::read(&target).expect("read copied file"), b"payload");
+    }
+
+    #[test]
+    fn verify_interior_dirs_real_names_the_outermost_link_and_skips_root_leaves() {
+        let (_td, dir) = utf8_tempdir();
+        let root = dir.join("root");
+        let elsewhere = dir.join("elsewhere");
+        fs_err::create_dir_all(elsewhere.join("deep")).expect("mkdir elsewhere");
+        fs_err::create_dir_all(&root).expect("mkdir root");
+        crate::test_util::symlink_dir(&elsewhere, &root.join("sub"));
+
+        let leaves = [
+            Utf8PathBuf::from("top.txt"),
+            Utf8PathBuf::from("sub/deep/a.txt"),
+            Utf8PathBuf::from("sub/deep/b.txt"),
+        ];
+        let err = verify_interior_dirs_real(&root, leaves.iter())
+            .expect_err("a symlinked interior directory must be refused");
+        assert!(
+            matches!(&err, ExecutorError::InteriorSymlink { path, .. } if *path == root.join("sub")),
+            "the outermost link is named, not the deeper prefix, got: {err:?}"
+        );
+
+        verify_interior_dirs_real(&root, std::iter::once(&Utf8PathBuf::from("top.txt")))
+            .expect("a leaf at the root has no interior directories");
     }
 
     #[test]

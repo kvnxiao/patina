@@ -9,6 +9,7 @@
 use super::CompletionRecord;
 use super::ExecutorError;
 use super::LeafWrite;
+use super::clear_foreign_entry;
 use super::ensure_parent;
 use super::with_sharing_violation_retry;
 use camino::Utf8Path;
@@ -29,6 +30,7 @@ pub(super) fn copy_file(
     let mut records = Vec::with_capacity(targets.len());
     for target in targets {
         ensure_parent(target)?;
+        clear_foreign_entry(target)?;
         with_sharing_violation_retry(|| fs_err::copy(source, target)).map_err(|source_err| {
             ExecutorError::Io {
                 path: target.to_path_buf(),
@@ -85,6 +87,10 @@ pub(super) fn copy_tree(
     let relative_files = super::walk_files(source, rules)?;
     let mut records = Vec::new();
     for target in targets {
+        super::verify_interior_dirs_real(
+            target,
+            relative_files.iter().filter(|rel| write.includes(rel)),
+        )?;
         for rel in &relative_files {
             if !write.includes(rel) {
                 continue;
@@ -92,6 +98,7 @@ pub(super) fn copy_tree(
             let file_source = source.join(rel);
             let file_target = target.join(rel);
             ensure_parent(&file_target)?;
+            clear_foreign_entry(&file_target)?;
             with_sharing_violation_retry(|| fs_err::copy(&file_source, &file_target)).map_err(
                 |source_err| ExecutorError::Io {
                     path: file_target.clone(),
@@ -205,6 +212,168 @@ mod tests {
         assert!(
             !target.join("b.txt").exists(),
             "the unselected leaf must not be written"
+        );
+    }
+
+    #[test]
+    fn copy_file_replaces_a_symlink_target_with_a_regular_file() {
+        let (_td, dir) = utf8_tempdir();
+        let source = dir.join("src");
+        fs_err::write(&source, b"new bytes").expect("write source");
+        let target = dir.join("dst");
+        crate::test_util::symlink_file(&source, &target);
+
+        copy_file(&source, std::slice::from_ref(&target)).expect("copy over a symlink");
+
+        let meta = fs_err::symlink_metadata(&target).expect("stat target");
+        assert!(
+            meta.file_type().is_file(),
+            "the target must become a regular file"
+        );
+        assert_eq!(fs_err::read(&target).expect("read target"), b"new bytes");
+        assert_eq!(
+            fs_err::read(&source).expect("read source"),
+            b"new bytes",
+            "the source is untouched"
+        );
+    }
+
+    #[test]
+    fn copy_file_over_a_dangling_symlink_writes_the_target_not_the_link_destination() {
+        let (_td, dir) = utf8_tempdir();
+        let source = dir.join("src");
+        fs_err::write(&source, b"payload").expect("write source");
+        let ghost = dir.join("module").join("ghost");
+        fs_err::create_dir_all(ghost.parent().expect("ghost parent")).expect("mkdir");
+        fs_err::write(&ghost, b"x").expect("write ghost");
+        let target = dir.join("dst");
+        crate::test_util::symlink_file(&ghost, &target);
+        fs_err::remove_file(&ghost).expect("dangle the target link");
+
+        copy_file(&source, std::slice::from_ref(&target)).expect("copy over a dangling symlink");
+
+        assert!(
+            fs_err::symlink_metadata(&target)
+                .expect("stat target")
+                .file_type()
+                .is_file(),
+            "the target must become a regular file"
+        );
+        assert_eq!(fs_err::read(&target).expect("read target"), b"payload");
+        assert!(
+            !ghost.exists(),
+            "no file may appear at the dead link's destination"
+        );
+    }
+
+    #[test]
+    fn copy_file_clears_a_directory_target() {
+        let (_td, dir) = utf8_tempdir();
+        let source = dir.join("src");
+        fs_err::write(&source, b"payload").expect("write source");
+        let target = dir.join("dst");
+        fs_err::create_dir_all(target.join("inner")).expect("mkdir target dir");
+
+        copy_file(&source, std::slice::from_ref(&target)).expect("copy over a directory");
+
+        assert!(
+            fs_err::symlink_metadata(&target)
+                .expect("stat target")
+                .file_type()
+                .is_file(),
+            "the directory is cleared and the file written at the path"
+        );
+        assert_eq!(fs_err::read(&target).expect("read target"), b"payload");
+    }
+
+    #[test]
+    fn copy_file_overwrites_a_regular_file_in_place() {
+        let (_td, dir) = utf8_tempdir();
+        let source = dir.join("src");
+        fs_err::write(&source, b"new bytes").expect("write source");
+        let target = dir.join("dst");
+        fs_err::write(&target, b"old bytes").expect("write target");
+        let alias = dir.join("alias");
+        fs_err::hard_link(&target, &alias).expect("hard-link the target");
+
+        copy_file(&source, std::slice::from_ref(&target)).expect("copy over a regular file");
+
+        assert_eq!(
+            fs_err::read(&alias).expect("read alias"),
+            b"new bytes",
+            "the hard-linked alias sees the new bytes, so the inode was reused"
+        );
+    }
+
+    #[test]
+    fn copy_tree_replaces_a_symlink_leaf_with_a_regular_file() {
+        let (_td, dir) = utf8_tempdir();
+        let src = dir.join("src");
+        fs_err::create_dir_all(&src).expect("mkdir src");
+        fs_err::write(src.join("a.txt"), b"a-bytes").expect("write a");
+        let target = dir.join("dest");
+        fs_err::create_dir_all(&target).expect("mkdir dest");
+        crate::test_util::symlink_file(&src.join("a.txt"), &target.join("a.txt"));
+
+        copy_tree(
+            &src,
+            std::slice::from_ref(&target),
+            LeafWrite::All,
+            &crate::ignore_rules::none(),
+        )
+        .expect("copy tree over a symlink leaf");
+
+        let leaf = target.join("a.txt");
+        assert!(
+            fs_err::symlink_metadata(&leaf)
+                .expect("stat leaf")
+                .file_type()
+                .is_file(),
+            "the leaf must become a regular file"
+        );
+        assert_eq!(
+            fs_err::read(src.join("a.txt")).expect("read source leaf"),
+            b"a-bytes",
+            "the source leaf is untouched"
+        );
+    }
+
+    #[test]
+    fn copy_tree_refuses_to_write_through_a_symlinked_interior_directory() {
+        let (_td, dir) = utf8_tempdir();
+        let src = dir.join("src");
+        fs_err::create_dir_all(src.join("sub")).expect("mkdir src sub");
+        fs_err::write(src.join("sub").join("a.txt"), b"new").expect("write source leaf");
+        let victim = dir.join("victim");
+        fs_err::create_dir_all(&victim).expect("mkdir victim");
+        fs_err::write(victim.join("a.txt"), b"victim bytes").expect("write victim leaf");
+        let target = dir.join("dest");
+        fs_err::create_dir_all(&target).expect("mkdir target");
+        crate::test_util::symlink_dir(&victim, &target.join("sub"));
+
+        let err = copy_tree(
+            &src,
+            std::slice::from_ref(&target),
+            LeafWrite::All,
+            &crate::ignore_rules::none(),
+        )
+        .expect_err("a symlinked interior directory must be refused");
+
+        assert!(
+            matches!(&err, ExecutorError::InteriorSymlink { path, .. } if *path == target.join("sub")),
+            "the typed error names the interior link, got: {err:?}"
+        );
+        assert_eq!(
+            fs_err::read(victim.join("a.txt")).expect("read victim leaf"),
+            b"victim bytes",
+            "no write may reach the link's destination"
+        );
+        assert!(
+            fs_err::symlink_metadata(target.join("sub"))
+                .expect("stat interior")
+                .file_type()
+                .is_symlink(),
+            "the foreign link is left in place"
         );
     }
 

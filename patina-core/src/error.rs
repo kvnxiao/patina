@@ -151,6 +151,18 @@ pub enum EngineError {
         expected_table: &'static str,
     },
 
+    /// The plan did not consent to replace a tree-mode target root that is a
+    /// symbolic link. The executor refuses before writing any leaf because a
+    /// leaf write through the link can modify its destination.
+    #[error(
+        "the tree target {target} is a symbolic link the current plan did not \
+         consent to replace; re-run `patina apply` to plan the replacement"
+    )]
+    TreeTargetIsSymlink {
+        /// The declared target directory occupied by a symbolic link.
+        target: Utf8PathBuf,
+    },
+
     /// A managed entry survived `when`-gating but its source does not exist
     /// on disk. Raised at plan time, before
     /// the advisory lock, the journal flush, or any mutation, rather than
