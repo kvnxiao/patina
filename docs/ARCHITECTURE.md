@@ -207,6 +207,14 @@ plan-time flag; on a symlinked root the plan did not consent to replace
 typed `TreeTargetIsSymlink` error before any leaf write, and the next
 apply re-plans with consent.
 
+Backup and restore take a symbolic link's Windows flavour from the
+link's own file type (`fsx::symlink_dir_flavor`), never from a stat of
+its destination: a dangling directory link has no destination to stat,
+and a link restored file-flavoured would not resolve once the
+destination directory reappears. `fsx::clone_entry` (backup, crash
+recovery, rollback) and the in-process roll-forward snapshot both pass
+the flavour to `fsx::symlink_to`.
+
 ### Tree enumeration and `ignore`
 
 Every tree-mode phase enumerates leaves through `apply::walk_files`:

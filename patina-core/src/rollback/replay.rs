@@ -140,8 +140,9 @@ struct Snapshot {
 enum SnapshotState {
     /// The target was a regular file; its bytes are staged at this path.
     File(Utf8PathBuf),
-    /// The target was a symbolic link pointing at this path.
-    Symlink(Utf8PathBuf),
+    /// The target was a symbolic link pointing at `link`, with the Windows
+    /// flavour captured from the link itself.
+    Symlink { link: Utf8PathBuf, dir_flavor: bool },
     /// The target did not exist at snapshot time.
     Absent,
 }
@@ -193,7 +194,10 @@ fn snapshot_targets(stage: &Utf8Path, targets: &[Utf8PathBuf]) -> std::io::Resul
                         format!("non-UTF-8 symlink target: {}", bad.display()),
                     )
                 })?;
-                SnapshotState::Symlink(link)
+                SnapshotState::Symlink {
+                    link,
+                    dir_flavor: crate::fsx::symlink_dir_flavor(meta.file_type()),
+                }
             }
             Ok(meta) if meta.is_dir() => {
                 // A directory target (symlink-dir restored, or a copy-tree
@@ -289,7 +293,9 @@ fn restore_snapshot(snapshot: &Snapshot) -> std::io::Result<()> {
                 fs_err::copy(staged, target).map(|_| ())
             }
         }
-        SnapshotState::Symlink(link) => crate::fsx::symlink_to(link, target),
+        SnapshotState::Symlink { link, dir_flavor } => {
+            crate::fsx::symlink_to(link, target, *dir_flavor)
+        }
         SnapshotState::Absent => Ok(()),
     }
 }
@@ -534,6 +540,30 @@ mod tests {
             replaced_root_ancestor(&e.backups, ts, &root.join("a.conf")),
             None,
             "a live symlink root is not a replaced root"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn snapshot_restores_a_dangling_directory_link_dir_flavoured() {
+        use std::os::windows::fs::FileTypeExt as _;
+        let e = env();
+        let dest = e.root.join("dest_dir");
+        fs_err::create_dir_all(&dest).expect("mkdir dest");
+        let target = e.root.join("link");
+        crate::test_util::symlink_dir(&dest, &target);
+        fs_err::remove_dir(&dest).expect("dangle the link");
+        let stage = e.root.join("stage");
+        fs_err::create_dir_all(&stage).expect("mkdir stage");
+
+        let snapshots = snapshot_targets(&stage, std::slice::from_ref(&target)).expect("snapshot");
+        crate::fsx::remove_entry(&target).expect("clear the live link");
+        restore_snapshot(snapshots.first().expect("one snapshot")).expect("restore");
+
+        let meta = fs_err::symlink_metadata(&target).expect("stat restored");
+        assert!(
+            meta.file_type().is_symlink_dir(),
+            "the roll-forward must restore the link dir-flavoured"
         );
     }
 
