@@ -154,14 +154,14 @@ pub(crate) fn copy_tree(src: &Utf8Path, dst: &Utf8Path) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Whether a symlink's `file_type` has the Windows directory flavour.
+/// Read whether `file_type` marks a symlink as directory-flavoured.
 #[cfg(windows)]
 pub(crate) fn symlink_dir_flavor(file_type: std::fs::FileType) -> bool {
     use std::os::windows::fs::FileTypeExt as _;
     file_type.is_symlink_dir()
 }
 
-/// Whether a symlink's `file_type` has the Windows directory flavour.
+/// Read whether `file_type` marks a symlink as directory-flavoured.
 /// Unix has one link kind, so this always returns `false`.
 #[cfg(unix)]
 pub(crate) fn symlink_dir_flavor(_file_type: std::fs::FileType) -> bool {

@@ -556,8 +556,6 @@ mod tests {
 
     #[test]
     fn tree_symlink_refuses_to_link_through_a_symlinked_interior_directory() {
-        // The link points at the source's own subdirectory, so the per-leaf
-        // clear through it would delete the repository source.
         let (_td, dir) = utf8_tempdir();
         let src_dir = dir.join("d");
         fs_err::create_dir_all(src_dir.join("sub")).expect("mkdir sub");

@@ -203,10 +203,9 @@ pub fn handle_target_events(
             continue;
         }
 
-        // The entry kind is part of the match, the same rule that the status
-        // seam (`status::classify::content_matches`) applies: a symlink or
-        // directory where a regular file is expected is drift even when a
-        // read through it returns matching bytes.
+        // Keep watcher classification aligned with status: a symlink or
+        // directory where a regular file is expected is drift even when
+        // reading through it returns matching bytes.
         let is_regular_file = fs_err::symlink_metadata(content.target.as_std_path())
             .is_ok_and(|meta| meta.file_type().is_file());
         let live = match fs_err::read(content.target.as_std_path()) {
@@ -395,9 +394,6 @@ mod tests {
         assert_ne!(entry.expected_hash, entry.actual_hash);
     }
 
-    /// A symlink where a copy-mode file is expected is drift to the watcher,
-    /// matching status's Drifted for the identical live state: the entry kind
-    /// is part of the match even when the link's referent hashes equal.
     #[test]
     fn symlink_where_copy_expected_is_drift_matching_status() {
         let (_temp, dir) = temp_state();

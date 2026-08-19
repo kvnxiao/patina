@@ -162,11 +162,11 @@ pub struct TargetDisposition {
     /// relative to the declared target directory; empty for single-target
     /// modes.
     pub leaves: Vec<LeafDisposition>,
-    /// For a tree mode, whether the declared target directory is occupied by
-    /// a symbolic link the executor must remove before writing leaves.
-    /// The executor refuses a symlinked root unless this flag is set, so a
-    /// stale plan can never write leaves through the link. In-memory only;
-    /// the durable [`PlannedOperation`] records only the aggregate.
+    /// Whether a tree target root is a symbolic link that the executor must
+    /// remove before writing leaves. The executor refuses a symlinked root
+    /// unless this flag is set, so a stale plan cannot write through the link.
+    /// This flag exists only in memory; [`PlannedOperation`] records only the
+    /// aggregate.
     pub replace_root: bool,
     /// Whether the latest committed apply materialized this target from the
     /// same source under a different entry kind (a `mode` edit on the same
@@ -345,9 +345,6 @@ pub fn plan(
         repo_ignore,
     } = build_planning_context(&request.cli_overrides)?;
     let mut registry = RemoteRegistry::new(&remotes, &repo_root, &state_dir, CachePolicy::Fetch);
-    // The latest committed record, read once per plan: classification
-    // consults it to tell a `mode` edit (same target, same source, new
-    // kind) from a target transferred between entries.
     let provenance = Provenance::read(&state_dir.join("journal"))?;
 
     // Resolve every managed entry into its canonical source/targets, kept
@@ -884,9 +881,6 @@ fn insert_managed_targets(
     // next apply, and the reap pass would delete it (`copy-tree`'s journal
     // hashing would then fail on the just-reaped file).
     if matches!(entry.mode, FileMode::SymlinkTree | FileMode::CopyTree) {
-        // The declared directory itself: consulted by orphan detection so a
-        // root-level record from a prior whole-directory `symlink` apply is
-        // superseded by the tree, not reaped.
         let root_keys: Vec<Utf8PathBuf> = entry
             .targets
             .iter()
@@ -1139,10 +1133,9 @@ fn assemble_plan_operations(
 /// validated.
 #[expect(
     clippy::too_many_arguments,
-    reason = "the per-entry gate needs the entry, its module, the remote \
-              registry, and the four planning-context handles resolution \
-              reads; threading a struct here would only move the same \
-              fields behind a name."
+    reason = "the per-entry gate needs the entry, module, remote registry, \
+              and planning-context handles that resolution reads; a struct \
+              would only move the same fields behind a name."
 )]
 fn gate_and_resolve_entry(
     entry: &ManagedEntry,
@@ -1174,18 +1167,13 @@ fn gate_and_resolve_entry(
     )?))
 }
 
-/// The entry kind a committed target was materialized as, for the
-/// journal-provenance side of the `replace`-verb decision.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RecordedKind {
-    /// The commit recorded the target as a symbolic link.
     Symlink,
-    /// The commit recorded the target as a regular file (copy or render).
     Content,
 }
 
 impl RecordedKind {
-    /// The kind `mode` materializes at a single target.
     fn of_mode(mode: FileMode) -> Self {
         match mode {
             FileMode::Symlink | FileMode::SymlinkDir | FileMode::SymlinkTree => Self::Symlink,
@@ -1194,26 +1182,12 @@ impl RecordedKind {
     }
 }
 
-/// The latest committed apply's `(kind, source)` per manage-keyed target.
-///
-/// Classification consults it to separate a `mode` edit on one entry (the
-/// same target, the same canonical source, a different kind: rendered as a
-/// `replace` block) from a target transferred between entries (a different
-/// source: rendered with the plain mode verb). A fresh state directory or a
-/// never-managed target has no record; `mode_change` then returns `false`.
 #[derive(Debug, Default)]
 struct Provenance {
     targets: BTreeMap<Utf8PathBuf, (RecordedKind, String)>,
 }
 
 impl Provenance {
-    /// Read the latest committed record under `journal_dir` into the map,
-    /// or an empty map when no commit exists.
-    ///
-    /// # Errors
-    ///
-    /// Returns an [`EngineError`] when the journal directory or the newest
-    /// readable commit sentinel cannot be read.
     fn read(journal_dir: &Utf8Path) -> Result<Self, EngineError> {
         let Some(record) = crate::journal::read_latest_commit(journal_dir)? else {
             return Ok(Self::default());
@@ -1232,11 +1206,6 @@ impl Provenance {
         Ok(Self { targets })
     }
 
-    /// Whether the latest commit materialized `target` from `source` under a
-    /// kind other than `kind`: the journal-provenance half of the
-    /// `replace`-verb rule. Sources are compared on the verbatim-stripped
-    /// form, the same identity that the symlink classifier compares link
-    /// targets under; the recorded side is stored pre-stripped.
     fn mode_change(&self, target: &Utf8Path, kind: RecordedKind, source: &Utf8Path) -> bool {
         self.targets
             .get(&crate::status::manage_key(target))
@@ -1247,28 +1216,6 @@ impl Provenance {
     }
 }
 
-/// Classify each declared target of one resolved entry against live
-/// filesystem state at plan time.
-///
-/// Single-target modes classify the target directly. Tree modes
-/// (`copy-tree`, `symlink-tree`) enumerate the source leaves with
-/// [`walk_files`](crate::apply::walk_files) and classify each leaf, then
-/// fold the per-leaf results into the per-op aggregate:
-/// `Create` if the target directory is absent, otherwise `Unchanged` iff
-/// every leaf is `Unchanged`, otherwise `Update`. The per-leaf dispositions
-/// ride along on each [`TargetDisposition`] for the execute write-skip
-/// and the per-leaf reporting.
-///
-/// A template target is classified against its freshly rendered output,
-/// rendered once here through `engine` / `resolver`.
-///
-/// # Errors
-///
-/// Returns an [`EngineError`] when a copy/copy-tree leaf's source cannot be
-/// read to hash it, a tree source cannot be walked, a directory between a
-/// tree root and one of its leaves is a symbolic link
-/// ([`ExecutorError::InteriorSymlink`](crate::apply::ExecutorError::InteriorSymlink)),
-/// or a template source cannot be read or rendered.
 fn classify_entry(
     mode: FileMode,
     source: &Utf8Path,
@@ -1302,10 +1249,6 @@ fn classify_entry(
     Ok(dispositions)
 }
 
-/// Whether the live entry at `target` is a different kind than `mode`
-/// materializes: a symlink or directory where a content mode writes a
-/// regular file, or a non-symlink where a symlink mode writes a link.
-/// Returns `false` for an absent target.
 fn target_kind_flips(mode: FileMode, target: &Utf8Path) -> bool {
     let Ok(meta) = fs_err::symlink_metadata(target) else {
         return false;
@@ -1365,14 +1308,6 @@ fn classify_target(
         });
     };
 
-    // A symbolic link at the tree root is never walked through: a leaf path
-    // under the link resolves into the link's destination, and both
-    // classifying and writing there would touch the repository's own source
-    // files. Enumerate the source leaves instead, mark every leaf Create,
-    // and flag the root for a consented remove-then-write. The tree root
-    // materializes as a real directory, so any recorded root kind other
-    // than Content — a whole-directory symlink record — with the same
-    // source is a mode edit.
     if root_meta.file_type().is_symlink() {
         let leaves: Vec<LeafDisposition> = crate::apply::walk_files(source, rules)?
             .into_iter()
@@ -1453,9 +1388,9 @@ fn classify_target(
 /// [`EngineError::Template`].
 #[expect(
     clippy::too_many_arguments,
-    reason = "resolution needs the entry, its origin and module name, and \
-              the planning-context handles classification reads; threading \
-              a struct here would only move the same fields behind a name."
+    reason = "resolution needs the entry, origin, module name, and \
+              planning-context handles that classification reads; a struct \
+              would only move the same fields behind a name."
 )]
 fn resolve_entry(
     entry: &ManagedEntry,
@@ -1673,36 +1608,17 @@ fn planned_operation(
     }
 }
 
-/// Materialize one declared target according to its plan-time disposition,
-/// upholding the write-and-backup skip.
+/// Materialize one target after backing up any pre-existing entry.
 ///
-/// - **Aggregate `Unchanged`**: the target (single-target or whole tree)
-///   matches desired state, so it is neither backed up nor written. No
-///   [`CompletionRecord`] is produced; the commit records it from the resolved
-///   plan instead.
-/// - **Single-target `Create` / `Update`**: back up the pre-existing target (a
-///   no-op for an absent `Create` target, since [`backup_before_overwrite`]
-///   only stashes something that exists), then materialize it.
-/// - **Tree `Create` / `Update`**: back up the target directory as a unit (a
-///   whole-directory backup, which captures every leaf's prior bytes), then
-///   (re)write only the leaves whose per-leaf disposition is not `Unchanged`. A
-///   `Create` aggregate carries no per-leaf entries, so every leaf is written
-///   ([`LeafWrite::All`]); an `Update` aggregate writes only the drifted leaves
-///   ([`LeafWrite::Only`]), leaving clean leaves' inode/mtime untouched. When
-///   the plan consented (`replace_root`), a symbolic link at the root is
-///   removed first and every leaf is then written ([`LeafWrite::All`]).
-///
-/// # Errors
-///
-/// Returns an [`EngineError`] when a backup or an executor write fails, and
-/// [`EngineError::TreeTargetIsSymlink`] when a tree root is a symbolic link
-/// the plan did not consent to replace.
+/// Tree updates write only non-`Unchanged` leaves unless `replace_root` is
+/// set; that branch removes the backed-up root and writes every leaf. A
+/// symlinked root is rejected when `replace_root` is not set.
 #[expect(
     clippy::too_many_arguments,
-    reason = "the per-target write-skip needs the op's mode/source, the \
-              target and its plan-time disposition, the backup tree + \
-              timestamp, and the template engine/resolver; threading a \
-              struct here would only move the same fields behind a name."
+    reason = "the per-target write-skip needs the operation mode, source, \
+              target, disposition, backup tree, timestamp, template engine, \
+              resolver, and rules; a struct would only move the same fields \
+              behind a name."
 )]
 fn materialize_target(
     mode: FileMode,
@@ -1741,11 +1657,8 @@ fn materialize_target(
     // drifted leaves. A Create aggregate has no per-leaf entries (the target
     // dir is absent), so write every leaf.
     backup_before_overwrite(backups_dir, timestamp, target)?;
-    // A symbolic link at the root is removed only under plan-time consent
-    // (`replace_root`); the backup above stashed the link, so rollback
-    // restores it. Without consent, the plan is stale against the live
-    // filesystem: writing leaves through the link would delete and re-link
-    // the repository's own source files, so refuse before any leaf write.
+    // Keep the backup before removing a consented root. Without plan-time
+    // consent, refuse before a leaf write can follow the link.
     if fs_err::symlink_metadata(target).is_ok_and(|meta| meta.file_type().is_symlink()) {
         if !disposition.replace_root {
             return Err(EngineError::TreeTargetIsSymlink {
@@ -2434,14 +2347,10 @@ fn detect_orphans(journal_dir: &Utf8Path) -> Result<Vec<Orphan>, EngineError> {
             // status to handle. Never reaped.
             continue;
         }
-        // A record at a tree-mode entry's declared directory is the root that
-        // a prior whole-directory `symlink` apply materialized. The tree
-        // entry manages leaves, so the root key is absent from the managed
-        // set, and at preview time it is still a symlink (the directory
-        // guard below does not fire). The consented root replacement
-        // supersedes it; listing it too would pair a `remove` block with
-        // the replace for one path and promise a removal the reap never
-        // performs.
+        // A prior whole-directory `symlink` apply records the tree target root,
+        // while tree mode manages only its leaves. Skip that root because the
+        // consented replacement handles it; listing it would add a duplicate
+        // `remove` block that the reap never performs.
         if managed.tree_roots.contains(&key) {
             continue;
         }
@@ -2536,23 +2445,12 @@ async fn run_hook_phase_collecting(
     Ok(None)
 }
 
-/// Reverse every completed materialization to the pre-apply state.
+/// Reverse completed materializations to the pre-apply state.
 ///
-/// A target that had a backup is restored from it; a freshly created
-/// target (no backup) is removed. This mirrors crash recovery's reversal
-/// rule, applied in-process when a `post_apply` hook fails. Backup presence
-/// is probed with [`crate::fsx::entry_present`] and the restore goes through
-/// the kind-preserving [`crate::fsx::clone_entry`], the same pair that
-/// recovery and `patina rollback` restore through, so a backed-up symlink is
-/// restored as a symlink and a dangling-link backup still restores rather
-/// than reading as absent.
-///
-/// Completion records are per leaf, so a consented root replacement folds
-/// like `patina rollback` does: a leaf whose backup mirror path passes
-/// through the stashed root link reverts through the root as one unit
-/// (the same [`crate::rollback::replaced_root_ancestor`] rule), never
-/// individually — the leaf's own mirror path resolves through the stash
-/// into the repository.
+/// Restore backed-up entries with [`crate::fsx::clone_entry`] so their kinds,
+/// including dangling symlinks, are preserved. When a leaf backup path passes
+/// through a stashed root link, restore that root as one unit; restoring the
+/// leaf through the link would reach the repository.
 fn reverse_completed(
     completed: &[(u32, CompletionRecord)],
     backups_dir: &Utf8Path,
@@ -2560,8 +2458,6 @@ fn reverse_completed(
 ) -> Result<(), EngineError> {
     use crate::journal::mirror_backup_path;
 
-    // Reverse in inverse order so later operations are undone first, and
-    // fold each target into its replaced-root unit.
     let mut units: Vec<Utf8PathBuf> = Vec::new();
     for (_entry, record) in completed.iter().rev() {
         let unit = crate::rollback::replaced_root_ancestor(backups_dir, timestamp, &record.target)
@@ -2573,9 +2469,6 @@ fn reverse_completed(
     for target in &units {
         let backup = mirror_backup_path(backups_dir, timestamp, target);
         if crate::fsx::entry_present(&backup) {
-            // The target pre-existed; restore the original entry, kind and
-            // all. `clone_entry` clears the target and creates its parent
-            // chain itself.
             crate::fsx::clone_entry(&backup, target).map_err(|source| {
                 EngineError::Journal(crate::journal::JournalError::Filesystem(source))
             })?;
@@ -3535,8 +3428,6 @@ mod tests {
         );
     }
 
-    /// Write a `<ts>.COMMIT` sentinel holding `record` so `Provenance::read`
-    /// and `detect_orphans` read it as the latest committed apply.
     fn write_commit(journal_dir: &Utf8Path, ts: &str, record: &ApplyRecord) {
         fs_err::create_dir_all(journal_dir).expect("mkdir journal");
         fs_err::write(
@@ -3643,9 +3534,6 @@ mod tests {
         fs_err::create_dir_all(source.join("sub")).expect("mkdir source");
         fs_err::write(source.join("a.conf"), b"a").expect("write a");
         fs_err::write(source.join("sub").join("b.conf"), b"b").expect("write b");
-        // The destructive repro shape: the whole-directory link points at the
-        // source itself, so a walk through the link would classify every leaf
-        // Unchanged (copy-tree bytes trivially match themselves).
         let target = dir.join("out");
         make_symlink(&source, &target);
 
@@ -3690,8 +3578,6 @@ mod tests {
         let source = dir.join("srcdir");
         fs_err::create_dir_all(source.join("sub")).expect("mkdir source");
         fs_err::write(source.join("sub").join("a.conf"), b"a").expect("write a");
-        // The link points at the source's own subdirectory, so classifying
-        // through it would reach the repository.
         let target = dir.join("out");
         fs_err::create_dir_all(&target).expect("mkdir target");
         make_symlink(&source.join("sub"), &target.join("sub"));
@@ -3722,8 +3608,6 @@ mod tests {
         let source = dir.join("srcdir");
         fs_err::create_dir_all(&source).expect("mkdir source");
         fs_err::write(source.join("a.conf"), b"a").expect("write a");
-        // A prior symlink-tree apply left a leaf link; the entry now declares
-        // copy mode over the same source.
         let target = dir.join("out");
         fs_err::create_dir_all(&target).expect("mkdir target");
         make_symlink(&source.join("a.conf"), &target.join("a.conf"));
@@ -3872,8 +3756,6 @@ mod tests {
         let (_td, dir) = utf8_tempdir();
         let backups = dir.join("backups");
 
-        // Backup = live symlink: the target reverts to a link, not a copy of
-        // the destination's bytes.
         let link_dest = dir.join("dest");
         fs_err::write(&link_dest, b"dest").expect("write dest");
         let link_target = dir.join("was-link");
@@ -3882,9 +3764,6 @@ mod tests {
         fs_err::create_dir_all(link_backup.parent().expect("backup parent")).expect("mkdir");
         make_symlink(&link_dest, &link_backup);
 
-        // Backup = dangling symlink: `exists()` follows it and reads absent;
-        // the restore must still recreate the link rather than delete the
-        // target.
         let dangling_target = dir.join("was-dangling");
         fs_err::write(&dangling_target, b"apply wrote a file here").expect("write post-apply file");
         let dangling_backup = crate::journal::mirror_backup_path(&backups, TS, &dangling_target);
@@ -3894,8 +3773,6 @@ mod tests {
         make_symlink(&ghost, &dangling_backup);
         fs_err::remove_file(&ghost).expect("dangle the backup link");
 
-        // Backup = directory: the restore clones the tree rather than
-        // failing in `fs_err::copy`.
         let dir_target = dir.join("was-dir");
         make_symlink(&link_dest, &dir_target);
         let dir_backup = crate::journal::mirror_backup_path(&backups, TS, &dir_target);
@@ -3959,12 +3836,6 @@ mod tests {
 
     #[test]
     fn reverse_completed_folds_replaced_root_leaves_into_the_root_link() {
-        // Post-materialize state of a consented root replacement whose
-        // `post_apply` hook then failed: a real directory of leaves at the
-        // target, the pre-apply link stashed at the root's mirror path, and
-        // per-leaf completion records. The reversal must restore the root
-        // link as the unit — a leaf's own mirror path resolves through the
-        // stashed link into the repository.
         let (_td, dir) = utf8_tempdir();
         let backups = dir.join("backups");
         let repo_src = dir.join("srcdir");

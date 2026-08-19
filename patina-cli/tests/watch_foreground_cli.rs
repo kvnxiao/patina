@@ -385,10 +385,9 @@ mod foreground {
         let drifted = format!("{applied}; drifted = true\n");
         assert_ne!(drifted, applied, "the overwrite must change the bytes");
         // On macOS, FSEvents arms its stream asynchronously after `watch()`
-        // returns, so a single write landing in the startup gap is lost, not
-        // delayed. Drift detection is idempotent over repeated identical
-        // writes (no re-apply, no journal write), so re-write until the
-        // armed stream observes one.
+        // returns. A write during the startup gap is lost, not delayed.
+        // Repeat identical writes until the armed stream observes one; drift
+        // detection treats repeated identical writes as a no-op.
         let drift_logged = {
             let deadline = Instant::now() + Duration::from_secs(15);
             loop {

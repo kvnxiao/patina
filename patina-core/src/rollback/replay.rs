@@ -55,12 +55,11 @@ pub struct RevertTarget<'a> {
 /// actually mutates. For a tree leaf the `Update` restore reads the
 /// whole-tree backup at the leaf's mirror path.
 ///
-/// A leaf whose backup mirror path passes through a symbolic link stashed in
-/// this cycle's backup tree belongs to a replaced tree root: the apply
-/// removed a whole-directory link and materialized leaves in its place. The
-/// root is reverted as the unit (the live directory removed, the stashed
-/// link cloned back) and the leaf is never reverted individually — a leaf
-/// path under the restored link would resolve into the repository.
+/// When a leaf's backup mirror path passes through a symbolic link stashed in
+/// this cycle's backup tree, the apply replaced a whole-directory link with
+/// materialized leaves. Rollback restores the root as one unit: it removes
+/// the live directory and clones the stashed link back. It does not restore a
+/// leaf through the link because that path would resolve into the repository.
 ///
 /// # Errors
 ///
@@ -77,8 +76,8 @@ pub fn replay_entry(
     // Unchanged targets were neither written nor backed up, so they are
     // left wholly out of the reversal, with no snapshot and no revert. Only
     // Create/Update targets enter the atomic snapshot/roll-forward region.
-    // A leaf under a replaced root folds into that root, so the link is
-    // restored once and no leaf is reverted through it.
+    // A leaf under a replaced root maps to that root unit; restoring it
+    // separately would traverse the stashed link.
     let mut to_revert: Vec<Utf8PathBuf> = Vec::new();
     for revert in targets
         .iter()
@@ -147,19 +146,20 @@ enum SnapshotState {
     Absent,
 }
 
-/// The shallowest strict ancestor of `target` that a consented root
-/// replacement left split: its backup mirror in this cycle is the stashed
-/// whole-directory link, and its live counterpart is a real directory of
-/// materialized leaves. `None` when no ancestor matches.
+/// Find the outermost strict ancestor of `target` whose backup mirror in this
+/// cycle is a stashed whole-directory link and whose live counterpart is a
+/// real directory of materialized leaves. Return `None` when no ancestor
+/// matches.
 ///
 /// Such an ancestor reverts as the unit. A leaf beneath it must never
 /// revert individually: the leaf's own mirror path traverses the stashed
 /// link into the repository, and after the root link is restored the live
-/// leaf path would too. Ancestors are probed shallowest-first, and the
-/// probe stops at the first stashed link (a deeper mirror path would
-/// traverse it). The live-kind requirement keeps an ordinary stashed link
-/// from folding unrelated targets beneath it: after a plain re-link, the
-/// live counterpart is still a symlink, not a materialized directory.
+/// leaf path would too. Ancestors are probed from the filesystem root toward
+/// `target`, and the probe stops at the first stashed link because a deeper
+/// mirror path would traverse it. The live-kind requirement keeps an ordinary
+/// stashed link from folding unrelated targets beneath it: after a plain
+/// re-link, the live counterpart is still a symlink, not a materialized
+/// directory.
 pub(crate) fn replaced_root_ancestor(
     backups_dir: &Utf8Path,
     timestamp: &str,
@@ -477,13 +477,6 @@ mod tests {
 
     #[test]
     fn replaced_tree_root_reverts_as_the_link_and_leaves_the_repo_untouched() {
-        // Post-apply state of a consented `symlink → tree` switch: the root is
-        // a real directory of materialized leaves, the backup tree stashed the
-        // pre-apply whole-directory link at the root's mirror path, and the
-        // commit recorded the leaves (Create, no per-leaf backup). Reverting a
-        // leaf individually would resolve its backup path through the stashed
-        // link and delete the repository's own file; the root must revert as
-        // the unit.
         let e = env();
         let ts = "TS";
         let repo_src = e.root.join("srcdir");
@@ -521,10 +514,6 @@ mod tests {
 
     #[test]
     fn a_stashed_link_whose_live_counterpart_is_still_a_symlink_does_not_fold() {
-        // An ordinary drifted whole-directory link: the cycle stashed the
-        // link and the apply re-linked it, so the live counterpart is still
-        // a symlink, not a materialized tree. Targets beneath it must keep
-        // reverting individually rather than folding into the ancestor.
         let e = env();
         let ts = "TS";
         let repo_src = e.root.join("srcdir");

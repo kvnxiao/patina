@@ -217,9 +217,6 @@ mod tests {
 
     #[test]
     fn copy_file_replaces_a_symlink_target_with_a_regular_file() {
-        // Without the clear, `fs_err::copy` follows the link back to the
-        // source: the target stays a link and the repo file is rewritten in
-        // place.
         let (_td, dir) = utf8_tempdir();
         let source = dir.join("src");
         fs_err::write(&source, b"new bytes").expect("write source");
@@ -291,9 +288,6 @@ mod tests {
 
     #[test]
     fn copy_file_overwrites_a_regular_file_in_place() {
-        // A hard-linked alias shares the target's inode; if the alias reads
-        // back the new bytes, the overwrite reused the inode rather than
-        // unlinking and recreating the entry.
         let (_td, dir) = utf8_tempdir();
         let source = dir.join("src");
         fs_err::write(&source, b"new bytes").expect("write source");

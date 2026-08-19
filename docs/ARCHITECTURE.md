@@ -184,28 +184,27 @@ The target's entry kind is part of the "matches" definition. The shared
 content comparison (`status::classify::content_matches`) requires a
 regular file at the target before reading it, so a symlink whose
 referent's bytes hash equal is drift, not a match. Plan-time
-classification and `patina status` read through that one seam, and the
-watcher's drift handler applies the same regular-file rule, so a `mode`
-edit on an existing entry is planned as an `Update` everywhere instead
-of silently reading as satisfied through the stale entry.
+classification and `patina status` use that seam. The watcher's drift
+handler applies the same regular-file rule. `patina apply` therefore
+plans a mode edit as an `Update`, while `patina status` reports `Drifted`,
+instead of reading through the stale entry as if it were satisfied.
 
 The diff's `replace` verb is journal-provenance-gated. Planning reads
 the latest committed record once and maps each recorded target to its
 `(kind, source)`. A target whose live kind flips is a `replace` only
-when the record holds the same target from the same canonical source
+when the record holds the same target from the same source identity
 under a different kind: a `mode` edit on one entry. A target claimed by
 a different entry (a different source) keeps the plain mode verb with a
 kind-aware body.
 
 A symbolic link at a tree-mode target's root is never walked through:
-leaf paths under the link resolve into the link's destination, which is
-the entry's own source. The classifier enumerates the source leaves
+leaf paths under the link resolve into its destination, which can be the
+repository's source. The classifier enumerates the source leaves
 instead, marks every leaf `Create`, and flags the root for replacement
 (`replace_root`). The executor removes a symlinked root only under that
-plan-time flag; on a symlinked root the plan did not consent to replace
-(a plan stale against the live filesystem), the apply aborts with the
-typed `TreeTargetIsSymlink` error before any leaf write, and the next
-apply re-plans with consent.
+plan-time flag. When the plan is stale relative to the live filesystem,
+the apply aborts with the typed `TreeTargetIsSymlink` error before any
+leaf write, and the next apply re-plans with consent.
 
 A symbolic link *between* a tree root and its leaves is refused
 outright. Tree modes keep intermediate target directories real and
@@ -223,13 +222,13 @@ gate covers planning and leaf writes only; the orphan reap,
 without it, so a link planted after an apply can still redirect those
 single-path operations (see the Known unknowns note in AGENTS.md).
 
-Backup and restore take a symbolic link's Windows flavour from the
-link's own file type (`fsx::symlink_dir_flavor`), never from a stat of
-its destination: a dangling directory link has no destination to stat,
-and a link restored file-flavoured would not resolve once the
-destination directory reappears. `fsx::clone_entry` (backup, crash
-recovery, rollback) and the in-process roll-forward snapshot both pass
-the flavour to `fsx::symlink_to`.
+Backup and restore preserve a symbolic link's Windows flavour from the
+link's own file type (`fsx::symlink_dir_flavor`), not from a stat of its
+destination. A dangling directory link has no destination to stat, and
+restoring it with file flavour would lose its directory-link flavour when
+the destination returns. `fsx::clone_entry` (backup, crash recovery,
+rollback) and the in-process rollback snapshot both pass the flavour to
+`fsx::symlink_to`.
 
 ### Tree enumeration and `ignore`
 

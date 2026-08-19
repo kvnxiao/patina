@@ -194,10 +194,9 @@ pub enum ExecutorError {
         path: Utf8PathBuf,
     },
 
-    /// A directory between a tree target's root and one of its leaves is a
-    /// symbolic link. Tree modes keep intermediate target directories real;
-    /// classifying or writing a leaf through a foreign link would read and
-    /// delete entries at the link's destination, so both refuse first.
+    /// A tree-mode target contains a symbolic link between its root and a
+    /// leaf. Plan-time classification and execution reject the leaf before
+    /// reading or deleting the link's destination.
     #[error(
         "the directory {path} inside the tree target {root} is a symbolic \
          link; remove the link and re-run `patina apply`"
@@ -333,16 +332,11 @@ fn ensure_parent(target: &Utf8Path) -> Result<(), ExecutorError> {
     Ok(())
 }
 
-/// Remove a symbolic link or directory occupying `target` before a content
-/// write; a regular file (or an absent path) is left for the in-place
-/// overwrite.
+/// Remove a symlink or directory before a content write and leave regular
+/// files in place for in-place overwrite.
 ///
-/// A content write through `fs_err::copy` / `fs_err::write` follows a
-/// symlink at the target: without the removal, the bytes are written at the
-/// link's destination — a repository source file, or a file freshly created
-/// at a dangling link's destination — while the target stays a link. The
-/// engine backs the target up before `materialize` runs, so whatever is
-/// cleared here is already stashed for rollback.
+/// Content writes follow a symlink at the target, so the engine backs up the
+/// target before this helper removes it for rollback.
 fn clear_foreign_entry(target: &Utf8Path) -> Result<(), ExecutorError> {
     match fs_err::symlink_metadata(target) {
         Ok(meta) if meta.file_type().is_symlink() || meta.is_dir() => remove_entry_at(target),
@@ -350,24 +344,18 @@ fn clear_foreign_entry(target: &Utf8Path) -> Result<(), ExecutorError> {
     }
 }
 
-/// Verify that no directory between `root` and any leaf in `relatives` is a
-/// symbolic link, returning [`ExecutorError::InteriorSymlink`] naming the
+/// Verify that no directory between `root` and a leaf in `relatives` is a
+/// symbolic link, returning [`ExecutorError::InteriorSymlink`] for the
 /// outermost offender.
 ///
-/// Each caller passes the leaves whose paths it is about to traverse:
-/// plan-time classification every walked leaf, the executors the leaves
-/// selected for writing. The root itself and the ancestors above it are out
-/// of scope; the engine gates the root separately, and links above the root
-/// are the user's filesystem layout.
+/// Plan-time classification passes every walked leaf; executors pass only
+/// leaves selected for writing. The root and its ancestors are out of scope:
+/// the engine gates the root separately, and links above it are the user's
+/// filesystem layout.
 fn verify_interior_dirs_real<'a>(
     root: &Utf8Path,
     relatives: impl IntoIterator<Item = &'a Utf8PathBuf>,
 ) -> Result<(), ExecutorError> {
-    // The set dedupes prefixes shared between leaves and iterates in
-    // component order ("sub" before "sub/deep"), so the error names the
-    // outermost link and no stat resolves through an unchecked ancestor.
-    // A failed stat passes: an absent path is not a link, and an
-    // unreachable one fails the leaf operation with its own error.
     let prefixes: std::collections::BTreeSet<&Utf8Path> = relatives
         .into_iter()
         .flat_map(|relative| relative.ancestors().skip(1))
@@ -385,9 +373,6 @@ fn verify_interior_dirs_real<'a>(
     Ok(())
 }
 
-/// Remove the entry at `target` and fold the failure into
-/// [`ExecutorError::Io`] under the target's path. Every executor clears a
-/// target through this seam.
 fn remove_entry_at(target: &Utf8Path) -> Result<(), ExecutorError> {
     crate::fsx::remove_entry(target).map_err(|source| ExecutorError::Io {
         path: target.to_path_buf(),

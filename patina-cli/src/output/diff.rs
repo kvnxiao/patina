@@ -140,7 +140,6 @@ pub fn render(resolved: &ResolvedPlan, orphans: &[Orphan]) -> Result<String, Str
     Ok(out)
 }
 
-/// The header verb for a mode's plain (non-`replace`) block.
 fn mode_verb(mode: FileMode) -> &'static str {
     match mode {
         FileMode::Symlink | FileMode::SymlinkDir | FileMode::SymlinkTree => "symlink",
@@ -149,13 +148,6 @@ fn mode_verb(mode: FileMode) -> &'static str {
     }
 }
 
-/// Render the one-block preview of a symlinked tree root's replacement: the
-/// whole-directory link on the deleted side, the materialized leaf count on
-/// the inserted side.
-///
-/// The header carries the `replace` verb only for a provenance-confirmed
-/// mode edit; a transferred directory target keeps the plain mode verb with
-/// the same body.
 fn render_root_replacement(
     out: &mut String,
     mode: FileMode,
@@ -184,23 +176,11 @@ fn render_root_replacement(
     );
 }
 
-/// Render one block for a `(mode, source, target)` triple into `out`. Shared
-/// by the single-target path and the tree-mode per-leaf path so a drifted
-/// leaf renders the same block shape as a single-target entry of the same
-/// mode.
-///
-/// `mode_change` selects the `replace` header for a provenance-confirmed
-/// mode edit. Independently of it, a target whose live entry kind differs
-/// from what the mode writes renders kind-aware placeholder bodies: a
-/// content header over a live symlink shows the link rather than a content
-/// diff read through it, and a symlink header over a live regular file or
-/// directory shows `(text, N bytes)` / `(directory)` rather than
-/// `(absent)`.
 #[expect(
     clippy::too_many_arguments,
-    reason = "one block needs the op triple, the replace-verb flag, the \
-              template engine/resolver, and the palette; threading a struct \
-              here would only move the same fields behind a name."
+    reason = "one block needs the operation mode, source, target, replace \
+              flag, template engine, resolver, and palette; a struct would \
+              only move the same fields behind a name."
 )]
 fn render_leaf(
     out: &mut String,
@@ -252,15 +232,6 @@ fn render_leaf(
     Ok(())
 }
 
-/// Render a content-mode (`copy` / `render`) block, kind-aware at the
-/// target.
-///
-/// A live symlink at the target is never line-diffed: reading through it would
-/// diff the linked file's bytes while the entry being replaced is the link.
-/// The block shows the link on the deleted side and the incoming content's
-/// descriptor on the inserted side, under the `replace` header when the
-/// kind flip is a provenance-confirmed mode edit. Any other target renders
-/// the ordinary content diff.
 fn render_content_block(
     out: &mut String,
     verb: &str,

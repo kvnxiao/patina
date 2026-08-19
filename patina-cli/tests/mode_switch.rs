@@ -1,10 +1,8 @@
-//! Integration tests for `mode` edits on existing entries: every legal
-//! switch converges in one apply, previews honestly, and re-applies as a
-//! byte-identical no-op.
+//! Test mode edits for convergence, diff output, and rollback state.
 
 #![expect(
     clippy::expect_used,
-    reason = "integration tests use .expect() on fixtures and asserted output; allow-expect-in-tests covers #[cfg(test)] modules but not the helper functions in tests/*.rs integration crates."
+    reason = "Clippy's allow-expect-in-tests covers #[cfg(test)] modules, not integration-test helper functions."
 )]
 
 mod common;
@@ -59,8 +57,6 @@ fn apply_converges(f: &Fixture) {
     );
 }
 
-/// Two `apply --json --yes` runs over the converged state: byte-identical
-/// stdout, and no new journal or backup entries.
 fn assert_noop_reapply(f: &Fixture) {
     let journal_dir = f.state_root().join("journal");
     let backups_dir = f.state_root().join("backups");
@@ -95,7 +91,6 @@ fn assert_noop_reapply(f: &Fixture) {
     );
 }
 
-/// The non-interactive preview's stdout (diff, no writes).
 fn preview(f: &Fixture) -> String {
     let out = f.apply(&[]);
     assert_eq!(
@@ -117,7 +112,6 @@ const DIR_SYMLINK_TREE: &str =
     "[[directory]]\nsource = \"conf\"\ntarget = \"~/conf\"\nmode = \"symlink-tree\"\n";
 const DIR_COPY: &str = "[[directory]]\nsource = \"conf\"\ntarget = \"~/conf\"\nmode = \"copy\"\n";
 
-/// A module whose `conf/` directory holds `a.conf` and `sub/b.conf`.
 fn dir_fixture(manifest: &str) -> (Fixture, Utf8PathBuf) {
     let f = Fixture::new();
     let m = f.module("m", manifest);
@@ -141,8 +135,6 @@ fn assert_repo_conf_intact(m: &Utf8Path) {
         "the repo source leaf sub/b.conf must survive byte-for-byte"
     );
 }
-
-// --- [[file]] matrix ---------------------------------------------------
 
 #[test]
 fn file_symlink_to_copy_converges_with_a_replace_block() {
@@ -265,9 +257,6 @@ fn file_template_to_symlink_converges() {
 
 #[test]
 fn file_symlink_to_template_converges_and_writes_nothing_into_the_repo() {
-    // The dangling-link repro: renaming the source to `.tmpl` dangles the
-    // previously applied link, and the render must land at the target path,
-    // never at the dead link's destination inside the repo module.
     let f = Fixture::new();
     let m = f.module("m", FILE_SYMLINK);
     fs_err::write(m.join("rc"), b"static body").expect("write rc");
@@ -322,12 +311,8 @@ fn file_copy_over_a_dangling_symlink_writes_the_target() {
     assert_noop_reapply(&f);
 }
 
-// --- [[directory]] matrix ----------------------------------------------
-
 #[test]
 fn dir_symlink_to_symlink_tree_converges_and_preserves_the_repo() {
-    // The destruction repro: writing leaves through the stale root link
-    // would delete the repo's own files and link them back at themselves.
     let (f, m) = dir_fixture(DIR_SYMLINK);
     apply_converges(&f);
     let target = f.home.join("conf");
@@ -356,8 +341,6 @@ fn dir_symlink_to_symlink_tree_converges_and_preserves_the_repo() {
     assert!(is_symlink(&target.join("sub").join("b.conf")));
     assert_repo_conf_intact(&m);
 
-    // The commit record lists every materialized leaf, so status, rollback,
-    // and the next reap resolve each leaf independently.
     let record = patina_core::journal::read_latest_commit(f.state_root().join("journal"))
         .expect("read the commit record")
         .expect("a committed apply");
@@ -491,8 +474,6 @@ fn dir_copy_to_symlink_tree_converges() {
     assert_noop_reapply(&f);
 }
 
-// --- transfers: a deleted entry's target claimed by another entry -------
-
 #[test]
 fn file_target_transfer_renders_the_plain_verb_and_no_remove() {
     let f = Fixture::new();
@@ -506,7 +487,6 @@ fn file_target_transfer_renders_the_plain_verb_and_no_remove() {
     let target = f.home.join("t");
     assert!(is_symlink(&target));
 
-    // Entry A deleted; entry B (a different source) claims the target.
     set_manifest(
         &m,
         "[[file]]\nsource = \"b_src\"\ntarget = \"~/t\"\nmode = \"copy\"\n",
@@ -593,7 +573,6 @@ fn dir_root_transfer_keeps_the_mode_verb_and_no_remove() {
     let target = f.home.join("conf");
     assert!(is_symlink(&target));
 
-    // Entry A deleted; entry B claims the directory with a different source.
     set_manifest(
         &m,
         "[[directory]]\nsource = \"conf_b\"\ntarget = \"~/conf\"\nmode = \"symlink-tree\"\n",
@@ -622,8 +601,6 @@ fn dir_root_transfer_keeps_the_mode_verb_and_no_remove() {
     );
     assert_noop_reapply(&f);
 }
-
-// --- rollback of a consented root replacement ---------------------------
 
 #[test]
 fn rollback_of_a_root_replacement_restores_the_link_and_the_repo() {

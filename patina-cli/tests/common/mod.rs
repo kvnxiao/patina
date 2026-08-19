@@ -143,14 +143,12 @@ pub fn symlink_file(source: &Utf8Path, link: &Utf8Path) {
 }
 
 #[cfg(unix)]
-/// Create a directory symlink using the host platform.
 pub fn symlink_dir(source: &Utf8Path, link: &Utf8Path) {
     std::os::unix::fs::symlink(source.as_std_path(), link.as_std_path())
         .expect("create dir symlink");
 }
 
 #[cfg(windows)]
-/// Create a directory symlink using the host platform.
 pub fn symlink_dir(source: &Utf8Path, link: &Utf8Path) {
     std::os::windows::fs::symlink_dir(source.as_std_path(), link.as_std_path())
         .expect("create dir symlink");

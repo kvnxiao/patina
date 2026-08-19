@@ -143,8 +143,6 @@ fn apply_refuses_a_foreign_symlink_planted_inside_a_managed_tree() {
         String::from_utf8_lossy(&first.stderr)
     );
 
-    // Replace the real interior directory with a link into the repository:
-    // a leaf write through it would delete and re-link the repo's own file.
     let interior = f.home.join("d").join("sub");
     fs_err::remove_dir_all(interior.as_std_path()).expect("clear interior dir");
     common::symlink_dir(&src.join("sub"), &interior);

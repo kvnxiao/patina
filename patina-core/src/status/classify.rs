@@ -112,9 +112,9 @@ pub(crate) fn symlink_matches(target: &Utf8Path, desired: &str) -> bool {
 /// `status` and the plan-time classifier (for copy/copy-tree and template
 /// targets) both read through this function as their one definition of
 /// matching content, so "Unchanged" coincides exactly with status's
-/// "Clean". A target that is not a regular file (a symlink, a directory,
-/// or an absent path) is not a match, even when a read through a live
-/// symlink would return matching bytes.
+/// "Clean". A target is not a match when it is not a regular file (a
+/// symlink, directory, or absent path), even if reading through a live
+/// symlink returns matching bytes.
 #[must_use = "the comparison result drives the Clean/Unchanged classification"]
 pub(crate) fn content_matches(target: &Utf8Path, desired: &[u8; 32]) -> bool {
     let is_regular_file =

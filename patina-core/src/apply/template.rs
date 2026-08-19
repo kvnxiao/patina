@@ -129,9 +129,6 @@ mod tests {
 
     #[test]
     fn render_replaces_a_symlink_target_with_a_regular_file() {
-        // Without the clear, `fs_err::write` follows the link and the
-        // rendered output is written at the link's destination while the
-        // target stays a symlink.
         let (_td, dir) = utf8_tempdir();
         let source = dir.join("rc.tmpl");
         fs_err::write(&source, b"name = {{ who }}").expect("write template");
@@ -165,9 +162,6 @@ mod tests {
 
     #[test]
     fn render_over_a_dangling_symlink_writes_the_target_not_the_link_destination() {
-        // The `symlink → template` repro: the entry's source was renamed to
-        // `.tmpl`, so the old link dangles; the render must not create a file
-        // inside the repo module at the dead link's destination.
         let (_td, dir) = utf8_tempdir();
         let source = dir.join("rc.tmpl");
         fs_err::write(&source, b"static body").expect("write template");
