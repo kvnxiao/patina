@@ -202,23 +202,38 @@ fn canonicalize_lexical(p: &Utf8Path) -> Result<Utf8PathBuf, PathError> {
     anchor_lexical(p)
 }
 
-/// Join `p` onto the current working directory when it is relative, then fold
-/// `.` / `..` segments out. The filesystem is never consulted.
+/// Join `p` onto the canonical current working directory when it is relative,
+/// then fold `.` / `..` segments out. Only the working directory is resolved
+/// through the filesystem; `p` itself is never touched.
 fn anchor_lexical(p: &Utf8Path) -> Result<Utf8PathBuf, PathError> {
     let base = if p.is_absolute() {
         Utf8PathBuf::new()
     } else {
-        let cwd_std = env::current_dir().map_err(|source| PathError::CwdUnavailable {
-            path: p.to_path_buf(),
-            source,
-        })?;
-        Utf8PathBuf::from_path_buf(cwd_std).map_err(|cwd| PathError::CwdNotUtf8 {
-            path: p.to_path_buf(),
-            cwd,
-        })?
+        canonical_cwd(p)?
     };
 
     Ok(fold_dot_segments(&base.join(p)))
+}
+
+/// The current working directory in its canonical spelling, for anchoring
+/// `path`.
+///
+/// Windows reports the working directory in whatever spelling set it, so a
+/// process started in a short (8.3) directory reports the short form while
+/// `$HOME` and the repository root canonicalize to the long one. Resolving
+/// here gives every anchored path one spelling to compare and contract
+/// against. A working directory that cannot be canonicalized is returned as
+/// the OS reported it.
+fn canonical_cwd(path: &Utf8Path) -> Result<Utf8PathBuf, PathError> {
+    let cwd_std = env::current_dir().map_err(|source| PathError::CwdUnavailable {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let cwd = Utf8PathBuf::from_path_buf(cwd_std).map_err(|cwd| PathError::CwdNotUtf8 {
+        path: path.to_path_buf(),
+        cwd,
+    })?;
+    Ok(canonicalize(&cwd).unwrap_or(cwd))
 }
 
 /// Strip a Windows verbatim (`\\?\` / `\\?\UNC\`) path prefix where the
