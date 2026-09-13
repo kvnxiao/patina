@@ -195,12 +195,10 @@ facts, the repo-shared `[variables]` table, each module's own
 table, per-machine variables, and finally CLI overrides. A higher layer
 overrides a lower one for the same key.
 
-A module's `[variables]` table is scoped to that module. It binds the
-templates, `when` predicates, and hooks declared in the same
-`patina.toml` and does not reach any other module. Discovery order does
-not affect this scope. A module that declares no binding for a name
-resolves it from the repo-shared table, the active profile, or the
-built-ins.
+In a module manifest, `[variables]` is local to that module. Its values are
+available to templates, `when` expressions, and hooks declared in the same
+`patina.toml`. Other modules resolve the name from their own table or from a
+broader layer, regardless of manifest discovery order.
 
 ```toml
 # Root patina.toml: repo-shared defaults plus a per-profile override.
@@ -214,16 +212,22 @@ editor = "code"
 Profiles select the machine-specific variable set layered on top of the
 repo-shared one.
 
-`patina apply` and `patina status` both take `-v key=value`, repeatable.
-Pass the same overrides to `status` that the matching `apply` received.
-An entry whose `when` expression reads an overridden variable is managed
-only under those overrides, so a bare `patina status` reports its target
-as orphaned. Apply uses its own overrides for the reap set and does not
-delete a target that the same run materialized.
+Both `apply` and `status` accept repeated `-v key=value` overrides. Use the
+same values when checking an apply:
 
-`patina doctor` does not take overrides and resolves every `when`
-expression without them. If a predicate reads a variable bound only by a
-`-v` override, the stranded-target check reports no targets.
+```sh
+patina apply -v machine=laptop
+patina status -v machine=laptop
+```
+
+Without the override, `status` evaluates the configured value. It may report a
+previously applied target as orphaned when `when` becomes false. If no lower
+layer defines the variable, `status` returns an undefined-variable error.
+During apply, the same override set drives both materialization and orphan
+reaping.
+
+`doctor` does not accept variable overrides. If its ignored-target check cannot
+rebuild the managed set without them, it skips that finding.
 
 ## Apply flow
 
@@ -252,9 +256,10 @@ Re-running `patina apply` against unchanged source is a no-op: the same
 plan, no writes, and byte-identical stdout. Patina never overwrites a
 file it does not own without taking a backup first.
 
-### Hooks
+### Apply hooks
 
-A `[[hook]]` entry runs a shell command around the file operations:
+Declare a `[[hook]]` to run a shell command before or after apply writes its
+targets:
 
 ```toml
 [[hook]]
@@ -263,25 +268,28 @@ command = "fc-cache -f"
 when = "patina.os == 'linux'"
 ```
 
-`event` is `pre_apply` or `post_apply`. A `pre_apply` hook runs before
-any file operation, and a failure under the default
-`must_succeed = true` aborts the apply (exit 2) before anything is
-written. A `post_apply` hook runs after every file operation, and a
-failure rolls those operations back (exit 3). Declare
-`must_succeed = false` to treat a failure as a warning, or pass
-`--force-deploy` to treat every hook failure as a warning for one invocation.
-Patina evaluates an optional `when` expression with the variables scoped to
-the manifest that declares the hook. An optional `shell` overrides the
-platform default (`bash` on macOS
-and Linux, `pwsh` on Windows); Patina resolves it on `PATH` before any
-hook runs, so an unresolvable shell aborts the apply before the first
-write.
+After an earlier apply has committed, a run with no target changes or orphans
+returns before the hook phase. For every run that reaches the hook phase,
+Patina first resolves all hook shells on `PATH`. An unknown shell aborts before
+the planned target changes.
 
-A hook command is run verbatim and is never rendered as a template.
+When an apply reaches the hook phase, Patina uses this order:
 
-An up-to-date apply returns before the hook phase and preserves
-byte-identical stdout across consecutive runs. A reload hook therefore
-runs only when the apply has work.
+1. Run `pre_apply` hooks.
+2. Write the journal and materialize the planned changes.
+3. Run `post_apply` hooks.
+4. Commit the apply.
+
+Hook failures stop the sequence when `must_succeed = true`, which is the
+default. A failed `pre_apply` hook exits `2` before file operations begin. A
+failed `post_apply` hook rolls back the file operations and exits `3`. Set
+`must_succeed = false` on one hook, or pass `--force-deploy` to downgrade every
+hook failure for that invocation to a warning.
+
+An optional `when` expression uses the variables from the hook's manifest.
+The optional `shell` field replaces the platform default: `bash` on macOS and
+Linux, or `pwsh` on Windows. Patina passes `command` to the selected shell
+verbatim; it does not render the command as a template.
 
 ### Changing an entry's mode
 
@@ -383,8 +391,8 @@ other skips a prompt.
 | --------- | --------------------------------------------------------------------------------------------- |
 | `init`    | Scaffold a root `patina.toml` and persist the default-repository pointer.                     |
 | `add`     | Bring an existing dotfile under management: copy it into a module and write a `[[file]]` entry for a file source or a `[[directory]]` entry for a directory source.|
-| `remove`  | Unmanage a target: drop its entry and replace the target with a regular file holding the last-applied content. Refuses a single leaf of a tree-mode `[[directory]]` entry. |
-| `promote` | Copy a drifted copy-mode target's current bytes back into its repository source, then re-apply. Refuses targets deployed from remotes. |
+| `remove`  | Drop a managed target and preserve its applied contents as a regular file. Individual tree-mode leaves cannot be removed with this command. |
+| `promote` | Copy a changed copy-mode target back to its repository source, then apply again. Remote-backed targets cannot be promoted. |
 | `doctor`  | Inspect the environment for known problems (UNC repository paths, missing Windows Developer Mode, an outdated Windows build, a missing default repo, missing `git`, and targets stranded by a new `ignore` pattern). |
 | `remote`  | Manage remote git sources: `list` the pins, `check` upstream tips, `update` a pin through the update gate, `prune` cached checkouts. See [Remote sources](#remote-sources). |
 
@@ -635,19 +643,17 @@ Resolve a drifted target either way:
 - `patina promote` updates the source from the target's current bytes,
   then re-applies.
 
-`promote` refuses a target deployed from a remote (exit 1) and names the
-remote. Patina treats pinned checkouts as immutable third-party content.
-Writing into a checkout would change every entry that deploys the same
-path until the pin moves and replaces the checkout. Change the upstream
-repository, then run `patina remote update <name>`.
+### Limits on promote and remove
 
-`remove` refuses one leaf of a `symlink-tree` or `copy` `[[directory]]`
-entry (exit 1) and names the manifest that declares it. The entry
-declares the directory, while `remove` drops a `[[file]]` entry. A single
-leaf therefore has no entry to drop. Drop the `[[directory]]` entry, or
-exclude the leaf with an `ignore` pattern. A refused `remove` leaves the
-target exactly as it found it: `remove` settles which manifest entry it
-will drop before it touches the target.
+Remote checkouts are immutable, so `promote` refuses a remote-backed target.
+The error names the remote and exits `1`. Make the change upstream, then run
+`patina remote update <name>`.
+
+A tree-mode `[[directory]]` entry owns the tree as one manifest declaration.
+`remove` cannot drop an individual `symlink-tree` or `copy` leaf because no
+separate file entry exists for that leaf. The command names the declaring
+manifest, exits `1`, and leaves the target unchanged. To stop managing the
+leaf, add an `ignore` pattern or edit the directory entry.
 
 ## Remote sources
 
@@ -756,11 +762,9 @@ error naming the version mismatch, and both exit 1 on an invalid path.
 - **Symlink creation fails on Windows.** Enable Developer Mode, or run
   the command from an elevated (UAC) session.
 - **A template render fails with an undefined-variable error.** Patina
-  uses strict-undefined semantics, and a module's `[variables]` table
-  binds only the manifest that declares it. Define the variable in that
-  same module, in the root `[variables]` table to share it across
-  modules, or in the active profile; there is no empty default to fall
-  back on.
+  does not substitute an empty value for an undefined variable. Define the
+  variable in the affected module, in the root `[variables]` table for all
+  modules, or in the active profile.
 - **Apply seems to hang.** Another `patina` process may hold the
   advisory lock. Patina waits up to a bounded timeout and then exits
   with the lock-timeout exit code; check for a concurrent apply or a
@@ -779,7 +783,6 @@ error naming the version mismatch, and both exit 1 on an invalid path.
   reports drift from a live re-hash regardless. Resolve with `patina
   apply` (revert to source) or `patina promote` (update source from
   target).
-- **`patina status` reports `orphaned` for a target `patina apply` keeps
-  materializing.** The entry's `when` reads a variable the apply
-  overrides. Pass `status` the same `-v key=value` overrides (see
-  "Variables").
+- **`patina status` reports `orphaned` after an apply with `-v`.** Pass the
+  same variable overrides to `status`. Without them, the entry's `when`
+  expression can evaluate differently. See [Variables](#variables).
