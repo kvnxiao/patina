@@ -371,6 +371,16 @@ resolves against the command's current directory. For example, `patina add
 the repository location. `add` stores a `~`-relative target under your home
 directory and an absolute target elsewhere.
 
+For symlink and copy modes, the repository source preserves the target's file
+name, including a leading dot: adding `.wslconfig` to module `wsl2` writes
+`wsl2/.wslconfig` and records `source = ".wslconfig"`. Template mode writes
+`wsl2/.wslconfig.tmpl` and records the appended `.tmpl` suffix.
+
+If any filesystem entry occupies the derived repository source path, `add`
+exits `1` and does not replace the entry or write the manifest declaration.
+Choose a different module or remove the occupied repository source before
+retrying.
+
 If the path is your home directory, the repository, or an ancestor of the
 repository, `patina add` exits `1`. A home-directory entry would claim every
 file under it; staging the repository or an ancestor would recursively copy
