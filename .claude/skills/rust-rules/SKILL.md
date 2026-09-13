@@ -7,10 +7,16 @@ description: "Use for Rust implementation, review, API design, testing, error ha
 
 Use for Rust implementation, review, API design, testing, error handling, dependencies, documentation, linting, formatting, performance, and workspace structure.
 
+## Rule Strength
+
+- **Required**: Follow this rule to preserve correctness, security, lifecycle, or compatibility.
+- **Default**: Follow this project convention unless a stated exception applies.
+- **Conditional**: Apply this rule only when its stated condition or measurement is present.
+
 ## Rule References
 
 - [API design](references/rust-api-design.md): Read when adding or reviewing public APIs, constructors, traits, macros, unsafe code, features, or no_std behavior.
-- [Code quality](references/rust-code-quality.md): Read when implementing or reviewing Rust code for maintainability, idioms, module shape, naming, and readability.
+- [Code quality](references/rust-code-quality.md): Read when implementing or reviewing Rust code for maintainability, idioms, module shape, naming, and readability, or when deriving collection and package metadata.
 - [Defensive programming](references/rust-defensive-programming.md): Read when handling invariants, input validation, panics, assertions, boundaries, and failure modes.
 - [Dependencies](references/rust-dependencies.md): Read when adding, updating, configuring, or evaluating Rust crate dependencies and feature flags.
 - [Documentation](references/rust-documentation.md): Read when writing or reviewing docs, examples, crate-level docs, public API docs, and README guidance.

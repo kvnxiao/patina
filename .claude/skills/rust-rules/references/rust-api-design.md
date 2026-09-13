@@ -5,11 +5,13 @@ description: "Public API design for libraries; ergonomic, semver-evolvable inter
 
 # API Design
 
-Patterns for public interfaces that stay ergonomic for callers and evolvable for you.
+These patterns keep public interfaces ergonomic for callers and compatible with later evolution.
 
-## Options struct + `impl Into` for overload-like ergonomics
+## Options struct + `impl Into` for overload-like ergonomics (Conditional)
 
-Rust has no function overloading. Accept `impl Into<Options>` and provide a family of `From` impls: the simple call passes a bare value, richer calls pass a tuple or the full struct. No builder ceremony for the common case, and one obvious home for optional params.
+When a public API benefits from overload-like call ergonomics, accept `impl Into<Options>` and
+provide a small family of `From` implementations. The simple call can pass a bare value, while
+richer calls pass a tuple or the full struct.
 
 ```rust
 pub struct RoundOptions { smallest: Unit, increment: i64 }
@@ -22,54 +24,58 @@ impl From<(Unit, i64)> for RoundOptions {
 }
 
 impl Span {
-    // span.round(Unit::Hour) | span.round((Unit::Minute, 15)) | span.round(RoundOptions { .. })
     pub fn round<R: Into<RoundOptions>>(self, options: R) -> Result<Span> {
         let options = options.into();
-        // ...
+        todo!()
     }
 }
 ```
 
-## Deferred-validation builder
+## Deferred-validation builder (Required)
 
-Validating inside each setter makes some valid end states unreachable through valid intermediate states.
+When builder fields interact, setters must store values and `build()` must validate the complete
+state. Per-setter validation can reject a valid final state because an intermediate state is
+incomplete.
+
+An order-sensitive builder can reject this call before the month changes:
 
 ```rust
-// Bad: `day(29)` validates against the current month. Setting the day before
-// the month rejects Feb 29 even when you're about to switch to a leap year.
-date.with().day(29).month(2).build()  // spurious error
+date.with().day(29).month(2).build()
+```
 
-// Good: setters only store; `build()` validates the whole thing once.
+Deferred validation accepts any setter order and validates once:
+
+```rust
 date.with()
     .month(2)
-    .day(29)   // order-independent, not checked yet
-    .build()?  // single validation point
+    .day(29)
+    .build()?
 ```
 
-## Don't derive `Eq`/`Ord`/`PartialEq` reflexively
+## Derive equality and ordering from semantics (Default)
 
-A derived `PartialEq` compares field-by-field. Field-by-field equality is often wrong: two values can be semantically equal with different representations.
+A derived `PartialEq` compares field by field. Default to a semantic comparison or omit equality
+when values can be equivalent despite different representations. Derive equality when structural
+equality is the intended contract.
 
 ```rust
-// Bad: derived PartialEq makes 2.hours() != 120.minutes() despite equal duration.
-
-// Good, option 1: hand-write over the meaningful field:
 impl PartialEq for Zoned {
     fn eq(&self, other: &Self) -> bool {
-        self.timestamp() == other.timestamp() // compare the instant, ignore the zone
+        self.timestamp() == other.timestamp()
     }
 }
 
-// Good, option 2: withhold equality when "equal" is ambiguous, and expose an
-// explicit opt-in newtype for the field-wise comparison:
 #[repr(transparent)]
-pub struct SpanFieldwise(pub Span); // via `span.fieldwise()`, only when asked for
+pub struct SpanFieldwise(pub Span);
 ```
 
-## `#[non_exhaustive]` on config enums expected to grow
+## `#[non_exhaustive]` on config enums expected to grow (Conditional)
+
+When a public configuration enum is expected to gain variants, mark it `#[non_exhaustive]` to permit
+additions in compatible releases.
 
 ```rust
-/// Non-exhaustive so new strategies can be added in a semver-compatible release.
+/// Select how an ambiguous local time is resolved.
 #[non_exhaustive]
 pub enum Disambiguation {
     Compatible,
@@ -79,31 +85,35 @@ pub enum Disambiguation {
 }
 ```
 
-## Paired panicking / fallible constructors
+## Paired panicking / fallible constructors (Default)
 
-Give literals a terse panicking constructor and untrusted input a fallible one. A `const {}` block moves the literal's panic to compile time.
+Default author-controlled literals to a terse panicking constructor and untrusted input to a
+fallible constructor. A `const {}` block moves a literal panic to compile time.
 
 ```rust
-let d = date(2024, 2, 29);          // panicking: for author-known-good literals
-let d = Date::new(year, month, day)?; // fallible: for runtime / user input
+let literal = date(2024, 2, 29);
+let parsed = Date::new(year, month, day)?;
 
-const NEW_YEAR: Date = const { date(2025, 1, 1) }; // invalid literal fails to compile
+const NEW_YEAR: Date = const { date(2025, 1, 1) };
 ```
 
-## Extension traits for literal ergonomics
+## Extension traits for literal ergonomics (Conditional)
 
-An extension trait can add literal syntax to primitives. Document it as literals-only and panicking, and pair it with `try_*` methods for user input.
+When an API has many author-controlled literals, an extension trait can add literal syntax to
+primitives. Document the methods as literals-only and panicking, and pair them with `try_*` methods
+for user input.
 
 ```rust
 use jiff::ToSpan;
 
-let span = 2.hours().minutes(30); // ergonomic literals; panics if out of range
-let span = n.try_hours()?;        // for untrusted input
+let literal = 2.hours().minutes(30);
+let parsed = n.try_hours()?;
 ```
 
-## Sealed traits
+## Sealed traits (Conditional)
 
-A trait bounded on a `pub(crate)` `Sealed` supertrait is public to *call* but closed to *implement*. You can add methods later without a major bump, and no downstream type can implement it.
+When a public trait must gain methods without a major-version bump, bound it on a private `Sealed`
+supertrait. Downstream code can call the trait but cannot implement it.
 
 ```rust
 pub trait Context<T>: private::Sealed {
@@ -116,26 +126,32 @@ mod private {
 }
 ```
 
-## Hide macro glue behind `#[doc(hidden)]`
+## Hide macro glue behind `#[doc(hidden)]` (Default)
 
-Code your macros generate needs public items to call, but humans should not. Put them in a `#[doc(hidden)] pub mod __private`; they are not part of your semver surface.
+Generated macro code can need public items for expansion. Default those items to a `#[doc(hidden)]
+pub mod __private` unless callers are expected to use them directly.
+
+The attribute does not make an item private: downstream code can still name and call it. Rust
+convention treats hidden items as unsupported, and `cargo-semver-checks` excludes them from the
+SemVer surface by default. See
+[Checking semver for doc(hidden) items](https://predr.ag/blog/checking-semver-for-doc-hidden-items/).
 
 ```rust
 #[doc(hidden)]
 pub mod __private {
     pub use core::result::Result;
-    // re-exports the generated code depends on ...
 }
 ```
 
-## Private modules, one curated `pub use`
+## Private modules, one curated `pub use` (Default)
 
-Decouple your file layout from your public path: keep modules private and export a single curated block. Rename or move files without touching the public API.
+Default modules to private and export a curated `pub use` block unless the module path is part of
+the intended public API. This separates file layout from public paths.
 
 ```rust
 mod error;
 mod span;
-pub mod civil; // only genuinely-public modules are `pub`
+pub mod civil;
 
 pub use crate::{
     error::Error,
@@ -143,28 +159,35 @@ pub use crate::{
 };
 ```
 
-## Lossless → `From`, lossy → `TryFrom`
+## Lossless → `From`, lossy → `TryFrom` (Required)
 
-A conversion that can overflow or lose data must be fallible. Never hide truncation behind an infallible `From`.
+A conversion that can overflow or lose data must be fallible. Never hide truncation behind an
+infallible `From`.
 
 ```rust
-impl From<i32> for Duration { /* widening: always succeeds */ }
+let widened = i64::from(seconds);
+let narrowed = i32::try_from(seconds)?;
 
 impl TryFrom<std::time::Duration> for SignedDuration {
     type Error = Error;
     fn try_from(d: std::time::Duration) -> Result<Self> {
-        let secs = i64::try_from(d.as_secs())?; // may not fit
-        // ...
+        let secs = i64::try_from(d.as_secs())?;
+        todo!()
     }
 }
 ```
 
-## Library authoring: features and `no_std`
+## Features must remain additive (Required)
 
-Applies when you publish a library.
+Published library features must only add behavior. A feature must not change existing behavior
+because downstream crates share feature resolution.
+
+## Library features and `no_std` conventions (Default)
+
+When publishing a library, default to explicit capability tiers and document what changes when a
+feature is disabled.
 
 ```rust
-// Toggle `no_std` behind a feature; pull in `alloc` where available.
 #![cfg_attr(not(feature = "std"), no_std)]
 
 #[cfg(feature = "alloc")]
@@ -178,58 +201,73 @@ std = ["alloc"]        # tier features: std ⊃ alloc ⊃ core
 alloc = []
 derive = ["dep:my_derive"] # optional proc-macro, off by default
 
-# Removed feature kept as a documented no-op so `features = ["backtrace"]` still builds.
+# Removed feature retained as a no-op until the next major version.
 backtrace = []
 
-# Footgun documented inline: does not preserve identity, so enable only if intended.
+# Does not preserve identity; enable only when that behavior is acceptable.
 rc = []
 ```
 
-- **Features must be additive.** Enabling one only adds behavior, never changes it. Downstream crates share your feature resolution.
-- **Document what degrades** when a feature is off, and what a footgun feature does.
-- **Don't forward target-sensitive features** from a library. Let the final binary opt in (e.g. a `js` feature that only makes sense on `wasm32-unknown-unknown`).
-- **Centralize `#[cfg]`** in one module as type aliases + macros, so the rest of the crate stays cfg-free.
-- **Probe unstable APIs in `build.rs`** and emit `println!("cargo:rustc-check-cfg=cfg(...)")`, rather than leaking a nightly feature to users.
+- Feature documentation states what degrades when a feature is off and what semantic trade-offs an
+  opt-in feature adds.
+- Target-sensitive features remain under the final binary's control unless the library contract
+  itself requires them.
+- Conditional type selection stays in one module unless local `#[cfg]` attributes are clearer.
+- When a stable API cannot express a capability check, `build.rs` probes it and emits
+  `println!("cargo:rustc-check-cfg=cfg(...)")`.
 
-## `unsafe` discipline
+## `unsafe` soundness obligations (Required)
 
-Forbid `unsafe` by default. If a crate must relax that baseline, keep the discipline; `unsafe_code = "warn"` is a middle ground.
-
-Before writing `unsafe`, search for a safe wrapper crate:
-
-| Domain | Unsafe Bindings | Safe Wrapper |
-|--------|-----------------|--------------|
-| Windows API | `windows-sys` | `winsafe` |
-| POSIX/Unix | `libc` | `nix`, `rustix` |
-| SQLite | `libsqlite3-sys` | `rusqlite` |
-| OpenSSL | `openssl-sys` | `openssl` |
-| Memory | raw pointers | `bytemuck`, `zerocopy` |
+Each `unsafe` block must state its safety invariant, and each `unsafe fn` must document caller
+obligations in a `# Safety` section. Enable `unsafe_op_in_unsafe_fn`, keep unsafe blocks minimal,
+and wrap raw unsafe operations behind safe public abstractions.
 
 ```rust
 #![deny(unsafe_op_in_unsafe_fn)]
 
-// Every unsafe block states the invariant it relies on.
-// Safety: `ptr` is non-null and points to an initialized `T` (checked above).
+// Safety: `ptr` is non-null and points to an initialized `T`.
 let value = unsafe { &*ptr };
 ```
 
-Keep unsafe blocks minimal, never expose them in a public API (wrap in a safe abstraction), and document caller obligations in a `/// # Safety` section. Run `cargo +nightly miri test` over crates containing `unsafe`.
+## `unsafe` project policy (Default)
 
-Lock the public auto-trait surface with `assert_send::<T>()`-style tests, and add drop-count tests for by-value ownership tricks.
+Default `unsafe_code` to `forbid`. When a crate needs unsafe implementation code, `unsafe_code =
+"warn"` permits reviewed exceptions.
 
-## Macro-author hygiene
+Prefer a maintained safe wrapper when one covers the required API:
+
+| Domain      | Unsafe Bindings  | Safe Wrapper           |
+| ----------- | ---------------- | ---------------------- |
+| Windows API | `windows-sys`    | `winsafe`              |
+| POSIX/Unix  | `libc`           | `nix`, `rustix`        |
+| SQLite      | `libsqlite3-sys` | `rusqlite`             |
+| OpenSSL     | `openssl-sys`    | `openssl`              |
+| Memory      | raw pointers     | `bytemuck`, `zerocopy` |
+
+Crates containing `unsafe` default to `cargo +nightly miri test`; projects without nightly test
+support can omit this job.
+
+For a public library, default to `assert_send::<T>()`-style tests for the intended auto-trait
+surface. When code uses by-value ownership tricks, add drop-count tests.
+
+## Macro-author hygiene (Required)
 
 Generated code runs in the caller's namespace, so it must be self-contained.
 
 ```rust
-// Inside a derive macro's `quote!`:
 quote! {
     #[automatically_derived]
     #[allow(unused_qualifications)]
-    impl #generics ::core::fmt::Display for #ty { /* ... */ }
+    impl #generics ::core::fmt::Display for #ty {
+        fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+            todo!()
+        }
+    }
 }
 ```
 
-- Fully-qualify every path (`::core::`, `::std::`, `::your_crate::`) so it works regardless of the caller's `use`s.
+- Fully-qualify every path (`::core::`, `::std::`, `::your_crate::`) so it works regardless of the
+  caller's `use`s.
 - Emit `#[automatically_derived]` on generated impls.
-- Add targeted `#[allow(...)]` for lints your codegen cannot avoid, and test the output under `#![deny(...)]`.
+- Add targeted `#[allow(...)]` for lints your codegen cannot avoid, and test the output under
+  `#![deny(...)]`.
