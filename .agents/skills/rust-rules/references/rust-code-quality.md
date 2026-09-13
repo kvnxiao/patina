@@ -1,13 +1,14 @@
 ---
 paths: **/*.{rs,toml}
-description: "General Rust code-quality patterns; edition and MSRV, enums over booleans and strings, #[must_use], and choosing function parameter types."
+description: "General Rust code-quality patterns; edition and MSRV, derived metadata, enums over booleans and strings, #[must_use], and choosing function parameter types."
 ---
 
 # Code Quality Standards
 
-## Edition and MSRV
+## Edition and MSRV (Default)
 
-Track the latest stable edition and pin the MSRV.
+Default the project to a deliberate edition and a declared minimum supported Rust version. A
+compatibility policy can require an older edition or compiler.
 
 ```toml
 [package]
@@ -15,15 +16,29 @@ edition = "2024"
 rust-version = "1.95"
 ```
 
-## Prefer Enums Over Booleans
+## Derive collection and package metadata (Default)
 
-A `bool` parameter is opaque at the call site, and adjacent flags invite transposition. Name the states.
+Derive collection lengths and catalog membership from their data. Read package identity from Cargo
+metadata instead of maintaining a separate version or package-name string. Keep deliberate limits,
+protocol constants, and supported-version policies explicit; they define choices that the data
+cannot determine.
+
+For tests over a catalog or fixture directory, discover members and derive counts from the fixtures.
+Keep expected parser results, serialized bytes, and golden outputs independent of the implementation
+under test.
+
+## Prefer Enums Over Booleans (Default)
+
+A `bool` parameter is opaque at the call site, and adjacent flags invite transposition.
 
 ```rust
-// Bad: process(data, true, false) passes two anonymous flags.
 fn process(data: &str, is_verbose: bool, is_strict: bool) {}
+```
 
-// Good
+Default to enums when callers choose among named states. Keep booleans for self-evident predicates
+and setters.
+
+```rust
 #[derive(Debug, Clone, Copy)]
 pub enum Verbosity { Quiet, Normal, Verbose }
 
@@ -33,77 +48,81 @@ pub enum ValidationMode { Lenient, Strict }
 fn process(data: &str, verbosity: Verbosity, validation: ValidationMode) {}
 ```
 
-## Avoid Stringly-Typed Code
+## Prefer domain types after string boundaries (Default)
 
-A `&str` discriminant accepts any string and forces a fallible catch-all arm. An enum makes the match exhaustive and the invalid case unrepresentable.
+A `&str` discriminant accepts any string and forces a fallible catch-all arm:
 
 ```rust
-// Bad
 fn get_user_by_type(user_type: &str) -> Result<User> {
     match user_type {
-        "admin" => { /* ... */ }
-        "regular" => { /* ... */ }
+        "admin" => load_admin(),
+        "regular" => load_regular(),
         _ => Err(Error::InvalidUserType),
     }
 }
+```
 
-// Good
+Default to an enum after parsing at genuine string boundaries such as CLIs and wire formats.
+
+```rust
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UserType { Admin, Regular, Guest }
 
 fn get_user_by_type(user_type: UserType) -> Result<User> {
     match user_type {
-        UserType::Admin => { /* ... */ }
-        UserType::Regular => { /* ... */ }
-        UserType::Guest => { /* ... */ }
+        UserType::Admin => load_admin(),
+        UserType::Regular => load_regular(),
+        UserType::Guest => load_guest(),
     }
 }
 ```
 
-## Use `#[must_use]` Strategically
+## Use `#[must_use]` strategically (Default)
 
-Add `#[must_use]` when ignoring a value is likely a bug, and always give a custom message explaining why it matters.
+When discarding an annotated type or return value likely indicates a bug, default it to
+`#[must_use]`. A message is appropriate only when it gives the caller a non-obvious corrective
+action. Types such as `Result` already carry the attribute, so a function returning them usually
+needs no additional annotation.
 
 ```rust
-// Results and error-returning validators
-#[must_use = "errors must be handled, not silently ignored"]
-pub fn validate_config(config: &Config) -> Result<(), ValidationError> { /* ... */ }
-
-// Builder types and their chained methods
-#[must_use = "builders must be used to construct the final value"]
-pub struct QueryBuilder { /* ... */ }
+#[must_use]
+pub struct QueryBuilder { filters: Vec<Filter> }
 
 impl QueryBuilder {
-    #[must_use = "this returns a new builder with the filter added"]
-    pub fn filter(mut self, f: Filter) -> Self { /* ... */ self }
+    #[must_use]
+    pub fn filter(mut self, filter: Filter) -> Self {
+        self.filters.push(filter);
+        self
+    }
 }
 
-// Expensive computations
-#[must_use = "computing the hash is expensive; use the result"]
-pub fn compute_hash(data: &[u8]) -> Hash { /* ... */ }
-
-// Values representing a state change
-#[must_use = "the guard must be held to maintain the lock"]
-pub fn acquire_lock(&self) -> LockGuard<'_> { /* ... */ }
-
-#[must_use = "the previous value may need to be processed"]
-pub fn swap(&mut self, new_value: T) -> T {
-    std::mem::replace(&mut self.value, new_value)
+impl Lock {
+    #[must_use = "hold the guard for as long as the lock must remain acquired"]
+    pub fn acquire(&self) -> LockGuard<'_> { todo!() }
 }
 ```
 
-Skip it for side-effecting functions whose return is incidental, and for simple getters.
+Side-effecting functions whose return is incidental, simple getters, and expensive computations with
+no discard bug do not meet this criterion. Work cost alone does not justify the attribute.
 
 ```rust
-pub fn log_event(event: &Event) -> usize { /* bytes written; logging happened anyway */ }
+pub fn log_event(event: &Event) -> usize { todo!() }
 pub fn len(&self) -> usize { self.items.len() }
 ```
 
-## Choosing Function Parameter Types
+See the Rust Reference for
+[`must_use`](https://doc.rust-lang.org/reference/attributes/diagnostics.html#the-must_use-attribute)
+semantics and the rustc
+[`unused_must_use`](https://doc.rust-lang.org/rustc/lints/listing/warn-by-default.html#unused-must-use)
+lint.
 
-Pick the least demanding type that does the job, from most to least flexible.
+## Choosing Function Parameter Types (Default)
 
-**1. Borrow when you only read:**
+Default to concrete borrowed parameters such as `&str`, `&Utf8Path`, and `&[T]`. Use `impl AsRef<T>`
+for a read-only API or `impl Into<T>` for an owning API only when accepting several common caller
+types materially improves ergonomics.
+
+Borrow concrete types when callers already have the expected representation:
 
 ```rust
 pub fn validate_name(name: &str) -> bool {
@@ -111,18 +130,20 @@ pub fn validate_name(name: &str) -> bool {
 }
 ```
 
-**2. `impl AsRef<T>` for flexible read-only input:**
+An `impl AsRef<T>` parameter is appropriate when callers commonly hold multiple borrowed or owned
+representations:
 
 ```rust
 use camino::Utf8Path;
 
 pub fn read_config(path: impl AsRef<Utf8Path>) -> Result<Config> {
     let content = fs_err::read_to_string(path.as_ref())?;
-    // ...
+    todo!()
 }
 ```
 
-**3. `impl Into<T>` when you need to own the value:**
+An `impl Into<T>` parameter is appropriate when the function needs ownership and conversion at the
+boundary avoids repeated caller boilerplate:
 
 ```rust
 impl User {
@@ -131,12 +152,12 @@ impl User {
     }
 }
 
-let user = User::new("Alice", "alice@example.com"); // no .to_string() at the call site
+let user = User::new("Alice", "alice@example.com");
 ```
 
-| Scenario                         | Recommended Type            | Example                              |
-| -------------------------------- | --------------------------- | ------------------------------------ |
-| Read-only access                 | `&str`, `&Utf8Path`, `&[T]` | `fn print(msg: &str)`                |
-| Read-only, flexible input        | `impl AsRef<T>`             | `fn read(p: impl AsRef<Utf8Path>)`   |
-| Need ownership, want flexibility | `impl Into<T>`              | `fn new(name: impl Into<String>)`    |
-| Need exact type                  | Concrete type               | `fn process(data: Vec<u8>)`          |
+| Scenario                         | Recommended Type            | Example                            |
+| -------------------------------- | --------------------------- | ---------------------------------- |
+| Read-only access                 | `&str`, `&Utf8Path`, `&[T]` | `fn print(msg: &str)`              |
+| Read-only, flexible input        | `impl AsRef<T>`             | `fn read(p: impl AsRef<Utf8Path>)` |
+| Need ownership, want flexibility | `impl Into<T>`              | `fn new(name: impl Into<String>)`  |
+| Need exact type                  | Concrete type               | `fn process(data: Vec<u8>)`        |

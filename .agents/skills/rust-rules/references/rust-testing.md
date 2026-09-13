@@ -5,9 +5,10 @@ description: "Rust testing; insta snapshots, table and file-driven tests, invari
 
 # Testing
 
-## Centralize snapshot settings in one macro
+## Centralize snapshot settings in one macro (Default)
 
-Wrap every `insta` snapshot assertion in a single project macro so settings (redactions, `omit_expression`, filters) are applied consistently and set once.
+Default `insta` assertions to one project macro when snapshots share settings such as redactions,
+`omit_expression`, or filters. Direct assertions remain appropriate when no project setting applies.
 
 ```rust
 #[macro_export]
@@ -20,11 +21,13 @@ macro_rules! assert_diagnostics {
 }
 ```
 
-Use per-test `filters` to normalize volatile substrings (absolute paths, timestamps) before comparison, so snapshots are stable across machines.
+For tests with volatile substrings such as absolute paths or timestamps, apply per-test filters
+before comparison.
 
-## Table-driven tests with `#[test_case]`
+## Table-driven tests with `#[test_case]` (Default)
 
-Turn a fixture table into one parameterized test instead of copy-pasted functions.
+When cases share one assertion path, default to a parameterized test instead of copied test
+functions. Keep separate tests when their setup or failure contracts differ.
 
 ```rust
 use test_case::test_case;
@@ -38,9 +41,10 @@ fn rules(rule: Rule, path: &Path) -> Result<()> {
 }
 ```
 
-## File-driven tests with `datatest-stable`
+## File-driven tests with `datatest-stable` (Conditional)
 
-For large corpora, make each fixture file on disk its own test case. Opt out of the default libtest harness.
+For large corpora, make each fixture file on disk its own test case. Opt out of the default libtest
+harness.
 
 ```toml
 [[test]]
@@ -52,16 +56,19 @@ harness = false
 datatest_stable::harness!(run_test, "resources/mdtest", r"^.*\.md$");
 ```
 
-## Make the shared test helper assert invariants
+## Make the shared test helper assert invariants (Default)
 
-A helper that every test funnels through should check invariants on each call, not just diff a snapshot. Then a bug in any code path fails the nearest test. Good invariants: applying a fix **converges** (a second application is a no-op), and a transformation introduces **no new syntax errors**.
+Default a shared test helper to checking common invariants on each call instead of only diffing a
+snapshot. Each invariant failure then identifies the calling test. Useful invariants include
+**convergence** and preservation of syntax validity during a transformation.
 
-## Compile-fail UI tests with `trybuild`
+## Compile-fail UI tests with `trybuild` (Conditional)
 
-Pin the exact error message your macro or API produces for bad input. Commit the `.stderr` files. Messages vary by toolchain, so gate on nightly and skip under miri.
+When a macro or API has misuse that must fail to compile with a useful diagnostic, use `trybuild`
+and commit the `.stderr` files. Keep the `rust-src` component consistent across local development
+and CI because its presence changes standard-library snippets in diagnostics.
 
 ```rust
-#[rustversion::attr(not(nightly), ignore = "requires nightly")]
 #[cfg_attr(miri, ignore = "incompatible with miri")]
 #[test]
 fn ui() {
@@ -70,9 +77,21 @@ fn ui() {
 }
 ```
 
-## Verify `no_std` with a real `no_std` crate
+```toml
+[toolchain]
+components = ["rust-src"]
+```
 
-A `#[cfg]` alone won't catch an accidental `std::` path. Add a separate crate that is genuinely `#![no_std]` and depends on yours with `default-features = false`.
+When expected diagnostics drift after a deliberate toolchain update, run `TRYBUILD=overwrite cargo
+test`, inspect the diff, and commit the accepted output. When a project treats exact diagnostic text
+as a compatibility contract, pin the Rust toolchain and update it through a reviewed maintenance
+process. Trybuild does not require nightly; see its
+[workflow and troubleshooting guidance](https://github.com/dtolnay/trybuild#workflow).
+
+## Verify `no_std` with a real `no_std` crate (Required)
+
+A `#[cfg]` alone won't catch an accidental `std::` path. Add a separate crate that is genuinely
+`#![no_std]` and depends on yours with `default-features = false`.
 
 ```toml
 [dependencies]
@@ -81,23 +100,24 @@ my-crate = { path = "../..", default-features = false }
 
 ```rust
 #![no_std]
-use my_crate::Error; // fails to build if the crate leaks a std dependency
+use my_crate::Error;
 ```
 
-## Compile-time size and trait assertions
+## Compile-time size and trait assertions (Conditional)
 
-Lock the size and trait surface of hot types so a careless change fails at compile time.
+When a type is hot or ABI-critical, lock its size and required trait surface at compile time.
 
 ```rust
 use static_assertions::{assert_eq_size, assert_impl_all};
 
-assert_eq_size!(NodeId, Option<NodeId>); // NonZeroU32 niche: Option is free
+assert_eq_size!(NodeId, Option<NodeId>);
 assert_impl_all!(NodeId: Ord, Send, Sync);
 ```
 
-## Auto-trait and drop-count tests
+## Auto-trait and drop-count tests (Default)
 
-Guard your public auto-trait surface: a stray `Rc` or raw pointer silently removing `Send`/`Sync` is a breaking change.
+For public libraries, default to compile-time tests for the intended auto-trait surface. A stray
+`Rc` or raw pointer can remove `Send` or `Sync` and break callers.
 
 ```rust
 #[test]
@@ -109,7 +129,8 @@ fn auto_traits() {
 }
 ```
 
-For by-value ownership tricks (custom `Drop`, manual `unsafe` memory management), assert values are dropped exactly once with a drop-counting helper.
+When a type uses custom `Drop` or manual unsafe ownership, add a drop-counting test that asserts
+each value is dropped exactly once.
 
 ```rust
 #[test]
@@ -121,9 +142,10 @@ fn drops_source_once() {
 }
 ```
 
-## A release-profile test profile
+## A release-profile test profile (Conditional)
 
-Debug-only checks (e.g. bounds checks gated on `debug_assertions`) never run under `cargo test`. Add a profile that turns them off so CI exercises the real release paths.
+When behavior changes under `debug_assertions`, add a test profile that disables them so CI
+exercises the release path.
 
 ```toml
 [profile.testrelease]
@@ -131,24 +153,25 @@ inherits = "test"
 debug-assertions = false
 ```
 
-## `nextest`: serialize and bound flaky tests
+## `nextest`: serialize and bound flaky tests (Conditional)
 
-Put race-prone tests in a serial group and cap deadlock-prone ones with a hard timeout.
+When tests contend for a shared resource or can deadlock, use nextest groups and timeouts to
+serialize or bound them.
 
 ```toml
-# .config/nextest.toml
 [test-groups]
 serial = { max-threads = 1 }
 
 [[profile.default.overrides]]
 filter = 'binary(file_watching)'
 test-group = 'serial'
-slow-timeout = { period = "1s", terminate-after = 60 } # terminate on deadlock
+slow-timeout = { period = "1s", terminate-after = 60 }
 ```
 
-## CI-enforce generated-code freshness
+## CI-enforce generated-code freshness (Required)
 
-If you check in generated code, fail CI when regenerating it would produce a diff. Otherwise the checked-in copy silently rots.
+If you check in generated code, fail CI when regenerating it would produce a diff; otherwise the
+checked-in copy can become stale.
 
 ```sh
 cargo run -p my-cli -- generate
