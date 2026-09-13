@@ -5,41 +5,46 @@ description: "Multi-crate Cargo workspace layout; root-level crates, workspace d
 
 # Multi-Crate Workspaces
 
-> **Scope:** This rule applies only when the project is structured as a multi-crate Cargo workspace (i.e. the root `Cargo.toml` contains a `[workspace]` table). For a single-crate project, ignore the workspace-specific guidance below and use crate-level `[lints]`, `[dependencies]`, and `[package]` sections instead.
+> **Scope:** This rule applies only when the project is structured as a multi-crate Cargo workspace
+> (i.e. the root `Cargo.toml` contains a `[workspace]` table). For a single-crate project, ignore
+> the workspace-specific guidance below and use crate-level `[lints]`, `[dependencies]`, and
+> `[package]` sections instead.
 
-## Workspace Structure: Root-Level Crates
+## Workspace Structure: Root-Level Crates (Default)
 
-**Prefer placing workspace crates at the root level** rather than nested in a `crates/` directory.
+Default to root-level crate directories for a small workspace. Use a `crates/` directory when the
+repository has many top-level concerns or enough members that grouping improves navigation.
 
 ### Recommended Structure
 
 ```
 my-project/
-├── Cargo.toml          # Workspace root
-├── Cargo.lock          # Shared lock file
-├── my-core/            # Core library crate
+├── Cargo.toml
+├── Cargo.lock
+├── my-core/
 │   ├── Cargo.toml
 │   └── src/
-├── my-cli/             # CLI binary crate
+├── my-cli/
 │   ├── Cargo.toml
 │   └── src/
-└── my-utils/           # Utilities crate
+└── my-utils/
     ├── Cargo.toml
     └── src/
 ```
 
-**Why root-level is better:**
-- Shorter import paths in IDEs
-- Easier navigation - less nesting
-- Simpler to understand project structure
-- Matches common Rust ecosystem conventions
+Root-level members keep paths short and expose crate boundaries directly.
 
-## Workspace Root `Cargo.toml`
+## Workspace Root `Cargo.toml` (Default)
+
+Set `resolver = "3"` explicitly in a virtual workspace. A virtual workspace has no root package
+edition from which Cargo can infer the resolver; without the field, Cargo warns and defaults to
+resolver `"1"`. See
+[Cargo resolver versions](https://doc.rust-lang.org/cargo/reference/resolver.html#resolver-versions).
 
 ```toml
 [workspace]
 members = ["my-core", "my-cli", "my-utils"]
-resolver = "2"
+resolver = "3"
 
 [workspace.dependencies]
 tokio = { version = "1.35", features = ["rt-multi-thread", "macros"] }
@@ -51,11 +56,8 @@ unsafe_code = "forbid"
 missing_docs = "warn"
 missing_debug_implementations = "warn"
 
-# Clippy lints: configure the project's strict set under
-# `[workspace.lints.clippy]` (not `[lints.clippy]`) at the workspace root,
-# alongside a `clippy.toml` that sets `allow-expect-in-tests = true`.
 [workspace.lints.clippy]
-# … project-specific strict lints …
+pedantic = { level = "warn", priority = -2 }
 
 [workspace.package]
 edition = "2024"
@@ -63,9 +65,13 @@ rust-version = "1.95"
 license = "MIT OR Apache-2.0"
 ```
 
-Member crates inherit the lint set via `[lints] workspace = true` (see the member-crate example below).
+Member crates inherit the lint set via `[lints] workspace = true` (see the member-crate example
+below).
 
-## Member Crate `Cargo.toml`
+## Member Crate `Cargo.toml` (Default)
+
+Default member manifests to inherited workspace metadata, dependencies, and lints. Keep a field
+local when the member intentionally differs.
 
 ```toml
 [package]
@@ -80,79 +86,56 @@ tokio.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 
-# Crate-specific dependencies
 uuid = { version = "1.6", features = ["v4"] }
 
 [lints]
 workspace = true
 ```
 
-## Workspace Best Practices
+## Workspace Best Practices (Default)
 
 ### 1. Dependency Management
 
-Use workspace dependencies for shared crates:
+Default dependencies used by several members to `[workspace.dependencies]`. Keep a dependency local
+when its version or feature policy is member-specific.
 
 ```toml
-# Root Cargo.toml
 [workspace.dependencies]
 serde = { version = "1.0", features = ["derive"] }
 tokio = { version = "1.35", default-features = false }
 
-# Member crates can enable additional features
-# my-server/Cargo.toml
 [dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "net"] }
 ```
 
 ### 2. Inter-Crate Dependencies
 
-Use path dependencies for workspace members:
+Default inter-member dependencies to versioned path dependencies. Omit the version only when the
+workspace will never publish the dependent crate.
 
 ```toml
 [dependencies]
 my-core = { path = "../my-core", version = "0.2.0" }
 ```
 
-### 3. Avoid Circular Dependencies
+### 3. Keep the dependency graph acyclic
 
-```toml
-# BAD: Circular dependency
-# my-core depends on my-utils
-# my-utils depends on my-core
-
-# GOOD: Create third crate for shared types
-# my-types (no dependencies on other workspace crates)
-# my-core depends on my-types
-# my-utils depends on my-types
-```
+Cargo rejects cycles among normal dependencies at build time. Cargo permits a dev-dependency cycle,
+but a library's unit-test binary can then link two copies of that library with incompatible type
+identities. Default to an acyclic architecture; move shared contracts into a lower-level crate when
+a dev-dependency would point back to its dependent. See
+[Cargo's dev-dependency cycle guidance](https://doc.rust-lang.org/cargo/reference/resolver.html#dev-dependency-cycles).
 
 ## Workspace Commands
 
 ```bash
-# Build entire workspace
 cargo build
 
-# Build specific crate
 cargo build -p my-cli
 
-# Check all workspace members
 cargo check --workspace
 
-# Run tests for specific crate
 cargo test -p my-core
 
-# Run tests with all features
 cargo test --all-features
 ```
-
-## Workspace Checklist
-
-- [ ] Use root-level crate directories (not `crates/` folder)
-- [ ] Configure `[workspace.dependencies]` for shared deps
-- [ ] Set `[workspace.lints]` for consistent code quality
-- [ ] Use `[workspace.package]` for shared metadata
-- [ ] Define clear boundaries between crates
-- [ ] Avoid circular dependencies
-- [ ] Use path dependencies with versions
-- [ ] Test entire workspace with `cargo test --workspace`

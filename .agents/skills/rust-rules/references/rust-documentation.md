@@ -5,42 +5,31 @@ description: "Rustdoc requirements; public-API and module docs, the module skele
 
 # Documentation Requirements
 
-## Public API Documentation
+## Public API Documentation (Default)
 
-Every public item must have documentation. Clippy enforces `# Errors`
-and `# Panics` sections (`missing_errors_doc` / `missing_panics_doc`);
-this rule covers the rest: the prose summary, `# Arguments`, and
-`# Examples`.
+Default public library items to useful documentation that states the purpose and any invariants,
+failure paths, panics, or side effects the signature cannot express. Examples are appropriate when
+usage is not apparent from the type and name; redundant `# Arguments` sections and fixed paragraph
+structures are omitted.
 
 ```rust
-/// Processes the input data and returns a processed result.
+/// Normalize an account name for storage.
 ///
-/// # Arguments
+/// # Errors
 ///
-/// * `input` - The input string to process
-/// * `options` - Processing options
-///
-/// # Examples
-///
-/// ```
-/// use my_library::{process, Options};
-///
-/// let result = process("hello", Options::default())?;
-/// assert_eq!(result.value(), "HELLO");
-/// # Ok::<(), Box<dyn std::error::Error>>(())
-/// ```
-pub fn process(input: &str, options: Options) -> Result<ProcessedData> {
-    // Implementation
+/// Returns [`NameError::Empty`] if `input` contains no visible characters.
+pub fn normalize_name(input: &str) -> Result<AccountName, NameError> {
+    todo!()
 }
 ```
 
-## Module Documentation
+## Module Documentation (Default)
 
-```rust
-//! Configuration management for the application.
-//!
-//! This module provides types and functions for loading, validating,
-//! and managing application configuration.
+Default public modules to a concise model and primary entry points. An example is appropriate when
+it clarifies how the items compose.
+
+````rust
+//! Load and validate application configuration.
 //!
 //! # Examples
 //!
@@ -50,14 +39,16 @@ pub fn process(input: &str, options: Options) -> Result<ProcessedData> {
 //! let config = Config::from_file("config.toml")?;
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
-```
+````
 
-## Module `//!` Skeleton
+## Substantial public module guide (Conditional)
 
-For a substantial module, follow a three-part skeleton: an **Overview** (bulleted list of the types, plus runnable examples), a **"What is X?"** concept section, then a **"When should I use X?"** decision guide that points at the alternatives.
+When a public module introduces a substantial concept or several related types, document its model,
+primary entry points, and selection guidance. Use headings that fit the subject; the module does not
+need a fixed skeleton.
 
-```rust
-//! Facilities for civil (time-zone-less) datetimes.
+````rust
+//! Provide facilities for civil (time-zone-less) datetimes.
 //!
 //! # Overview
 //!
@@ -72,27 +63,28 @@ For a substantial module, follow a three-part skeleton: an **Overview** (bullete
 //!
 //! # What is "civil" time?
 //!
-//! (the concept, in prose)
+//! Civil time represents local calendar values without a time-zone offset.
 //!
 //! # When should I use civil time?
 //!
-//! (a decision guide contrasting the alternatives)
-```
+//! Use civil time for calendar input before a time zone is known.
+````
 
-## Crate Root as Cookbook and Spec
+## Crate Root as Cookbook and Spec (Conditional)
 
-New users land at the crate root. Make it useful:
+For a published library, the crate root:
 
-- List what the crate supports, and explicitly what it does **not**, linking each gap to a tracking issue.
-- State the panic policy ("APIs that panic by design are few and clearly documented as such").
-- Embed a short cookbook of runnable, task-oriented examples.
+- Lists what the crate supports and does not support, with each unsupported feature linked to a
+  tracking issue.
+- States the panic policy ("APIs that panic by design are few and clearly documented as such").
+- Includes a short cookbook of runnable, task-oriented examples.
 
-## Long-Form Rationale via `include_str!`
+## Long-Form Rationale via `include_str!` (Conditional)
 
-Keep design rationale in top-level Markdown (PR-reviewable, one source of truth) and render it into the docs through a hidden documentation module.
+When long-form design rationale exists, keep it in top-level Markdown and render it into rustdoc
+through a hidden documentation module.
 
 ```rust
-/// Longer-form documentation.
 pub mod _documentation {
     #[doc = include_str!("../DESIGN.md")]
     pub mod design {}
@@ -101,9 +93,10 @@ pub mod _documentation {
 }
 ```
 
-## Own Your `docs.rs` cfg Knob
+## Own Your `docs.rs` cfg Knob (Conditional)
 
-Use a crate-specific cfg name, not the shared `docsrs`, so another crate's use of `docsrs` can't accidentally toggle your nightly-only doc attributes.
+When a crate uses nightly-only documentation attributes, use a crate-specific cfg name instead of
+the shared `docsrs` name. Another crate can otherwise enable the shared cfg unexpectedly.
 
 ```toml
 [package.metadata.docs.rs]
