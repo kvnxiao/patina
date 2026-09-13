@@ -22,7 +22,7 @@ use std::time::Duration;
 use std::time::Instant;
 
 #[test]
-fn add_copies_file_writes_entry_and_leaves_target() {
+fn add_preserves_dotfile_name_in_source_and_leaves_target() {
     let fx = Fixture::new();
     let zshrc = fx.home.join(".zshrc");
     fs_err::write(zshrc.as_std_path(), "foo").expect("seed ~/.zshrc");
@@ -33,11 +33,11 @@ fn add_copies_file_writes_entry_and_leaves_target() {
     );
     assert_eq!(code(&out), 0, "add must exit 0; stderr: {}", stderr(&out));
 
-    let staged = fx.root.join("zsh").join("zshrc");
-    assert!(staged.is_file(), "<repo>/zsh/zshrc must be a regular file");
+    let staged = fx.root.join("zsh").join(".zshrc");
+    assert!(staged.is_file(), "<repo>/zsh/.zshrc must be a regular file");
     assert!(
         !is_symlink(&staged),
-        "<repo>/zsh/zshrc must not be a symlink"
+        "<repo>/zsh/.zshrc must not be a symlink"
     );
     assert_eq!(
         fs_err::read_to_string(staged.as_std_path()).expect("read staged file"),
@@ -55,7 +55,7 @@ fn add_copies_file_writes_entry_and_leaves_target() {
     let entry = entries.first().expect("the single [[file]] entry");
     assert_eq!(
         entry.get("source").and_then(toml::Value::as_str),
-        Some("zshrc")
+        Some(".zshrc")
     );
     assert_eq!(
         entry.get("target").and_then(toml::Value::as_str),
@@ -71,6 +71,58 @@ fn add_copies_file_writes_entry_and_leaves_target() {
     assert_eq!(
         fs_err::read_to_string(zshrc.as_std_path()).expect("read ~/.zshrc"),
         "foo"
+    );
+}
+
+#[test]
+fn add_preserves_dotfile_name_for_template_source() {
+    let fx = Fixture::new();
+    let zshrc = fx.home.join(".zshrc");
+    fs_err::write(zshrc.as_std_path(), "{{ patina.os }}").expect("seed ~/.zshrc");
+
+    let out = fx.run(
+        &["add", "~/.zshrc", "--module", "zsh", "--template", "--yes"],
+        &[],
+    );
+    assert_eq!(code(&out), 0, "add must exit 0; stderr: {}", stderr(&out));
+
+    let staged = fx.root.join("zsh").join(".zshrc.tmpl");
+    assert!(
+        staged.is_file(),
+        "<repo>/zsh/.zshrc.tmpl must be a regular file"
+    );
+    assert_eq!(manifest_file_field(&fx, "zsh", "source"), ".zshrc.tmpl");
+}
+
+#[test]
+fn add_refuses_to_overwrite_an_existing_repository_source() {
+    let fx = Fixture::new();
+    let original_manifest =
+        "[[file]]\nsource = \".wslconfig\"\ntarget = \"~/other\"\nmode = \"copy\"\n";
+    fx.module("wsl2", original_manifest);
+    let repository_source = fx.root.join("wsl2").join(".wslconfig");
+    fs_err::write(repository_source.as_std_path(), "existing").expect("seed repository source");
+    let wslconfig = fx.home.join(".wslconfig");
+    fs_err::write(wslconfig.as_std_path(), "replacement").expect("seed ~/.wslconfig");
+
+    let out = fx.run(
+        &["add", "~/.wslconfig", "--module", "wsl2", "--copy", "--yes"],
+        &[],
+    );
+    assert_eq!(code(&out), 1, "add must exit 1; stderr: {}", stderr(&out));
+    assert!(
+        stderr(&out).contains("repository source") && stderr(&out).contains("already exists"),
+        "stderr must identify the occupied repository source, got: {}",
+        stderr(&out)
+    );
+    assert_eq!(
+        fs_err::read_to_string(repository_source.as_std_path()).expect("read repository source"),
+        "existing"
+    );
+    assert_eq!(
+        fs_err::read_to_string(fx.root.join("wsl2").join("patina.toml").as_std_path())
+            .expect("read module manifest"),
+        original_manifest
     );
 }
 
@@ -103,12 +155,12 @@ fn add_then_apply_materializes_target_as_symlink() {
         "~/.zshrc must be a symbolic link after apply"
     );
     let link_target = fs_err::read_link(zshrc.as_std_path()).expect("read_link ~/.zshrc");
-    let staged = fx.root.join("zsh").join("zshrc");
+    let staged = fx.root.join("zsh").join(".zshrc");
     let canonical = fs_err::canonicalize(staged.as_std_path()).expect("canonicalize staged source");
     assert_eq!(
         fs_err::canonicalize(&link_target).expect("canonicalize link target"),
         canonical,
-        "the symlink must resolve to the canonical <repo>/zsh/zshrc"
+        "the symlink must resolve to the canonical <repo>/zsh/.zshrc"
     );
 }
 
@@ -258,7 +310,7 @@ fn add_serializes_behind_a_held_exclusive_lock() {
         "the holder should have been holding the lock while add waited"
     );
 
-    let moved = fx.root.join("zsh").join("zshrc");
+    let moved = fx.root.join("zsh").join(".zshrc");
     assert!(
         moved.is_file(),
         "the moved source must exist after the wait"
@@ -382,7 +434,7 @@ fn add_relative_path_from_home_stores_a_home_relative_target_and_applies_there()
     );
     assert_eq!(
         fs_err::canonicalize(&wslconfig).expect("canonicalize link target"),
-        fs_err::canonicalize(fx.root.join("wsl2").join("wslconfig"))
+        fs_err::canonicalize(fx.root.join("wsl2").join(".wslconfig"))
             .expect("canonicalize repo source")
     );
 }
@@ -542,6 +594,10 @@ fn add_refuses_a_symlink_to_the_repository() {
 }
 
 fn manifest_target(fx: &Fixture, module: &str) -> String {
+    manifest_file_field(fx, module, "target")
+}
+
+fn manifest_file_field(fx: &Fixture, module: &str, field: &str) -> String {
     let manifest = fx.root.join(module).join("patina.toml");
     let body = fs_err::read_to_string(manifest.as_std_path()).expect("read module manifest");
     let parsed: toml::Value = toml::from_str(&body).expect("module manifest parses");
@@ -549,8 +605,8 @@ fn manifest_target(fx: &Fixture, module: &str) -> String {
         .get("file")
         .and_then(toml::Value::as_array)
         .and_then(|entries| entries.first())
-        .and_then(|entry| entry.get("target"))
+        .and_then(|entry| entry.get(field))
         .and_then(toml::Value::as_str)
-        .expect("the single [[file]] entry has a target")
+        .expect("the single [[file]] entry has the requested field")
         .to_owned()
 }

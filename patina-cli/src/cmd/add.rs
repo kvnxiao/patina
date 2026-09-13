@@ -283,19 +283,19 @@ pub async fn run(
     let file_name = target
         .file_name()
         .ok_or_else(|| anyhow!("the path `{manifest_target}` has no file name"))?;
-    let basename = repo_source_name(file_name);
-    // A `--template` source records the `.tmpl` suffix so the engine derives
-    // the implicit template mode. The copied file on disk ends in `.tmpl` too.
-    let source = if mode.is_template() {
-        format!("{basename}.tmpl")
-    } else {
-        basename.clone()
-    };
+    let mut source = file_name.to_owned();
+    if mode.is_template() {
+        source.push_str(".tmpl");
+    }
 
     let module_dir = repo_root.join(&module);
     fs_err::create_dir_all(module_dir.as_std_path())
         .with_context(|| format!("failed to create module directory {module_dir}"))?;
     let dest = module_dir.join(&source);
+
+    if let Some(exit) = refuse_occupied_source(args, &manifest_target, &dest, reporter)? {
+        return Ok(exit);
+    }
 
     // The ignore checks run before `stage_into_repo`, so a refusal leaves the
     // user's file where it was.
@@ -343,6 +343,35 @@ pub async fn run(
         ));
     }
     Ok(ExitCode::Success.code())
+}
+
+fn refuse_occupied_source(
+    args: &AddArgs,
+    manifest_target: &Utf8Path,
+    dest: &Utf8Path,
+    reporter: &mut impl Reporter,
+) -> Result<Option<i32>> {
+    match fs_err::symlink_metadata(dest.as_std_path()) {
+        Ok(_) => {
+            let message = format!(
+                "repository source {dest} already exists; refusing to add {manifest_target}. Choose a different module or remove the existing source"
+            );
+            if args.json {
+                reporter.json(&error_envelope(
+                    "source_exists",
+                    manifest_target.as_str(),
+                    &message,
+                ));
+            } else {
+                reporter.warn(&message);
+            }
+            Ok(Some(ExitCode::Generic.code()))
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => {
+            Err(error).with_context(|| format!("failed to inspect repository source {dest}"))
+        }
+    }
 }
 
 fn overreaching_target(
@@ -652,19 +681,6 @@ fn resolve_module(
     }
 }
 
-/// Derive the repository source name from a target's file name. A single
-/// leading dot is stripped, so a dotfile is stored as `zsh/zshrc` rather than
-/// `zsh/.zshrc`.
-///
-/// The empty-result guard is unreachable: `Utf8Path::file_name` returns `None`
-/// for `.` and `..`, and the caller rejects a target with no file name.
-fn repo_source_name(file_name: &str) -> String {
-    match file_name.strip_prefix('.') {
-        Some(rest) if !rest.is_empty() => rest.to_owned(),
-        _ => file_name.to_owned(),
-    }
-}
-
 /// Resolve the user's home directory for tilde expansion. `$HOME` is read
 /// first, then `$USERPROFILE` (the Windows fallback).
 ///
@@ -746,15 +762,6 @@ mod tests {
             yes: false,
             force: false,
         }
-    }
-
-    #[test]
-    fn repo_source_name_strips_one_leading_dot() {
-        assert_eq!(repo_source_name(".zshrc"), "zshrc");
-        assert_eq!(repo_source_name("config"), "config");
-        // At most one leading dot is stripped, and the result is never empty.
-        assert_eq!(repo_source_name("."), ".");
-        assert_eq!(repo_source_name(".."), ".");
     }
 
     #[test]
