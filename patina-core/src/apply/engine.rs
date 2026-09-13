@@ -222,9 +222,10 @@ pub struct ResolvedOperation {
     /// Index into [`ResolvedPlan::modules`] of the module that declared this
     /// entry. Every render of this operation goes through that module's
     /// resolver, so a `[variables]` table stays scoped to the manifest that
-    /// declared it. Read it through
+    /// declared it. Crate-private, so the index is only ever one this plan
+    /// assigned; readers outside patina-core go through
     /// [`ResolvedPlan::operation_resolver`].
-    pub module: usize,
+    pub(crate) module: usize,
     /// The entry's compiled ignore rules, kept from planning so execution and
     /// the commit record walk the leaves the plan classified. Crate-private:
     /// nothing outside patina-core builds a [`ResolvedOperation`], and no
@@ -248,10 +249,11 @@ pub struct ModuleContext {
 }
 
 impl ModuleContext {
-    /// The module's directory name, as a target-collision error spells it.
+    /// The module's directory. A repository source declared by this module
+    /// resolves under it, whatever depth the `source` key spells.
     #[must_use]
-    pub fn name(&self) -> &str {
-        &self.name
+    pub fn directory(&self) -> &Utf8Path {
+        &self.dir
     }
 
     /// The `patina.toml` that declared this module's entries and hooks.
@@ -276,8 +278,9 @@ impl ModuleContext {
 pub struct PlannedHook {
     /// The parsed `[[hook]]` table.
     pub entry: HookEntry,
-    /// Index into [`ResolvedPlan::modules`] of the declaring module.
-    pub module: usize,
+    /// Index into [`ResolvedPlan::modules`] of the declaring module. Set by
+    /// [`PlannedHook::new`] and read inside patina-core only.
+    pub(crate) module: usize,
 }
 
 impl PlannedHook {
@@ -319,28 +322,29 @@ pub struct ResolvedPlan {
     /// during [`execute`].
     pub hooks: Vec<PlannedHook>,
     /// Per-module identity and scoped resolver, in module-discovery order.
-    /// [`ResolvedOperation::module`] and [`PlannedHook::module`] index into
-    /// this.
+    /// Each resolved operation and each planned hook records its declaring
+    /// module as a position in this list; reach the resolver through
+    /// [`operation_resolver`](Self::operation_resolver) rather than indexing.
     pub modules: Vec<ModuleContext>,
     /// The canonical targets this plan manages, keyed by
     /// [`manage_key`](crate::status::manage_key). Built during the same module
     /// walk that resolved the operations, so the orphan reap and the plan read
     /// one `when` evaluation under one set of `-v` overrides. Recomputing it
-    /// against a second, override-free pass let the reap delete a target the
-    /// plan had just materialized.
-    pub managed: crate::status::ManagedTargets,
+    /// against a second, override-free pass would let the reap delete a
+    /// target the plan had just materialized.
+    pub(crate) managed: crate::status::ManagedTargets,
     /// Per-machine state directory root (`<state>/patina`).
     pub state_dir: Utf8PathBuf,
     /// Resolved host OS family (drives hook shell defaults).
     pub host_os: HostOs,
     /// Timestamp keying this run's journal and backup files.
     pub timestamp: String,
-    /// The repository-wide variable context every module's scoped resolver is
-    /// derived from: built-ins, the resolved profile, the repo-shared
-    /// `[variables]` table, the active profile's table, and the CLI
-    /// overrides. It carries no `[variables]` from any module, so a render
-    /// against it resolves only what the whole repository shares. Rendering an
-    /// entry or evaluating a hook `when` goes through
+    /// The repository-wide variable context that every module's scoped
+    /// resolver is derived from: built-ins, the resolved profile, the
+    /// repo-shared `[variables]` table, the active profile's table, and the
+    /// CLI overrides. It carries no `[variables]` from any module, so a
+    /// render against it resolves only what the whole repository shares.
+    /// Rendering an entry or evaluating a hook `when` goes through
     /// [`operation_resolver`](Self::operation_resolver) or
     /// [`module_resolver`](Self::module_resolver) instead.
     pub resolver: Resolver,
@@ -385,24 +389,29 @@ impl ResolvedPlan {
         use crate::status::manage_key;
 
         let key = manage_key(target);
-        for op in &self.operations {
-            let is_tree = matches!(op.mode, FileMode::CopyTree | FileMode::SymlinkTree);
-            let claims = op.targets.iter().any(|declared| {
-                let declared_key = manage_key(declared);
-                if is_tree {
-                    key.starts_with(&declared_key)
-                } else {
-                    key == declared_key
-                }
-            });
-            if claims {
-                return self.modules.get(op.module).map(|module| TargetOwner {
-                    module,
-                    mode: op.mode,
-                });
-            }
-        }
-        None
+        let exact = self.operations.iter().find(|op| {
+            !matches!(op.mode, FileMode::CopyTree | FileMode::SymlinkTree)
+                && op
+                    .targets
+                    .iter()
+                    .any(|declared| manage_key(declared) == key)
+        });
+        // An entry that declares the path itself owns it, even where a tree
+        // entry's declared directory also contains it: a whole-directory
+        // `symlink` may legally sit inside a tree's target.
+        let claiming = exact.or_else(|| {
+            self.operations.iter().find(|op| {
+                matches!(op.mode, FileMode::CopyTree | FileMode::SymlinkTree)
+                    && op
+                        .targets
+                        .iter()
+                        .any(|declared| key.starts_with(manage_key(declared)))
+            })
+        })?;
+        self.modules.get(claiming.module).map(|module| TargetOwner {
+            module,
+            mode: claiming.mode,
+        })
     }
 
     /// The journal directory for this run.
@@ -504,9 +513,6 @@ pub fn plan(
     let mut directory_entries: Vec<Option<ResolvedEntry>> = Vec::new();
     let mut hooks: Vec<PlannedHook> = Vec::new();
 
-    // The managed-target set is built from the same resolution, under the
-    // same `-v` overrides, rather than recomputed later. The reap and the plan
-    // therefore cannot disagree about which entries are active.
     let mut managed = crate::status::ManagedTargets::default();
 
     let scoped = module_contexts(&resolver, &modules)?;
@@ -586,8 +592,8 @@ pub fn plan(
 /// Each context clones `base` and pushes only its own `[variables]` table, so
 /// the layer is scoped to the manifest that declared it rather than
 /// accumulating across the walk. Contexts come out in [`discover_modules`]
-/// order, which both the entry-index space and the module indices on
-/// [`ResolvedOperation`] and [`PlannedHook`] are positions in.
+/// order, in which both the entry-index space and the module indices on
+/// [`ResolvedOperation`] and [`PlannedHook`] are positions.
 ///
 /// # Errors
 ///
@@ -622,13 +628,13 @@ fn module_contexts(
 /// [`current_managed_targets`] (which recomputes the managed-target set for
 /// `patina status` and the apply-time orphan reap).
 ///
-/// Everything up to the per-module entry loop, but not including it, is
-/// identical between the two passes (the repo-shared / per-profile
-/// layer pushes, the active-profile resolution, the shared `MiniJinja`
-/// engine). The per-module layer is then pushed by [`module_contexts`], which
-/// both passes call. Sharing both gives the `when` gate the same variable
-/// context in planning and in status, down to which module's `[variables]`
-/// is in scope. An entry that plans on this host is therefore the same entry
+/// Both passes share everything up to the per-module entry loop: the
+/// repo-shared / per-profile layer pushes, the active-profile resolution,
+/// and the shared `MiniJinja` engine. Both also push the per-module layer
+/// through the same [`module_contexts`] call. Sharing the prefix and the
+/// per-module push gives the `when` gate the same variable context in
+/// planning and in status, down to which module's `[variables]` is in
+/// scope. An entry that plans on this host is therefore the same entry
 /// status counts as managed.
 struct PlanningContext {
     repo_root: Utf8PathBuf,
@@ -1108,7 +1114,7 @@ struct ManagedFootprint<'a> {
 }
 
 /// A tree-mode source's leaves, split by the entry's ignore rules.
-#[derive(Debug, Default, Clone)]
+#[derive(Default)]
 struct SourceLeaves {
     /// Leaves the entry materializes, relative to the source, in
     /// [`walk_files`](crate::apply::walk_files) order.
@@ -1148,7 +1154,7 @@ fn split_source_leaves(
     Ok(split)
 }
 
-/// Insert the managed `manage_key`(s) one surviving (`when`-true) entry
+/// Insert the managed `manage_key`(s) that one surviving (`when`-true) entry
 /// contributes.
 ///
 /// A tree-mode entry (`symlink-tree` or `copy-tree`) expands to one key per
@@ -1313,7 +1319,7 @@ impl ClaimTargets<'_> {
 /// appearing upstream under a tree source can newly fail a plan. Failing
 /// before any write is correct when a tree grows an unexpected file.
 ///
-/// The leaves are walked here rather than taken from the classified
+/// The leaves come from the entry's own split rather than from its classified
 /// dispositions. Classification deliberately records none for a tree target
 /// that does not exist yet (the whole-op Create shortcut), but a collision
 /// must still be caught even for a fresh target.
@@ -2557,9 +2563,11 @@ pub fn plan_orphans(resolved: &ResolvedPlan) -> Result<Vec<Orphan>, EngineError>
 ///
 /// [`plan_orphans`] is the same computation for a caller holding a resolved
 /// plan; `doctor` holds a state directory and no plan and so recomputes the
-/// managed set here. That recomputation carries no `-v` overrides, so where
-/// an override steers a `when` predicate this answer is advisory: the reap
-/// itself reads the set the plan built under the overrides the run was given.
+/// managed set here. That recomputation carries no `-v` overrides, so a
+/// `when` predicate reading an overridden variable resolves differently here
+/// than in that apply. A variable bound only by an override is undefined
+/// here, and the walk fails on it. The reap itself never takes this path: it
+/// reads the set the plan built under the overrides the run was given.
 ///
 /// # Errors
 ///

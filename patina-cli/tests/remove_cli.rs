@@ -222,3 +222,181 @@ fn remove_resolves_a_relative_path_against_the_working_directory() {
         "the [[file]] entry must be removed, got: {body}"
     );
 }
+
+#[test]
+fn remove_edits_the_manifest_that_declares_a_nested_source() {
+    let fx = Fixture::new();
+    fx.module(
+        "zsh",
+        "[[file]]\nsource = \"conf/zshrc\"\ntarget = \"~/.zshrc\"\nmode = \"symlink\"\n",
+    );
+    let nested = fx.root.join("zsh").join("conf");
+    fs_err::create_dir_all(nested.as_std_path()).expect("mkdir nested source dir");
+    fs_err::write(nested.join("zshrc").as_std_path(), "shell-config").expect("seed repo source");
+
+    let applied = fx.apply(&["--yes"]);
+    assert_eq!(
+        code(&applied),
+        0,
+        "apply must exit 0; stderr: {}",
+        stderr(&applied)
+    );
+
+    let out = fx.run(&["remove", "~/.zshrc", "--yes"], &[]);
+    assert_eq!(
+        code(&out),
+        0,
+        "remove must exit 0 for a nested source; stderr: {}",
+        stderr(&out)
+    );
+
+    let body = fs_err::read_to_string(fx.root.join("zsh").join("patina.toml").as_std_path())
+        .expect("read module manifest");
+    assert!(
+        !body.contains("[[file]]"),
+        "the declaring manifest must lose the entry, got: {body}"
+    );
+    assert!(
+        !fx.root
+            .join("zsh")
+            .join("conf")
+            .join("patina.toml")
+            .exists(),
+        "the source's own parent directory must not be treated as a module"
+    );
+    let zshrc = fx.home.join(".zshrc");
+    assert!(zshrc.is_file() && !is_symlink(&zshrc));
+    assert_eq!(
+        fs_err::read_to_string(zshrc.as_std_path()).expect("read replacement"),
+        "shell-config"
+    );
+}
+
+#[test]
+fn remove_refuses_a_tree_leaf_and_leaves_it_a_symlink() {
+    let fx = Fixture::new();
+    fx.module(
+        "cfg",
+        "[[directory]]\nsource = \"tree\"\ntarget = \"~/conf\"\nmode = \"symlink-tree\"\n",
+    );
+    let tree = fx.root.join("cfg").join("tree");
+    fs_err::create_dir_all(tree.as_std_path()).expect("mkdir tree source");
+    fs_err::write(tree.join("a.conf").as_std_path(), "leaf bytes").expect("seed leaf");
+
+    let applied = fx.apply(&["--yes"]);
+    assert_eq!(
+        code(&applied),
+        0,
+        "apply must exit 0; stderr: {}",
+        stderr(&applied)
+    );
+    let leaf = fx.home.join("conf").join("a.conf");
+    assert!(is_symlink(&leaf), "the leaf must be a symlink after apply");
+
+    let out = fx.run(&["remove", "~/conf/a.conf", "--yes"], &[]);
+
+    assert_eq!(
+        code(&out),
+        1,
+        "a tree leaf has no [[file]] entry to drop; stderr: {}",
+        stderr(&out)
+    );
+    assert!(
+        stderr(&out).contains("[[directory]]"),
+        "the refusal must point at the declaring entry; stderr: {}",
+        stderr(&out)
+    );
+    assert!(
+        is_symlink(&leaf),
+        "a refused remove must not convert the leaf into a regular file"
+    );
+    let body = fs_err::read_to_string(fx.root.join("cfg").join("patina.toml").as_std_path())
+        .expect("read module manifest");
+    assert!(
+        body.contains("[[directory]]"),
+        "the manifest must be untouched, got: {body}"
+    );
+}
+
+#[test]
+fn a_refused_remove_leaves_the_target_byte_identical_and_still_a_symlink() {
+    let fx = applied_symlink_fixture();
+    let zshrc = fx.home.join(".zshrc");
+    let manifest = fx.root.join("zsh").join("patina.toml");
+    // A [[file]] entry the manifest writer cannot address: rewriting the
+    // declaration as a [[directory]] leaves the journaled target with no
+    // [[file]] entry to drop.
+    fs_err::write(
+        manifest.as_std_path(),
+        "[[directory]]\nsource = \"dir\"\ntarget = \"~/dir\"\nmode = \"symlink\"\n",
+    )
+    .expect("rewrite manifest");
+    fs_err::create_dir_all(fx.root.join("zsh").join("dir").as_std_path()).expect("mkdir dir");
+
+    let out = fx.run(&["remove", "~/.zshrc", "--yes"], &[]);
+
+    assert_eq!(
+        code(&out),
+        1,
+        "no manifest declares the target any more; stderr: {}",
+        stderr(&out)
+    );
+    assert!(
+        is_symlink(&zshrc),
+        "a refused remove must leave the target a symlink"
+    );
+    assert_eq!(
+        fs_err::read_to_string(zshrc.as_std_path()).expect("read through the link"),
+        "shell-config",
+        "a refused remove must leave the target byte-identical"
+    );
+}
+
+#[test]
+fn remove_edits_the_manifest_whose_module_holds_the_journaled_source() {
+    let fx = Fixture::new();
+    for (module, pick) in [("alpha", "a"), ("beta", "b")] {
+        fx.module(
+            module,
+            &format!(
+                "[[file]]\nsource = \"zshrc\"\ntarget = \"~/.zshrc\"\nmode = \"symlink\"\n\
+                 when = \"patina.env.PICK == '{pick}'\"\n"
+            ),
+        );
+        fs_err::write(
+            fx.root.join(module).join("zshrc").as_std_path(),
+            format!("from {module}"),
+        )
+        .expect("seed repo source");
+    }
+
+    let applied = fx.run(&["apply", "--yes"], &[("PICK", "a")]);
+    assert_eq!(
+        code(&applied),
+        0,
+        "the alpha-selecting apply must exit 0; stderr: {}",
+        stderr(&applied)
+    );
+
+    let out = fx.run(&["remove", "~/.zshrc", "--yes"], &[("PICK", "b")]);
+    assert_eq!(
+        code(&out),
+        0,
+        "remove must exit 0; stderr: {}",
+        stderr(&out)
+    );
+
+    let alpha = fs_err::read_to_string(fx.root.join("alpha").join("patina.toml").as_std_path())
+        .expect("read alpha manifest");
+    let beta = fs_err::read_to_string(fx.root.join("beta").join("patina.toml").as_std_path())
+        .expect("read beta manifest");
+    assert!(
+        !alpha.contains("[[file]]"),
+        "the journaled source lives in alpha, so alpha's entry is the one to drop, got: {alpha}"
+    );
+    assert!(
+        beta.contains("[[file]]"),
+        "beta declares the same target under a predicate this host does not select; its \
+         declaration must survive, got: {beta}"
+    );
+}

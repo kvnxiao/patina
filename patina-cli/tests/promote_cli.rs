@@ -12,7 +12,9 @@
 mod common;
 
 use camino::Utf8Path;
+use camino::Utf8PathBuf;
 use common::Fixture;
+use common::Origin;
 use common::code;
 use patina_core::ApplyRecord;
 use patina_core::ExpectedTarget;
@@ -311,5 +313,80 @@ fn promote_resolves_a_relative_path_against_the_working_directory() {
         fs_err::read_to_string(source.as_std_path()).expect("read repo source"),
         NEW_GITCONFIG,
         "the repository source must hold the promoted bytes"
+    );
+}
+
+/// Deploy one file from a pinned remote checkout, and return the fixture, the
+/// deployed target, and the checkout's own copy of the source.
+fn remote_backed_fixture() -> (Fixture, Utf8PathBuf, Utf8PathBuf) {
+    let fx = Fixture::new();
+    let origin = Origin::new(&fx, "humanizer", 1_700_000_000);
+    let rev = origin.commit_files(&[("skills/tone.md", "upstream\n")], 1_700_000_000);
+    fx.declare_remote("humanizer", &origin.url(), Some("main"));
+    fx.module(
+        "agents",
+        "[[directory]]\nsource = \"skills\"\nremote = \"humanizer\"\n\
+         target = \"~/.claude/skills\"\nmode = \"copy\"\n",
+    );
+    fs_err::write(
+        fx.root.join("patina.lock").as_std_path(),
+        format!(
+            "version = 1\n\n[remotes.humanizer]\nurl = \"{}\"\nref = \"main\"\n\
+             rev = \"{rev}\"\nupdated_at = \"2026-08-11T14:00:00Z\"\n",
+            origin.url()
+        ),
+    )
+    .expect("write patina.lock");
+
+    let applied = fx.apply(&["--yes"]);
+    assert_eq!(
+        code(&applied),
+        0,
+        "the remote-backed apply must exit 0; stderr: {}",
+        stderr(&applied)
+    );
+    let target = fx.home.join(".claude").join("skills").join("tone.md");
+    assert_eq!(
+        fs_err::read_to_string(target.as_std_path()).expect("read deployed leaf"),
+        "upstream\n"
+    );
+    let checkout_source =
+        patina_core::remote::cache::checkout_dir(&fx.state_root(), &remote_name("humanizer"), &rev)
+            .join("skills")
+            .join("tone.md");
+    (fx, target, checkout_source)
+}
+
+fn remote_name(spelling: &str) -> patina_core::RemoteName {
+    patina_core::RemoteName::parse(spelling).expect("a legal remote name")
+}
+
+#[test]
+fn promote_refuses_a_remote_backed_target_and_leaves_the_checkout_intact() {
+    let (fx, target, checkout_source) = remote_backed_fixture();
+    fs_err::write(target.as_std_path(), "edited locally\n").expect("edit the target");
+
+    let out = fx.run(&["promote", "~/.claude/skills/tone.md", "--yes"], &[]);
+
+    assert_eq!(
+        code(&out),
+        1,
+        "promoting into an immutable checkout must be refused; stderr: {}",
+        stderr(&out)
+    );
+    assert!(
+        stderr(&out).contains("humanizer"),
+        "the refusal must name the remote; stderr: {}",
+        stderr(&out)
+    );
+    assert_eq!(
+        fs_err::read_to_string(checkout_source.as_std_path()).expect("read checkout source"),
+        "upstream\n",
+        "the pinned checkout must still hold the upstream bytes"
+    );
+    assert_eq!(
+        fs_err::read_to_string(target.as_std_path()).expect("read target"),
+        "edited locally\n",
+        "a refused promote must leave the target as it found it"
     );
 }

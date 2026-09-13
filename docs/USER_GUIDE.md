@@ -599,6 +599,21 @@ Resolve a drifted target either way:
 - `patina promote` updates the source from the target's current bytes,
   then re-applies.
 
+`promote` refuses a target deployed from a remote (exit 1) and names the
+remote. A pinned checkout is third-party content Patina treats as
+immutable: writing your bytes into it would change what every entry
+reading that path deploys, until the pin moves and the checkout is
+replaced. Change the upstream repository, then run `patina remote update
+<name>`.
+
+`remove` refuses one leaf of a `symlink-tree` or `copy` `[[directory]]`
+entry (exit 1) and names the manifest that declares it. The entry
+declares the directory, so `remove`, which drops a `[[file]]` entry, has
+nothing to drop for a single leaf. Drop the `[[directory]]` entry, or
+exclude the leaf with an `ignore` pattern. A refused `remove` leaves the
+target exactly as it found it: `remove` settles which manifest entry it
+will drop before it touches the target.
+
 ## Remote sources
 
 An entry can draw its source from someone else's git repository instead

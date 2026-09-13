@@ -9,6 +9,22 @@
 //! out of the report, rather than reporting an ORPHANED leftover. With
 //! `--purge` the target is deleted from disk entirely instead of replaced.
 //!
+//! A tree-mode leaf is refused (exit 1). A `symlink-tree` or `copy`
+//! `[[directory]]` entry declares one directory and materializes a leaf per
+//! source file, so no `[[file]]` edit can drop a single leaf; the manifest
+//! writer edits only `[[file]]` arrays. Drop the `[[directory]]` entry, or
+//! exclude the leaf with an `ignore` pattern.
+//!
+//! Every refusal, and the manifest edit `remove` will make, is settled
+//! before the prompt, so a refused `remove` leaves the target and every
+//! manifest exactly as it found them. Settling the edit means planning
+//! first. Planning a remote-backed entry against a cold cache fetches its
+//! pinned checkout, so a declined `remove` can still have filled
+//! `<state>/remotes/`, the same way a declined `apply` does. Writing the
+//! edited manifest is the one step that follows the target replacement: a
+//! failure there leaves the target already replaced while its entry still
+//! stands.
+//!
 //! `remove` holds one exclusive advisory lock for the whole command and
 //! re-journals under [`LockPolicy::Held`](patina_core::LockPolicy) through
 //! the shared helpers in [`crate::cmd::managed`].
@@ -30,7 +46,6 @@
 //! flow.
 
 use crate::cli::RemoveArgs;
-use crate::cmd::MANIFEST_FILENAME;
 use crate::cmd::add::resolve_home;
 use crate::cmd::apply::PromptReader;
 use crate::cmd::apply::Tty;
@@ -46,9 +61,14 @@ use anyhow::anyhow;
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
 use patina_core::ApplyRequest;
+use patina_core::ConfigWriteError;
 use patina_core::EngineError;
 use patina_core::ExpectedTarget;
+use patina_core::FileMode;
+use patina_core::ModuleContext;
+use patina_core::ResolvedPlan;
 use patina_core::Resolver;
+use patina_core::TargetOwner;
 use patina_core::TemplateEngine;
 use patina_core::anchor_input;
 use patina_core::contract_home;
@@ -91,13 +111,10 @@ pub async fn run(
         return Ok(report_unmanaged(args, reporter));
     };
 
-    if !confirm(args, tty, reader, reporter) {
-        return Ok(ExitCode::UserDeclined.code());
-    }
-
     // Plan against the still-current managed set, before the entry is
     // removed, so the resolver has the variable context a template target
-    // needs for its last-applied re-render.
+    // needs for its last-applied re-render and the declaring module is still
+    // resolvable.
     let timestamp = current_timestamp();
     let resolved =
         plan_apply(&ApplyRequest::default(), &timestamp).context("failed to compute the plan")?;
@@ -107,6 +124,27 @@ pub async fn run(
     let target_path = Utf8PathBuf::from(expected.target());
     let owner = resolved.owner_of(&target_path);
 
+    if let Some(owner) = owner
+        && matches!(owner.mode, FileMode::SymlinkTree | FileMode::CopyTree)
+    {
+        return Ok(report_tree_leaf(args, &owner.module.manifest(), reporter));
+    }
+
+    // Settle the manifest edit before touching the target, so a target whose
+    // entry cannot be dropped stays exactly as `remove` found it. Try the
+    // portable form, the user's argument, and the journaled path to match
+    // manifests written by both current and older `add` versions.
+    let portable = contract_home(&target, &home);
+    let source = Utf8PathBuf::from(expected.source());
+    let edit = plan_manifest_edit(
+        candidate_manifests(&resolved, &source, owner),
+        &[portable.as_str(), args.path.as_str(), target_path.as_str()],
+    )?;
+
+    if !confirm(args, tty, reader, reporter) {
+        return Ok(ExitCode::UserDeclined.code());
+    }
+
     let content = if args.purge {
         None
     } else {
@@ -115,16 +153,8 @@ pub async fn run(
     };
 
     replace_target(&target_path, content.as_deref())?;
-
-    let source = Utf8PathBuf::from(expected.source());
-    let manifest_path = owning_manifest(&source)?;
-    // Try the portable form, the user's argument, and the journaled path to
-    // match manifests written by both current and older `add` versions.
-    let portable = contract_home(&target, &home);
-    remove_entry(
-        &manifest_path,
-        &[portable.as_str(), args.path.as_str(), target_path.as_str()],
-    )?;
+    fs_err::write(edit.manifest.as_std_path(), &edit.edited)
+        .with_context(|| format!("failed to write {}", edit.manifest))?;
 
     // The re-plan runs after the manifest edit, so the fresh <ts>.COMMIT
     // omits the removed target and `patina status` stops listing it.
@@ -190,42 +220,97 @@ fn remove_if_present(path: &Utf8Path) -> Result<()> {
     }
 }
 
-/// Derive the owning module's manifest path from a journaled source path:
-/// `<repo>/<module>/<source>` → `<repo>/<module>/patina.toml`.
-fn owning_manifest(source: &Utf8Path) -> Result<Utf8PathBuf> {
-    let module_dir = source
-        .parent()
-        .ok_or_else(|| anyhow!("the journaled source `{source}` has no parent module directory"))?;
-    Ok(module_dir.join(MANIFEST_FILENAME))
+/// The manifest edit `remove` will apply, computed before any mutation.
+#[derive(Debug)]
+struct ManifestEdit {
+    /// The manifest that declared the entry.
+    manifest: Utf8PathBuf,
+    /// That manifest's text with the entry dropped.
+    edited: String,
 }
 
-fn remove_entry(manifest_path: &Utf8Path, spellings: &[&str]) -> Result<()> {
-    let text = fs_err::read_to_string(manifest_path.as_std_path())
-        .with_context(|| format!("failed to read {manifest_path}"))?;
-    let mut last_error = None;
-    let mut matched = None;
-    for spelling in spellings {
-        match remove_file_entry(&text, spelling) {
-            Ok(edited) => {
-                matched = Some(edited);
-                break;
+/// The manifests that may declare the journaled entry, most authoritative
+/// first.
+///
+/// The journaled `source` decides it. A repository source lies under the
+/// module directory that declared it, whatever depth the `source` key spells
+/// and whichever entries are active on this host, so a `when` predicate that
+/// has flipped since the apply cannot redirect the edit at another module's
+/// declaration of the same target. Only a remote-backed source, which lives
+/// under the state directory rather than the repository, falls through to the
+/// module the current plan materializes the target from.
+fn candidate_manifests(
+    resolved: &ResolvedPlan,
+    source: &Utf8Path,
+    owner: Option<TargetOwner<'_>>,
+) -> Vec<Utf8PathBuf> {
+    let declaring = resolved
+        .modules
+        .iter()
+        .find(|module| source.starts_with(module.directory()))
+        .map(ModuleContext::manifest);
+    let owning = owner.map(|owner| owner.module.manifest());
+    let mut candidates: Vec<Utf8PathBuf> = declaring.into_iter().chain(owning).collect();
+    candidates.dedup();
+    candidates
+}
+
+/// Find the manifest declaring the target and compute its text without that
+/// entry, trying each candidate manifest against each spelling of the target.
+///
+/// # Errors
+///
+/// Returns an error naming every spelling tried when no candidate declares a
+/// `[[file]]` entry for the target. A `[[directory]]` entry lands here too,
+/// because the manifest writer edits only `[[file]]` arrays. A manifest that
+/// cannot be read, or whose TOML does not parse, fails the command rather than
+/// being skipped: the target is declared somewhere, and skipping would report
+/// the wrong reason for not finding it.
+fn plan_manifest_edit(
+    candidates: impl IntoIterator<Item = Utf8PathBuf>,
+    spellings: &[&str],
+) -> Result<ManifestEdit> {
+    for manifest in candidates {
+        let text = match fs_err::read_to_string(manifest.as_std_path()) {
+            Ok(text) => text,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                return Err(anyhow::Error::new(error).context(format!("failed to read {manifest}")));
             }
-            Err(error) => last_error = Some(error),
+        };
+        for spelling in spellings {
+            match remove_file_entry(&text, spelling) {
+                Ok(edited) => return Ok(ManifestEdit { manifest, edited }),
+                Err(ConfigWriteError::EntryNotFound { .. }) => {}
+                Err(error) => {
+                    return Err(EngineError::from(error))
+                        .with_context(|| format!("failed to edit {manifest}"));
+                }
+            }
         }
     }
-    let Some(edited) = matched else {
-        let error = last_error
-            .ok_or_else(|| anyhow!("no target spelling was supplied for {manifest_path}"))?;
-        return Err(EngineError::from(error)).with_context(|| {
-            format!(
-                "failed to remove the entry for {} from {manifest_path}",
-                spellings.join(" or ")
-            )
-        });
-    };
-    fs_err::write(manifest_path.as_std_path(), edited)
-        .with_context(|| format!("failed to write {manifest_path}"))?;
-    Ok(())
+    Err(anyhow!(
+        "no patina.toml declares a [[file]] entry for {}; a [[directory]] entry is \
+         unmanaged by editing its manifest directly",
+        spellings.join(" or ")
+    ))
+}
+
+/// Report the tree-leaf refusal (exit 1) and return the exit code.
+fn report_tree_leaf(args: &RemoveArgs, manifest: &Utf8Path, reporter: &mut impl Reporter) -> i32 {
+    let message = format!(
+        "{} is one leaf of a tree-mode [[directory]] entry declared in {manifest}. \
+         The entry declares the directory, not the leaf, so no single leaf can be \
+         unmanaged on its own. Drop the [[directory]] entry, or exclude the leaf \
+         with an ignore pattern.",
+        args.path
+    );
+    if args.json {
+        reporter.json(&error_envelope("tree_leaf", args.path.as_str(), &message));
+    } else {
+        reporter.warn(&message);
+    }
+    ExitCode::Generic.code()
 }
 
 /// Confirm the removal before mutating. `--yes` proceeds unconditionally; a
@@ -395,12 +480,6 @@ mod tests {
     }
 
     #[test]
-    fn owning_manifest_is_the_source_module_dir() {
-        let manifest = owning_manifest(Utf8Path::new("/repo/zsh/zshrc")).expect("manifest");
-        assert_eq!(manifest, Utf8PathBuf::from("/repo/zsh/patina.toml"));
-    }
-
-    #[test]
     fn remove_if_present_tolerates_absent_target() {
         let td = TempDir::new().expect("tempdir");
         let dir = Utf8Path::from_path(td.path()).expect("utf8 tempdir path");
@@ -441,7 +520,7 @@ mod tests {
     }
 
     #[test]
-    fn remove_entry_deletes_the_matching_file_entry() {
+    fn the_edit_drops_the_matching_file_entry_and_keeps_its_siblings() {
         let td = TempDir::new().expect("tempdir");
         let dir = Utf8Path::from_path(td.path()).expect("utf8 tempdir path");
         let manifest = dir.join("patina.toml");
@@ -452,9 +531,11 @@ mod tests {
         )
         .expect("seed manifest");
 
-        remove_entry(&manifest, &["~/.zshrc", "/home/u/.zshrc"]).expect("remove entry");
+        let edit = plan_manifest_edit([manifest.clone()], &["~/.zshrc", "/home/u/.zshrc"])
+            .expect("remove entry");
 
-        let body = fs_err::read_to_string(manifest.as_std_path()).expect("read manifest");
+        assert_eq!(edit.manifest, manifest);
+        let body = edit.edited;
         assert!(
             !body.contains("~/.zshrc"),
             "the removed entry's target must be gone, got: {body}"
@@ -470,7 +551,7 @@ mod tests {
     }
 
     #[test]
-    fn remove_entry_falls_through_to_a_later_spelling() {
+    fn the_edit_falls_through_to_a_later_spelling() {
         let td = TempDir::new().expect("tempdir");
         let dir = Utf8Path::from_path(td.path()).expect("utf8 tempdir path");
         let manifest = dir.join("patina.toml");
@@ -484,10 +565,13 @@ mode = \"symlink\"
         )
         .expect("seed manifest");
 
-        remove_entry(&manifest, &["~/.zshrc", ".zshrc", "/home/u/.zshrc"])
-            .expect("a later spelling matches");
+        let edit = plan_manifest_edit(
+            [manifest.clone()],
+            &["~/.zshrc", ".zshrc", "/home/u/.zshrc"],
+        )
+        .expect("a later spelling matches");
 
-        let body = fs_err::read_to_string(manifest.as_std_path()).expect("read manifest");
+        let body = edit.edited;
         assert!(
             !body.contains("[[file]]"),
             "the entry matched by the second spelling must be gone, got: {body}"
@@ -495,7 +579,7 @@ mode = \"symlink\"
     }
 
     #[test]
-    fn remove_entry_reports_every_spelling_it_tried() {
+    fn a_declaration_free_manifest_reports_every_spelling_tried() {
         let td = TempDir::new().expect("tempdir");
         let dir = Utf8Path::from_path(td.path()).expect("utf8 tempdir path");
         let manifest = dir.join("patina.toml");
@@ -509,18 +593,12 @@ mode = \"copy\"
         )
         .expect("seed manifest");
 
-        let error = remove_entry(&manifest, &["~/.zshrc", "/home/u/.zshrc"])
+        let error = plan_manifest_edit([manifest.clone()], &["~/.zshrc", "/home/u/.zshrc"])
             .expect_err("no spelling matches");
         let rendered = format!("{error:#}");
         assert!(
             rendered.contains("~/.zshrc") && rendered.contains("/home/u/.zshrc"),
             "the error must name both spellings, got: {rendered}"
-        );
-        assert!(
-            fs_err::read_to_string(manifest.as_std_path())
-                .expect("read manifest")
-                .contains("~/.vimrc"),
-            "a failed removal must leave the manifest untouched"
         );
     }
 
