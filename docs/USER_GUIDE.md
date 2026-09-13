@@ -195,6 +195,12 @@ facts, the repo-shared `[variables]` table, each module's own
 table, per-machine variables, and finally CLI overrides. A higher layer
 overrides a lower one for the same key.
 
+A module's `[variables]` table is scoped to that module. It binds the
+templates, `when` predicates, and hooks declared in the same
+`patina.toml` and reaches no other module, whatever order the modules are
+discovered in. A module that declares no binding for a name resolves it
+from the repo-shared table, the active profile, or the built-ins.
+
 ```toml
 # Root patina.toml: repo-shared defaults plus a per-profile override.
 [variables]

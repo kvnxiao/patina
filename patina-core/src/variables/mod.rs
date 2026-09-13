@@ -313,6 +313,35 @@ mod tests {
     }
 
     #[test]
+    fn clones_of_one_base_keep_their_per_module_keys_apart() {
+        let base = Resolver::new(Builtins::for_tests())
+            .with_repo_shared([("editor", "nvim"), ("shell", "zsh")])
+            .expect("repo layer accepted");
+
+        let first = base
+            .clone()
+            .with_per_module([("editor", "emacs")])
+            .expect("first module layer accepted");
+        let second = base
+            .clone()
+            .with_per_module([("editor", "helix")])
+            .expect("second module layer accepted");
+
+        assert_eq!(first.get("editor").as_deref(), Some("emacs"));
+        assert_eq!(second.get("editor").as_deref(), Some("helix"));
+        assert_eq!(
+            base.get("editor").as_deref(),
+            Some("nvim"),
+            "the base must keep the repo-shared value neither clone pushed onto it"
+        );
+        assert_eq!(
+            first.get("shell").as_deref(),
+            Some("zsh"),
+            "a scoped clone must still see the repo-shared layers it was derived from"
+        );
+    }
+
+    #[test]
     fn missing_keys_return_none() {
         let resolver = Resolver::new(Builtins::for_tests());
         assert!(resolver.get("nonexistent").is_none());

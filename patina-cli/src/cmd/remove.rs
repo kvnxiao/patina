@@ -48,7 +48,7 @@ use camino::Utf8PathBuf;
 use patina_core::ApplyRequest;
 use patina_core::EngineError;
 use patina_core::ExpectedTarget;
-use patina_core::ResolvedPlan;
+use patina_core::Resolver;
 use patina_core::TemplateEngine;
 use patina_core::anchor_input;
 use patina_core::contract_home;
@@ -102,15 +102,18 @@ pub async fn run(
     let resolved =
         plan_apply(&ApplyRequest::default(), &timestamp).context("failed to compute the plan")?;
 
-    let content = if args.purge {
-        None
-    } else {
-        Some(reconstruct_content(expected, &resolved)?)
-    };
-
     // The target path is read from the journal: the canonical path of the
     // materialized object, not the user's spelling of it.
     let target_path = Utf8PathBuf::from(expected.target());
+    let owner = resolved.owner_of(&target_path);
+
+    let content = if args.purge {
+        None
+    } else {
+        let vars = owner.map_or(&resolved.resolver, |owner| owner.module.resolver());
+        Some(reconstruct_content(expected, vars)?)
+    };
+
     replace_target(&target_path, content.as_deref())?;
 
     let source = Utf8PathBuf::from(expected.source());
@@ -136,14 +139,14 @@ pub async fn run(
 ///
 /// - Symlink / copy targets: the source bytes read from the repository.
 /// - Template targets (`.tmpl` source): re-rendered through `MiniJinja` against
-///   the variable context the plan resolved.
-fn reconstruct_content(expected: &ExpectedTarget, resolved: &ResolvedPlan) -> Result<Vec<u8>> {
+///   `vars`, the resolver the declaring module scopes.
+fn reconstruct_content(expected: &ExpectedTarget, vars: &Resolver) -> Result<Vec<u8>> {
     let source = Utf8PathBuf::from(expected.source());
     if source.as_str().ends_with(TEMPLATE_SUFFIX) {
         let body = fs_err::read_to_string(source.as_std_path())
             .with_context(|| format!("failed to read template source {source}"))?;
         let rendered = TemplateEngine::new()
-            .render(&body, &resolved.resolver)
+            .render(&body, vars)
             .map_err(EngineError::from)
             .with_context(|| format!("failed to re-render template source {source}"))?;
         Ok(rendered.into_bytes())

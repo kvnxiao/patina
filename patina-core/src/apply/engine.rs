@@ -219,11 +219,84 @@ pub struct ResolvedOperation {
     /// therefore never collide on an index, and per-entry atomic rollback
     /// groups targets by their declared entry.
     pub entry_index: u32,
+    /// Index into [`ResolvedPlan::modules`] of the module that declared this
+    /// entry. Every render of this operation goes through that module's
+    /// resolver, so a `[variables]` table stays scoped to the manifest that
+    /// declared it. Read it through
+    /// [`ResolvedPlan::operation_resolver`].
+    pub module: usize,
     /// The entry's compiled ignore rules, kept from planning so execution and
     /// the commit record walk the leaves the plan classified. Crate-private:
     /// nothing outside patina-core builds a [`ResolvedOperation`], and no
     /// reader of one needs the matcher.
     pub(crate) ignore_rules: ignore::gitignore::Gitignore,
+}
+
+/// One module's identity and the resolver its own `[variables]` table scopes.
+///
+/// Derived by cloning the repository-wide base resolver and pushing only this
+/// module's table, so a variable one module declares never resolves for
+/// another module's entries, `when` predicates, or hooks.
+#[derive(Debug, Clone)]
+pub struct ModuleContext {
+    /// The module's directory name.
+    name: String,
+    /// Absolute path to the module's directory.
+    dir: Utf8PathBuf,
+    /// The base resolver with this module's `[variables]` layer pushed.
+    resolver: Resolver,
+}
+
+impl ModuleContext {
+    /// The module's directory name, as a target-collision error spells it.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// The `patina.toml` that declared this module's entries and hooks.
+    #[must_use]
+    pub fn manifest(&self) -> Utf8PathBuf {
+        self.dir.join(MANIFEST_FILENAME)
+    }
+
+    /// The resolver every entry, `when` predicate, and hook this module
+    /// declares resolves through.
+    pub fn resolver(&self) -> &Resolver {
+        &self.resolver
+    }
+}
+
+/// A `[[hook]]` entry paired with the module that declared it.
+///
+/// A hook command is run verbatim and never rendered, so the module binding
+/// governs only the `when` predicate.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct PlannedHook {
+    /// The parsed `[[hook]]` table.
+    pub entry: HookEntry,
+    /// Index into [`ResolvedPlan::modules`] of the declaring module.
+    pub module: usize,
+}
+
+impl PlannedHook {
+    /// [`PlannedHook`] is `#[non_exhaustive]`, so this constructor is the only
+    /// way to build one outside patina-core.
+    #[must_use]
+    pub fn new(entry: HookEntry, module: usize) -> Self {
+        Self { entry, module }
+    }
+}
+
+/// The module that declared the entry materializing one target.
+#[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
+pub struct TargetOwner<'a> {
+    /// The declaring module's context.
+    pub module: &'a ModuleContext,
+    /// The declared entry's mode.
+    pub mode: FileMode,
 }
 
 /// Everything an apply needs after planning, with no mutation performed
@@ -241,19 +314,28 @@ pub struct ResolvedPlan {
     /// Per-operation resolved executor inputs, parallel to
     /// [`Plan::operations`].
     pub operations: Vec<ResolvedOperation>,
-    /// Every `[[hook]]` entry across all modules, owned so the resolved
-    /// hooks can borrow from it during [`execute`].
-    pub hooks: Vec<HookEntry>,
+    /// Every `[[hook]]` entry across all modules, each tagged with its
+    /// declaring module and owned so the resolved hooks can borrow from it
+    /// during [`execute`].
+    pub hooks: Vec<PlannedHook>,
+    /// Per-module identity and scoped resolver, in module-discovery order.
+    /// [`ResolvedOperation::module`] and [`PlannedHook::module`] index into
+    /// this.
+    pub modules: Vec<ModuleContext>,
     /// Per-machine state directory root (`<state>/patina`).
     pub state_dir: Utf8PathBuf,
     /// Resolved host OS family (drives hook shell defaults).
     pub host_os: HostOs,
     /// Timestamp keying this run's journal and backup files.
     pub timestamp: String,
-    /// Fully-resolved variable context (built-ins + CLI overrides +
-    /// per-module layers + resolved profile). Reused by the executors,
-    /// the hook `when` evaluator, and the CLI diff renderer so all three
-    /// agree on rendered template output.
+    /// The repository-wide variable context every module's scoped resolver is
+    /// derived from: built-ins, the resolved profile, the repo-shared
+    /// `[variables]` table, the active profile's table, and the CLI
+    /// overrides. It carries no `[variables]` from any module, so a render
+    /// against it resolves only what the whole repository shares. Rendering an
+    /// entry or evaluating a hook `when` goes through
+    /// [`operation_resolver`](Self::operation_resolver) or
+    /// [`module_resolver`](Self::module_resolver) instead.
     pub resolver: Resolver,
     /// The names of every `[[remote]]` the root manifest declares, in
     /// declaration order. Carried so the stale-pin and cache sweeps work from
@@ -267,6 +349,55 @@ pub struct ResolvedPlan {
 }
 
 impl ResolvedPlan {
+    /// The resolver the module at `index` declares its entries under, falling
+    /// back to the repository-wide base for an index no module occupies.
+    ///
+    /// The fallback keeps the lookup total. Every index this plan hands out
+    /// comes from its own module walk, so reaching the fallback means the
+    /// entry resolves against the repo-shared layers alone.
+    pub fn module_resolver(&self, index: usize) -> &Resolver {
+        self.modules
+            .get(index)
+            .map_or(&self.resolver, ModuleContext::resolver)
+    }
+
+    /// The resolver `op`'s declaring module scopes.
+    pub fn operation_resolver(&self, op: &ResolvedOperation) -> &Resolver {
+        self.module_resolver(op.module)
+    }
+
+    /// The module and mode of the entry that materializes `target`, or `None`
+    /// when this plan materializes no such target.
+    ///
+    /// The match is under [`manage_key`](crate::status::manage_key), so a
+    /// caller may pass a path as the journal recorded it. A tree-mode entry
+    /// owns every path beneath one of its declared targets, because the
+    /// journal records each materialized leaf as its own target.
+    #[must_use]
+    pub fn owner_of(&self, target: &Utf8Path) -> Option<TargetOwner<'_>> {
+        use crate::status::manage_key;
+
+        let key = manage_key(target);
+        for op in &self.operations {
+            let is_tree = matches!(op.mode, FileMode::CopyTree | FileMode::SymlinkTree);
+            let claims = op.targets.iter().any(|declared| {
+                let declared_key = manage_key(declared);
+                if is_tree {
+                    key.starts_with(&declared_key)
+                } else {
+                    key == declared_key
+                }
+            });
+            if claims {
+                return self.modules.get(op.module).map(|module| TargetOwner {
+                    module,
+                    mode: op.mode,
+                });
+            }
+        }
+        None
+    }
+
     /// The journal directory for this run.
     fn journal_dir(&self) -> Utf8PathBuf {
         self.state_dir.join("journal")
@@ -338,7 +469,7 @@ pub fn plan(
         state_dir,
         home,
         profile,
-        mut resolver,
+        resolver,
         engine,
         modules,
         remotes,
@@ -364,24 +495,18 @@ pub fn plan(
     // never canonicalized or validated (ordering).
     let mut file_entries: Vec<Option<ResolvedEntry>> = Vec::new();
     let mut directory_entries: Vec<Option<ResolvedEntry>> = Vec::new();
-    let mut hooks: Vec<HookEntry> = Vec::new();
+    let mut hooks: Vec<PlannedHook> = Vec::new();
 
-    for module in &modules {
-        let manifest = module.path.join(MANIFEST_FILENAME);
-        let config = parse_module_config(&manifest)?;
-
-        if let Some(table) = config.variables.as_ref() {
-            resolver = resolver.with_per_module(table_to_layer(table))?;
-        }
-
+    let scoped = module_contexts(&resolver, &modules)?;
+    for (index, (context, config)) in scoped.iter().enumerate() {
         for entry in &config.files {
             file_entries.push(gate_and_resolve_entry(
                 entry,
-                module,
+                context,
+                index,
                 &mut registry,
                 &home,
                 &engine,
-                &resolver,
                 &repo_ignore,
                 &provenance,
             )?);
@@ -389,20 +514,27 @@ pub fn plan(
         for entry in &config.directories {
             directory_entries.push(gate_and_resolve_entry(
                 entry,
-                module,
+                context,
+                index,
                 &mut registry,
                 &home,
                 &engine,
-                &resolver,
                 &repo_ignore,
                 &provenance,
             )?);
         }
 
-        hooks.extend(config.hooks.iter().cloned());
+        hooks.extend(config.hooks.iter().cloned().map(|entry| PlannedHook {
+            entry,
+            module: index,
+        }));
     }
+    let module_contexts: Vec<ModuleContext> = scoped
+        .into_iter()
+        .map(|(context, _config)| context)
+        .collect();
 
-    let expanded = expand_claims(&file_entries, &directory_entries)?;
+    let expanded = expand_claims(&module_contexts, &file_entries, &directory_entries)?;
     let claims: Vec<crate::apply::TargetClaim<'_>> =
         expanded.iter().map(ClaimTargets::claim).collect();
     crate::apply::collisions::validate_targets(&claims)?;
@@ -417,6 +549,7 @@ pub fn plan(
         plan: Plan::new(operations),
         operations: resolved_ops,
         hooks,
+        modules: module_contexts,
         state_dir,
         host_os,
         timestamp: timestamp.into(),
@@ -424,6 +557,42 @@ pub fn plan(
         remote_names,
         remote_pins,
     })
+}
+
+/// Parse every module manifest and derive the resolver that module's entries,
+/// `when` predicates, and hooks resolve through.
+///
+/// Each context clones `base` and pushes only its own `[variables]` table, so
+/// the layer is scoped to the manifest that declared it rather than
+/// accumulating across the walk. Contexts come out in [`discover_modules`]
+/// order, which both the entry-index space and the module indices on
+/// [`ResolvedOperation`] and [`PlannedHook`] are positions in.
+///
+/// # Errors
+///
+/// Returns an [`EngineError`] when a module manifest fails to parse or its
+/// `[variables]` table names a key in the reserved `patina.*` namespace.
+fn module_contexts(
+    base: &Resolver,
+    modules: &[crate::discovery::ModuleHandle],
+) -> Result<Vec<(ModuleContext, crate::config::ModuleConfig)>, EngineError> {
+    let mut contexts = Vec::with_capacity(modules.len());
+    for module in modules {
+        let config = parse_module_config(&module.path.join(MANIFEST_FILENAME))?;
+        let mut resolver = base.clone();
+        if let Some(table) = config.variables.as_ref() {
+            resolver = resolver.with_per_module(table_to_layer(table))?;
+        }
+        contexts.push((
+            ModuleContext {
+                name: module.name.clone(),
+                dir: module.path.clone(),
+                resolver,
+            },
+            config,
+        ));
+    }
+    Ok(contexts)
 }
 
 /// The repository, profile, variable resolver, and `when` engine shared by
@@ -435,10 +604,11 @@ pub fn plan(
 /// Everything up to the per-module entry loop, but not including it, is
 /// identical between the two passes (the repo-shared / per-profile
 /// layer pushes, the active-profile resolution, the shared `MiniJinja`
-/// engine). Sharing it here gives the `when` gate the same variable context
-/// in planning and in status. An entry that plans on this host is therefore
-/// the same entry status counts as managed, and the same entry the reap
-/// leaves alone.
+/// engine). The per-module layer is then pushed by [`module_contexts`], which
+/// both passes call. Sharing both gives the `when` gate the same variable
+/// context in planning and in status, down to which module's `[variables]`
+/// is in scope. An entry that plans on this host is therefore the same entry
+/// status counts as managed.
 struct PlanningContext {
     repo_root: Utf8PathBuf,
     state_dir: Utf8PathBuf,
@@ -710,9 +880,9 @@ fn declared_pins<'a>(
 /// Resolves the repository and state directory, the active profile, and the
 /// resolver's repo-shared (`[variables]`) and active-profile
 /// (`[profiles.<name>.variables]`) layers. The per-module layer is
-/// *not* pushed here; each pass pushes it during its own module loop, in
-/// declaration order, so a module's `[variables]` is in scope for that
-/// module's entries' `when` predicates.
+/// *not* pushed here; [`module_contexts`] derives one resolver per module from
+/// the returned base, so a module's `[variables]` is in scope for that
+/// module's own entries and for nothing else.
 ///
 /// # Errors
 ///
@@ -817,7 +987,7 @@ pub fn current_managed_targets() -> Result<crate::status::ManagedTargets, Engine
         repo_root,
         state_dir,
         home,
-        mut resolver,
+        resolver,
         engine,
         modules,
         remotes,
@@ -829,23 +999,16 @@ pub fn current_managed_targets() -> Result<crate::status::ManagedTargets, Engine
     // no source root, which costs only tree-mode leaf expansion.
     let mut registry = RemoteRegistry::new(&remotes, &repo_root, &state_dir, CachePolicy::ReadOnly);
     let mut managed = crate::status::ManagedTargets::default();
-    for module in &modules {
-        let manifest = module.path.join(MANIFEST_FILENAME);
-        let config = parse_module_config(&manifest)?;
-
-        if let Some(table) = config.variables.as_ref() {
-            resolver = resolver.with_per_module(table_to_layer(table))?;
-        }
-
+    for (context, config) in module_contexts(&resolver, &modules)? {
         for entry in config.files.iter().chain(&config.directories) {
             // `when`-false entries manage nothing this run: their
             // prior targets fall out of the set and classify ORPHANED.
             if let Some(expr) = entry.when.as_deref()
-                && !engine.eval_when(expr, &resolver)?
+                && !engine.eval_when(expr, &context.resolver)?
             {
                 continue;
             }
-            let origin = registry.origin(entry, &module.path)?;
+            let origin = registry.origin(entry, &context.dir)?;
             insert_managed_targets(entry, &origin, &home, &repo_ignore, &mut managed);
         }
     }
@@ -962,10 +1125,10 @@ struct ResolvedEntry {
     /// resolution while the template engine and resolver are in scope (a
     /// template target is classified against its freshly rendered output).
     dispositions: Vec<TargetDisposition>,
-    /// Name of the module that declared this entry, and the entry's declared
-    /// module-relative source. Neither drives materialization; both exist so a
-    /// target-collision error can point the author at a specific manifest line.
-    module: String,
+    /// Index of the module that declared this entry. It selects the scoped
+    /// resolver every render of this entry goes through, and names the
+    /// manifest a target-collision error points the author at.
+    module: usize,
     /// The entry's declared source, as written in the manifest.
     declared_source: Utf8PathBuf,
     /// The compiled ignore rules this entry's source walk filters through,
@@ -981,6 +1144,9 @@ struct ResolvedEntry {
 /// leaves.
 struct ClaimTargets<'a> {
     entry: &'a ResolvedEntry,
+    /// The declaring module's name, for the collision error's manifest
+    /// reference.
+    module: &'a str,
     /// The declared directory target `targets` are the leaves of, for a
     /// tree-mode entry; `None` when they are the declared targets themselves.
     tree_target: Option<&'a Utf8Path>,
@@ -991,7 +1157,7 @@ impl ClaimTargets<'_> {
     /// Project this into the claim the target-collision check consumes.
     fn claim(&self) -> crate::apply::TargetClaim<'_> {
         crate::apply::TargetClaim {
-            module: &self.entry.module,
+            module: self.module,
             source: &self.entry.declared_source,
             mode: self.entry.mode,
             tree_target: self.tree_target,
@@ -1029,6 +1195,7 @@ impl ClaimTargets<'_> {
 /// existence and kind were validated during resolution, so this is a live IO
 /// failure rather than a manifest error.
 fn expand_claims<'a>(
+    modules: &'a [ModuleContext],
     file_entries: &'a [Option<ResolvedEntry>],
     directory_entries: &'a [Option<ResolvedEntry>],
 ) -> Result<Vec<ClaimTargets<'a>>, EngineError> {
@@ -1036,9 +1203,13 @@ fn expand_claims<'a>(
     // Only surviving (`when`-true) entries claim anything, so `flatten` drops
     // the gated-off slots.
     for entry in file_entries.iter().chain(directory_entries).flatten() {
+        let module = modules
+            .get(entry.module)
+            .map_or("", |context| context.name.as_str());
         if !matches!(entry.mode, FileMode::SymlinkTree | FileMode::CopyTree) {
             expanded.push(ClaimTargets {
                 entry,
+                module,
                 tree_target: None,
                 targets: std::borrow::Cow::Borrowed(&entry.targets[..]),
             });
@@ -1048,6 +1219,7 @@ fn expand_claims<'a>(
         for target in &entry.targets {
             expanded.push(ClaimTargets {
                 entry,
+                module,
                 tree_target: Some(target.as_path()),
                 targets: std::borrow::Cow::Owned(
                     leaves.iter().map(|leaf| target.join(leaf)).collect(),
@@ -1105,6 +1277,7 @@ fn assemble_plan_operations(
                 targets: resolved.targets,
                 dispositions: resolved.dispositions,
                 entry_index,
+                module: resolved.module,
                 ignore_rules: resolved.ignore_rules,
             });
         }
@@ -1139,29 +1312,29 @@ fn assemble_plan_operations(
 )]
 fn gate_and_resolve_entry(
     entry: &ManagedEntry,
-    module: &crate::discovery::ModuleHandle,
+    context: &ModuleContext,
+    module: usize,
     registry: &mut RemoteRegistry<'_>,
     home: &Utf8Path,
     engine: &Engine,
-    resolver: &Resolver,
     repo_ignore: &[String],
     provenance: &Provenance,
 ) -> Result<Option<ResolvedEntry>, EngineError> {
     if let Some(expr) = entry.when.as_deref()
-        && !engine.eval_when(expr, resolver)?
+        && !engine.eval_when(expr, &context.resolver)?
     {
         return Ok(None);
     }
     // The gate is above this, so an entry switched off on this host never
     // reaches the registry and never triggers a fetch.
-    let origin = registry.origin(entry, &module.path)?;
+    let origin = registry.origin(entry, &context.dir)?;
     Ok(Some(resolve_entry(
         entry,
         &origin,
-        &module.name,
+        module,
         home,
         engine,
-        resolver,
+        &context.resolver,
         repo_ignore,
         provenance,
     )?))
@@ -1395,7 +1568,7 @@ fn classify_target(
 fn resolve_entry(
     entry: &ManagedEntry,
     origin: &EntryOrigin,
-    module: &str,
+    module: usize,
     home: &Utf8Path,
     engine: &Engine,
     resolver: &Resolver,
@@ -1487,7 +1660,7 @@ fn resolve_entry(
         source,
         targets,
         dispositions,
-        module: module.to_owned(),
+        module,
         declared_source: entry.source.clone(),
         ignore_rules,
     })
@@ -1799,15 +1972,14 @@ pub async fn execute(
     // aborts before any file operation runs.
     let resolved_hooks = hooks::resolve_shells(&resolved.hooks, resolved.host_os)?;
 
-    // pre_apply hooks run before any file operation. Reuse the resolver
-    // built during planning so hook `when` predicates and template
-    // renders see the same CLI overrides and module variables.
-    let vars = &resolved.resolver;
+    // pre_apply hooks run before any file operation. Each `when` predicate is
+    // evaluated through its declaring module's resolver, the same one that
+    // module's entries render against.
     if let Some(failed) = run_hook_phase(
         &resolved_hooks,
         HookEvent::PreApply,
         &template_engine,
-        vars,
+        resolved,
         request.force_deploy,
     )
     .await?
@@ -1866,7 +2038,7 @@ pub async fn execute(
                 &backups_dir,
                 &resolved.timestamp,
                 &template_engine,
-                vars,
+                resolved.operation_resolver(op),
                 &op.ignore_rules,
             )?;
             for record in records {
@@ -1891,7 +2063,7 @@ pub async fn execute(
         &resolved_hooks,
         HookEvent::PostApply,
         &template_engine,
-        vars,
+        resolved,
         request.force_deploy,
         &mut warnings,
     )
@@ -2394,11 +2566,11 @@ async fn run_hook_phase(
     hooks: &[ResolvedHook<'_>],
     event: HookEvent,
     engine: &Engine,
-    resolver: &Resolver,
+    resolved: &ResolvedPlan,
     force_deploy: ForceDeploy,
 ) -> Result<Option<String>, EngineError> {
     let mut sink = Vec::new();
-    run_hook_phase_collecting(hooks, event, engine, resolver, force_deploy, &mut sink).await
+    run_hook_phase_collecting(hooks, event, engine, resolved, force_deploy, &mut sink).await
 }
 
 /// Run every hook whose event matches `event`, pushing a human-readable
@@ -2408,7 +2580,7 @@ async fn run_hook_phase_collecting(
     hooks: &[ResolvedHook<'_>],
     event: HookEvent,
     engine: &Engine,
-    resolver: &Resolver,
+    resolved: &ResolvedPlan,
     force_deploy: ForceDeploy,
     warnings: &mut Vec<String>,
 ) -> Result<Option<String>, EngineError> {
@@ -2416,7 +2588,7 @@ async fn run_hook_phase_collecting(
         if hook.entry.event != event {
             continue;
         }
-        if !hooks::should_run(hook, engine, resolver)? {
+        if !hooks::should_run(hook, engine, resolved.module_resolver(hook.module))? {
             continue;
         }
         match hooks::run_hook(hook, force_deploy).await? {
@@ -2548,7 +2720,7 @@ mod tests {
             source: Utf8PathBuf::from(format!("/repo/{source_tag}")),
             targets,
             dispositions,
-            module: "m".to_owned(),
+            module: 0,
             declared_source: Utf8PathBuf::from(source_tag),
             ignore_rules: crate::ignore_rules::none(),
         }
@@ -2804,6 +2976,7 @@ mod tests {
                 plan: Plan::new(Vec::new()),
                 operations: Vec::new(),
                 hooks: Vec::new(),
+                modules: Vec::new(),
                 state_dir,
                 host_os: HostOs::current(),
                 timestamp: TS.to_owned(),
@@ -3874,7 +4047,7 @@ mod tests {
                 replace_root: false,
                 mode_change: false,
             }],
-            module: "m".to_owned(),
+            module: 0,
             declared_source: Utf8PathBuf::from("config"),
             ignore_rules: crate::ignore_rules::none(),
         };
