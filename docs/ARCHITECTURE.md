@@ -123,8 +123,9 @@ requires neither a read nor a fetch. The subsystem lives under
   fetch repository per remote plus one immutable directory per pinned rev.
   A checkout is staged in a `<sha>.partial.<pid>` sibling and renamed into
   place, so a checkout directory's existence means it is complete. Staging
-  runs outside the process lock, so a sweep can meet a live staging tree.
-  Once its timestamp has stood still for a day, the sweep removes it.
+  runs outside the process lock, so the sweep preserves staging roots less
+  than one day old. It removes older staging roots based on their directory
+  modification time.
   Because a new rev gets a *new* directory, an update never mutates content
   under a live symbolic link. Apply re-points the link through the ordinary
   journaled flow, and rollback can re-point it back.
@@ -174,10 +175,10 @@ sequenceDiagram
    non-interactive shell falls through to plan-only and writes nothing.
    Re-applying against unchanged source is a no-op with byte-identical
    stdout.
-3. **Mutate.** Every target `Unchanged`, a prior commit on disk, and an
-   empty reap set make the run a full no-op: it returns under the held
-   lock, before the journal flush, so no hook runs and nothing is
-   written. Otherwise, run `pre_apply` hooks, write and fsync the
+3. **Mutate.** If every target is `Unchanged`, a prior commit exists, and
+   the reap set is empty, the run returns under the held lock before the
+   journal flush. No hook runs and nothing is written. Otherwise, run
+   `pre_apply` hooks, write and fsync the
    journal, take backups before any overwrite, apply each operation while
    advancing the progress cursor, run `post_apply` hooks, and write the
    terminal sentinel. The process exits through the formalized exit-code
@@ -271,27 +272,22 @@ An ignored leaf never enters the `ApplyRecord`. Reap reasons are computed
 at plan time, by diffing that record against the current managed set, so
 the on-disk format is unchanged.
 
-### Where the reap's managed set comes from
+### Managed-set construction
 
-`plan` builds the managed set during the module walk that resolves the
-operations, and stores it on the `ResolvedPlan`. The reap, the full-no-op
-short-circuit, and the CLI's reap preview all read that one set, so a
-`when` predicate is evaluated once per run, under the run's own `-v`
-overrides and the declaring module's `[variables]`. Recomputing the set
-from a second, override-free pass would let an apply reap the target it
-had just materialized. Writing that target's commit record would then
-fail.
+`plan` builds the managed set while resolving operations and stores it on
+the `ResolvedPlan`. The reap, full-no-op check, and CLI preview read that
+set. Each `when` predicate is therefore evaluated once per run under the
+run's `-v` overrides and the declaring module's `[variables]`. A second
+override-free pass could reap a target that the current plan materialized.
 
-`status` and `doctor` hold no plan, so `current_managed_targets` walks the
-manifests independently for them. It gates `when` the same way and expands
-tree leaves the same way, but resolves nothing strictly: a missing or
-wrong-shaped source, and a pattern list that will not compile, each yields
-no leaves rather than an error. `status` therefore takes `-v` as well.
-`doctor` does not: it reports only the targets that a new `ignore` pattern
-stranded, and an override steers a `when` predicate rather than a pattern.
-Where a variable is bound only by an override, that predicate is
-undefined. Because the predicate is undefined, the managed-set walk
-fails. The check therefore reports nothing.
+Because `status` and `doctor` have no plan, `current_managed_targets` walks
+the manifests for them. It evaluates `when` and expands tree leaves under
+the planning rules, but a missing or wrong-shaped source and an invalid
+pattern list yield no leaves instead of an error. `status` accepts `-v`
+overrides. `doctor` does not accept them because its stranded-target check
+reports only targets excluded by a new `ignore` pattern. If a `when`
+predicate reads a variable bound only by an override, the managed-set walk
+fails and the check reports no stranded targets.
 
 ## Recovery
 

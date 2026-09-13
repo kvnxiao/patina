@@ -332,7 +332,7 @@ mod tests {
         assert_eq!(
             base.get("editor").as_deref(),
             Some("nvim"),
-            "the base must keep the repo-shared value neither clone pushed onto it"
+            "neither clone may modify the base's repo-shared value"
         );
         assert_eq!(
             first.get("shell").as_deref(),

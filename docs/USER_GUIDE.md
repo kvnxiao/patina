@@ -197,8 +197,8 @@ overrides a lower one for the same key.
 
 A module's `[variables]` table is scoped to that module. It binds the
 templates, `when` predicates, and hooks declared in the same
-`patina.toml` and does not reach any other module, in whatever order the
-modules are discovered. A module that declares no binding for a name
+`patina.toml` and does not reach any other module. Discovery order does
+not affect this scope. A module that declares no binding for a name
 resolves it from the repo-shared table, the active profile, or the
 built-ins.
 
@@ -215,17 +215,15 @@ Profiles select the machine-specific variable set layered on top of the
 repo-shared one.
 
 `patina apply` and `patina status` both take `-v key=value`, repeatable.
-Pass `status` the same overrides the matching `apply` was given: an entry
-whose `when` reads an overridden variable is only counted as managed
-under those overrides, so a bare `patina status` reports its target
-orphaned. An apply reaps against the overrides it was run with, so a run
-that materializes an entry never deletes that entry's target in the same
-pass.
+Pass the same overrides to `status` that the matching `apply` received.
+An entry whose `when` expression reads an overridden variable is managed
+only under those overrides, so a bare `patina status` reports its target
+as orphaned. Apply uses its own overrides for the reap set and does not
+delete a target that the same run materialized.
 
-`patina doctor` does not take overrides, and resolves every `when`
-without them. Where a variable is bound only by a `-v` override, its
-predicate is undefined. Doctor's stranded-target check then reports
-nothing at all rather than guessing.
+`patina doctor` does not take overrides and resolves every `when`
+expression without them. If a predicate reads a variable bound only by a
+`-v` override, the stranded-target check reports no targets.
 
 ## Apply flow
 
@@ -270,21 +268,20 @@ any file operation, and a failure under the default
 `must_succeed = true` aborts the apply (exit 2) before anything is
 written. A `post_apply` hook runs after every file operation, and a
 failure rolls those operations back (exit 3). Declare
-`must_succeed = false` to degrade a failure to a warning, or pass
-`--force-deploy` to degrade every hook in one invocation. An optional
-`when` gates the hook the same way it gates an entry, and resolves
-variables under the `[variables]` table of the manifest that declared the
-hook. An optional `shell` overrides the platform default (`bash` on macOS
+`must_succeed = false` to treat a failure as a warning, or pass
+`--force-deploy` to treat every hook failure as a warning for one invocation.
+Patina evaluates an optional `when` expression with the variables scoped to
+the manifest that declares the hook. An optional `shell` overrides the
+platform default (`bash` on macOS
 and Linux, `pwsh` on Windows); Patina resolves it on `PATH` before any
 hook runs, so an unresolvable shell aborts the apply before the first
 write.
 
 A hook command is run verbatim and is never rendered as a template.
 
-No hook runs on an up-to-date apply. An apply with nothing to write
-short-circuits before the hook phase and keeps two consecutive runs
-byte-identical on stdout. A reload hook therefore fires when something
-actually changes, not on every invocation.
+An up-to-date apply returns before the hook phase and preserves
+byte-identical stdout across consecutive runs. A reload hook therefore
+runs only when the apply has work.
 
 ### Changing an entry's mode
 
@@ -386,8 +383,8 @@ other skips a prompt.
 | --------- | --------------------------------------------------------------------------------------------- |
 | `init`    | Scaffold a root `patina.toml` and persist the default-repository pointer.                     |
 | `add`     | Bring an existing dotfile under management: copy it into a module and write a `[[file]]` entry for a file source or a `[[directory]]` entry for a directory source.|
-| `remove`  | Unmanage a target: drop its entry and replace the target with a regular file holding the last-applied content. One leaf of a tree-mode `[[directory]]` entry is refused. |
-| `promote` | Copy a drifted copy-mode target's current bytes back into its repository source, then re-apply. A target deployed from a remote is refused. |
+| `remove`  | Unmanage a target: drop its entry and replace the target with a regular file holding the last-applied content. Refuses a single leaf of a tree-mode `[[directory]]` entry. |
+| `promote` | Copy a drifted copy-mode target's current bytes back into its repository source, then re-apply. Refuses targets deployed from remotes. |
 | `doctor`  | Inspect the environment for known problems (UNC repository paths, missing Windows Developer Mode, an outdated Windows build, a missing default repo, missing `git`, and targets stranded by a new `ignore` pattern). |
 | `remote`  | Manage remote git sources: `list` the pins, `check` upstream tips, `update` a pin through the update gate, `prune` cached checkouts. See [Remote sources](#remote-sources). |
 
@@ -639,16 +636,15 @@ Resolve a drifted target either way:
   then re-applies.
 
 `promote` refuses a target deployed from a remote (exit 1) and names the
-remote. A pinned checkout is third-party content Patina treats as
-immutable: writing your bytes into it would change what every entry
-reading that path deploys, until the pin moves and the checkout is
-replaced. Change the upstream repository, then run `patina remote update
-<name>`.
+remote. Patina treats pinned checkouts as immutable third-party content.
+Writing into a checkout would change every entry that deploys the same
+path until the pin moves and replaces the checkout. Change the upstream
+repository, then run `patina remote update <name>`.
 
 `remove` refuses one leaf of a `symlink-tree` or `copy` `[[directory]]`
 entry (exit 1) and names the manifest that declares it. The entry
-declares the directory, so `remove`, which drops a `[[file]]` entry, has
-nothing to drop for a single leaf. Drop the `[[directory]]` entry, or
+declares the directory, while `remove` drops a `[[file]]` entry. A single
+leaf therefore has no entry to drop. Drop the `[[directory]]` entry, or
 exclude the leaf with an `ignore` pattern. A refused `remove` leaves the
 target exactly as it found it: `remove` settles which manifest entry it
 will drop before it touches the target.

@@ -558,9 +558,7 @@ fn build_request(args: &ApplyArgs) -> Result<ApplyRequest> {
     })
 }
 
-/// Parse every `-v key=value` override, failing on the first malformed one.
-/// Shared with `status`, which takes the same overrides so its classification
-/// matches the apply's.
+/// Parse every `-v key=value` override and fail on the first malformed value.
 pub(crate) fn parse_overrides(raw: &[String]) -> Result<Vec<(String, String)>> {
     raw.iter().map(|entry| parse_override(entry)).collect()
 }

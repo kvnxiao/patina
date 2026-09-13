@@ -122,8 +122,6 @@ fn no_profile_selects_no_per_profile_table() {
     );
 }
 
-/// Declare one module that renders `{{ editor }}` into `~/.<name>-editor`,
-/// with an optional `[variables]` table of its own.
 fn editor_module(f: &Fixture, name: &str, editor: Option<&str>) {
     let variables = editor.map_or_else(String::new, |value| {
         format!("\n[variables]\neditor = \"{value}\"\n")
@@ -209,8 +207,7 @@ fn per_module_renders_converge_and_report_clean() {
     );
     assert!(
         String::from_utf8_lossy(&second.stdout).contains("Already up to date"),
-        "a target classified against one resolver and written from another replans \
-         as drift forever; stdout: {}",
+        "the second apply must not plan another update; stdout: {}",
         String::from_utf8_lossy(&second.stdout)
     );
 
@@ -226,8 +223,7 @@ fn per_module_renders_converge_and_report_clean() {
     assert_eq!(
         doc.get("drifted").and_then(serde_json::Value::as_u64),
         Some(0),
-        "a target classified Unchanged against one resolver and written from another \
-         would report drifted: {doc}"
+        "module-scoped classification must not report drift: {doc}"
     );
     assert_eq!(
         doc.get("clean").and_then(serde_json::Value::as_u64),
@@ -236,8 +232,6 @@ fn per_module_renders_converge_and_report_clean() {
     );
 }
 
-/// Declare a module whose `pre_apply` hook fails when its `when` holds, next
-/// to a second module binding the same variable to the opposite value.
 fn gated_hook_modules(f: &Fixture, gating: &str, trailing: &str) {
     f.module(
         "alpha",

@@ -316,8 +316,6 @@ fn promote_resolves_a_relative_path_against_the_working_directory() {
     );
 }
 
-/// Deploy one file from a pinned remote checkout, and return the fixture, the
-/// deployed target, and the checkout's own copy of the source.
 fn remote_backed_fixture() -> (Fixture, Utf8PathBuf, Utf8PathBuf) {
     let fx = Fixture::new();
     let origin = Origin::new(&fx, "humanizer", 1_700_000_000);

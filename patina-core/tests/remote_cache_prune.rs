@@ -135,9 +135,6 @@ fn the_bare_repository_is_never_pruned() {
     );
 }
 
-/// Staging runs outside the process lock, so a sweep meets the staging tree of
-/// a process that is still planning. A fresh artifact is that peer's live
-/// work, not a leftover, and deleting it fails the peer's rename.
 #[test]
 fn a_fresh_scratch_artifact_survives_the_sweep() {
     let f = Fixture::new();
@@ -154,7 +151,10 @@ fn a_fresh_scratch_artifact_survives_the_sweep() {
     let removed = f.prune(Some(&[]));
 
     for artifact in [&partial, &pid_partial, &index, &pid_index] {
-        assert!(artifact.exists(), "{artifact} was just written and is live");
+        assert!(
+            artifact.exists(),
+            "{artifact} is younger than the removal threshold"
+        );
     }
     assert!(
         removed.is_empty(),

@@ -246,17 +246,12 @@ pub struct ApplyOptions {
 #[derive(Debug, Default, Clone)]
 #[non_exhaustive]
 pub struct StatusOptions {
-    /// `-v key=value` CLI variable overrides, in declaration order. They enter
-    /// the resolver's highest layer, so an entry gated on an overridden
-    /// variable is counted managed exactly as the matching `apply` would
-    /// count it.
+    /// `-v key=value` CLI variable overrides in declaration order.
     pub cli_overrides: Vec<(String, String)>,
 }
 
 impl StatusOptions {
-    /// Set the `-v key=value` overrides. [`StatusOptions`] is
-    /// `#[non_exhaustive]`, so a caller outside patina-core cannot reach the
-    /// field through a struct literal or a functional update.
+    /// Set the `-v key=value` overrides.
     #[must_use]
     pub fn with_cli_overrides(
         mut self,

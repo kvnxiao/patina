@@ -1,4 +1,4 @@
-//! Integration tests for `-v`-gated entries and the orphan reap.
+//! Test variable overrides during orphan reaping.
 
 #![expect(
     clippy::expect_used,
@@ -11,8 +11,6 @@ mod common;
 use common::Fixture;
 use common::code;
 
-/// A module whose only entry is gated on the `deploy` variable, plus an
-/// optional repo-shared default for it.
 fn gated_fixture(repo_shared: Option<&str>) -> Fixture {
     let f = Fixture::new();
     if let Some(value) = repo_shared {
@@ -139,8 +137,6 @@ fn an_override_gated_entry_with_no_repo_shared_default_still_applies() {
     assert!(target.is_file(), "the target must be materialized");
 }
 
-/// The watcher re-applies with `ApplyRequest::default()`, the same
-/// no-override request a bare `patina apply` builds.
 #[test]
 fn an_apply_without_the_override_refuses_rather_than_reaping() {
     let f = gated_fixture(None);

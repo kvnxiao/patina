@@ -244,14 +244,14 @@ a checkout that might be the current pin is worth more than the disk it
 occupies.
 
 Because plan time comes before the consent prompt, staging runs outside
-the process lock: a checkout is staged in a `<sha>.partial.<pid>` sibling
-and renamed into place. Two processes may therefore stage the same rev at
-once, and a sweep may meet a staging tree another process is still
-writing. The floor is a day, well beyond any real checkout, so a live
-tree is never old enough to qualify; once its timestamp has stood still
-that long, the sweep removes it. A tree abandoned by a killed process
-costs disk until that day passes. Before staging, `ensure_checkout`
-clears any same-pid leftover of its own.
+the process lock. A checkout is staged in a `<sha>.partial.<pid>` sibling
+and renamed into place. Two processes may stage the same rev concurrently,
+and a sweep may inspect a staging tree another process is writing. The
+sweep preserves staging roots less than one day old and removes older roots
+according to their directory modification time. Nested writes do not update
+that time, so a checkout running longer than one day can be removed. A tree
+abandoned by a killed process consumes disk until the threshold passes.
+Before staging, `ensure_checkout` removes a same-process leftover.
 
 ## Commands
 
@@ -264,7 +264,7 @@ Commands are split into producer and consumer operations:
 | `patina apply --update`      | producer | `remote update` for every remote, then apply, in one sitting. Runs only when the apply may mutate: it is skipped (with a note) on a preview, meaning a non-interactive apply without `--yes`, or any `--json` run. It never auto-accepts a gate concern, even under `--yes`. |
 | `patina remote list`         | either   | Each declared remote's URL, ref, pinned rev, and pending-update state. Read-only. |
 | `patina remote check`        | either   | `git ls-remote` only: compare upstream tips against the lock, refresh the notice file. No object download. Exits non-zero if any remote could not be reached. |
-| `patina remote prune`        | either   | Remove cached checkouts unreferenced by any journal record (currently pinned revs always stay), plus the cache tree of any undeclared remote and any staging tree untouched for a day. |
+| `patina remote prune`        | either   | Remove cached checkouts unreferenced by any journal record (currently pinned revs always stay), plus the cache tree of any undeclared remote and any staging root whose directory modification time is at least one day old. |
 
 `patina remote list` prints a header and one row per declaration, each
 column sized to its widest cell:

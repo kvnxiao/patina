@@ -219,12 +219,7 @@ pub struct ResolvedOperation {
     /// therefore never collide on an index, and per-entry atomic rollback
     /// groups targets by their declared entry.
     pub entry_index: u32,
-    /// Index into [`ResolvedPlan::modules`] of the module that declared this
-    /// entry. Every render of this operation goes through that module's
-    /// resolver, so a `[variables]` table stays scoped to the manifest that
-    /// declared it. Crate-private, so the index is only ever one this plan
-    /// assigned; readers outside patina-core go through
-    /// [`ResolvedPlan::operation_resolver`].
+    /// Index of the declaring module in [`ResolvedPlan::modules`].
     pub(crate) module: usize,
     /// The entry's compiled ignore rules, kept from planning so execution and
     /// the commit record walk the leaves the plan classified. Crate-private:
@@ -233,72 +228,58 @@ pub struct ResolvedOperation {
     pub(crate) ignore_rules: ignore::gitignore::Gitignore,
 }
 
-/// One module's identity and the resolver its own `[variables]` table scopes.
-///
-/// Derived by cloning the repository-wide base resolver and pushing only this
-/// module's table, so a variable one module declares never resolves for
-/// another module's entries, `when` predicates, or hooks.
+/// Store a module's identity and variable resolver.
 #[derive(Debug, Clone)]
 pub struct ModuleContext {
-    /// The module's directory name.
     name: String,
-    /// Absolute path to the module's directory.
     dir: Utf8PathBuf,
-    /// The base resolver with this module's `[variables]` layer pushed.
     resolver: Resolver,
 }
 
 impl ModuleContext {
-    /// The module's directory. A repository source declared by this module
-    /// resolves under it, whatever depth the `source` key spells.
+    /// Return the module directory.
     #[must_use]
     pub fn directory(&self) -> &Utf8Path {
         &self.dir
     }
 
-    /// The `patina.toml` that declared this module's entries and hooks.
+    /// Return the module manifest path.
     #[must_use]
     pub fn manifest(&self) -> Utf8PathBuf {
         self.dir.join(MANIFEST_FILENAME)
     }
 
-    /// The resolver every entry, `when` predicate, and hook this module
-    /// declares resolves through.
+    /// Return the module-scoped resolver.
     pub fn resolver(&self) -> &Resolver {
         &self.resolver
     }
 }
 
-/// A `[[hook]]` entry paired with the module that declared it.
-///
-/// A hook command is run verbatim and never rendered, so the module binding
-/// governs only the `when` predicate.
+/// Pair a `[[hook]]` entry with its declaring module.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct PlannedHook {
     /// The parsed `[[hook]]` table.
     pub entry: HookEntry,
-    /// Index into [`ResolvedPlan::modules`] of the declaring module. Set by
-    /// [`PlannedHook::new`] and read inside patina-core only.
+    /// Index of the declaring module in [`ResolvedPlan::modules`].
     pub(crate) module: usize,
 }
 
 impl PlannedHook {
-    /// [`PlannedHook`] is `#[non_exhaustive]`, so this constructor is the only
-    /// way to build one outside patina-core.
+    /// Pair a hook entry with its declaring module index.
     #[must_use]
     pub fn new(entry: HookEntry, module: usize) -> Self {
         Self { entry, module }
     }
 }
 
-/// The module that declared the entry materializing one target.
+/// Identify the module and mode that materialize a target.
 #[derive(Debug, Clone, Copy)]
 #[non_exhaustive]
 pub struct TargetOwner<'a> {
-    /// The declaring module's context.
+    /// Declaring module context.
     pub module: &'a ModuleContext,
-    /// The declared entry's mode.
+    /// Declared entry mode.
     pub mode: FileMode,
 }
 
@@ -317,21 +298,11 @@ pub struct ResolvedPlan {
     /// Per-operation resolved executor inputs, parallel to
     /// [`Plan::operations`].
     pub operations: Vec<ResolvedOperation>,
-    /// Every `[[hook]]` entry across all modules, each tagged with its
-    /// declaring module and owned so the resolved hooks can borrow from it
-    /// during [`execute`].
+    /// Every `[[hook]]` entry paired with its declaring module.
     pub hooks: Vec<PlannedHook>,
-    /// Per-module identity and scoped resolver, in module-discovery order.
-    /// Each resolved operation and each planned hook records its declaring
-    /// module as a position in this list; reach the resolver through
-    /// [`operation_resolver`](Self::operation_resolver) rather than indexing.
+    /// Module contexts in discovery order.
     pub modules: Vec<ModuleContext>,
-    /// The canonical targets this plan manages, keyed by
-    /// [`manage_key`](crate::status::manage_key). Built during the same module
-    /// walk that resolved the operations, so the orphan reap and the plan read
-    /// one `when` evaluation under one set of `-v` overrides. Recomputing it
-    /// against a second, override-free pass would let the reap delete a
-    /// target the plan had just materialized.
+    /// Canonical targets managed under this plan's variable overrides.
     pub(crate) managed: crate::status::ManagedTargets,
     /// Per-machine state directory root (`<state>/patina`).
     pub state_dir: Utf8PathBuf,
@@ -339,14 +310,7 @@ pub struct ResolvedPlan {
     pub host_os: HostOs,
     /// Timestamp keying this run's journal and backup files.
     pub timestamp: String,
-    /// The repository-wide variable context that every module's scoped
-    /// resolver is derived from: built-ins, the resolved profile, the
-    /// repo-shared `[variables]` table, the active profile's table, and the
-    /// CLI overrides. It carries no `[variables]` from any module, so a
-    /// render against it resolves only what the whole repository shares.
-    /// Rendering an entry or evaluating a hook `when` goes through
-    /// [`operation_resolver`](Self::operation_resolver) or
-    /// [`module_resolver`](Self::module_resolver) instead.
+    /// Repository-wide variable resolver without module-local variables.
     pub resolver: Resolver,
     /// The names of every `[[remote]]` the root manifest declares, in
     /// declaration order. Carried so the stale-pin and cache sweeps work from
@@ -360,30 +324,23 @@ pub struct ResolvedPlan {
 }
 
 impl ResolvedPlan {
-    /// The resolver the module at `index` declares its entries under, falling
-    /// back to the repository-wide base for an index no module occupies.
-    ///
-    /// The fallback keeps the lookup total. Every index this plan hands out
-    /// comes from its own module walk, so reaching the fallback means the
-    /// entry resolves against the repo-shared layers alone.
+    /// Return a module resolver or the repository-wide resolver for an invalid
+    /// index.
     pub fn module_resolver(&self, index: usize) -> &Resolver {
         self.modules
             .get(index)
             .map_or(&self.resolver, ModuleContext::resolver)
     }
 
-    /// The resolver `op`'s declaring module scopes.
+    /// Return the resolver scoped to an operation's declaring module.
     pub fn operation_resolver(&self, op: &ResolvedOperation) -> &Resolver {
         self.module_resolver(op.module)
     }
 
-    /// The module and mode of the entry that materializes `target`, or `None`
-    /// when this plan materializes no such target.
+    /// Return the module and mode that materialize `target`.
     ///
-    /// The match is under [`manage_key`](crate::status::manage_key), so a
-    /// caller may pass a path as the journal recorded it. A tree-mode entry
-    /// owns every path beneath one of its declared targets, because the
-    /// journal records each materialized leaf as its own target.
+    /// Matching uses [`manage_key`](crate::status::manage_key). A tree-mode
+    /// entry owns paths beneath its declared targets.
     #[must_use]
     pub fn owner_of(&self, target: &Utf8Path) -> Option<TargetOwner<'_>> {
         use crate::status::manage_key;
@@ -396,9 +353,8 @@ impl ResolvedPlan {
                     .iter()
                     .any(|declared| manage_key(declared) == key)
         });
-        // An entry that declares the path itself owns it, even where a tree
-        // entry's declared directory also contains it: a whole-directory
-        // `symlink` may legally sit inside a tree's target.
+        // Exact ownership wins because a whole-directory symlink may sit
+        // inside a tree target.
         let claiming = exact.or_else(|| {
             self.operations.iter().find(|op| {
                 matches!(op.mode, FileMode::CopyTree | FileMode::SymlinkTree)
@@ -586,19 +542,8 @@ pub fn plan(
     })
 }
 
-/// Parse every module manifest and derive the resolver that module's entries,
-/// `when` predicates, and hooks resolve through.
-///
-/// Each context clones `base` and pushes only its own `[variables]` table, so
-/// the layer is scoped to the manifest that declared it rather than
-/// accumulating across the walk. Contexts come out in [`discover_modules`]
-/// order, in which both the entry-index space and the module indices on
-/// [`ResolvedOperation`] and [`PlannedHook`] are positions.
-///
-/// # Errors
-///
-/// Returns an [`EngineError`] when a module manifest fails to parse or its
-/// `[variables]` table names a key in the reserved `patina.*` namespace.
+/// Derive module-scoped resolvers without accumulating variables across
+/// modules.
 fn module_contexts(
     base: &Resolver,
     modules: &[crate::discovery::ModuleHandle],
@@ -622,20 +567,10 @@ fn module_contexts(
     Ok(contexts)
 }
 
-/// The repository, profile, variable resolver, and `when` engine shared by
-/// the two passes that must agree on which entries are active and how their
-/// `when` predicates resolve: [`plan`] (which builds the apply plan) and
-/// [`current_managed_targets`] (which recomputes the managed-target set for
-/// `patina status` and the apply-time orphan reap).
+/// Inputs shared by [`plan`] and [`current_managed_targets`].
 ///
-/// Both passes share everything up to the per-module entry loop: the
-/// repo-shared / per-profile layer pushes, the active-profile resolution,
-/// and the shared `MiniJinja` engine. Both also push the per-module layer
-/// through the same [`module_contexts`] call. Sharing the prefix and the
-/// per-module push gives the `when` gate the same variable context in
-/// planning and in status, down to which module's `[variables]` is in
-/// scope. An entry that plans on this host is therefore the same entry
-/// status counts as managed.
+/// Both callers derive module resolvers through [`module_contexts`], so their
+/// `when` evaluations use the same variable scopes.
 struct PlanningContext {
     repo_root: Utf8PathBuf,
     state_dir: Utf8PathBuf,
@@ -980,33 +915,16 @@ fn build_planning_context(
 /// manages, keyed by [`crate::status::manage_key`] for cross-time comparison
 /// against the recorded commit.
 ///
-/// Compute the `when`-aware, `symlink-tree`-aware managed set consumed by both
-/// `patina status` (to classify a dropped target ORPHANED) and the apply-time
-/// orphan reap. It mirrors [`plan`]'s entry walk with two
-/// differences that make it safe to run for status, where the plan would
-/// refuse:
+/// Compute the managed set for read-only callers.
 ///
-/// - **`when` gating.** An entry whose `when` is false on this host contributes
-///   no managed target. A `[[file]]` whose `when` has been edited to false
-///   therefore has its prior target fall out of the set, and classify ORPHANED.
-///   The gate uses the same [`Engine::eval_when`] and layered resolver as
-///   planning, so the two passes agree on which entries are active.
-/// - **Tree-mode leaf expansion.** A `symlink-tree` or `copy-tree`
-///   `[[directory]]` entry expands into one managed key per *live* source leaf,
-///   walked in the same `walk_files` order the executor used. A deleted source
-///   leaf is therefore absent from the set, and its recorded target leaf
-///   classifies ORPHANED. Both modes materialize one object per leaf and
-///   journal each leaf as its own target, so both must expand here; every other
-///   mode contributes its declared target(s) directly.
+/// A false `when` expression contributes no targets. Tree modes contribute one
+/// key per source leaf, while other modes contribute their declared targets.
 ///
-/// Unlike [`plan`], this never canonicalizes the source or kind-checks it:
-/// status must not fail because a `when`-true entry's source is missing or
-/// wrong-shaped (that is the apply plan's job to report). A `symlink-tree`
-/// source that is missing simply yields no leaves.
+/// Unlike [`plan`], this function does not fetch missing remote checkouts or
+/// reject missing and wrong-shaped sources. Unavailable trees contribute no
+/// enumerable leaves.
 ///
-/// `cli_overrides` are this invocation's `-v key=value` pairs. They enter the
-/// resolver's highest layer, so a `when` predicate reading an overridden
-/// variable answers for the invocation that asked rather than for a bare one.
+/// `cli_overrides` enter the resolver's highest-precedence layer.
 ///
 /// # Errors
 ///
@@ -1048,14 +966,10 @@ pub fn current_managed_targets(
     Ok(managed)
 }
 
-/// Insert what one declared entry manages, enumerating a tree source the way
-/// a status-time walk must: leniently.
+/// Add one declared entry to the managed set using a lenient source walk.
 ///
-/// Neither the source nor the pattern list is validated here. `status` must
-/// not fail because a `when`-true entry's source is missing or wrong-shaped,
-/// nor because a pattern never compiled. Both degrade to "no leaves", so
-/// nothing is reaped over either. [`plan`] resolves the same entries strictly
-/// and feeds [`insert_managed_targets`] from that resolution instead.
+/// A missing or wrong-shaped source and an invalid pattern list produce no
+/// leaves. [`plan`] resolves the same entries strictly.
 fn insert_declared_entry(
     entry: &ManagedEntry,
     origin: &EntryOrigin,
@@ -1093,46 +1007,23 @@ fn insert_declared_entry(
     );
 }
 
-/// What one surviving (`when`-true) entry contributes to the managed set.
-///
-/// Both passes that build a managed set project their entries into this, so
-/// the rule turning an entry into keys lives in [`insert_managed_targets`]
-/// alone. The passes differ only in how they reach the leaves: planning splits
-/// them while resolving the entry, and [`current_managed_targets`] walks the
-/// declared source leniently.
 struct ManagedFootprint<'a> {
-    /// The entry's declared mode.
     mode: FileMode,
-    /// The entry's targets, tilde-expanded.
     targets: &'a [Utf8PathBuf],
-    /// A tree-mode source's leaves, or `None` for a non-tree entry and for a
-    /// source tree that could not be enumerated.
     leaves: Option<&'a SourceLeaves>,
-    /// The remote a tree-mode entry waits on, when its checkout is not
-    /// materialized on this machine.
     unmaterialized_remote: Option<&'a str>,
 }
 
-/// A tree-mode source's leaves, split by the entry's ignore rules.
 #[derive(Default)]
 struct SourceLeaves {
-    /// Leaves the entry materializes, relative to the source, in
-    /// [`walk_files`](crate::apply::walk_files) order.
     kept: Vec<Utf8PathBuf>,
-    /// Leaves the ignore rules exclude. Tracking them lets a reap report
-    /// `ignored` rather than an unexplained removal.
     ignored: Vec<Utf8PathBuf>,
 }
 
-/// Enumerate `source` once, unfiltered, and split its leaves by `rules`.
+/// Split an unfiltered source walk into included and ignored leaves.
 ///
-/// The walk is deliberately unfiltered, unlike the executors'. A reap has to
-/// tell "the source leaf is gone" from "an ignore pattern now excludes it",
-/// and only an unfiltered walk still sees an excluded leaf.
-/// [`crate::ignore_rules::prunes`] replays the filtered walk's decision per
-/// leaf, so `kept` holds exactly what a filtered walk yields and the plan-time
-/// classification, the collision claims, and the managed set all read one
-/// enumeration.
+/// The unfiltered walk preserves ignored leaves so the reap can distinguish a
+/// removed source from a newly ignored source.
 ///
 /// # Errors
 ///
@@ -1143,8 +1034,6 @@ fn split_source_leaves(
 ) -> Result<SourceLeaves, EngineError> {
     let mut split = SourceLeaves::default();
     for leaf in crate::apply::walk_files(source, &crate::ignore_rules::none())? {
-        // `prunes`, not `Gitignore::matched`: the walk above yields files
-        // inside an ignored directory.
         if crate::ignore_rules::prunes(rules, &leaf) {
             split.ignored.push(leaf);
         } else {
@@ -1241,9 +1130,6 @@ struct ResolvedEntry {
     /// resolution while the template engine and resolver are in scope (a
     /// template target is classified against its freshly rendered output).
     dispositions: Vec<TargetDisposition>,
-    /// Index of the module that declared this entry. It selects the scoped
-    /// resolver every render of this entry goes through, and names the
-    /// manifest a target-collision error points the author at.
     module: usize,
     /// The entry's declared source, as written in the manifest.
     declared_source: Utf8PathBuf,
@@ -1252,25 +1138,19 @@ struct ResolvedEntry {
     /// [`crate::apply::walk_files`] says why every phase shares one
     /// enumeration. Empty for every non-tree mode.
     ignore_rules: ignore::gitignore::Gitignore,
-    /// The tree-mode source's leaves, split by `ignore_rules` from one
-    /// unfiltered walk. `None` for every non-tree mode.
     leaves: Option<SourceLeaves>,
 }
 
 impl ResolvedEntry {
-    /// The leaves this entry materializes, empty for a non-tree mode.
     fn kept_leaves(&self) -> &[Utf8PathBuf] {
         self.leaves.as_ref().map_or(&[], |leaves| &leaves.kept)
     }
 
-    /// What this entry contributes to the managed-target set.
     fn footprint(&self) -> ManagedFootprint<'_> {
         ManagedFootprint {
             mode: self.mode,
             targets: &self.targets,
             leaves: self.leaves.as_ref(),
-            // Planning resolves every remote entry against a materialized
-            // checkout or fails, so no tree root is ever indeterminate here.
             unmaterialized_remote: None,
         }
     }
@@ -1282,8 +1162,6 @@ impl ResolvedEntry {
 /// leaves.
 struct ClaimTargets<'a> {
     entry: &'a ResolvedEntry,
-    /// The declaring module's name, for the collision error's manifest
-    /// reference.
     module: &'a str,
     /// The declared directory target `targets` are the leaves of, for a
     /// tree-mode entry; `None` when they are the declared targets themselves.
@@ -1743,8 +1621,6 @@ fn resolve_entry(
     let metadata = source_metadata(&source)?;
     // Anchored at the canonical source: the walk yields paths relative to it.
     let ignore_rules = crate::ignore_rules::build(repo_ignore, &entry.ignore, &source)?;
-    // One unfiltered walk per tree entry. Classification, the collision
-    // claims, and the managed set all read this split rather than re-walking.
     let leaves = match entry.mode {
         FileMode::SymlinkTree | FileMode::CopyTree if metadata.is_dir() => {
             Some(split_source_leaves(&source, &ignore_rules)?)
@@ -2121,9 +1997,6 @@ pub async fn execute(
     // aborts before any file operation runs.
     let resolved_hooks = hooks::resolve_shells(&resolved.hooks, resolved.host_os)?;
 
-    // pre_apply hooks run before any file operation. Each `when` predicate is
-    // evaluated through its declaring module's resolver, the same one that
-    // module's entries render against.
     if let Some(failed) = run_hook_phase(
         &resolved_hooks,
         HookEvent::PreApply,
@@ -2561,13 +2434,9 @@ pub fn plan_orphans(resolved: &ResolvedPlan) -> Result<Vec<Orphan>, EngineError>
 
 /// The reap set for the apply recorded under `journal_dir`, sorted by target.
 ///
-/// [`plan_orphans`] is the same computation for a caller holding a resolved
-/// plan; `doctor` holds a state directory and no plan and so recomputes the
-/// managed set here. That recomputation carries no `-v` overrides, so a
-/// `when` predicate reading an overridden variable resolves differently here
-/// than in that apply. A variable bound only by an override is undefined
-/// here, and the walk fails on it. The reap itself never takes this path: it
-/// reads the set the plan built under the overrides the run was given.
+/// [`plan_orphans`] reads the managed set from a resolved plan. Because
+/// `doctor` has no plan, this function recomputes the set without `-v`
+/// overrides. An undefined override-only variable fails that walk.
 ///
 /// # Errors
 ///
@@ -3525,9 +3394,6 @@ mod tests {
         }
     }
 
-    /// The leaves resolution splits out of a tree source, for the
-    /// classification fixtures below. A non-directory source has none, which
-    /// is what a single-target mode passes.
     fn source_leaves(source: &Utf8Path) -> Vec<Utf8PathBuf> {
         if !source.is_dir() {
             return Vec::new();

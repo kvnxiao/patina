@@ -69,8 +69,6 @@ pub fn render(resolved: &ResolvedPlan, orphans: &[Orphan]) -> Result<String, Str
     // for its drifted leaves and adds its clean leaves to `unchanged`.
     let mut unchanged = 0usize;
     for op in &resolved.operations {
-        // The declaring module's scoped resolver, so a preview renders the
-        // bytes the executor writes rather than another module's binding.
         let vars = resolved.operation_resolver(op);
         for (target, disposition) in op.targets.iter().zip(&op.dispositions) {
             // A symlinked tree root renders as one replacement block: the

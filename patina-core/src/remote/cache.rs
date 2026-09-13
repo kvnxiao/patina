@@ -37,19 +37,12 @@ const BARE_REPO_DIR: &str = "repo.git";
 /// place. Its presence means an interrupted checkout, never a usable one.
 const PARTIAL_SUFFIX: &str = ".partial";
 
-/// How long a staging artifact must have gone untouched before [`prune`]
-/// removes it.
+/// Minimum staging-root age eligible for removal by [`prune`].
 ///
-/// [`ensure_checkout`] stages without the process lock, so a sweep meets the
-/// staging tree of a process that is still planning. The floor reads the
-/// staging root's mtime, which is set when the checkout begins: a directory's
-/// mtime moves only when an entry is created or removed directly in it, not
-/// for a write nested below. A checkout would therefore have to run longer
-/// than the floor to be misjudged, and a day sits far beyond any real one,
-/// including a cold clone of a large repository over a slow link. A leftover
-/// costs only disk until the floor passes. It is a duration rather than the
-/// count `crate::backups::RETENTION_COUNT` uses, because the floor must
-/// outlast one writer's wall-clock, not a number of cycles.
+/// [`ensure_checkout`] stages without the process lock, so a sweep can inspect
+/// another process's staging tree. The check uses the root directory's mtime;
+/// nested writes do not refresh it. A checkout that runs longer than this
+/// threshold can therefore be removed while still active.
 const STAGING_MIN_AGE: Duration = Duration::from_hours(24);
 
 /// `<state>/remotes/`, the root of the remote cache.
@@ -200,11 +193,8 @@ fn staging_dir(final_dir: &Utf8Path) -> Utf8PathBuf {
 /// When any sentinel fails to decode, nothing is pruned. Deleting on partial
 /// knowledge could strand a rollback, and a stale checkout only costs disk.
 ///
-/// Once a staging artifact (`<rev>.partial.<pid>` or a scratch index file)
-/// has gone untouched for a day, it is removed. It is derivable and never
-/// referenced, but it is not necessarily leftover: [`ensure_checkout`] stages
-/// outside the process lock, so one may belong to a process that is still
-/// planning.
+/// A staging artifact (`<rev>.partial.<pid>` or a scratch index file) becomes
+/// eligible for removal when its root directory mtime is at least one day old.
 ///
 /// # Errors
 ///
@@ -218,8 +208,6 @@ pub fn prune(
     prune_at(state_dir, declared, keep, SystemTime::now())
 }
 
-/// [`prune`] against an explicit clock, so the staging floor is exercisable
-/// without waiting a day or rewriting a directory's mtime.
 fn prune_at(
     state_dir: &Utf8Path,
     declared: &BTreeSet<&RemoteName>,
@@ -305,14 +293,6 @@ fn is_scratch_name(name: &str) -> bool {
     })
 }
 
-/// Whether the staging artifact at `path` has gone untouched for at least
-/// `floor`.
-///
-/// An mtime that cannot be read, or that lies ahead of `now`, counts as
-/// in-flight. The sweep removes a staging tree only where it can show the tree
-/// is abandoned, because the alternative deletes a live peer's work mid-write
-/// and fails that peer's rename. A liveness probe on the pid in the name would
-/// not do, because pids are recycled.
 fn scratch_is_abandoned(path: &Utf8Path, now: SystemTime, floor: Duration) -> bool {
     let Ok(modified) =
         fs_err::symlink_metadata(path.as_std_path()).and_then(|meta| meta.modified())
@@ -456,9 +436,9 @@ mod tests {
             .expect("prune reads the empty journal");
         assert!(
             removed.is_empty(),
-            "a staging tree younger than the floor belongs to a live peer: {removed:?}"
+            "a staging root younger than the threshold must be preserved: {removed:?}"
         );
-        assert!(staging.is_dir(), "the peer's staging tree must survive");
+        assert!(staging.is_dir(), "the staging tree must survive");
         assert!(checkout.is_dir(), "the pinned checkout must survive");
 
         let later = SystemTime::now() + STAGING_MIN_AGE + Duration::from_secs(60);
@@ -466,9 +446,9 @@ mod tests {
         assert_eq!(
             removed,
             vec![staging.clone()],
-            "a staging tree past the floor is abandoned and goes"
+            "a staging root older than the threshold must be removed"
         );
-        assert!(!staging.exists(), "the abandoned staging tree must be gone");
+        assert!(!staging.exists(), "the old staging tree must be removed");
         assert!(
             checkout.is_dir(),
             "the pinned checkout must survive the scratch sweep"

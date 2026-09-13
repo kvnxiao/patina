@@ -323,9 +323,6 @@ fn a_refused_remove_leaves_the_target_byte_identical_and_still_a_symlink() {
     let fx = applied_symlink_fixture();
     let zshrc = fx.home.join(".zshrc");
     let manifest = fx.root.join("zsh").join("patina.toml");
-    // A [[file]] entry the manifest writer cannot address: rewriting the
-    // declaration as a [[directory]] leaves the journaled target with no
-    // [[file]] entry to drop.
     fs_err::write(
         manifest.as_std_path(),
         "[[directory]]\nsource = \"dir\"\ntarget = \"~/dir\"\nmode = \"symlink\"\n",
@@ -353,7 +350,7 @@ fn a_refused_remove_leaves_the_target_byte_identical_and_still_a_symlink() {
 }
 
 #[test]
-fn remove_edits_the_manifest_whose_module_holds_the_journaled_source() {
+fn remove_edits_the_manifest_whose_module_contains_the_journaled_source() {
     let fx = Fixture::new();
     for (module, pick) in [("alpha", "a"), ("beta", "b")] {
         fx.module(
@@ -392,7 +389,7 @@ fn remove_edits_the_manifest_whose_module_holds_the_journaled_source() {
         .expect("read beta manifest");
     assert!(
         !alpha.contains("[[file]]"),
-        "the journaled source lives in alpha, so alpha's entry is the one to drop, got: {alpha}"
+        "the journaled source is in alpha; alpha's entry must be removed, got: {alpha}"
     );
     assert!(
         beta.contains("[[file]]"),

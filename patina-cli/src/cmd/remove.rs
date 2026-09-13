@@ -15,15 +15,11 @@
 //! writer edits only `[[file]]` arrays. Drop the `[[directory]]` entry, or
 //! exclude the leaf with an `ignore` pattern.
 //!
-//! Every refusal, and the manifest edit `remove` will make, is settled
-//! before the prompt, so a refused `remove` leaves the target and every
-//! manifest exactly as it found them. Settling the edit means planning
-//! first. Planning a remote-backed entry against a cold cache fetches its
-//! pinned checkout, so a declined `remove` can still have filled
-//! `<state>/remotes/`, the same way a declined `apply` does. Writing the
-//! edited manifest is the one step that follows the target replacement: a
-//! failure there leaves the target already replaced while its entry still
-//! stands.
+//! Before prompting, `remove` selects the manifest edit and leaves refused
+//! targets and manifests unchanged. Selecting the edit requires planning,
+//! which can fill `<state>/remotes/` for a remote-backed entry before the user
+//! declines. After replacing the target, `remove` writes the manifest. If that
+//! write fails, the target is already replaced and its entry remains.
 //!
 //! `remove` holds one exclusive advisory lock for the whole command and
 //! re-journals under [`LockPolicy::Held`](patina_core::LockPolicy) through
@@ -111,16 +107,10 @@ pub async fn run(
         return Ok(report_unmanaged(args, reporter));
     };
 
-    // Plan against the still-current managed set, before the entry is
-    // removed, so the resolver has the variable context a template target
-    // needs for its last-applied re-render and the declaring module is still
-    // resolvable.
     let timestamp = current_timestamp();
     let resolved =
         plan_apply(&ApplyRequest::default(), &timestamp).context("failed to compute the plan")?;
 
-    // The target path is read from the journal: the canonical path of the
-    // materialized object, not the user's spelling of it.
     let target_path = Utf8PathBuf::from(expected.target());
     let owner = resolved.owner_of(&target_path);
 
@@ -130,10 +120,6 @@ pub async fn run(
         return Ok(report_tree_leaf(args, &owner.module.manifest(), reporter));
     }
 
-    // Settle the manifest edit before touching the target, so a target whose
-    // entry cannot be dropped stays exactly as `remove` found it. Try the
-    // portable form, the user's argument, and the journaled path to match
-    // manifests written by both current and older `add` versions.
     let portable = contract_home(&target, &home);
     let source = Utf8PathBuf::from(expected.source());
     let edit = plan_manifest_edit(
@@ -169,7 +155,7 @@ pub async fn run(
 ///
 /// - Symlink / copy targets: the source bytes read from the repository.
 /// - Template targets (`.tmpl` source): re-rendered through `MiniJinja` against
-///   `vars`, the resolver the declaring module scopes.
+///   `vars`, the resolver scoped to the declaring module.
 fn reconstruct_content(expected: &ExpectedTarget, vars: &Resolver) -> Result<Vec<u8>> {
     let source = Utf8PathBuf::from(expected.source());
     if source.as_str().ends_with(TEMPLATE_SUFFIX) {
@@ -220,25 +206,17 @@ fn remove_if_present(path: &Utf8Path) -> Result<()> {
     }
 }
 
-/// The manifest edit `remove` will apply, computed before any mutation.
 #[derive(Debug)]
 struct ManifestEdit {
-    /// The manifest that declared the entry.
     manifest: Utf8PathBuf,
-    /// That manifest's text with the entry dropped.
     edited: String,
 }
 
-/// The manifests that may declare the journaled entry, most authoritative
-/// first.
+/// Return candidate manifests in ownership order.
 ///
-/// The journaled `source` decides it. A repository source lies under the
-/// module directory that declared it, whatever depth the `source` key spells
-/// and whichever entries are active on this host, so a `when` predicate that
-/// has flipped since the apply cannot redirect the edit at another module's
-/// declaration of the same target. Only a remote-backed source, which lives
-/// under the state directory rather than the repository, falls through to the
-/// module the current plan materializes the target from.
+/// A repository source selects its containing module even if a `when`
+/// predicate has since changed. A remote source falls back to the module that
+/// the current plan associates with the target.
 fn candidate_manifests(
     resolved: &ResolvedPlan,
     source: &Utf8Path,
@@ -255,17 +233,13 @@ fn candidate_manifests(
     candidates
 }
 
-/// Find the manifest declaring the target and compute its text without that
-/// entry, trying each candidate manifest against each spelling of the target.
+/// Find and remove the target's `[[file]]` entry in memory.
 ///
 /// # Errors
 ///
-/// Returns an error naming every spelling tried when no candidate declares a
-/// `[[file]]` entry for the target. A `[[directory]]` entry lands here too,
-/// because the manifest writer edits only `[[file]]` arrays. A manifest that
-/// cannot be read, or whose TOML does not parse, fails the command rather than
-/// being skipped: the target is declared somewhere, and skipping would report
-/// the wrong reason for not finding it.
+/// Returns an error naming every spelling tried when no candidate contains a
+/// matching `[[file]]` entry. Missing candidate manifests are skipped. Other
+/// read and parse errors stop the command.
 fn plan_manifest_edit(
     candidates: impl IntoIterator<Item = Utf8PathBuf>,
     spellings: &[&str],
@@ -290,13 +264,12 @@ fn plan_manifest_edit(
         }
     }
     Err(anyhow!(
-        "no patina.toml declares a [[file]] entry for {}; a [[directory]] entry is \
-         unmanaged by editing its manifest directly",
+        "no patina.toml declares a [[file]] entry for {}; remove a [[directory]] \
+         entry by editing its manifest directly",
         spellings.join(" or ")
     ))
 }
 
-/// Report the tree-leaf refusal (exit 1) and return the exit code.
 fn report_tree_leaf(args: &RemoveArgs, manifest: &Utf8Path, reporter: &mut impl Reporter) -> i32 {
     let message = format!(
         "{} is one leaf of a tree-mode [[directory]] entry declared in {manifest}. \
@@ -520,7 +493,7 @@ mod tests {
     }
 
     #[test]
-    fn the_edit_drops_the_matching_file_entry_and_keeps_its_siblings() {
+    fn the_edit_drops_the_matching_file_entry_and_preserves_its_siblings() {
         let td = TempDir::new().expect("tempdir");
         let dir = Utf8Path::from_path(td.path()).expect("utf8 tempdir path");
         let manifest = dir.join("patina.toml");

@@ -101,7 +101,7 @@ pub fn mirror_backup_path(
 /// components that mirror beneath the backup root. The platform root, and any
 /// `.` / `..`, are dropped, so the mirror contains only the target's own path
 /// beneath `<backups>/<ts>/`. A platform prefix maps to the components
-/// [`prefix_components`] gives it.
+/// returned by [`prefix_components`].
 fn mirror_components(target: &Utf8Path) -> Vec<String> {
     use camino::Utf8Component;
 
@@ -116,11 +116,10 @@ fn mirror_components(target: &Utf8Path) -> Vec<String> {
     mirrored
 }
 
-/// Marker component that every non-drive path prefix mirrors under.
+/// Prefix backup components that do not represent drive letters.
 ///
-/// A drive prefix mirrors to its bare letter, one character long, so no
-/// marked component can be mistaken for a drive letter. Without the marker a
-/// UNC host literally named `C` would mirror onto drive `C:`.
+/// A drive prefix maps to one letter. The marker prevents a one-letter UNC
+/// host from colliding with that drive.
 const UNC_MARKER: &str = "__unc__";
 
 /// Marker for a `\\.\<device>` prefix.
@@ -129,14 +128,11 @@ const DEVICE_MARKER: &str = "__device__";
 /// Marker for a `\\?\<name>` prefix that is neither a drive nor a UNC share.
 const VERBATIM_MARKER: &str = "__verbatim__";
 
-/// Map a platform path prefix onto the components it mirrors under.
+/// Map a platform path prefix to backup-path components.
 ///
-/// A disk prefix contributes its drive letter alone, so cross-volume targets
-/// stay apart and every backup tree already on disk keeps its layout. A UNC
-/// prefix contributes the marker, the host, and the share as separate
-/// components: collapsing host and share into one string would let
-/// `\\srv\a\conf.toml` and `\\sr\va\conf.toml` mirror onto one path, each
-/// overwriting the other's backup.
+/// Disk prefixes retain the existing single-letter layout. UNC prefixes use
+/// separate marker, host, and share components to prevent flattened names
+/// such as `\\srv\a` and `\\sr\va` from colliding.
 fn prefix_components(prefix: camino::Utf8PrefixComponent<'_>) -> Vec<String> {
     use camino::Utf8Prefix;
 

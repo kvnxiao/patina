@@ -16,7 +16,7 @@
 //!   into a template, so promotion cannot recover the source.
 //! - **Remote-backed targets** (the journaled source lies under
 //!   `<state>/remotes/`). A pinned checkout is immutable third-party content:
-//!   writing into it would poison every entry reading that path until the pin
+//!   writing into it would modify every entry reading that path until the pin
 //!   moves. `patina remote check` compares revisions, so it would never report
 //!   the edit.
 //!
@@ -89,8 +89,6 @@ pub async fn run(
         return Ok(report_unmanaged(args, reporter));
     };
 
-    // Refuse before any prompt or mutation, so a refused promote never
-    // touches the filesystem.
     if let Some(code) = refuse_unpromotable(args, expected, &state, reporter) {
         return Ok(code);
     }
@@ -112,10 +110,6 @@ pub async fn run(
     Ok(ExitCode::Success.code())
 }
 
-/// Refuse a target `promote` cannot reconcile. A symbolic-link,
-/// template-rendered, or remote-backed target returns `Some(exit code)`, and
-/// the caller propagates it. A promotable copy-mode `Content` target whose
-/// source is in the repository returns `None`.
 fn refuse_unpromotable(
     args: &PromoteArgs,
     expected: &ExpectedTarget,
@@ -170,15 +164,12 @@ fn refuse_unpromotable(
     }
 }
 
-/// The remote whose pinned checkout holds `source`, or `None` for a source
-/// outside the per-machine remote cache.
+/// Return the remote whose pinned checkout contains `source`.
 ///
-/// A recorded source went through `paths::canonicalize` at apply time, while
-/// the cache root here is built directly from the state directory as the
-/// environment spells it. The two paths routinely differ: macOS resolves
-/// `/var` to `/private/var`, Windows hands back 8.3 short names, and a
-/// symlinked `HOME` produces the same mismatch on any host. The lookup
-/// therefore checks both spellings of the root.
+/// Apply records a canonical source, but the cache root retains the state
+/// directory's spelling. macOS can resolve `/var` to `/private/var`, Windows
+/// can return an 8.3 short name, and a symlinked home directory can produce
+/// another spelling. The lookup checks the original and canonical cache roots.
 fn remote_backing(source: &Utf8Path, state: &Utf8Path) -> Option<String> {
     let root = remotes_root(state);
     let canonical = canonicalize_path(&root).ok();
@@ -349,13 +340,10 @@ mod tests {
         }
     }
 
-    /// A per-machine state directory none of the fixture sources lie under.
     fn state() -> Utf8PathBuf {
         Utf8PathBuf::from("/state/patina")
     }
 
-    /// A copy target deployed from a remote's pinned checkout under that state
-    /// directory.
     fn remote_backed_target() -> ExpectedTarget {
         ExpectedTarget::Content {
             target: "/home/u/.claude/skills/tone.md".to_owned(),
@@ -383,10 +371,6 @@ mod tests {
         );
     }
 
-    /// Every refusal is one paragraph of prose the user reads. A run of
-    /// several spaces means a `\` line continuation in the source collapsed
-    /// into literal indentation, which reaches stderr and the `--json`
-    /// `message` field verbatim.
     #[test]
     fn no_refusal_carries_collapsed_line_continuations() {
         for expected in [

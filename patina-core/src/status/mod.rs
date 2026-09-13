@@ -238,8 +238,7 @@ pub fn report(managed: &ManagedTargets) -> Result<StatusReport, EngineError> {
 /// into one key per live source leaf, so a deleted source leaf's prior target
 /// classifies ORPHANED.
 ///
-/// `cli_overrides` are the invocation's `-v key=value` pairs, so a `when`
-/// predicate reading an overridden variable resolves the way the caller asked.
+/// `cli_overrides` enter the resolver's highest-precedence layer.
 ///
 /// # Errors
 ///
