@@ -265,6 +265,24 @@ An ignored leaf never enters the `ApplyRecord`. Reap reasons are computed
 at plan time, by diffing that record against the current managed set, so
 the on-disk format is unchanged.
 
+### Where the reap's managed set comes from
+
+`plan` builds the managed set during the module walk that resolves the
+operations, and stores it on the `ResolvedPlan`. The reap, the full-no-op
+short-circuit, and the CLI's reap preview all read that one set, so a
+`when` predicate is evaluated once per run, under the run's own `-v`
+overrides and the declaring module's `[variables]`. Recomputing the set
+from a second, override-free pass let an apply reap the target it had
+just materialized, and then fail writing the commit record for it.
+
+`status` and `doctor` hold no plan, so `current_managed_targets` walks the
+manifests independently for them. It gates `when` the same way and expands
+tree leaves the same way, but resolves nothing strictly: a missing or
+wrong-shaped source, and a pattern list that will not compile, each yield
+no leaves rather than an error. `status` therefore takes `-v` as well, and
+`doctor`'s orphan listing is advisory where an override steers a
+predicate.
+
 ## Recovery
 
 A `kill -9` mid-apply leaves the filesystem in either the pre-apply or

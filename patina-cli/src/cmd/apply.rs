@@ -561,8 +561,9 @@ fn build_request(args: &ApplyArgs) -> Result<ApplyRequest> {
     })
 }
 
-/// Parse a single `-v key=value` override.
-fn parse_override(raw: &str) -> Result<(String, String)> {
+/// Parse a single `-v key=value` override. Shared with `status`, which takes
+/// the same overrides so its classification matches the apply's.
+pub(crate) fn parse_override(raw: &str) -> Result<(String, String)> {
     let (key, value) = raw
         .split_once('=')
         .ok_or_else(|| anyhow!("invalid -v override `{raw}`; expected key=value"))?;

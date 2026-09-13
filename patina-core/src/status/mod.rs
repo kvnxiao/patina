@@ -238,13 +238,18 @@ pub fn report(managed: &ManagedTargets) -> Result<StatusReport, EngineError> {
 /// into one key per live source leaf, so a deleted source leaf's prior target
 /// classifies ORPHANED.
 ///
+/// `cli_overrides` are the invocation's `-v key=value` pairs, so a `when`
+/// predicate reading an overridden variable resolves the way the caller asked.
+///
 /// # Errors
 ///
 /// Returns an [`EngineError`] when repository discovery, profile resolution,
 /// module enumeration, manifest parsing, or a `when` predicate evaluation
 /// fails.
-pub fn current_plan_targets() -> Result<ManagedTargets, EngineError> {
-    crate::apply::engine::current_managed_targets()
+pub fn current_plan_targets(
+    cli_overrides: &[(String, String)],
+) -> Result<ManagedTargets, EngineError> {
+    crate::apply::engine::current_managed_targets(cli_overrides)
 }
 
 /// Compute the cross-time comparison key for a target path.

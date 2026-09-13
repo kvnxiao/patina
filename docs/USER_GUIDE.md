@@ -213,6 +213,13 @@ editor = "code"
 Profiles select the machine-specific variable set layered on top of the
 repo-shared one.
 
+`patina apply` and `patina status` both take `-v key=value`, repeatable.
+Pass `status` the same overrides the matching `apply` was given: an entry
+whose `when` reads an overridden variable is only counted managed under
+those overrides, so a bare `patina status` reports its target orphaned.
+An apply reaps against the overrides it was run with, so a run that
+materializes an entry never deletes that entry's target in the same pass.
+
 ## Apply flow
 
 Run `patina apply` to materialize your declarations. Apply is a

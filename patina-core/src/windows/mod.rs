@@ -397,6 +397,7 @@ mod tests {
             operations: ops,
             hooks: Vec::new(),
             modules: Vec::new(),
+            managed: crate::status::ManagedTargets::default(),
             state_dir: Utf8PathBuf::from("/state"),
             host_os: HostOs::current(),
             timestamp: "fixed".to_owned(),

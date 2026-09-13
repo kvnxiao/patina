@@ -245,7 +245,13 @@ pub struct ApplyOptions {
 /// Options accepted by [`status`](fn@crate::status).
 #[derive(Debug, Default, Clone)]
 #[non_exhaustive]
-pub struct StatusOptions {}
+pub struct StatusOptions {
+    /// `-v key=value` CLI variable overrides, in declaration order. They enter
+    /// the resolver's highest layer, so an entry gated on an overridden
+    /// variable is counted managed exactly as the matching `apply` would
+    /// count it.
+    pub cli_overrides: Vec<(String, String)>,
+}
 
 /// Options accepted by [`rollback`](fn@crate::rollback).
 #[derive(Debug, Default, Clone)]
@@ -279,8 +285,8 @@ pub async fn apply(options: ApplyOptions) -> Result<ApplyResult, EngineError> {
     clippy::unused_async,
     reason = "An async signature is required; the status read itself is synchronous."
 )]
-pub async fn status(_options: StatusOptions) -> Result<StatusReport, EngineError> {
-    let managed = current_plan_targets()?;
+pub async fn status(options: StatusOptions) -> Result<StatusReport, EngineError> {
+    let managed = current_plan_targets(&options.cli_overrides)?;
     status_report(&managed)
 }
 

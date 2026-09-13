@@ -11,6 +11,7 @@
 //! not change the exit code.
 
 use crate::cli::StatusArgs;
+use crate::cmd::apply::parse_override;
 use crate::exit_code::ExitCode;
 use crate::output::reporter::Reporter;
 use crate::output::style::Styles;
@@ -32,7 +33,13 @@ use patina_core::TargetState;
 /// discovery, manifest parse, state-directory resolution, or a journal
 /// read error).
 pub async fn run(args: &StatusArgs, reporter: &mut impl Reporter) -> Result<i32> {
-    let report = patina_core::status(StatusOptions::default())
+    let mut cli_overrides = Vec::with_capacity(args.var.len());
+    for raw in &args.var {
+        cli_overrides.push(parse_override(raw)?);
+    }
+    let mut options = StatusOptions::default();
+    options.cli_overrides = cli_overrides;
+    let report = patina_core::status(options)
         .await
         .context("failed to compute status")?;
 

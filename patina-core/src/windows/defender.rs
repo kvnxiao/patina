@@ -1124,6 +1124,7 @@ mod tests {
             operations: ops,
             hooks: Vec::new(),
             modules: Vec::new(),
+            managed: crate::status::ManagedTargets::default(),
             state_dir: Utf8PathBuf::from(r"C:\Users\kevin\AppData\Local\patina"),
             host_os: HostOs::current(),
             timestamp: "fixed".to_owned(),

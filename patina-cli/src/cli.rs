@@ -451,6 +451,12 @@ pub struct StatusArgs {
     /// Emit a JSON envelope instead of the human-readable table.
     #[arg(long)]
     pub json: bool,
+
+    /// CLI variable override, repeatable: `-v key=value`. Pass the same
+    /// overrides `apply` was given so a `when`-gated entry is classified the
+    /// way that apply manages it.
+    #[arg(short = 'v', value_name = "key=value")]
+    pub var: Vec<String>,
 }
 
 /// Flags for `patina apply`.
