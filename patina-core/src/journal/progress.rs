@@ -77,13 +77,12 @@ impl ProgressCursor {
     /// never `fsync`-ed.
     #[must_use = "the decoded indices drive recovery reconciliation"]
     pub fn decode_completed(bytes: &[u8]) -> Vec<u32> {
+        // `.0` holds the whole records; a torn trailing record stays in the
+        // discarded remainder.
         bytes
-            .chunks_exact(RECORD_LEN)
-            // `chunks_exact(RECORD_LEN=5)` only ever yields 5-byte slices, so
-            // this slice pattern is irrefutable. It mirrors the
-            // `let [b0, b1, b2, b3] = ...` idiom in `record` above. The
-            // trailing partial chunk (a torn record) is left in
-            // `chunks_exact`'s remainder and never produced here.
+            .as_chunks::<RECORD_LEN>()
+            .0
+            .iter()
             .filter_map(|record| match record {
                 [b0, b1, b2, b3, COMPLETED_MARKER] => {
                     Some(u32::from_le_bytes([*b0, *b1, *b2, *b3]))
