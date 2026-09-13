@@ -77,8 +77,6 @@ impl ProgressCursor {
     /// never `fsync`-ed.
     #[must_use = "the decoded indices drive recovery reconciliation"]
     pub fn decode_completed(bytes: &[u8]) -> Vec<u32> {
-        // `.0` holds the whole records; a torn trailing record stays in the
-        // discarded remainder.
         bytes
             .as_chunks::<RECORD_LEN>()
             .0

@@ -70,7 +70,7 @@ fn promote_copy_target_rewrites_source_and_rejournals() {
     assert_eq!(
         fs_err::read_to_string(source.as_std_path()).expect("read repo source"),
         NEW_GITCONFIG,
-        "the repository source must hold the promoted bytes"
+        "the repository source must contain the promoted bytes"
     );
 
     let record = commit_record(&fx);

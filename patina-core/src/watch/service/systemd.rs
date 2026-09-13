@@ -410,22 +410,13 @@ mod tests {
 
     #[test]
     fn render_unit_neutralizes_space_percent_and_newline_in_the_binary_path() {
-        // A hostile / awkward install path: a space (word-split risk), a `%`
-        // (specifier-expansion risk), and a newline (directive-injection risk).
-        // All three must land inside a single quoted ExecStart word so systemd
-        // takes the path literally and the unit stays a one-line ExecStart.
         let binary = Utf8Path::new("/opt/my apps/pat%ina\nExecStartPost=/evil");
         let unit = render_unit(binary);
 
-        // The injected `\n` must be escaped, not emitted raw. There must be
-        // no line that begins a second ExecStart-family directive.
         assert!(
             !unit.contains("\nExecStartPost="),
             "a newline in the path must not inject a fresh directive, got: {unit}"
         );
-        // The whole token is one quoted word: the space stays inside the
-        // quotes, `%` is doubled, and the newline is the C-style `\n`
-        // escape.
         assert!(
             unit.contains(
                 "ExecStart=\"/opt/my apps/pat%%ina\\nExecStartPost=/evil\" \"watch\" \"--foreground\""

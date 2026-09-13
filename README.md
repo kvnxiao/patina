@@ -57,10 +57,10 @@ patina watch install        # auto-reapply on change via a per-OS background ser
 | `defender` | Windows only. `status` / `apply` / `clear` manage Microsoft Defender path exclusions for the repo and its targets. |
 | `debug journal` / `debug drift-cache` | Decode the binary journal / drift cache for post-mortem inspection. |
 
-`add`, `remove`, and `promote` take a path on your machine: absolute,
-`~`-relative, or relative to the current directory. `add` stores the
-`~`-relative spelling in the manifest whenever the target lands under
-`$HOME`, so the entry resolves the same from any working directory.
+`add`, `remove`, and `promote` accept absolute paths, paths beginning with
+`~`, and paths relative to the current directory. For targets under `$HOME`,
+`add` stores a `~`-relative path in the manifest. Other targets remain
+absolute.
 
 Every command except the `debug` family accepts `--json` for
 deterministic structured output. Commands that prompt for confirmation

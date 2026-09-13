@@ -11,6 +11,7 @@ use camino::Utf8Path;
 use camino::Utf8PathBuf;
 use common::Fixture;
 use common::code;
+use common::symlink_dir;
 use std::io::BufRead;
 use std::io::BufReader;
 use std::process::Child;
@@ -368,8 +369,6 @@ fn add_relative_path_from_home_stores_a_home_relative_target_and_applies_there()
     );
     assert_eq!(manifest_target(&fx, "wsl2"), "~/.wslconfig");
 
-    // Applied from the repository root, not from home: a target left relative
-    // would materialize under the repository instead.
     let applied = fx.run_in(&fx.root, &["apply", "--yes"], &[]);
     assert_eq!(
         code(&applied),
@@ -454,8 +453,8 @@ fn add_contracts_home_when_the_environment_spells_it_indirectly() {
     let fx = Fixture::new();
     let wslconfig = fx.home.join(".wslconfig");
     fs_err::write(wslconfig.as_std_path(), "foo").expect("seed ~/.wslconfig");
-    // The shape macOS ships: `$HOME` reaches the same directory by a spelling
-    // that `getcwd` never returns.
+    // This lexical indirection reproduces a home spelling that differs from
+    // `getcwd` without creating a symlink.
     let indirect = format!("{}/../home", fx.home);
 
     let out = fx.run_in(
@@ -513,7 +512,35 @@ fn add_dot_from_the_home_directory_is_refused() {
     );
 }
 
-/// The single entry's `target` from `<repo>/<module>/patina.toml`.
+#[test]
+fn add_refuses_a_symlink_to_the_repository() {
+    let fx = Fixture::new();
+    let link = fx.home.join("repository-link");
+    symlink_dir(&fx.root, &link);
+
+    let out = fx.run(
+        &[
+            "add",
+            link.as_str(),
+            "--module",
+            "everything",
+            "--copy",
+            "--yes",
+        ],
+        &[],
+    );
+    assert_eq!(code(&out), 1, "adding a repository symlink must exit 1");
+    assert!(
+        stderr(&out).contains("copy the repository into itself"),
+        "stderr must name the self-copy hazard, got: {}",
+        stderr(&out)
+    );
+    assert!(
+        !fx.root.join("everything").exists(),
+        "no module directory should be created on refusal"
+    );
+}
+
 fn manifest_target(fx: &Fixture, module: &str) -> String {
     let manifest = fx.root.join(module).join("patina.toml");
     let body = fs_err::read_to_string(manifest.as_std_path()).expect("read module manifest");
@@ -524,6 +551,6 @@ fn manifest_target(fx: &Fixture, module: &str) -> String {
         .and_then(|entries| entries.first())
         .and_then(|entry| entry.get("target"))
         .and_then(toml::Value::as_str)
-        .expect("the single [[file]] entry carries a target")
+        .expect("the single [[file]] entry has a target")
         .to_owned()
 }

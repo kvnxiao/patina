@@ -115,8 +115,8 @@ pub async fn run(
 
     let source = Utf8PathBuf::from(expected.source());
     let manifest_path = owning_manifest(&source)?;
-    // Every spelling a manifest may hold for this one location: the portable
-    // form `add` writes, the user's own argument, and the journaled path.
+    // Try the portable form, the user's argument, and the journaled path to
+    // match manifests written by both current and older `add` versions.
     let portable = contract_home(&target, &home);
     remove_entry(
         &manifest_path,
@@ -196,18 +196,6 @@ fn owning_manifest(source: &Utf8Path) -> Result<Utf8PathBuf> {
     Ok(module_dir.join(MANIFEST_FILENAME))
 }
 
-/// Remove the `[[file]]` entry matching any spelling in `spellings` from the
-/// module manifest at `manifest_path`, then write the edited text back.
-///
-/// `spellings` is tried in order and the first match wins. The caller passes
-/// every form one manifest may hold for the same location, since `remove`
-/// has already replaced the target on disk by the time this runs and a missed
-/// match would strand the entry against a target that no longer matches it.
-///
-/// # Errors
-///
-/// Returns an error when the manifest cannot be read or written, or when no
-/// spelling matches an entry.
 fn remove_entry(manifest_path: &Utf8Path, spellings: &[&str]) -> Result<()> {
     let text = fs_err::read_to_string(manifest_path.as_std_path())
         .with_context(|| format!("failed to read {manifest_path}"))?;

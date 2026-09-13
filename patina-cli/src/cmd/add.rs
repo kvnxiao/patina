@@ -33,17 +33,15 @@
 //!
 //! ## Target resolution
 //!
-//! The `<path>` argument names a location on the user's machine, never one
-//! inside the repository. A leading `~` expands to the home directory and a
-//! relative path is anchored to the current working directory, so `patina add
-//! .wslconfig` run from the home directory declares the home-directory file
-//! rather than a repository-relative one. The resolved location is written
-//! back to the manifest in `~`-relative form whenever it lands under home,
-//! keeping the entry portable across machines.
+//! The `<path>` argument names a target on the user's machine. A leading `~`
+//! expands to the home directory, and a relative path resolves against the
+//! current working directory. For targets under the home directory, the
+//! manifest stores a `~`-relative path.
 //!
-//! A resolved target that contains the dotfiles repository, or that is the
-//! home directory itself, is refused before any staging: one entry cannot own
-//! either, and staging the first would copy the repository into itself.
+//! Before staging, `add` refuses the home directory and any target that
+//! contains the dotfiles repository. A single entry cannot own the home
+//! directory, and staging a repository ancestor would copy the repository into
+//! itself.
 //!
 //! Manifest editing, repo discovery, path anchoring, and canonicalization
 //! all live in `patina_core`; this module is presentation and control flow.
@@ -72,6 +70,7 @@ use patina_core::contract_home;
 use patina_core::discover_modules;
 use patina_core::exclusive_timeout;
 use patina_core::ignore_rules;
+use patina_core::manage_key;
 use patina_core::parse_module_config;
 use patina_core::parse_root_config;
 use patina_core::resolve_repository_root;
@@ -237,12 +236,10 @@ pub async fn run(
 
     let repo_root = resolve_repository_root().map_err(EngineError::from)?;
     let home = resolve_home()?;
-    // Anchor before anything reads the path: a relative input resolves
-    // against the current working directory, not the repository root.
     let target = anchor_input(&args.path, &home).map_err(EngineError::from)?;
     let manifest_target = contract_home(&target, &home);
 
-    if let Some(reason) = overreaching_target(&target, &home, &repo_root) {
+    if let Some(reason) = overreaching_target(&target, &home, &repo_root)? {
         let message = format!(
             "refusing to add {manifest_target}: {reason}. Name the file or directory to manage instead"
         );
@@ -348,33 +345,29 @@ pub async fn run(
     Ok(ExitCode::Success.code())
 }
 
-/// Name why `target` is too broad to manage as one entry, or `None` when it is
-/// safe to stage.
-///
-/// A target at or above the repository root would copy the repository into
-/// itself, and a target at the home directory hands one entry every dotfile the
-/// user has. Both are reachable from a bare `patina add .`.
 fn overreaching_target(
     target: &Utf8Path,
     home: &Utf8Path,
     repo_root: &Utf8Path,
-) -> Option<&'static str> {
-    if repo_root.starts_with(target) {
-        return Some(
+) -> Result<Option<&'static str>> {
+    let resolved = canonicalize_path(target).map_err(EngineError::from)?;
+    if repo_root.starts_with(&resolved) {
+        return Ok(Some(
             "the path contains the dotfiles repository, so staging it would copy the repository into itself",
-        );
+        ));
     }
-    if target == home {
-        return Some("the path is the home directory, and one entry cannot own every file in it");
+    if resolved == home {
+        return Ok(Some(
+            "the path is the home directory, and one entry cannot own every file in it",
+        ));
     }
-    None
+    Ok(None)
 }
 
 /// Refuse the add when a tree-mode entry already excludes `dest`. Returns the
 /// exit code to propagate. `None` allows the add to proceed.
 ///
-/// `target` names the resolved location in the refusal, matching every other
-/// path this command reports. `--force` skips the check.
+/// `--force` skips the check.
 ///
 /// # Errors
 ///
@@ -492,15 +485,14 @@ fn warn_on_ignored_leaves(
 /// whose target resolves to the same absolute path as `target`. Returns the
 /// owning module's name on a match.
 ///
-/// Both sides are anchored through [`anchor_input`], so a `~`-relative, an
-/// absolute, and a working-directory-relative spelling of one location all
-/// compare equal. The anchoring is lexical, so a manifest the user has not
-/// applied yet is still matched.
+/// Anchoring compares absolute, `~`-relative, and working-directory-relative
+/// spellings without reading the target from disk.
 fn find_managed(
     repo_root: &Utf8Path,
     target: &Utf8Path,
     home: &Utf8Path,
 ) -> Result<Option<String>> {
+    let target_key = manage_key(target);
     let modules = discover_modules(repo_root).map_err(EngineError::from)?;
     for module in modules {
         let manifest = module.path.join(MANIFEST_FILENAME);
@@ -508,7 +500,7 @@ fn find_managed(
         for entry in config.files.iter().chain(config.directories.iter()) {
             for entry_target in &entry.targets {
                 let anchored = anchor_input(entry_target, home).map_err(EngineError::from)?;
-                if anchored == target {
+                if manage_key(&anchored) == target_key {
                     return Ok(Some(module.name));
                 }
             }
@@ -676,12 +668,8 @@ fn repo_source_name(file_name: &str) -> String {
 /// Resolve the user's home directory for tilde expansion. `$HOME` is read
 /// first, then `$USERPROFILE` (the Windows fallback).
 ///
-/// The result is canonicalized so it shares one spelling with
-/// [`std::env::current_dir`], which returns a symlink-resolved path. A home
-/// reached through a symbolic link (`/var` on macOS, a relocated `$HOME` on
-/// Linux) otherwise fails to prefix-match a working-directory-anchored target
-/// and [`contract_home`] would store an absolute target. A home that cannot be
-/// canonicalized is returned as the environment spelled it.
+/// Canonicalizes the result so path anchoring and home contraction compare the
+/// same spelling. If canonicalization fails, returns the environment spelling.
 pub(crate) fn resolve_home() -> Result<Utf8PathBuf> {
     for name in ["HOME", "USERPROFILE"] {
         if let Ok(value) = std::env::var(name)

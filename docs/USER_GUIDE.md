@@ -71,11 +71,11 @@ supplying the file-or-directory context.
 Use `target` for a single destination or `targets = [...]` to fan one
 source out to many.
 
-Spell each `target` absolutely or with a leading `~`, which expands to
-your home directory. A relative `target` resolves against whatever
-directory you run `patina apply` from, so it names a different file per
-invocation. `patina add` writes the `~`-relative spelling whenever the
-path lands under your home directory, and an absolute path otherwise.
+Spell each `target` absolutely or with a leading `~`; Patina expands `~` to
+your home directory. Because `patina apply` resolves a relative `target`
+against its current directory, the same relative spelling can name a
+different file on each invocation. `patina add` writes a `~`-relative target
+under your home directory and an absolute target elsewhere.
 
 Neither a `source` nor a `target` may contain an ASCII control character
 (`U+0000` through `U+001F` or `U+007F`), which covers tab, newline, and
@@ -364,20 +364,17 @@ Patina uses one exit-code scheme across every command:
 
 ### Naming a path on the command line
 
-`add`, `remove`, and `promote` each take a path naming a location on your
-machine, not one inside the repository. A leading `~` expands to your
-home directory, and a relative path resolves against the directory you
-run the command from: `patina add .wslconfig` in your home directory
-declares `~/.wslconfig` wherever the repository itself lives. `add`
-stores that resolved location in the manifest, `~`-relative under your
-home directory and absolute outside it, so the entry reads the same on
-every machine.
+`add`, `remove`, and `promote` interpret their path as a location on your
+machine. A leading `~` expands to your home directory, and a relative path
+resolves against the command's current directory. For example, `patina add
+.wslconfig` from your home directory declares `~/.wslconfig` independently of
+the repository location. `add` stores a `~`-relative target under your home
+directory and an absolute target elsewhere.
 
-A path at or above your dotfiles repository would stage the repository
-into itself, and the home directory would hand one entry every file in
-it. `patina add` refuses both and exits `1`, so a bare `patina add .`
-never starts a recursive copy. Name the file or directory you want
-managed instead.
+If the path is your home directory, the repository, or an ancestor of the
+repository, `patina add` exits `1`. A home-directory entry would claim every
+file under it; staging the repository or an ancestor would recursively copy
+the repository. Name the file or directory you want managed instead.
 
 ### Windows symbolic-link elevation
 
