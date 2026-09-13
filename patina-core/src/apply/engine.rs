@@ -1943,10 +1943,10 @@ pub async fn execute(
         // pinned rev by construction.
         //
         // Planning reads `patina.lock` only when an active entry selects a
-        // remote, so the engine reaches this point without knowing what is pinned.
-        // The engine re-reads the lockfile instead of assuming it is empty; a
-        // lockfile that cannot be read leaves every declared remote's cache
-        // untouched.
+        // remote, so the engine reaches this point without knowing what is
+        // pinned. The engine re-reads the lockfile instead of assuming
+        // it is empty; a lockfile that cannot be read leaves every
+        // declared remote's cache untouched.
         //
         // Pruning is best-effort cleanup after a durable commit, so a failure
         // anywhere here is logged, not propagated: the apply already succeeded
@@ -3874,7 +3874,8 @@ mod tests {
 
     // The durable plan carries the classified disposition: a satisfied copy
     // entry assembles a `PlannedOperation::Copy` whose disposition is
-    // Unchanged, threaded from `ResolvedEntry` through `assemble_plan_operations`.
+    // Unchanged, threaded from `ResolvedEntry` through
+    // `assemble_plan_operations`.
     #[test]
     fn assemble_plan_threads_disposition_onto_durable_operation() {
         let resolved = ResolvedEntry {

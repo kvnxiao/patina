@@ -253,7 +253,8 @@ fn run_check(
 ) -> i32 {
     let now = patina_core::current_epoch_seconds();
     if hook && !notice::hook_check_due(notice::last_check_epoch(&inventory.state_dir), now) {
-        // The notice already on disk stays as it is, so the shell still prints it.
+        // The notice already on disk stays as it is, so the shell still prints
+        // it.
         return ExitCode::Success.code();
     }
 

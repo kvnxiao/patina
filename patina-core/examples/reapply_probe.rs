@@ -43,7 +43,8 @@ fn main() {
 
     // The test-harness example talks to its parent test process over stdout; it
     // is not user-facing CLI output and has no `output::Reporter` to route
-    // through, so the workspace-wide `disallowed-macros` ban is scoped-out here.
+    // through, so the workspace-wide `disallowed-macros` ban is scoped-out
+    // here.
     #[expect(
         clippy::disallowed_macros,
         reason = "test-harness IPC over stdout, not user-facing CLI output"

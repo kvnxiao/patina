@@ -205,8 +205,8 @@ fn comparison_key(
     let Some(leaf) = target.file_name() else {
         return case_fold(target);
     };
-    // The leaf rides along as a to-be-appended component from the start, so only
-    // the parent chain (real directories) is ever resolved through the
+    // The leaf rides along as a to-be-appended component from the start, so
+    // only the parent chain (real directories) is ever resolved through the
     // filesystem, and each distinct parent only once per validation pass.
     let parent = match target.parent() {
         Some(parent) if !parent.as_str().is_empty() => parent,
@@ -506,8 +506,9 @@ mod tests {
 
     #[test]
     fn containment_is_found_when_the_two_targets_are_spelled_differently() {
-        // A `..` hop stands in for the spelling divergence, since `Path::components`
-        // preserves it while canonicalization resolves it away.
+        // A `..` hop stands in for the spelling divergence, since
+        // `Path::components` preserves it while canonicalization
+        // resolves it away.
         let temp = TempDir::new().expect("tempdir");
         let home = Utf8Path::from_path(temp.path())
             .expect("utf8 temp path")
@@ -542,8 +543,8 @@ mod tests {
     fn a_target_that_is_a_symlink_is_keyed_by_its_location_not_its_source() {
         // A re-apply sees a target already materialized as a symlink into the
         // repository. The collision key must stay at the target location;
-        // dereferencing the leaf to its source would compare the wrong paths and
-        // miss (or invent) collisions.
+        // dereferencing the leaf to its source would compare the wrong paths
+        // and miss (or invent) collisions.
         let temp = TempDir::new().expect("tempdir");
         let dir = Utf8Path::from_path(temp.path()).expect("utf8 temp path");
         let source = dir.join("real.conf");
@@ -577,7 +578,8 @@ mod tests {
 
     #[test]
     fn targets_differing_only_in_unicode_normalization_collide() {
-        // `café.conf` with a precomposed é, then with `e` plus a combining acute.
+        // `café.conf` with a precomposed é, then with `e` plus a combining
+        // acute.
         let precomposed = targets(&["/home/u/.config/caf\u{e9}.conf"]);
         let decomposed = targets(&["/home/u/.config/cafe\u{301}.conf"]);
         assert_ne!(

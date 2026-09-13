@@ -640,7 +640,8 @@ mod tests {
 
     #[test]
     fn non_noop_interactive_does_prompt_and_reads_the_answer() {
-        // Counterpart to `full_noop_interactive_skips_prompt_and_reads_no_stdin`:
+        // Counterpart to
+        // `full_noop_interactive_skips_prompt_and_reads_no_stdin`:
         // a `confirm_apply` that skipped the prompt unconditionally would pass
         // that test and fail this one.
         let mut reader = ScriptedReader {

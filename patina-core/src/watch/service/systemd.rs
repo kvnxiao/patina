@@ -423,8 +423,9 @@ mod tests {
             !unit.contains("\nExecStartPost="),
             "a newline in the path must not inject a fresh directive, got: {unit}"
         );
-        // The whole token is one quoted word: the space stays inside the quotes,
-        // `%` is doubled, and the newline is the C-style `\n` escape.
+        // The whole token is one quoted word: the space stays inside the
+        // quotes, `%` is doubled, and the newline is the C-style `\n`
+        // escape.
         assert!(
             unit.contains(
                 "ExecStart=\"/opt/my apps/pat%%ina\\nExecStartPost=/evil\" \"watch\" \"--foreground\""

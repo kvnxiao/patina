@@ -106,7 +106,8 @@ impl NotificationSink for NotifySink {
             Ok(_handle) => {}
             Err(error) => {
                 // Best-effort. A headless host or a denied permission must not
-                // crash the watcher. Surface the failure in the log and move on.
+                // crash the watcher. Surface the failure in the log and move
+                // on.
                 tracing::warn!(
                     target: "patina_core",
                     error = %error,
