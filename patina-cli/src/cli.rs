@@ -328,8 +328,9 @@ pub struct InitArgs {
     reason = "this is a clap-derived flag struct: each bool is an independent CLI flag (the mode flags, plus --json, --yes, and --force), not a state machine that would be better modelled as an enum. The mode flags are unified at use-site into the AddMode enum."
 )]
 pub struct AddArgs {
-    /// The dotfile to bring under management. Absolute or HOME-relative
-    /// (a leading `~` is expanded).
+    /// The dotfile to manage. A leading `~` expands to HOME, and a relative
+    /// path resolves against the current directory. Manifest targets under
+    /// HOME use `~`-relative paths.
     #[arg(value_name = "path")]
     pub path: Utf8PathBuf,
 
@@ -374,8 +375,8 @@ pub struct AddArgs {
 /// Flags for `patina remove`.
 #[derive(Debug, Args, Default)]
 pub struct RemoveArgs {
-    /// The managed target to unmanage. Absolute or HOME-relative (a leading
-    /// `~` is expanded).
+    /// The managed target to remove. A leading `~` expands to HOME, and a
+    /// relative path resolves against the current directory.
     #[arg(value_name = "path")]
     pub path: Utf8PathBuf,
 
@@ -396,8 +397,8 @@ pub struct RemoveArgs {
 /// Flags for `patina promote`.
 #[derive(Debug, Args, Default)]
 pub struct PromoteArgs {
-    /// The drifted copy-mode target to promote. Absolute or HOME-relative (a
-    /// leading `~` is expanded).
+    /// The drifted copy-mode target to promote. A leading `~` expands to HOME,
+    /// and a relative path resolves against the current directory.
     #[arg(value_name = "target")]
     pub target: Utf8PathBuf,
 

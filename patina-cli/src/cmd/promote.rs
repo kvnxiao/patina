@@ -44,7 +44,7 @@ use camino::Utf8Path;
 use camino::Utf8PathBuf;
 use patina_core::EngineError;
 use patina_core::ExpectedTarget;
-use patina_core::expand_tilde;
+use patina_core::anchor_input;
 use patina_core::manage_key;
 use patina_core::read_latest_commit;
 
@@ -64,7 +64,7 @@ pub async fn run(
     reporter: &mut impl Reporter,
 ) -> Result<i32> {
     let home = resolve_home()?;
-    let target = expand_tilde(&args.target, &home);
+    let target = anchor_input(&args.target, &home).map_err(EngineError::from)?;
     let target_key = manage_key(&target);
 
     let (state, guard) = acquire_state_and_lock()?;

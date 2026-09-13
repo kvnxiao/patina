@@ -70,7 +70,7 @@ fn promote_copy_target_rewrites_source_and_rejournals() {
     assert_eq!(
         fs_err::read_to_string(source.as_std_path()).expect("read repo source"),
         NEW_GITCONFIG,
-        "the repository source must hold the promoted bytes"
+        "the repository source must contain the promoted bytes"
     );
 
     let record = commit_record(&fx);
@@ -289,4 +289,27 @@ fn stderr(out: &std::process::Output) -> String {
 
 fn is_symlink(path: &Utf8Path) -> bool {
     fs_err::symlink_metadata(path.as_std_path()).is_ok_and(|m| m.file_type().is_symlink())
+}
+
+#[test]
+fn promote_resolves_a_relative_path_against_the_working_directory() {
+    let fx = applied_copy_fixture();
+    let gitconfig = fx.home.join(".gitconfig");
+    let source = fx.root.join("git").join("gitconfig");
+
+    fs_err::write(gitconfig.as_std_path(), NEW_GITCONFIG).expect("overwrite target");
+
+    let out = fx.run_in(&fx.home, &["promote", ".gitconfig", "--yes"], &[]);
+    assert_eq!(
+        code(&out),
+        0,
+        "promote must exit 0; stderr: {}",
+        stderr(&out)
+    );
+
+    assert_eq!(
+        fs_err::read_to_string(source.as_std_path()).expect("read repo source"),
+        NEW_GITCONFIG,
+        "the repository source must hold the promoted bytes"
+    );
 }

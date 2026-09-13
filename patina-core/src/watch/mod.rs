@@ -537,15 +537,9 @@ mod tests {
 
     #[test]
     fn only_source_paths_classify_as_source_events() {
-        // The re-apply trigger fires only for a repository source path. A
-        // content-target path is watched (for drift) but is not a source, so a
-        // batch naming only the target does not re-apply. The loop guard stops a
-        // re-apply's own target rewrite from re-triggering.
         let sources = vec![Utf8PathBuf::from("/repo/git/gitconfig")];
         assert!(source_event(&batch(&["/repo/git/gitconfig"]), &sources));
         assert!(!source_event(&batch(&["/home/u/.gitconfig"]), &sources));
-        // A batch coalescing a source edit with the target rewrite still counts
-        // as a source event (the source path is present).
         assert!(source_event(
             &batch(&["/home/u/.gitconfig", "/repo/git/gitconfig"]),
             &sources

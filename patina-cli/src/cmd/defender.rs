@@ -899,9 +899,6 @@ mod tests {
 
     #[test]
     fn only_a_rejected_write_is_reported_as_defender_refusing_it() {
-        // `Blocked`, `Failed`, and `Unconfirmed` share a code, so the message is
-        // the only thing separating them. Blaming Tamper Protection for an
-        // unconfirmed outcome is the bug this split fixes.
         let blocked = blocked_error("TamperProtected=True").to_string();
         assert!(blocked.contains("Defender rejected the exclusion change"));
         assert!(blocked.contains("Tamper Protection"));

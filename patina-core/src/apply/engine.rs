@@ -1933,25 +1933,15 @@ pub async fn execute(
         // rolling back to it correctly deletes its fresh targets.
         let pruned = gc_retain(&backups_dir, crate::backups::RETENTION_COUNT)?;
         prune_cycles(&journal_dir, &pruned)?;
-        // Remote checkouts follow the same retain-what-recovery-needs rule as
-        // backups, and for the same reason: `patina rollback` re-points links
-        // back to whatever checkout an on-disk journal record still names. Runs
-        // after the commit and after the journal prune, so the reachability set
-        // it reads is this run's, and disk settles at roughly the current and
-        // previous rev per remote. Currently pinned checkouts survive even
-        // unreferenced: another process's not-yet-committed plan points at a
-        // pinned rev by construction.
+        // Journal records can point rollback at remote checkouts, so pruning
+        // runs after the commit and journal retention. Uncommitted plans can
+        // still reference pinned checkouts.
         //
-        // Planning reads `patina.lock` only when an active entry selects a
-        // remote, so the engine reaches this point without knowing what is pinned.
-        // The engine re-reads the lockfile instead of assuming it is empty; a
-        // lockfile that cannot be read leaves every declared remote's cache
-        // untouched.
+        // When planning did not load `patina.lock`, cleanup re-reads its pins.
+        // If that read fails, declared remote caches remain untouched.
         //
-        // Pruning is best-effort cleanup after a durable commit, so a failure
-        // anywhere here is logged, not propagated: the apply already succeeded
-        // and rolling it back over a stale checkout would be worse than leaving
-        // the checkout on disk.
+        // Because apply has committed, pruning failures are logged and do not
+        // trigger rollback.
         let declared: BTreeSet<&RemoteName> = resolved.remote_names.iter().collect();
         let pins = resolved
             .remote_pins
@@ -3872,9 +3862,6 @@ mod tests {
         );
     }
 
-    // The durable plan carries the classified disposition: a satisfied copy
-    // entry assembles a `PlannedOperation::Copy` whose disposition is
-    // Unchanged, threaded from `ResolvedEntry` through `assemble_plan_operations`.
     #[test]
     fn assemble_plan_threads_disposition_onto_durable_operation() {
         let resolved = ResolvedEntry {

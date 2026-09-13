@@ -50,8 +50,9 @@ use patina_core::EngineError;
 use patina_core::ExpectedTarget;
 use patina_core::ResolvedPlan;
 use patina_core::TemplateEngine;
+use patina_core::anchor_input;
+use patina_core::contract_home;
 use patina_core::current_timestamp;
-use patina_core::expand_tilde;
 use patina_core::manage_key;
 use patina_core::plan_apply;
 use patina_core::read_latest_commit;
@@ -73,7 +74,7 @@ pub async fn run(
     reporter: &mut impl Reporter,
 ) -> Result<i32> {
     let home = resolve_home()?;
-    let target = expand_tilde(&args.path, &home);
+    let target = anchor_input(&args.path, &home).map_err(EngineError::from)?;
     let target_key = manage_key(&target);
 
     let (state, guard) = acquire_state_and_lock()?;
@@ -114,7 +115,13 @@ pub async fn run(
 
     let source = Utf8PathBuf::from(expected.source());
     let manifest_path = owning_manifest(&source)?;
-    remove_entry(&manifest_path, args.path.as_str(), &target_path)?;
+    // Try the portable form, the user's argument, and the journaled path to
+    // match manifests written by both current and older `add` versions.
+    let portable = contract_home(&target, &home);
+    remove_entry(
+        &manifest_path,
+        &[portable.as_str(), args.path.as_str(), target_path.as_str()],
+    )?;
 
     // The re-plan runs after the manifest edit, so the fresh <ts>.COMMIT
     // omits the removed target and `patina status` stops listing it.
@@ -189,26 +196,29 @@ fn owning_manifest(source: &Utf8Path) -> Result<Utf8PathBuf> {
     Ok(module_dir.join(MANIFEST_FILENAME))
 }
 
-/// Remove the `[[file]]` entry for `entry_target` from the module manifest at
-/// `manifest_path`, then write the edited text back.
-///
-/// The manifest stores the target unexpanded (e.g. `~/.zshrc`), while the
-/// writer also accepts the canonical form. Both spellings are tried before the
-/// removal fails.
-fn remove_entry(
-    manifest_path: &Utf8Path,
-    entry_target: &str,
-    canonical_target: &Utf8Path,
-) -> Result<()> {
+fn remove_entry(manifest_path: &Utf8Path, spellings: &[&str]) -> Result<()> {
     let text = fs_err::read_to_string(manifest_path.as_std_path())
         .with_context(|| format!("failed to read {manifest_path}"))?;
-    let edited = match remove_file_entry(&text, entry_target) {
-        Ok(edited) => edited,
-        Err(_) => remove_file_entry(&text, canonical_target.as_str())
-            .map_err(EngineError::from)
-            .with_context(|| {
-                format!("failed to remove the entry for {entry_target} from {manifest_path}")
-            })?,
+    let mut last_error = None;
+    let mut matched = None;
+    for spelling in spellings {
+        match remove_file_entry(&text, spelling) {
+            Ok(edited) => {
+                matched = Some(edited);
+                break;
+            }
+            Err(error) => last_error = Some(error),
+        }
+    }
+    let Some(edited) = matched else {
+        let error = last_error
+            .ok_or_else(|| anyhow!("no target spelling was supplied for {manifest_path}"))?;
+        return Err(EngineError::from(error)).with_context(|| {
+            format!(
+                "failed to remove the entry for {} from {manifest_path}",
+                spellings.join(" or ")
+            )
+        });
     };
     fs_err::write(manifest_path.as_std_path(), edited)
         .with_context(|| format!("failed to write {manifest_path}"))?;
@@ -439,7 +449,7 @@ mod tests {
         )
         .expect("seed manifest");
 
-        remove_entry(&manifest, "~/.zshrc", Utf8Path::new("/home/u/.zshrc")).expect("remove entry");
+        remove_entry(&manifest, &["~/.zshrc", "/home/u/.zshrc"]).expect("remove entry");
 
         let body = fs_err::read_to_string(manifest.as_std_path()).expect("read manifest");
         assert!(
@@ -453,6 +463,61 @@ mod tests {
         assert!(
             body.contains("# keep me"),
             "the sibling's comment must be preserved, got: {body}"
+        );
+    }
+
+    #[test]
+    fn remove_entry_falls_through_to_a_later_spelling() {
+        let td = TempDir::new().expect("tempdir");
+        let dir = Utf8Path::from_path(td.path()).expect("utf8 tempdir path");
+        let manifest = dir.join("patina.toml");
+        fs_err::write(
+            manifest.as_std_path(),
+            "[[file]]
+source = \"zshrc\"
+target = \".zshrc\"
+mode = \"symlink\"
+",
+        )
+        .expect("seed manifest");
+
+        remove_entry(&manifest, &["~/.zshrc", ".zshrc", "/home/u/.zshrc"])
+            .expect("a later spelling matches");
+
+        let body = fs_err::read_to_string(manifest.as_std_path()).expect("read manifest");
+        assert!(
+            !body.contains("[[file]]"),
+            "the entry matched by the second spelling must be gone, got: {body}"
+        );
+    }
+
+    #[test]
+    fn remove_entry_reports_every_spelling_it_tried() {
+        let td = TempDir::new().expect("tempdir");
+        let dir = Utf8Path::from_path(td.path()).expect("utf8 tempdir path");
+        let manifest = dir.join("patina.toml");
+        fs_err::write(
+            manifest.as_std_path(),
+            "[[file]]
+source = \"vimrc\"
+target = \"~/.vimrc\"
+mode = \"copy\"
+",
+        )
+        .expect("seed manifest");
+
+        let error = remove_entry(&manifest, &["~/.zshrc", "/home/u/.zshrc"])
+            .expect_err("no spelling matches");
+        let rendered = format!("{error:#}");
+        assert!(
+            rendered.contains("~/.zshrc") && rendered.contains("/home/u/.zshrc"),
+            "the error must name both spellings, got: {rendered}"
+        );
+        assert!(
+            fs_err::read_to_string(manifest.as_std_path())
+                .expect("read manifest")
+                .contains("~/.vimrc"),
+            "a failed removal must leave the manifest untouched"
         );
     }
 
