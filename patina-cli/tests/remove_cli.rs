@@ -195,3 +195,30 @@ fn stderr(out: &std::process::Output) -> String {
 fn is_symlink(path: &Utf8Path) -> bool {
     fs_err::symlink_metadata(path.as_std_path()).is_ok_and(|m| m.file_type().is_symlink())
 }
+
+#[test]
+fn remove_resolves_a_relative_path_against_the_working_directory() {
+    let fx = applied_symlink_fixture();
+    let zshrc = fx.home.join(".zshrc");
+
+    let out = fx.run_in(&fx.home, &["remove", ".zshrc", "--yes"], &[]);
+    assert_eq!(
+        code(&out),
+        0,
+        "remove must exit 0; stderr: {}",
+        stderr(&out)
+    );
+
+    assert!(!is_symlink(&zshrc), "~/.zshrc must no longer be a symlink");
+    assert_eq!(
+        fs_err::read_to_string(zshrc.as_std_path()).expect("read ~/.zshrc"),
+        "shell-config"
+    );
+
+    let manifest = fx.root.join("zsh").join("patina.toml");
+    let body = fs_err::read_to_string(manifest.as_std_path()).expect("read module manifest");
+    assert!(
+        !body.contains("[[file]]"),
+        "the [[file]] entry must be removed, got: {body}"
+    );
+}

@@ -401,9 +401,6 @@ mod tests {
 
     #[test]
     fn the_hook_throttle_admits_a_first_check_then_holds_for_one_window() {
-        // The window is derived from `HOOK_THROTTLE` rather than re-typed, so the
-        // assertion is about the boundary behaviour, not about two copies of the
-        // same number agreeing.
         let window = i64::try_from(HOOK_THROTTLE.as_secs()).expect("the throttle fits in i64");
         let now = 1_800_000_000;
         assert!(hook_check_due(None, now), "no stamp means a check is due");

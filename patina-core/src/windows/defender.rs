@@ -1439,8 +1439,6 @@ mod tests {
 
     #[test]
     fn validate_rejects_a_path_under_an_injected_system_dir() {
-        // The env-derived denylist rule, tested with an injected directory so it
-        // runs on any platform (the process env is untouched).
         let system_dirs = vec![Utf8PathBuf::from(r"C:\Windows")];
         assert!(matches!(
             validate_exclusion_path_with(Utf8Path::new(r"C:\Windows\System32\x"), &system_dirs),
@@ -1485,8 +1483,6 @@ mod tests {
 
     #[test]
     fn classify_falls_back_to_the_ledger_when_the_list_is_withheld() {
-        // Unmanaged is undetectable here: without the live list there is nothing
-        // to notice an unrecorded-but-present exclusion against.
         let recorded = Exclusion::new(REPO, ExclusionKind::Folder);
         let other = Exclusion::new(r"C:\Users\kevin\.gitconfig", ExclusionKind::File);
         let ledger = set(&[(REPO, ExclusionKind::Folder)]);
@@ -1699,10 +1695,6 @@ mod tests {
 
     #[test]
     fn is_drive_root_guards_input_without_a_drive_and_colon() {
-        // The early-return guard: a string too short to carry a drive letter and
-        // colon is not a drive root. `validate_exclusion_path` only ever reaches
-        // `is_drive_root` with a drive-absolute path, so this guard is exercised
-        // directly.
         assert!(is_drive_root("C:"));
         assert!(is_drive_root(r"C:\"));
         assert!(!is_drive_root("C"));

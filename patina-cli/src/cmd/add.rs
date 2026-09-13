@@ -31,7 +31,19 @@
 //! source therefore never emits a `[[file]]` entry, and a file source never
 //! emits a `[[directory]]` entry.
 //!
-//! Manifest editing, repo discovery, tilde expansion, and canonicalization
+//! ## Target resolution
+//!
+//! The `<path>` argument names a target on the user's machine. A leading `~`
+//! expands to the home directory, and a relative path resolves against the
+//! current working directory. For targets under the home directory, the
+//! manifest stores a `~`-relative path.
+//!
+//! Before staging, `add` refuses the home directory and any target that
+//! contains the dotfiles repository. A single entry cannot own the home
+//! directory, and staging a repository ancestor would copy the repository into
+//! itself.
+//!
+//! Manifest editing, repo discovery, path anchoring, and canonicalization
 //! all live in `patina_core`; this module is presentation and control flow.
 
 use crate::cli::AddArgs;
@@ -50,13 +62,15 @@ use patina_core::EngineError;
 use patina_core::FileMode;
 use patina_core::LockKind;
 use patina_core::acquire_lock;
+use patina_core::anchor_input;
 use patina_core::append_directory_entry;
 use patina_core::append_file_entry;
 use patina_core::canonicalize_path;
+use patina_core::contract_home;
 use patina_core::discover_modules;
 use patina_core::exclusive_timeout;
-use patina_core::expand_tilde;
 use patina_core::ignore_rules;
+use patina_core::manage_key;
 use patina_core::parse_module_config;
 use patina_core::parse_root_config;
 use patina_core::resolve_repository_root;
@@ -222,7 +236,24 @@ pub async fn run(
 
     let repo_root = resolve_repository_root().map_err(EngineError::from)?;
     let home = resolve_home()?;
-    let target = expand_tilde(&args.path, &home);
+    let target = anchor_input(&args.path, &home).map_err(EngineError::from)?;
+    let manifest_target = contract_home(&target, &home);
+
+    if let Some(reason) = overreaching_target(&target, &home, &repo_root)? {
+        let message = format!(
+            "refusing to add {manifest_target}: {reason}. Name the file or directory to manage instead"
+        );
+        if args.json {
+            reporter.json(&error_envelope(
+                "overreaching_target",
+                manifest_target.as_str(),
+                &message,
+            ));
+        } else {
+            reporter.warn(&message);
+        }
+        return Ok(ExitCode::Generic.code());
+    }
 
     // The kind check runs before the lock, so an incompatible flag/kind pair
     // refuses before the lock is acquired.
@@ -236,14 +267,11 @@ pub async fn run(
         .context("failed to acquire the exclusive lock")?;
 
     if let Some(existing_module) = find_managed(&repo_root, &target, &home)? {
-        let message = format!(
-            "{} is already managed by module `{existing_module}`",
-            args.path
-        );
+        let message = format!("{manifest_target} is already managed by module `{existing_module}`");
         if args.json {
             reporter.json(&error_envelope(
                 "already_managed",
-                args.path.as_str(),
+                manifest_target.as_str(),
                 &message,
             ));
         } else {
@@ -254,7 +282,7 @@ pub async fn run(
 
     let file_name = target
         .file_name()
-        .ok_or_else(|| anyhow!("the path `{}` has no file name", args.path))?;
+        .ok_or_else(|| anyhow!("the path `{manifest_target}` has no file name"))?;
     let basename = repo_source_name(file_name);
     // A `--template` source records the `.tmpl` suffix so the engine derives
     // the implicit template mode. The copied file on disk ends in `.tmpl` too.
@@ -271,7 +299,9 @@ pub async fn run(
 
     // The ignore checks run before `stage_into_repo`, so a refusal leaves the
     // user's file where it was.
-    if let Some(exit) = refuse_ignored_conflict(args, &repo_root, &dest, reporter)? {
+    if let Some(exit) =
+        refuse_ignored_conflict(args, &manifest_target, &repo_root, &dest, reporter)?
+    {
         return Ok(exit);
     }
     // Tree modes only. A whole-directory `symlink` deploys through one link,
@@ -282,22 +312,20 @@ pub async fn run(
 
     stage_into_repo(&target, &dest, kind)?;
 
-    // Store the unexpanded target path (e.g. `~/.zshrc`) to keep the manifest
-    // portable across machines.
     let manifest_path = module_dir.join(MANIFEST_FILENAME);
     let existing_text = read_manifest_text(&manifest_path)?;
     let new_text = if mode.is_directory() {
         append_directory_entry(
             &existing_text,
             &source,
-            args.path.as_str(),
+            manifest_target.as_str(),
             mode.file_mode(),
         )
     } else {
         append_file_entry(
             &existing_text,
             &source,
-            args.path.as_str(),
+            manifest_target.as_str(),
             mode.file_mode(),
         )
     }
@@ -306,15 +334,34 @@ pub async fn run(
         .with_context(|| format!("failed to write {manifest_path}"))?;
 
     if args.json {
-        reporter.json(&success_envelope(&args.path, &dest, &module, mode));
+        reporter.json(&success_envelope(&manifest_target, &dest, &module, mode));
     } else {
-        let path = paint(reporter.styles().path, args.path.as_str());
+        let path = paint(reporter.styles().path, manifest_target.as_str());
         reporter.line(&format!(
             "Added {path} to module `{module}` as {} (run `patina apply` to materialize).",
             mode.label()
         ));
     }
     Ok(ExitCode::Success.code())
+}
+
+fn overreaching_target(
+    target: &Utf8Path,
+    home: &Utf8Path,
+    repo_root: &Utf8Path,
+) -> Result<Option<&'static str>> {
+    let resolved = canonicalize_path(target).map_err(EngineError::from)?;
+    if repo_root.starts_with(&resolved) {
+        return Ok(Some(
+            "the path contains the dotfiles repository, so staging it would copy the repository into itself",
+        ));
+    }
+    if resolved == home {
+        return Ok(Some(
+            "the path is the home directory, and one entry cannot own every file in it",
+        ));
+    }
+    Ok(None)
 }
 
 /// Refuse the add when a tree-mode entry already excludes `dest`. Returns the
@@ -328,6 +375,7 @@ pub async fn run(
 /// compile.
 fn refuse_ignored_conflict(
     args: &AddArgs,
+    target: &Utf8Path,
     repo_root: &Utf8Path,
     dest: &Utf8Path,
     reporter: &mut impl Reporter,
@@ -339,15 +387,14 @@ fn refuse_ignored_conflict(
         return Ok(None);
     };
     let message = format!(
-        "{} would be deployed by a new entry, but module `{module}` already excludes it from its \
-         `{entry_source}` tree via an `ignore` pattern; pass --force to declare it anyway, or drop \
-         the pattern",
-        args.path
+        "{target} would be deployed by a new entry, but module `{module}` already excludes it \
+         from its `{entry_source}` tree via an `ignore` pattern; pass --force to declare it \
+         anyway, or drop the pattern"
     );
     if args.json {
         reporter.json(&error_envelope(
             "ignored_conflict",
-            args.path.as_str(),
+            target.as_str(),
             &message,
         ));
     } else {
@@ -438,21 +485,22 @@ fn warn_on_ignored_leaves(
 /// whose target resolves to the same absolute path as `target`. Returns the
 /// owning module's name on a match.
 ///
-/// Targets are compared by tilde-expanded form, without touching the
-/// filesystem. The manifest may store a `~`-relative target against an absolute
-/// input, or an absolute target against a `~`-relative input.
+/// Anchoring compares absolute, `~`-relative, and working-directory-relative
+/// spellings without reading the target from disk.
 fn find_managed(
     repo_root: &Utf8Path,
     target: &Utf8Path,
     home: &Utf8Path,
 ) -> Result<Option<String>> {
+    let target_key = manage_key(target);
     let modules = discover_modules(repo_root).map_err(EngineError::from)?;
     for module in modules {
         let manifest = module.path.join(MANIFEST_FILENAME);
         let config = parse_module_config(&manifest).map_err(EngineError::from)?;
         for entry in config.files.iter().chain(config.directories.iter()) {
             for entry_target in &entry.targets {
-                if expand_tilde(entry_target, home) == target {
+                let anchored = anchor_input(entry_target, home).map_err(EngineError::from)?;
+                if manage_key(&anchored) == target_key {
                     return Ok(Some(module.name));
                 }
             }
@@ -619,12 +667,16 @@ fn repo_source_name(file_name: &str) -> String {
 
 /// Resolve the user's home directory for tilde expansion. `$HOME` is read
 /// first, then `$USERPROFILE` (the Windows fallback).
+///
+/// Canonicalizes the result so path anchoring and home contraction compare the
+/// same spelling. If canonicalization fails, returns the environment spelling.
 pub(crate) fn resolve_home() -> Result<Utf8PathBuf> {
     for name in ["HOME", "USERPROFILE"] {
         if let Ok(value) = std::env::var(name)
             && !value.is_empty()
         {
-            return Ok(Utf8PathBuf::from(value));
+            let home = Utf8PathBuf::from(value);
+            return Ok(canonicalize_path(&home).unwrap_or(home));
         }
     }
     Err(anyhow!(
@@ -636,7 +688,7 @@ pub(crate) fn resolve_home() -> Result<Utf8PathBuf> {
 /// (no timestamps / PIDs).
 fn success_envelope(target: &Utf8Path, dest: &Utf8Path, module: &str, mode: AddMode) -> String {
     // `canonicalize_path` is best-effort in this envelope, for display
-    // stability only. The stored manifest target is the verbatim user input.
+    // stability only.
     let canonical_dest = canonicalize_path(dest).unwrap_or_else(|_| dest.to_path_buf());
     let envelope = serde_json::json!({
         "added": target.as_str(),

@@ -371,11 +371,7 @@ mod tests {
     }
 
     #[test]
-    fn dispatch_routes_each_subcommand_to_its_backend_method() {
-        // The recorded call proves which backend method the dispatch invoked, so
-        // a miswired match arm (e.g. `Restart` calling `stop`) fails this test.
-        // `status` dispatches separately (it acquires the shared lock), so it is
-        // not part of this mutating path.
+    fn dispatch_routes_each_mutating_subcommand_to_its_backend_method() {
         let cases = [
             (WatchCommand::Install, "install"),
             (WatchCommand::Uninstall { yes: true }, "uninstall"),

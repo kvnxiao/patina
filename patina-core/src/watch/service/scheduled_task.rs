@@ -503,10 +503,8 @@ mod tests {
 
     #[test]
     fn is_not_found_recognizes_the_task_not_found_hresults() {
-        // FILE_NOT_FOUND (0x80070002) and PATH_NOT_FOUND (0x80070003) are the
-        // not-installed states; any other HRESULT raw code is a real supervisor
-        // error. The classifier takes the raw `u32` (the call site passes
-        // `err.raw()`) so it is testable without the `unsafe` `HRESULT::from_raw`.
+        // FILE_NOT_FOUND (0x80070002) and PATH_NOT_FOUND (0x80070003) are
+        // not-installed states; other HRESULT codes are supervisor errors.
         assert!(is_not_found(0x8007_0002));
         assert!(is_not_found(0x8007_0003));
         // ACCESS_DENIED (0x80070005) is a real error, not a not-found.
@@ -543,9 +541,6 @@ mod tests {
 
     #[test]
     fn map_task_status_reports_none_exit_code_when_never_run() {
-        // A task that has never run reports the SCHED_S_TASK_HAS_NOT_RUN
-        // sentinel result and the epoch (0.0) last-run time; both map to None so
-        // a freshly-installed task surfaces no exit code and no last-fired time.
         let readout = map_task_status(co::TASK_STATE::READY, SCHED_S_TASK_HAS_NOT_RUN, 0.0);
         assert!(!readout.running);
         assert_eq!(
