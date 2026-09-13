@@ -247,6 +247,38 @@ Re-running `patina apply` against unchanged source is a no-op: the same
 plan, no writes, and byte-identical stdout. Patina never overwrites a
 file it does not own without taking a backup first.
 
+### Hooks
+
+A `[[hook]]` entry runs a shell command around the file operations:
+
+```toml
+[[hook]]
+event = "post_apply"
+command = "fc-cache -f"
+when = "patina.os == 'linux'"
+```
+
+`event` is `pre_apply` or `post_apply`. A `pre_apply` hook runs before
+any file operation, and a failure under the default
+`must_succeed = true` aborts the apply (exit 2) before anything is
+written. A `post_apply` hook runs after every file operation, and a
+failure rolls those operations back (exit 3). Declare
+`must_succeed = false` to degrade a failure to a warning, or pass
+`--force-deploy` to degrade every hook in one invocation. An optional
+`when` gates the hook the same way it gates an entry, and resolves
+variables under the `[variables]` table of the manifest that declared the
+hook. An optional `shell` overrides the platform default (`bash` on macOS
+and Linux, `pwsh` on Windows); Patina resolves it on `PATH` before any
+hook runs, so an unresolvable shell aborts the apply before the first
+write.
+
+A hook command is run verbatim and is never rendered as a template.
+
+No hook runs on an up-to-date apply. An apply with nothing to write
+short-circuits before the hook phase and keeps two consecutive runs
+byte-identical on stdout. A reload hook therefore fires when something
+actually changes, not on every invocation.
+
 ### Changing an entry's mode
 
 Editing an entry's `mode` from `symlink` to `copy`, or a `[[directory]]`
