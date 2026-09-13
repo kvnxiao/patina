@@ -117,6 +117,10 @@ Remote content is third-party input. Patina enforces these limits on it:
   plan rather than deploying through it. Patina never writes such a
   link, so its presence means the cache was made or altered by
   something else.
+- Patina never writes into a checkout. `patina promote` refuses a target
+  deployed from a remote, names that remote, and exits `1`: a checkout is
+  immutable third-party content, replaced wholesale when the pin moves.
+  Change the upstream repository and run `patina remote update <name>`.
 - A remote's `url` and `ref` are passed to `git` as positional
   arguments, and may not begin with `-`. A manifest therefore cannot
   smuggle a git option (for example `--upload-pack`) into a fetch.
@@ -198,7 +202,9 @@ checkout's bytes. A preview is therefore neither offline nor write-free
 in the strictest sense: a non-interactive apply without `--yes`, and any
 `--json` run, will fetch and write a checkout the cache lacks. It touches
 no repository file and no target; the lockfile rewrites wait for a run
-that may write.
+that may write. `patina remove` settles its manifest edit before it
+prompts, so it plans first as well: a declined `remove` can leave the
+same fetched checkout behind.
 
 The directory under `<state>/remotes/` is named by the remote's folded
 name (one case, one Unicode normal form), not by the spelling in the
@@ -237,15 +243,15 @@ anything. Where that read fails, every declared remote's cache stays put:
 a checkout that might be the current pin is worth more than the disk it
 occupies.
 
-A checkout is staged in a `<sha>.partial.<pid>` sibling and renamed into
-place, and staging runs outside the process lock, because plan time comes
-before the consent prompt. Two processes may therefore stage the same rev
-at once, and a sweep may meet a staging tree another process is still
-writing. The sweep removes one only after it has gone untouched for a
-day, well beyond any real checkout; git writing into a live tree keeps its
-timestamp moving. A tree abandoned by a killed process costs disk until
-that day passes, and `ensure_checkout` clears a same-pid leftover of its
-own before it stages.
+Because plan time comes before the consent prompt, staging runs outside
+the process lock: a checkout is staged in a `<sha>.partial.<pid>` sibling
+and renamed into place. Two processes may therefore stage the same rev at
+once, and a sweep may meet a staging tree another process is still
+writing. The floor is a day, well beyond any real checkout, so a live
+tree is never old enough to qualify; once its timestamp has stood still
+that long, the sweep removes it. A tree abandoned by a killed process
+costs disk until that day passes. Before staging, `ensure_checkout`
+clears any same-pid leftover of its own.
 
 ## Commands
 

@@ -197,9 +197,10 @@ overrides a lower one for the same key.
 
 A module's `[variables]` table is scoped to that module. It binds the
 templates, `when` predicates, and hooks declared in the same
-`patina.toml` and reaches no other module, whatever order the modules are
-discovered in. A module that declares no binding for a name resolves it
-from the repo-shared table, the active profile, or the built-ins.
+`patina.toml` and does not reach any other module, in whatever order the
+modules are discovered. A module that declares no binding for a name
+resolves it from the repo-shared table, the active profile, or the
+built-ins.
 
 ```toml
 # Root patina.toml: repo-shared defaults plus a per-profile override.
@@ -215,10 +216,16 @@ repo-shared one.
 
 `patina apply` and `patina status` both take `-v key=value`, repeatable.
 Pass `status` the same overrides the matching `apply` was given: an entry
-whose `when` reads an overridden variable is only counted managed under
-those overrides, so a bare `patina status` reports its target orphaned.
-An apply reaps against the overrides it was run with, so a run that
-materializes an entry never deletes that entry's target in the same pass.
+whose `when` reads an overridden variable is only counted as managed
+under those overrides, so a bare `patina status` reports its target
+orphaned. An apply reaps against the overrides it was run with, so a run
+that materializes an entry never deletes that entry's target in the same
+pass.
+
+`patina doctor` does not take overrides, and resolves every `when`
+without them. Where a variable is bound only by a `-v` override, its
+predicate is undefined. Doctor's stranded-target check then reports
+nothing at all rather than guessing.
 
 ## Apply flow
 
@@ -379,8 +386,8 @@ other skips a prompt.
 | --------- | --------------------------------------------------------------------------------------------- |
 | `init`    | Scaffold a root `patina.toml` and persist the default-repository pointer.                     |
 | `add`     | Bring an existing dotfile under management: copy it into a module and write a `[[file]]` entry for a file source or a `[[directory]]` entry for a directory source.|
-| `remove`  | Unmanage a target: drop its entry and replace the target with a regular file holding the last-applied content. |
-| `promote` | Copy a drifted copy-mode target's current bytes back into its repository source, then re-apply. |
+| `remove`  | Unmanage a target: drop its entry and replace the target with a regular file holding the last-applied content. One leaf of a tree-mode `[[directory]]` entry is refused. |
+| `promote` | Copy a drifted copy-mode target's current bytes back into its repository source, then re-apply. A target deployed from a remote is refused. |
 | `doctor`  | Inspect the environment for known problems (UNC repository paths, missing Windows Developer Mode, an outdated Windows build, a missing default repo, missing `git`, and targets stranded by a new `ignore` pattern). |
 | `remote`  | Manage remote git sources: `list` the pins, `check` upstream tips, `update` a pin through the update gate, `prune` cached checkouts. See [Remote sources](#remote-sources). |
 
@@ -753,9 +760,11 @@ error naming the version mismatch, and both exit 1 on an invalid path.
 - **Symlink creation fails on Windows.** Enable Developer Mode, or run
   the command from an elevated (UAC) session.
 - **A template render fails with an undefined-variable error.** Patina
-  uses strict-undefined semantics. Define the variable in the
-  appropriate scope or profile; there is no empty default to fall back
-  on.
+  uses strict-undefined semantics, and a module's `[variables]` table
+  binds only the manifest that declares it. Define the variable in that
+  same module, in the root `[variables]` table to share it across
+  modules, or in the active profile; there is no empty default to fall
+  back on.
 - **Apply seems to hang.** Another `patina` process may hold the
   advisory lock. Patina waits up to a bounded timeout and then exits
   with the lock-timeout exit code; check for a concurrent apply or a
@@ -774,3 +783,7 @@ error naming the version mismatch, and both exit 1 on an invalid path.
   reports drift from a live re-hash regardless. Resolve with `patina
   apply` (revert to source) or `patina promote` (update source from
   target).
+- **`patina status` reports `orphaned` for a target `patina apply` keeps
+  materializing.** The entry's `when` reads a variable the apply
+  overrides. Pass `status` the same `-v key=value` overrides (see
+  "Variables").

@@ -253,6 +253,20 @@ pub struct StatusOptions {
     pub cli_overrides: Vec<(String, String)>,
 }
 
+impl StatusOptions {
+    /// Set the `-v key=value` overrides. [`StatusOptions`] is
+    /// `#[non_exhaustive]`, so a caller outside patina-core cannot reach the
+    /// field through a struct literal or a functional update.
+    #[must_use]
+    pub fn with_cli_overrides(
+        mut self,
+        overrides: impl IntoIterator<Item = (String, String)>,
+    ) -> Self {
+        self.cli_overrides = overrides.into_iter().collect();
+        self
+    }
+}
+
 /// Options accepted by [`rollback`](fn@crate::rollback).
 #[derive(Debug, Default, Clone)]
 #[non_exhaustive]

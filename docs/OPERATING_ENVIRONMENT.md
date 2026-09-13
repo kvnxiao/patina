@@ -25,6 +25,7 @@ patina/
 ├── journal/             postcard-encoded plan + COMMIT/ROLLED_BACK sentinels
 ├── backups/<ts>/        last-applied byte content, last 10 cycles retained
 ├── logs/                rotating watcher logs, created lazily by `patina watch`
+├── remotes/             one bare fetch repository and one checkout per pinned rev
 ├── default_repo         persisted dotfiles repo pointer (UTF-8 text)
 ├── profile              persisted profile name (UTF-8 text)
 ├── lock                 advisory file lock (fs2)

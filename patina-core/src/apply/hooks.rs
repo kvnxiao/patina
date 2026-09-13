@@ -127,10 +127,10 @@ pub enum HookError {
 pub struct ResolvedHook<'a> {
     /// The originating parsed hook entry.
     pub entry: &'a HookEntry,
-    /// Index of the module that declared the hook, carried from
-    /// [`PlannedHook::module`](crate::PlannedHook::module) so the `when`
-    /// predicate is evaluated through that module's scoped resolver.
-    pub module: usize,
+    /// Index of the module that declared the hook, carried from its
+    /// [`PlannedHook`](crate::PlannedHook) so the `when` predicate is
+    /// evaluated through that module's scoped resolver.
+    pub(crate) module: usize,
     /// The shell binary to invoke (a default name like `bash` / `pwsh`,
     /// or the explicit shell the entry declared once confirmed on PATH).
     shell: String,

@@ -41,13 +41,15 @@ const PARTIAL_SUFFIX: &str = ".partial";
 /// removes it.
 ///
 /// [`ensure_checkout`] stages without the process lock, so a sweep meets the
-/// staging tree of a process that is still planning. Git writing into that
-/// tree keeps its mtime fresh, while an abandoned tree's mtime stops moving,
-/// which is what this floor reads. A floor of a day sits far beyond any real
-/// checkout, including a cold clone of a large repository over a slow link,
-/// and a leftover costs only disk until it passes. It is a duration rather
-/// than the count `crate::backups::RETENTION_COUNT` uses, because what must be
-/// outlasted here is one writer's wall-clock, not a number of cycles.
+/// staging tree of a process that is still planning. The floor reads the
+/// staging root's mtime, which is set when the checkout begins: a directory's
+/// mtime moves only when an entry is created or removed directly in it, not
+/// for a write nested below. A checkout would therefore have to run longer
+/// than the floor to be misjudged, and a day sits far beyond any real one,
+/// including a cold clone of a large repository over a slow link. A leftover
+/// costs only disk until the floor passes. It is a duration rather than the
+/// count `crate::backups::RETENTION_COUNT` uses, because the floor must
+/// outlast one writer's wall-clock, not a number of cycles.
 const STAGING_MIN_AGE: Duration = Duration::from_hours(24);
 
 /// `<state>/remotes/`, the root of the remote cache.
@@ -198,11 +200,11 @@ fn staging_dir(final_dir: &Utf8Path) -> Utf8PathBuf {
 /// When any sentinel fails to decode, nothing is pruned. Deleting on partial
 /// knowledge could strand a rollback, and a stale checkout only costs disk.
 ///
-/// A staging artifact (`<rev>.partial.<pid>` or a scratch index file) is
-/// removed once it has gone untouched for a day. It is
-/// derivable and never referenced, but it is not necessarily leftover:
-/// [`ensure_checkout`] stages outside the process lock, so one may belong to
-/// a process that is still planning.
+/// Once a staging artifact (`<rev>.partial.<pid>` or a scratch index file)
+/// has gone untouched for a day, it is removed. It is derivable and never
+/// referenced, but it is not necessarily leftover: [`ensure_checkout`] stages
+/// outside the process lock, so one may belong to a process that is still
+/// planning.
 ///
 /// # Errors
 ///
@@ -310,7 +312,7 @@ fn is_scratch_name(name: &str) -> bool {
 /// in-flight. The sweep removes a staging tree only where it can show the tree
 /// is abandoned, because the alternative deletes a live peer's work mid-write
 /// and fails that peer's rename. A liveness probe on the pid in the name would
-/// not do: pids are recycled.
+/// not do, because pids are recycled.
 fn scratch_is_abandoned(path: &Utf8Path, now: SystemTime, floor: Duration) -> bool {
     let Ok(modified) =
         fs_err::symlink_metadata(path.as_std_path()).and_then(|meta| meta.modified())

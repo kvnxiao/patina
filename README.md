@@ -46,8 +46,8 @@ patina watch install        # auto-reapply on change via a per-OS background ser
 | --- | --- |
 | `init` | Scaffold a root `patina.toml` and persist the default-repo pointer. |
 | `add` | Bring an existing dotfile under management: copy it into a module and write a `[[file]]` or `[[directory]]` entry by source kind. |
-| `remove` | Unmanage a target (replace it with a plain file holding the last-applied content); `--purge` deletes it outright. |
-| `promote` | Copy a drifted copy-mode target's current bytes back into its repo source, then re-apply. |
+| `remove` | Unmanage a target (replace it with a plain file holding the last-applied content); `--purge` deletes it outright. One leaf of a tree-mode `[[directory]]` entry is refused. |
+| `promote` | Copy a drifted copy-mode target's current bytes back into its repo source, then re-apply. A target deployed from a remote is refused. |
 | `apply` | Materialize declarations as symlinks / rendered templates / byte copies. Diff-and-prompt by default; plan-only in a non-TTY. |
 | `status` | Classify each managed target: `clean` / `drifted` / `missing` / `orphaned`. |
 | `rollback` | Reverse the most recent successful apply from the journal and backups. |
@@ -64,7 +64,9 @@ absolute.
 
 Every command except the `debug` family accepts `--json` for
 deterministic structured output. Commands that prompt for confirmation
-accept `--yes` to skip the prompt.
+accept `--yes` to skip the prompt. `apply` and `status` accept
+`-v key=value`, repeatable. Give `status` the same overrides `apply` was
+given, or an entry whose `when` reads one classifies differently.
 
 ## Documentation
 

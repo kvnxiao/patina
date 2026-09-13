@@ -116,11 +116,11 @@ fn mirror_components(target: &Utf8Path) -> Vec<String> {
     mirrored
 }
 
-/// Marker component every non-drive path prefix mirrors under.
+/// Marker component that every non-drive path prefix mirrors under.
 ///
-/// A drive prefix mirrors to its bare letter, one character long, so no marked
-/// component can be mistaken for one. Without the marker a UNC host literally
-/// named `C` would mirror onto drive `C:`.
+/// A drive prefix mirrors to its bare letter, one character long, so no
+/// marked component can be mistaken for a drive letter. Without the marker a
+/// UNC host literally named `C` would mirror onto drive `C:`.
 const UNC_MARKER: &str = "__unc__";
 
 /// Marker for a `\\.\<device>` prefix.
@@ -133,10 +133,10 @@ const VERBATIM_MARKER: &str = "__verbatim__";
 ///
 /// A disk prefix contributes its drive letter alone, so cross-volume targets
 /// stay apart and every backup tree already on disk keeps its layout. A UNC
-/// prefix contributes the marker, the host, and the share as three
-/// components: flattening the prefix into one string dropped the separator
-/// between host and share, so `\\srv\a\conf.toml` and `\\sr\va\conf.toml`
-/// mirrored onto one path and each overwrote the other's backup.
+/// prefix contributes the marker, the host, and the share as separate
+/// components: collapsing host and share into one string would let
+/// `\\srv\a\conf.toml` and `\\sr\va\conf.toml` mirror onto one path, each
+/// overwriting the other's backup.
 fn prefix_components(prefix: camino::Utf8PrefixComponent<'_>) -> Vec<String> {
     use camino::Utf8Prefix;
 

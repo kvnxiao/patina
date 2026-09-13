@@ -121,11 +121,13 @@ requires neither a read nor a fetch. The subsystem lives under
   layer captures `stderr` into typed errors and prints nothing itself.
 - The **`cache`** module owns the layout under `<state>/remotes/`: one bare
   fetch repository per remote plus one immutable directory per pinned rev.
-  A checkout is written into a `<sha>.partial` sibling and renamed into
-  place, so a directory's existence means it is complete. Because a new rev
-  gets a *new* directory, an update never mutates content under a live
-  symbolic link. Apply re-points the link through the ordinary journaled
-  flow, and rollback can re-point it back.
+  A checkout is staged in a `<sha>.partial.<pid>` sibling and renamed into
+  place, so a checkout directory's existence means it is complete. Staging
+  runs outside the process lock, so a sweep can meet a live staging tree.
+  Once its timestamp has stood still for a day, the sweep removes it.
+  Because a new rev gets a *new* directory, an update never mutates content
+  under a live symbolic link. Apply re-points the link through the ordinary
+  journaled flow, and rollback can re-point it back.
 - The **`lockfile`** module reads and writes `patina.lock`. Rendering is
   deterministic (remote-name order, fixed field order), so re-writing
   unchanged pins produces identical bytes.
@@ -172,11 +174,15 @@ sequenceDiagram
    non-interactive shell falls through to plan-only and writes nothing.
    Re-applying against unchanged source is a no-op with byte-identical
    stdout.
-3. **Mutate.** Write and fsync the journal, take backups before any
-   overwrite, apply each operation while advancing the progress cursor,
-   and write the terminal sentinel. The process exits through the
-   formalized exit-code funnel. Mutations and read-only commands
-   coordinate through an advisory file lock.
+3. **Mutate.** Every target `Unchanged`, a prior commit on disk, and an
+   empty reap set make the run a full no-op: it returns under the held
+   lock, before the journal flush, so no hook runs and nothing is
+   written. Otherwise, run `pre_apply` hooks, write and fsync the
+   journal, take backups before any overwrite, apply each operation while
+   advancing the progress cursor, run `post_apply` hooks, and write the
+   terminal sentinel. The process exits through the formalized exit-code
+   funnel. Mutations and read-only commands coordinate through an
+   advisory file lock.
 
 ### Target kind and mode edits
 
@@ -272,16 +278,20 @@ operations, and stores it on the `ResolvedPlan`. The reap, the full-no-op
 short-circuit, and the CLI's reap preview all read that one set, so a
 `when` predicate is evaluated once per run, under the run's own `-v`
 overrides and the declaring module's `[variables]`. Recomputing the set
-from a second, override-free pass let an apply reap the target it had
-just materialized, and then fail writing the commit record for it.
+from a second, override-free pass would let an apply reap the target it
+had just materialized. Writing that target's commit record would then
+fail.
 
 `status` and `doctor` hold no plan, so `current_managed_targets` walks the
 manifests independently for them. It gates `when` the same way and expands
 tree leaves the same way, but resolves nothing strictly: a missing or
-wrong-shaped source, and a pattern list that will not compile, each yield
-no leaves rather than an error. `status` therefore takes `-v` as well, and
-`doctor`'s orphan listing is advisory where an override steers a
-predicate.
+wrong-shaped source, and a pattern list that will not compile, each yields
+no leaves rather than an error. `status` therefore takes `-v` as well.
+`doctor` does not: it reports only the targets that a new `ignore` pattern
+stranded, and an override steers a `when` predicate rather than a pattern.
+Where a variable is bound only by an override, that predicate is
+undefined. Because the predicate is undefined, the managed-set walk
+fails. The check therefore reports nothing.
 
 ## Recovery
 

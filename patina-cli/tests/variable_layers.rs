@@ -209,7 +209,8 @@ fn per_module_renders_converge_and_report_clean() {
     );
     assert!(
         String::from_utf8_lossy(&second.stdout).contains("Already up to date"),
-        "a target classified against one resolver and written from another replans as          drift forever; stdout: {}",
+        "a target classified against one resolver and written from another replans \
+         as drift forever; stdout: {}",
         String::from_utf8_lossy(&second.stdout)
     );
 
