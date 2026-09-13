@@ -26,6 +26,8 @@ use crate::config::remote::RemoteName;
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
 use std::collections::BTreeSet;
+use std::time::Duration;
+use std::time::SystemTime;
 
 /// Directory name of the bare fetch repository inside a module's cache
 /// directory.
@@ -34,6 +36,19 @@ const BARE_REPO_DIR: &str = "repo.git";
 /// Suffix of the directory a checkout is written into before it is renamed into
 /// place. Its presence means an interrupted checkout, never a usable one.
 const PARTIAL_SUFFIX: &str = ".partial";
+
+/// How long a staging artifact must have gone untouched before [`prune`]
+/// removes it.
+///
+/// [`ensure_checkout`] stages without the process lock, so a sweep meets the
+/// staging tree of a process that is still planning. Git writing into that
+/// tree keeps its mtime fresh, while an abandoned tree's mtime stops moving,
+/// which is what this floor reads. A floor of a day sits far beyond any real
+/// checkout, including a cold clone of a large repository over a slow link,
+/// and a leftover costs only disk until it passes. It is a duration rather
+/// than the count `crate::backups::RETENTION_COUNT` uses, because what must be
+/// outlasted here is one writer's wall-clock, not a number of cycles.
+const STAGING_MIN_AGE: Duration = Duration::from_hours(24);
 
 /// `<state>/remotes/`, the root of the remote cache.
 #[must_use = "the cache root locates every checkout and the notice files"]
@@ -183,8 +198,11 @@ fn staging_dir(final_dir: &Utf8Path) -> Utf8PathBuf {
 /// When any sentinel fails to decode, nothing is pruned. Deleting on partial
 /// knowledge could strand a rollback, and a stale checkout only costs disk.
 ///
-/// Staging leftovers (`<rev>.partial.<pid>`) and scratch index files are
-/// always removed: both are derivable, and neither is ever referenced.
+/// A staging artifact (`<rev>.partial.<pid>` or a scratch index file) is
+/// removed once it has gone untouched for a day. It is
+/// derivable and never referenced, but it is not necessarily leftover:
+/// [`ensure_checkout`] stages outside the process lock, so one may belong to
+/// a process that is still planning.
 ///
 /// # Errors
 ///
@@ -194,6 +212,17 @@ pub fn prune(
     state_dir: &Utf8Path,
     declared: &BTreeSet<&RemoteName>,
     keep: Option<&[(RemoteName, String)]>,
+) -> Result<Vec<Utf8PathBuf>, RemoteError> {
+    prune_at(state_dir, declared, keep, SystemTime::now())
+}
+
+/// [`prune`] against an explicit clock, so the staging floor is exercisable
+/// without waiting a day or rewriting a directory's mtime.
+fn prune_at(
+    state_dir: &Utf8Path,
+    declared: &BTreeSet<&RemoteName>,
+    keep: Option<&[(RemoteName, String)]>,
+    now: SystemTime,
 ) -> Result<Vec<Utf8PathBuf>, RemoteError> {
     use crate::config::remote::name_key;
 
@@ -236,8 +265,10 @@ pub fn prune(
                 continue;
             }
             if is_scratch_name(name) {
-                remove_any(&candidate)?;
-                removed.push(candidate);
+                if scratch_is_abandoned(&candidate, now, STAGING_MIN_AGE) {
+                    remove_any(&candidate)?;
+                    removed.push(candidate);
+                }
                 continue;
             }
             if !is_checkout_name(name)
@@ -270,6 +301,24 @@ fn is_scratch_name(name: &str) -> bool {
                     .strip_prefix(partial)
                     .is_some_and(|tail| tail.starts_with('.')))
     })
+}
+
+/// Whether the staging artifact at `path` has gone untouched for at least
+/// `floor`.
+///
+/// An mtime that cannot be read, or that lies ahead of `now`, counts as
+/// in-flight. The sweep removes a staging tree only where it can show the tree
+/// is abandoned, because the alternative deletes a live peer's work mid-write
+/// and fails that peer's rename. A liveness probe on the pid in the name would
+/// not do: pids are recycled.
+fn scratch_is_abandoned(path: &Utf8Path, now: SystemTime, floor: Duration) -> bool {
+    let Ok(modified) =
+        fs_err::symlink_metadata(path.as_std_path()).and_then(|meta| meta.modified())
+    else {
+        return false;
+    };
+    now.duration_since(modified)
+        .is_ok_and(|untouched| untouched >= floor)
 }
 
 /// Whether `name` is shaped like a checkout directory (a full commit SHA).
@@ -383,6 +432,79 @@ pub(super) fn remove_any(path: &Utf8Path) -> Result<(), RemoteError> {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    const SHA: &str = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0";
+
+    #[test]
+    fn the_scratch_sweep_spares_a_live_peers_staging_tree() {
+        let temp = TempDir::new().expect("tempdir");
+        let state = Utf8Path::from_path(temp.path()).expect("utf8 temp path");
+        let humanizer = RemoteName::parse("humanizer").expect("a legal remote name");
+        let checkout = checkout_dir(state, &humanizer, SHA);
+        let staging = Utf8PathBuf::from(format!("{checkout}{PARTIAL_SUFFIX}.4242"));
+        fs_err::create_dir_all(checkout.as_std_path()).expect("mkdir checkout");
+        fs_err::create_dir_all(staging.as_std_path()).expect("mkdir staging");
+        fs_err::write(staging.join("SKILL.md").as_std_path(), b"half-written")
+            .expect("write staged leaf");
+
+        let declared: BTreeSet<&RemoteName> = [&humanizer].into_iter().collect();
+        let keep = [(humanizer.clone(), SHA.to_owned())];
+
+        let removed = prune_at(state, &declared, Some(&keep), SystemTime::now())
+            .expect("prune reads the empty journal");
+        assert!(
+            removed.is_empty(),
+            "a staging tree younger than the floor belongs to a live peer: {removed:?}"
+        );
+        assert!(staging.is_dir(), "the peer's staging tree must survive");
+        assert!(checkout.is_dir(), "the pinned checkout must survive");
+
+        let later = SystemTime::now() + STAGING_MIN_AGE + Duration::from_secs(60);
+        let removed = prune_at(state, &declared, Some(&keep), later).expect("prune again");
+        assert_eq!(
+            removed,
+            vec![staging.clone()],
+            "a staging tree past the floor is abandoned and goes"
+        );
+        assert!(!staging.exists(), "the abandoned staging tree must be gone");
+        assert!(
+            checkout.is_dir(),
+            "the pinned checkout must survive the scratch sweep"
+        );
+    }
+
+    #[test]
+    fn a_future_mtime_counts_as_in_flight() {
+        let temp = TempDir::new().expect("tempdir");
+        let dir = Utf8Path::from_path(temp.path()).expect("utf8 temp path");
+        let staging = dir.join("staging");
+        fs_err::create_dir_all(staging.as_std_path()).expect("mkdir staging");
+
+        let earlier = SystemTime::now() - Duration::from_secs(3600);
+        assert!(
+            !scratch_is_abandoned(&staging, earlier, Duration::ZERO),
+            "an mtime ahead of the clock must not license a removal"
+        );
+        assert!(
+            !scratch_is_abandoned(&dir.join("absent"), SystemTime::now(), Duration::ZERO),
+            "an unreadable mtime must not license a removal"
+        );
+    }
+
+    #[test]
+    fn only_a_sha_stemmed_staging_or_index_name_is_scratch() {
+        assert!(is_scratch_name(&format!("{SHA}{PARTIAL_SUFFIX}")));
+        assert!(is_scratch_name(&format!("{SHA}{PARTIAL_SUFFIX}.4242")));
+        assert!(is_scratch_name(&format!("{SHA}.index")));
+        assert!(
+            !is_scratch_name("notes.partial.1"),
+            "a name without a full-SHA stem is a user's, not Patina's"
+        );
+        assert!(
+            !is_scratch_name(SHA),
+            "a checkout directory is not a scratch artifact"
+        );
+    }
 
     #[test]
     fn the_layout_nests_every_path_under_the_cache_root() {

@@ -31,6 +31,12 @@ patina/
 └── drift.cache          postcard-encoded drift events written by `patina watch`
 ```
 
+A backup mirrors its target's absolute path beneath `backups/<ts>/`. The
+platform prefix becomes ordinary components: a Windows drive contributes
+its bare letter (`C:\Users\u\.gitconfig` mirrors to `C/Users/u/.gitconfig`),
+and a UNC path contributes the marker `__unc__` followed by the host and
+the share, so two shares on two hosts never mirror onto one backup.
+
 ---
 
 ## Don't put state or your repo on a cloud-sync mount
