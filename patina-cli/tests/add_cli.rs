@@ -341,3 +341,189 @@ fn wait_for_acquired(child: &mut Child) {
         let _drained = std::io::copy(&mut reader, &mut std::io::sink());
     });
 }
+
+#[test]
+fn add_relative_path_from_home_stores_a_home_relative_target_and_applies_there() {
+    let fx = Fixture::new();
+    let wslconfig = fx.home.join(".wslconfig");
+    fs_err::write(wslconfig.as_std_path(), "foo").expect("seed ~/.wslconfig");
+
+    let added = fx.run_in(
+        &fx.home,
+        &[
+            "add",
+            ".wslconfig",
+            "--module",
+            "wsl2",
+            "--symlink",
+            "--yes",
+        ],
+        &[],
+    );
+    assert_eq!(
+        code(&added),
+        0,
+        "add must exit 0; stderr: {}",
+        stderr(&added)
+    );
+    assert_eq!(manifest_target(&fx, "wsl2"), "~/.wslconfig");
+
+    // Applied from the repository root, not from home: a target left relative
+    // would materialize under the repository instead.
+    let applied = fx.run_in(&fx.root, &["apply", "--yes"], &[]);
+    assert_eq!(
+        code(&applied),
+        0,
+        "apply must exit 0; stderr: {}",
+        stderr(&applied)
+    );
+    assert!(
+        is_symlink(&wslconfig),
+        "~/.wslconfig must be a symlink after apply"
+    );
+    assert_eq!(
+        fs_err::canonicalize(&wslconfig).expect("canonicalize link target"),
+        fs_err::canonicalize(fx.root.join("wsl2").join("wslconfig"))
+            .expect("canonicalize repo source")
+    );
+}
+
+#[test]
+fn add_relative_path_outside_home_stores_an_absolute_target() {
+    let fx = Fixture::new();
+    let outside = fx.root.parent().expect("fixture parent").join("outside");
+    fs_err::create_dir_all(outside.as_std_path()).expect("mkdir outside");
+    let conf = outside.join("tool.conf");
+    fs_err::write(conf.as_std_path(), "bar").expect("seed the outside-home file");
+
+    let out = fx.run_in(
+        &outside,
+        &["add", "tool.conf", "--module", "tool", "--copy", "--yes"],
+        &[],
+    );
+    assert_eq!(code(&out), 0, "add must exit 0; stderr: {}", stderr(&out));
+
+    let stored = manifest_target(&fx, "tool");
+    assert!(
+        !stored.starts_with('~'),
+        "a target outside HOME must stay absolute, got: {stored}"
+    );
+    assert_eq!(
+        Utf8Path::new(&stored)
+            .canonicalize_utf8()
+            .expect("canonicalize stored target"),
+        conf.canonicalize_utf8()
+            .expect("canonicalize the seeded file")
+    );
+}
+
+#[test]
+fn add_refuses_a_relative_spelling_of_an_already_managed_target() {
+    let fx = Fixture::new();
+    fx.module(
+        "zsh",
+        "[[file]]
+source = \"zshrc\"
+target = \"~/.zshrc\"
+mode = \"symlink\"
+",
+    );
+    fs_err::write(fx.root.join("zsh").join("zshrc").as_std_path(), "old").expect("seed source");
+    let zshrc = fx.home.join(".zshrc");
+    fs_err::write(zshrc.as_std_path(), "foo").expect("seed ~/.zshrc");
+
+    let out = fx.run_in(
+        &fx.home,
+        &["add", ".zshrc", "--module", "other", "--copy", "--yes"],
+        &[],
+    );
+    assert_eq!(code(&out), 1, "a relative spelling must refuse too");
+    let stderr = stderr(&out);
+    assert!(
+        stderr.contains("already managed") && stderr.contains("zsh"),
+        "stderr must say the path is already managed and name the module, got: {stderr}"
+    );
+    assert!(
+        !fx.root.join("other").exists(),
+        "no module directory should be created on refusal"
+    );
+}
+
+#[test]
+fn add_contracts_home_when_the_environment_spells_it_indirectly() {
+    let fx = Fixture::new();
+    let wslconfig = fx.home.join(".wslconfig");
+    fs_err::write(wslconfig.as_std_path(), "foo").expect("seed ~/.wslconfig");
+    // The shape macOS ships: `$HOME` reaches the same directory by a spelling
+    // that `getcwd` never returns.
+    let indirect = format!("{}/../home", fx.home);
+
+    let out = fx.run_in(
+        &fx.home,
+        &["add", ".wslconfig", "--module", "wsl2", "--copy", "--yes"],
+        &[
+            ("HOME", indirect.as_str()),
+            ("USERPROFILE", indirect.as_str()),
+        ],
+    );
+    assert_eq!(code(&out), 0, "add must exit 0; stderr: {}", stderr(&out));
+    assert_eq!(manifest_target(&fx, "wsl2"), "~/.wslconfig");
+}
+
+#[test]
+fn add_dot_from_a_directory_holding_the_repository_is_refused() {
+    let fx = Fixture::new();
+    let parent = fx.root.parent().expect("the repository's parent");
+
+    let out = fx.run_in(
+        parent,
+        &["add", ".", "--module", "everything", "--copy", "--yes"],
+        &[],
+    );
+    assert_eq!(code(&out), 1, "adding the repository's parent must exit 1");
+    let stderr = stderr(&out);
+    assert!(
+        stderr.contains("copy the repository into itself"),
+        "stderr must name the self-copy hazard, got: {stderr}"
+    );
+    assert!(
+        !fx.root.join("everything").exists(),
+        "no module directory should be created on refusal"
+    );
+}
+
+#[test]
+fn add_dot_from_the_home_directory_is_refused() {
+    let fx = Fixture::new();
+
+    let out = fx.run_in(
+        &fx.home,
+        &["add", ".", "--module", "everything", "--copy", "--yes"],
+        &[],
+    );
+    assert_eq!(code(&out), 1, "adding the home directory must exit 1");
+    let stderr = stderr(&out);
+    assert!(
+        stderr.contains("home directory"),
+        "stderr must name the home directory, got: {stderr}"
+    );
+    assert!(
+        !fx.root.join("everything").exists(),
+        "no module directory should be created on refusal"
+    );
+}
+
+/// The single entry's `target` from `<repo>/<module>/patina.toml`.
+fn manifest_target(fx: &Fixture, module: &str) -> String {
+    let manifest = fx.root.join(module).join("patina.toml");
+    let body = fs_err::read_to_string(manifest.as_std_path()).expect("read module manifest");
+    let parsed: toml::Value = toml::from_str(&body).expect("module manifest parses");
+    parsed
+        .get("file")
+        .and_then(toml::Value::as_array)
+        .and_then(|entries| entries.first())
+        .and_then(|entry| entry.get("target"))
+        .and_then(toml::Value::as_str)
+        .expect("the single [[file]] entry carries a target")
+        .to_owned()
+}

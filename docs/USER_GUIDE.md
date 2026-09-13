@@ -71,6 +71,12 @@ supplying the file-or-directory context.
 Use `target` for a single destination or `targets = [...]` to fan one
 source out to many.
 
+Spell each `target` absolutely or with a leading `~`, which expands to
+your home directory. A relative `target` resolves against whatever
+directory you run `patina apply` from, so it names a different file per
+invocation. `patina add` writes the `~`-relative spelling whenever the
+path lands under your home directory, and an absolute path otherwise.
+
 Neither a `source` nor a `target` may contain an ASCII control character
 (`U+0000` through `U+001F` or `U+007F`), which covers tab, newline, and
 carriage return. Patina refuses the whole manifest at parse time and
@@ -355,6 +361,23 @@ Patina uses one exit-code scheme across every command:
   held the lock).
 - `5`: the interactive prompt was declined, or, on Windows, the
   one-time elevation UAC prompt was refused.
+
+### Naming a path on the command line
+
+`add`, `remove`, and `promote` each take a path naming a location on your
+machine, not one inside the repository. A leading `~` expands to your
+home directory, and a relative path resolves against the directory you
+run the command from: `patina add .wslconfig` in your home directory
+declares `~/.wslconfig` wherever the repository itself lives. `add`
+stores that resolved location in the manifest, `~`-relative under your
+home directory and absolute outside it, so the entry reads the same on
+every machine.
+
+A path at or above your dotfiles repository would stage the repository
+into itself, and the home directory would hand one entry every file in
+it. `patina add` refuses both and exits `1`, so a bare `patina add .`
+never starts a recursive copy. Name the file or directory you want
+managed instead.
 
 ### Windows symbolic-link elevation
 

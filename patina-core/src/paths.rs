@@ -19,21 +19,26 @@
 //! `patina.home` built-in). It is purely lexical and does not touch the
 //! filesystem. Callers pipe its output into [`canonicalize`] when they
 //! want an absolute, symlink-resolved form.
+//!
+//! A command that accepts a path from the user pairs [`anchor_input`], which
+//! resolves that input to an absolute location without consulting the
+//! filesystem, with [`contract_home`], which re-expresses the result as
+//! `~/…` for a manifest entry that must read the same on every machine.
 
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
 use std::env;
 
-/// Errors returned from [`canonicalize`].
+/// Errors returned from [`canonicalize`] and [`anchor_input`].
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum PathError {
-    /// The current working directory could not be read. Only reachable
-    /// on the lexical-fallback branch for a relative path with no
-    /// existing parent.
-    #[error("failed to read current working directory while canonicalizing {path}: {source}")]
+    /// The current working directory could not be read. Reached for a
+    /// relative path: the lexical-fallback branch of [`canonicalize`] when
+    /// no parent exists, and every [`anchor_input`] call.
+    #[error("failed to read current working directory while resolving {path}: {source}")]
     CwdUnavailable {
-        /// The path being canonicalized when the CWD read failed.
+        /// The path being resolved when the CWD read failed.
         path: Utf8PathBuf,
         /// The underlying IO error.
         #[source]
@@ -42,9 +47,9 @@ pub enum PathError {
 
     /// The current working directory was not valid UTF-8. Rare; only on
     /// non-UTF-8 filesystems.
-    #[error("current working directory {cwd} is not valid UTF-8 while canonicalizing {path}")]
+    #[error("current working directory {cwd} is not valid UTF-8 while resolving {path}")]
     CwdNotUtf8 {
-        /// The path being canonicalized when the non-UTF-8 CWD surfaced.
+        /// The path being resolved when the non-UTF-8 CWD surfaced.
         path: Utf8PathBuf,
         /// The non-UTF-8 current working directory that could not be
         /// converted to a [`Utf8PathBuf`].
@@ -194,6 +199,12 @@ fn canonicalize_lexical(p: &Utf8Path) -> Result<Utf8PathBuf, PathError> {
         return Ok(simplified(&canonical_parent).join(file_name));
     }
 
+    anchor_lexical(p)
+}
+
+/// Join `p` onto the current working directory when it is relative, then fold
+/// `.` / `..` segments out. The filesystem is never consulted.
+fn anchor_lexical(p: &Utf8Path) -> Result<Utf8PathBuf, PathError> {
     let base = if p.is_absolute() {
         Utf8PathBuf::new()
     } else {
@@ -299,6 +310,82 @@ pub fn expand_tilde(p: &Utf8Path, home: &Utf8Path) -> Utf8PathBuf {
         return home.join(rest);
     }
     p.to_path_buf()
+}
+
+/// Anchor user-supplied path input to an absolute location.
+///
+/// A leading `~` expands to `home`, a relative path is joined onto the current
+/// working directory, and `.` / `..` segments are folded out lexically. The
+/// filesystem is never consulted, so a symbolic link at any component is left
+/// unresolved and the leaf keeps the location the user named.
+///
+/// The lexical fold departs from kernel resolution for a `..` that hops over a
+/// symbolic link: `link/../x` folds to `x` beside `link`, where the kernel
+/// would resolve it beside the link's destination. Pass such a path in its
+/// resolved spelling, or use [`resolve_location`], which walks the parent chain
+/// through the filesystem.
+///
+/// # Examples
+///
+/// ```
+/// use camino::Utf8Path;
+/// use patina_core::paths::anchor_input;
+///
+/// // The current directory always exists, so a relative input anchors to it
+/// // and the `..` hop folds away without touching the filesystem.
+/// let home = Utf8Path::new("/home/kevin");
+/// let resolved = anchor_input(Utf8Path::new("./sub/../leaf.conf"), home)?;
+/// assert!(resolved.is_absolute());
+/// assert!(resolved.ends_with("leaf.conf"));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
+/// # Errors
+///
+/// Returns [`PathError::CwdUnavailable`] / [`PathError::CwdNotUtf8`] when a
+/// relative input needs the current working directory but cannot read it as
+/// UTF-8.
+pub fn anchor_input(input: &Utf8Path, home: &Utf8Path) -> Result<Utf8PathBuf, PathError> {
+    anchor_lexical(&expand_tilde(input, home))
+}
+
+/// Re-express a path under `home` in the `~`-relative spelling a manifest
+/// stores, with `/` separators on every host. A path outside `home` is
+/// returned unchanged.
+///
+/// The prefix match is component-wise and case-sensitive, so a sibling of
+/// `home` is never contracted. Pass a `home` that shares its spelling with the
+/// paths being contracted: a `home` reached through a symbolic link does not
+/// prefix-match a path that resolved through the filesystem.
+///
+/// # Examples
+///
+/// ```
+/// use camino::Utf8Path;
+/// use patina_core::paths::contract_home;
+///
+/// let home = Utf8Path::new("/home/kevin");
+/// assert_eq!(
+///     contract_home(Utf8Path::new("/home/kevin/.zshrc"), home),
+///     Utf8Path::new("~/.zshrc"),
+/// );
+/// assert_eq!(
+///     contract_home(Utf8Path::new("/etc/hosts"), home),
+///     Utf8Path::new("/etc/hosts"),
+/// );
+/// ```
+#[must_use = "contract_home returns the rewritten path; the input is not mutated"]
+pub fn contract_home(path: &Utf8Path, home: &Utf8Path) -> Utf8PathBuf {
+    let Ok(rest) = path.strip_prefix(home) else {
+        return path.to_path_buf();
+    };
+    if rest.as_str().is_empty() {
+        return Utf8PathBuf::from("~");
+    }
+    Utf8PathBuf::from(format!(
+        "~/{}",
+        rest.as_str().replace(std::path::MAIN_SEPARATOR, "/")
+    ))
 }
 
 #[cfg(test)]
@@ -407,6 +494,54 @@ mod tests {
             Utf8PathBuf::from("/home/kevin/.config/foo")
         );
         assert_eq!(expand_tilde(Utf8Path::new("~"), home), home);
+    }
+
+    fn platform_home() -> Utf8PathBuf {
+        if cfg!(windows) {
+            Utf8PathBuf::from(r"C:\Users\kevin")
+        } else {
+            Utf8PathBuf::from("/home/kevin")
+        }
+    }
+
+    #[test]
+    fn anchor_input_expands_tilde_and_folds_dot_segments() {
+        let home = platform_home();
+        assert_eq!(
+            anchor_input(Utf8Path::new("~/.config/../.zshrc"), &home)
+                .expect("anchor a tilde-prefixed input"),
+            home.join(".zshrc")
+        );
+    }
+
+    #[test]
+    fn anchor_input_joins_a_relative_path_onto_the_current_directory() {
+        let cwd = Utf8PathBuf::from_path_buf(env::current_dir().expect("read cwd"))
+            .expect("cwd is utf-8");
+        assert_eq!(
+            anchor_input(Utf8Path::new(".wslconfig"), &platform_home())
+                .expect("anchor a relative input"),
+            cwd.join(".wslconfig")
+        );
+    }
+
+    #[test]
+    fn contract_home_rewrites_a_path_under_home_with_slash_separators() {
+        let home = platform_home();
+        assert_eq!(
+            contract_home(&home.join(".config").join("nvim"), &home),
+            Utf8PathBuf::from("~/.config/nvim")
+        );
+        assert_eq!(contract_home(&home, &home), Utf8PathBuf::from("~"));
+    }
+
+    #[test]
+    fn contract_home_leaves_a_sibling_of_home_unchanged() {
+        let home = platform_home();
+        // A string prefix would swallow `kevin-backup`; the match is
+        // component-wise.
+        let sibling = home.with_file_name("kevin-backup").join(".zshrc");
+        assert_eq!(contract_home(&sibling, &home), sibling);
     }
 
     #[test]
