@@ -121,11 +121,16 @@ requires neither a read nor a fetch. The subsystem lives under
   layer captures `stderr` into typed errors and prints nothing itself.
 - The **`cache`** module owns the layout under `<state>/remotes/`: one bare
   fetch repository per remote plus one immutable directory per pinned rev.
-  A checkout is written into a `<sha>.partial` sibling and renamed into
-  place, so a directory's existence means it is complete. Because a new rev
-  gets a *new* directory, an update never mutates content under a live
-  symbolic link. Apply re-points the link through the ordinary journaled
-  flow, and rollback can re-point it back.
+  Each process builds a checkout in `<sha>.partial.<pid>` and renames the
+  completed tree to `<sha>`. Only completed trees receive the final name, and
+  Patina never writes into a final checkout. Because staging precedes lock
+  acquisition, a sweep can encounter another process's staging root. The sweep
+  leaves that root alone until its directory modification time is at least 24
+  hours old. Writes below the root do not reset the timer.
+
+  A pin change creates another checkout directory instead of modifying the
+  directory behind a live symbolic link. Apply changes the link through the
+  journal, and rollback can restore its previous destination.
 - The **`lockfile`** module reads and writes `patina.lock`. Rendering is
   deterministic (remote-name order, fixed field order), so re-writing
   unchanged pins produces identical bytes.
@@ -142,9 +147,10 @@ suspends instead of stranding a rollback.
 
 ## Apply phases
 
-`patina apply` runs three phases in order. Plan and Diff only read.
-Mutate is the phase that touches the filesystem, and only after the
-journal is durable.
+`patina apply` separates target mutation from planning and consent. Planning
+may fill a cold remote cache, but it does not modify the dotfiles repository or
+any managed target. Target changes begin only after interactive confirmation
+or `--yes` approval.
 
 ```mermaid
 sequenceDiagram
@@ -153,13 +159,16 @@ sequenceDiagram
     participant D as Diff
     participant M as Mutate
     U->>P: patina apply
-    P->>P: resolve repo, config, variables, profile
-    P->>D: produce ordered operation list
-    D->>U: render diff
+    P->>P: resolve config and build plan
+    P->>D: pass operations and managed targets
+    D->>U: display diff
     U-->>D: confirm (TTY) / plan-only (non-TTY)
-    D->>M: write + fsync journal
-    M->>M: per-op mutate + cursor
-    M->>U: COMMIT sentinel, exit 0
+    D->>M: confirmed plan
+    M->>M: lock, recover, and check for work
+    M->>M: pre_apply hooks
+    M->>M: journal, target writes, and cursor
+    M->>M: post_apply hooks and COMMIT
+    M->>U: result
 ```
 
 1. **Plan.** Resolve the repository, parse `patina.toml`, and resolve the
@@ -169,14 +178,18 @@ sequenceDiagram
    modes.
 2. **Diff.** Compare the planned end-state against the live filesystem
    and present the diff. An interactive TTY prompts for confirmation; a
-   non-interactive shell falls through to plan-only and writes nothing.
+   non-interactive shell falls through to plan-only and modifies no repository
+   file or target. Planning may already have filled the remote cache.
    Re-applying against unchanged source is a no-op with byte-identical
    stdout.
-3. **Mutate.** Write and fsync the journal, take backups before any
-   overwrite, apply each operation while advancing the progress cursor,
-   and write the terminal sentinel. The process exits through the
-   formalized exit-code funnel. Mutations and read-only commands
-   coordinate through an advisory file lock.
+3. **Mutate.** After acquiring the advisory lock and recovering an interrupted
+   apply, check for work. A plan with only `Unchanged` targets, no orphans, and
+   an earlier commit returns without running hooks or writing files. Any other
+   plan resolves hook shells and runs `pre_apply` hooks. If those hooks
+   succeed, it flushes the journal, backs up and materializes its targets, and
+   runs `post_apply` hooks. A successful run writes the terminal sentinel; a
+   required `post_apply` hook failure rolls back the target operations. The CLI
+   maps the result to the documented exit code.
 
 ### Target kind and mode edits
 
@@ -264,6 +277,24 @@ re-prompting on every apply.
 An ignored leaf never enters the `ApplyRecord`. Reap reasons are computed
 at plan time, by diffing that record against the current managed set, so
 the on-disk format is unchanged.
+
+### Managed targets within a plan
+
+Planning derives operations and managed targets in one pass. Both results use
+the same module variables, profile, and command-line overrides. The resolved
+plan supplies its managed-target set to the orphan preview, orphan reap, and
+full-no-op check; none of those paths reevaluates `when` without the plan's
+overrides.
+
+`status` and `doctor` have no resolved plan, so
+`current_managed_targets` rebuilds the set from the manifests. The walk
+evaluates `when` and expands tree entries without fetching a remote checkout.
+If a remote checkout is missing, the walk marks its tree roots as
+indeterminate to protect their recorded leaves. A missing or wrong-shaped
+local tree contributes no leaves, and an invalid ignore list is treated as an
+empty list. `status` passes its `-v` values into this walk. `doctor` has no
+override flag, and its ignored-target check produces no finding if the walk
+fails.
 
 ## Recovery
 

@@ -136,7 +136,7 @@ fn the_bare_repository_is_never_pruned() {
 }
 
 #[test]
-fn scratch_artifacts_are_always_removed() {
+fn a_fresh_scratch_artifact_survives_the_sweep() {
     let f = Fixture::new();
     let module = cache::module_dir(&f.state, &humanizer());
     let partial = module.join(format!("{REV_A}.partial"));
@@ -151,12 +151,14 @@ fn scratch_artifacts_are_always_removed() {
     let removed = f.prune(Some(&[]));
 
     for artifact in [&partial, &pid_partial, &index, &pid_index] {
-        assert!(!artifact.exists(), "{artifact} must be swept");
+        assert!(
+            artifact.exists(),
+            "{artifact} is younger than the removal threshold"
+        );
     }
-    assert_eq!(
-        removed.len(),
-        4,
-        "every artifact must be reported: {removed:?}"
+    assert!(
+        removed.is_empty(),
+        "nothing may be reported removed: {removed:?}"
     );
 }
 

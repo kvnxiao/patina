@@ -451,6 +451,10 @@ pub struct StatusArgs {
     /// Emit a JSON envelope instead of the human-readable table.
     #[arg(long)]
     pub json: bool,
+
+    /// CLI variable override, repeatable: `-v key=value`.
+    #[arg(short = 'v', value_name = "key=value")]
+    pub var: Vec<String>,
 }
 
 /// Flags for `patina apply`.

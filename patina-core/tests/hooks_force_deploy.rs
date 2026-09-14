@@ -8,12 +8,20 @@
 use camino::Utf8PathBuf;
 use patina_core::ForceDeploy;
 use patina_core::HookOutcome;
+use patina_core::PlannedHook;
 use patina_core::config::HookEntry;
 use patina_core::config::HookEvent;
 use patina_core::resolve_shells;
 use patina_core::run_hook;
 use patina_core::state_dir::HostOs;
 use tempfile::TempDir;
+
+fn planned(entries: Vec<HookEntry>) -> Vec<PlannedHook> {
+    entries
+        .into_iter()
+        .map(|entry| PlannedHook::new(entry, 0))
+        .collect()
+}
 
 fn default_shell() -> &'static str {
     match HostOs::current() {
@@ -48,7 +56,7 @@ async fn force_deploy_downgrades_post_apply_failure_to_warning() {
         when: None,
         must_succeed: true,
     };
-    let hooks = vec![entry];
+    let hooks = planned(vec![entry]);
     let resolved = resolve_shells(&hooks, HostOs::current()).expect("shells resolve");
 
     let outcome = run_hook(
@@ -76,7 +84,7 @@ async fn same_hook_without_force_deploy_classifies_failed() {
         when: None,
         must_succeed: true,
     };
-    let hooks = vec![entry];
+    let hooks = planned(vec![entry]);
     let resolved = resolve_shells(&hooks, HostOs::current()).expect("shells resolve");
 
     let outcome = run_hook(
@@ -99,7 +107,7 @@ async fn force_deploy_leaves_succeeding_hook_succeeded() {
         when: None,
         must_succeed: true,
     };
-    let hooks = vec![entry];
+    let hooks = planned(vec![entry]);
     let resolved = resolve_shells(&hooks, HostOs::current()).expect("shells resolve");
     let outcome = run_hook(
         resolved.first().expect("one resolved hook"),

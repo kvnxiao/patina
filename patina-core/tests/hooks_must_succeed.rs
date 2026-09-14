@@ -3,6 +3,7 @@
 use patina_core::ForceDeploy;
 use patina_core::HookError;
 use patina_core::HookOutcome;
+use patina_core::PlannedHook;
 use patina_core::TemplateEngine;
 use patina_core::config::HookEntry;
 use patina_core::config::HookEvent;
@@ -23,6 +24,13 @@ fn hook_on_default_shell(event: HookEvent, command: &str) -> HookEntry {
     }
 }
 
+fn planned(entries: Vec<HookEntry>) -> Vec<PlannedHook> {
+    entries
+        .into_iter()
+        .map(|entry| PlannedHook::new(entry, 0))
+        .collect()
+}
+
 fn default_shell() -> &'static str {
     match HostOs::current() {
         HostOs::Windows => "pwsh",
@@ -40,7 +48,7 @@ fn is_clean_literal_char(c: char) -> bool {
 
 #[tokio::test]
 async fn pre_apply_failure_with_must_succeed_classifies_failed() {
-    let hooks = vec![hook_on_default_shell(HookEvent::PreApply, "exit 1")];
+    let hooks = planned(vec![hook_on_default_shell(HookEvent::PreApply, "exit 1")]);
     let resolved = resolve_shells(&hooks, HostOs::current()).expect("shells resolve");
     let outcome = run_hook(
         resolved.first().expect("one resolved hook"),
@@ -61,7 +69,7 @@ async fn pre_apply_failure_with_must_succeed_classifies_failed() {
 
 #[tokio::test]
 async fn post_apply_failure_with_must_succeed_classifies_failed() {
-    let hooks = vec![hook_on_default_shell(HookEvent::PostApply, "exit 1")];
+    let hooks = planned(vec![hook_on_default_shell(HookEvent::PostApply, "exit 1")]);
     let resolved = resolve_shells(&hooks, HostOs::current()).expect("shells resolve");
     let outcome = run_hook(
         resolved.first().expect("one resolved hook"),
@@ -78,7 +86,7 @@ async fn post_apply_failure_with_must_succeed_classifies_failed() {
 
 #[tokio::test]
 async fn zero_exit_classifies_succeeded() {
-    let hooks = vec![hook_on_default_shell(HookEvent::PreApply, "exit 0")];
+    let hooks = planned(vec![hook_on_default_shell(HookEvent::PreApply, "exit 0")]);
     let resolved = resolve_shells(&hooks, HostOs::current()).expect("shells resolve");
     let outcome = run_hook(
         resolved.first().expect("one resolved hook"),
@@ -93,7 +101,7 @@ async fn zero_exit_classifies_succeeded() {
 async fn non_must_succeed_failure_only_warns() {
     let mut entry = hook_on_default_shell(HookEvent::PreApply, "exit 1");
     entry.must_succeed = false;
-    let hooks = vec![entry];
+    let hooks = planned(vec![entry]);
     let resolved = resolve_shells(&hooks, HostOs::current()).expect("shells resolve");
     let outcome = run_hook(
         resolved.first().expect("one resolved hook"),
@@ -113,8 +121,8 @@ fn unresolved_explicit_shell_errors_before_any_hook_runs() {
         when: None,
         must_succeed: true,
     };
-    let err = resolve_shells(std::slice::from_ref(&entry), HostOs::current())
-        .expect_err("unresolved shell must error");
+    let hooks = planned(vec![entry]);
+    let err = resolve_shells(&hooks, HostOs::current()).expect_err("unresolved shell must error");
     assert!(
         matches!(&err, HookError::ShellNotFound { shell } if shell == "nonexistent-shell-xyz"),
         "expected ShellNotFound naming the binary, got {err:?}"
@@ -128,7 +136,7 @@ fn when_predicate_filters_out_non_matching_host() {
     let other = if os == "macos" { "linux" } else { "macos" };
     let mut entry = hook_on_default_shell(HookEvent::PreApply, "exit 0");
     entry.when = Some(format!("patina.os == '{other}'"));
-    let hooks = vec![entry];
+    let hooks = planned(vec![entry]);
     let resolved = resolve_shells(&hooks, HostOs::current()).expect("shells resolve");
     let runs = should_run(
         resolved.first().expect("one resolved hook"),
@@ -152,7 +160,7 @@ fn when_predicate_runs_on_matching_env_var() {
     let r = resolver();
     let mut entry = hook_on_default_shell(HookEvent::PreApply, "exit 0");
     entry.when = Some(format!("patina.env.{name} == '{value}'"));
-    let hooks = vec![entry];
+    let hooks = planned(vec![entry]);
     let resolved = resolve_shells(&hooks, HostOs::current()).expect("shells resolve");
     let runs = should_run(
         resolved.first().expect("one resolved hook"),

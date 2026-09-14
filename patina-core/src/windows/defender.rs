@@ -1111,6 +1111,7 @@ mod tests {
                 })
                 .collect(),
             entry_index: 0,
+            module: 0,
             ignore_rules: crate::ignore_rules::none(),
         }
     }
@@ -1122,6 +1123,8 @@ mod tests {
             plan: Plan::new(Vec::new()),
             operations: ops,
             hooks: Vec::new(),
+            modules: Vec::new(),
+            managed: crate::status::ManagedTargets::default(),
             state_dir: Utf8PathBuf::from(r"C:\Users\kevin\AppData\Local\patina"),
             host_os: HostOs::current(),
             timestamp: "fixed".to_owned(),

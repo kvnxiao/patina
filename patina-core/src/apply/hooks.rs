@@ -127,6 +127,8 @@ pub enum HookError {
 pub struct ResolvedHook<'a> {
     /// The originating parsed hook entry.
     pub entry: &'a HookEntry,
+    /// Index of the declaring module.
+    pub(crate) module: usize,
     /// The shell binary to invoke (a default name like `bash` / `pwsh`,
     /// or the explicit shell the entry declared once confirmed on PATH).
     shell: String,
@@ -161,12 +163,13 @@ pub enum HookOutcome {
 /// any hook is the contract: an unresolved shell aborts the apply
 /// before any file operation or hook command executes.
 pub fn resolve_shells(
-    hooks: &[HookEntry],
+    hooks: &[crate::PlannedHook],
     host_os: HostOs,
 ) -> Result<Vec<ResolvedHook<'_>>, HookError> {
     hooks
         .iter()
-        .map(|entry| {
+        .map(|planned| {
+            let entry = &planned.entry;
             let shell = match &entry.shell {
                 None => default_shell(host_os).to_owned(),
                 Some(explicit) => {
@@ -178,7 +181,11 @@ pub fn resolve_shells(
                     explicit.clone()
                 }
             };
-            Ok(ResolvedHook { entry, shell })
+            Ok(ResolvedHook {
+                entry,
+                module: planned.module,
+                shell,
+            })
         })
         .collect()
 }
@@ -355,6 +362,13 @@ mod tests {
         }
     }
 
+    fn planned(entries: Vec<HookEntry>) -> Vec<crate::PlannedHook> {
+        entries
+            .into_iter()
+            .map(|entry| crate::PlannedHook { entry, module: 0 })
+            .collect()
+    }
+
     fn resolver() -> Resolver {
         Resolver::new(Builtins::for_tests())
     }
@@ -372,7 +386,7 @@ mod tests {
 
     #[test]
     fn omitted_shell_defaults_per_platform() {
-        let hooks = vec![hook(HookEvent::PreApply, "echo hi")];
+        let hooks = planned(vec![hook(HookEvent::PreApply, "echo hi")]);
         let resolved = resolve_shells(&hooks, HostOs::Linux).expect("resolve");
         assert_eq!(resolved.first().expect("one resolved hook").shell, "bash");
         let resolved = resolve_shells(&hooks, HostOs::MacOs).expect("resolve");
@@ -385,7 +399,7 @@ mod tests {
     fn explicit_unresolved_shell_errors_before_running() {
         let mut entry = hook(HookEvent::PreApply, "echo hi");
         entry.shell = Some("nonexistent-shell-xyz".to_owned());
-        let hooks = vec![entry];
+        let hooks = planned(vec![entry]);
         let err = resolve_shells(&hooks, host_os()).expect_err("unresolved shell must error");
         assert!(
             matches!(&err, HookError::ShellNotFound { shell } if shell == "nonexistent-shell-xyz"),
@@ -400,14 +414,14 @@ mod tests {
         // partial set, so the orchestrator aborts before running any hook.
         let mut bad = hook(HookEvent::PreApply, "echo hi");
         bad.shell = Some("definitely-not-a-real-shell-9000".to_owned());
-        let hooks = vec![hook(HookEvent::PreApply, "echo ok"), bad];
+        let hooks = planned(vec![hook(HookEvent::PreApply, "echo ok"), bad]);
         let err = resolve_shells(&hooks, host_os()).expect_err("must error on the bad shell");
         assert!(matches!(err, HookError::ShellNotFound { .. }));
     }
 
     #[test]
     fn should_run_true_when_no_predicate() {
-        let hooks = vec![hook(HookEvent::PreApply, "echo hi")];
+        let hooks = planned(vec![hook(HookEvent::PreApply, "echo hi")]);
         let resolved = resolve_shells(&hooks, host_os()).expect("resolve");
         assert!(
             should_run(
@@ -428,7 +442,7 @@ mod tests {
         let other = if os == "macos" { "linux" } else { "macos" };
         let mut entry = hook(HookEvent::PreApply, "echo hi");
         entry.when = Some(format!("patina.os == '{other}'"));
-        let hooks = vec![entry];
+        let hooks = planned(vec![entry]);
         let resolved = resolve_shells(&hooks, host_os()).expect("resolve");
         assert!(
             !should_run(
@@ -446,7 +460,7 @@ mod tests {
         let os = r.get("patina.os").expect("os resolves");
         let mut entry = hook(HookEvent::PreApply, "echo hi");
         entry.when = Some(format!("patina.os == '{os}'"));
-        let hooks = vec![entry];
+        let hooks = planned(vec![entry]);
         let resolved = resolve_shells(&hooks, host_os()).expect("resolve");
         assert!(
             should_run(
@@ -465,7 +479,7 @@ mod tests {
         // Force the predicate to reach the undefined operand on any host.
         let mut entry = hook(HookEvent::PreApply, "echo hi");
         entry.when = Some(format!("patina.os == '{os}' and missing_hook_var"));
-        let hooks = vec![entry];
+        let hooks = planned(vec![entry]);
         let resolved = resolve_shells(&hooks, host_os()).expect("resolve");
         let err = should_run(
             resolved.first().expect("one resolved hook"),
@@ -480,7 +494,7 @@ mod tests {
     async fn zero_exit_succeeds() {
         let mut entry = hook(HookEvent::PreApply, "exit 0");
         entry.shell = Some(host_default_shell().to_owned());
-        let hooks = vec![entry];
+        let hooks = planned(vec![entry]);
         let resolved = resolve_shells(&hooks, host_os()).expect("resolve");
         let outcome = run_hook(
             resolved.first().expect("one resolved hook"),
@@ -496,7 +510,7 @@ mod tests {
         let mut entry = hook(HookEvent::PreApply, "exit 1");
         entry.shell = Some(host_default_shell().to_owned());
         entry.must_succeed = true;
-        let hooks = vec![entry];
+        let hooks = planned(vec![entry]);
         let resolved = resolve_shells(&hooks, host_os()).expect("resolve");
         let outcome = run_hook(
             resolved.first().expect("one resolved hook"),
@@ -512,7 +526,7 @@ mod tests {
         let mut entry = hook(HookEvent::PreApply, "exit 1");
         entry.shell = Some(host_default_shell().to_owned());
         entry.must_succeed = false;
-        let hooks = vec![entry];
+        let hooks = planned(vec![entry]);
         let resolved = resolve_shells(&hooks, host_os()).expect("resolve");
         let outcome = run_hook(
             resolved.first().expect("one resolved hook"),
@@ -528,7 +542,7 @@ mod tests {
         let mut entry = hook(HookEvent::PostApply, "exit 1");
         entry.shell = Some(host_default_shell().to_owned());
         entry.must_succeed = true;
-        let hooks = vec![entry];
+        let hooks = planned(vec![entry]);
         let resolved = resolve_shells(&hooks, host_os()).expect("resolve");
         let outcome = run_hook(
             resolved.first().expect("one resolved hook"),
