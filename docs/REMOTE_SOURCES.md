@@ -117,6 +117,9 @@ Remote content is third-party input. Patina enforces these limits on it:
   plan rather than deploying through it. Patina never writes such a
   link, so its presence means the cache was made or altered by
   something else.
+- Cached checkouts are immutable. `patina promote` cannot write a local edit
+  back to a remote-backed target; it reports the remote name and exits `1`.
+  Make the change upstream, then run `patina remote update <name>`.
 - A remote's `url` and `ref` are passed to `git` as positional
   arguments, and may not begin with `-`. A manifest therefore cannot
   smuggle a git option (for example `--upload-pack`) into a fetch.
@@ -193,12 +196,14 @@ The first entry that selects a remote on this machine fetches its
 checkout. A remote only a `when`-false entry names is never fetched. Pins
 are global, checkouts are local.
 
-The fetch happens at plan time, because the plan is computed from the
-checkout's bytes. A preview is therefore neither offline nor write-free
-in the strictest sense: a non-interactive apply without `--yes`, and any
-`--json` run, will fetch and write a checkout the cache lacks. It touches
-no repository file and no target; the lockfile rewrites wait for a run
-that may write.
+Planning needs the checkout's bytes, so a cold cache is filled before the
+consent prompt. A non-interactive apply without `--yes` and any `--json` apply
+can therefore fetch a checkout even though neither form changes repository
+files or targets. Lockfile updates still require a run that may write.
+
+`patina remove` also plans before prompting because it must identify the
+manifest entry that owns the target. If that plan needs an uncached remote, a
+declined removal leaves the fetched checkout in the machine cache.
 
 The directory under `<state>/remotes/` is named by the remote's folded
 name (one case, one Unicode normal form), not by the spelling in the
@@ -222,20 +227,30 @@ still apply an `eol` or `filter` rule, and against such a repository a
 checkout is not byte-verbatim. Fully attribute-blind materialization is a
 post-1.0 item.
 
-Each successful apply sweeps the cache. It removes every checkout no
-journal record on disk references, and a remote the root manifest no
-longer declares loses its whole cache directory, bare repository
-included. Rollback still finds every checkout it names, and disk stays
-bounded at roughly the current and previous rev per remote. The checkout of each declared
-remote's currently pinned rev survives whether or not a record names it,
-because a pin bumped but not yet applied is the warm cache an offline
-apply depends on. `patina remote prune` runs the same sweep by hand.
+Each successful apply sweeps the cache. A declared remote retains its current
+pin and every checkout referenced by a journal record; other checkouts are
+removed. When the root manifest drops a remote, Patina removes its entire cache
+only after no journal record references it. Until then, the referenced
+checkouts remain available to rollback. `patina remote prune` runs this sweep
+on demand.
 
 An apply where no active entry selects a remote never reads
 `patina.lock` while planning, so the sweep re-reads it before deciding
 anything. Where that read fails, every declared remote's cache stays put:
 a checkout that might be the current pin is worth more than the disk it
 occupies.
+
+Checkout staging also precedes lock acquisition. Each process writes to
+`<sha>.partial.<pid>`, then renames the completed tree to `<sha>`. Concurrent
+processes can build the same revision without sharing a staging directory.
+
+The cache sweep uses the staging root's directory modification time to avoid
+deleting recent work. It preserves roots younger than 24 hours and deletes
+older roots. Writes to files below the root do not update that timestamp, so a
+checkout that takes more than 24 hours can lose its staging directory. A
+killed process leaves its directory until the threshold expires. Before a new
+checkout starts, Patina removes any staging directory with the current process
+ID.
 
 ## Commands
 
@@ -248,7 +263,7 @@ Commands are split into producer and consumer operations:
 | `patina apply --update`      | producer | `remote update` for every remote, then apply, in one sitting. Runs only when the apply may mutate: it is skipped (with a note) on a preview, meaning a non-interactive apply without `--yes`, or any `--json` run. It never auto-accepts a gate concern, even under `--yes`. |
 | `patina remote list`         | either   | Each declared remote's URL, ref, pinned rev, and pending-update state. Read-only. |
 | `patina remote check`        | either   | `git ls-remote` only: compare upstream tips against the lock, refresh the notice file. No object download. Exits non-zero if any remote could not be reached. |
-| `patina remote prune`        | either   | Remove cached checkouts unreferenced by any journal record (currently pinned revs always stay), plus the cache tree of any undeclared remote. |
+| `patina remote prune`        | either   | Remove unreferenced checkouts and staging roots at least 24 hours old. Cache data for an undeclared remote is also removed unless a journal record still references it. Current pins remain cached. |
 
 `patina remote list` prints a header and one row per declaration, each
 column sized to its widest cell:

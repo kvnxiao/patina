@@ -44,11 +44,14 @@ pub use apply::TargetClaim;
 pub use apply::engine::ApplyRequest;
 pub use apply::engine::ApplyResult;
 pub use apply::engine::LockPolicy;
+pub use apply::engine::ModuleContext;
 pub use apply::engine::Orphan;
 pub use apply::engine::OrphanReason;
+pub use apply::engine::PlannedHook;
 pub use apply::engine::ResolvedOperation;
 pub use apply::engine::ResolvedPlan;
 pub use apply::engine::TargetDisposition;
+pub use apply::engine::TargetOwner;
 pub use apply::engine::execute as execute_plan;
 pub use apply::engine::is_content_materialization;
 pub use apply::engine::journal_orphans;
@@ -242,7 +245,22 @@ pub struct ApplyOptions {
 /// Options accepted by [`status`](fn@crate::status).
 #[derive(Debug, Default, Clone)]
 #[non_exhaustive]
-pub struct StatusOptions {}
+pub struct StatusOptions {
+    /// `-v key=value` CLI variable overrides in declaration order.
+    pub cli_overrides: Vec<(String, String)>,
+}
+
+impl StatusOptions {
+    /// Set the `-v key=value` overrides.
+    #[must_use]
+    pub fn with_cli_overrides(
+        mut self,
+        overrides: impl IntoIterator<Item = (String, String)>,
+    ) -> Self {
+        self.cli_overrides = overrides.into_iter().collect();
+        self
+    }
+}
 
 /// Options accepted by [`rollback`](fn@crate::rollback).
 #[derive(Debug, Default, Clone)]
@@ -276,8 +294,8 @@ pub async fn apply(options: ApplyOptions) -> Result<ApplyResult, EngineError> {
     clippy::unused_async,
     reason = "An async signature is required; the status read itself is synchronous."
 )]
-pub async fn status(_options: StatusOptions) -> Result<StatusReport, EngineError> {
-    let managed = current_plan_targets()?;
+pub async fn status(options: StatusOptions) -> Result<StatusReport, EngineError> {
+    let managed = current_plan_targets(&options.cli_overrides)?;
     status_report(&managed)
 }
 

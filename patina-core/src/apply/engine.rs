@@ -219,11 +219,68 @@ pub struct ResolvedOperation {
     /// therefore never collide on an index, and per-entry atomic rollback
     /// groups targets by their declared entry.
     pub entry_index: u32,
+    /// Index of the declaring module in [`ResolvedPlan::modules`].
+    pub(crate) module: usize,
     /// The entry's compiled ignore rules, kept from planning so execution and
     /// the commit record walk the leaves the plan classified. Crate-private:
     /// nothing outside patina-core builds a [`ResolvedOperation`], and no
     /// reader of one needs the matcher.
     pub(crate) ignore_rules: ignore::gitignore::Gitignore,
+}
+
+/// Store a module's identity and variable resolver.
+#[derive(Debug, Clone)]
+pub struct ModuleContext {
+    name: String,
+    dir: Utf8PathBuf,
+    resolver: Resolver,
+}
+
+impl ModuleContext {
+    /// Return the module directory.
+    #[must_use]
+    pub fn directory(&self) -> &Utf8Path {
+        &self.dir
+    }
+
+    /// Return the module manifest path.
+    #[must_use]
+    pub fn manifest(&self) -> Utf8PathBuf {
+        self.dir.join(MANIFEST_FILENAME)
+    }
+
+    /// Return the module-scoped resolver.
+    pub fn resolver(&self) -> &Resolver {
+        &self.resolver
+    }
+}
+
+/// Pair a `[[hook]]` entry with its declaring module.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct PlannedHook {
+    /// The parsed `[[hook]]` table.
+    pub entry: HookEntry,
+    /// Index of the declaring module in [`ResolvedPlan::modules`].
+    pub(crate) module: usize,
+}
+
+impl PlannedHook {
+    /// Pair a hook entry with its declaring module index.
+    #[must_use]
+    pub fn new(entry: HookEntry, module: usize) -> Self {
+        Self { entry, module }
+    }
+}
+
+/// Identify the module and mode that materialize a target.
+#[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
+pub struct TargetOwner<'a> {
+    /// Declaring module context.
+    pub module: &'a ModuleContext,
+    /// Declared entry mode.
+    pub mode: FileMode,
 }
 
 /// Everything an apply needs after planning, with no mutation performed
@@ -241,19 +298,19 @@ pub struct ResolvedPlan {
     /// Per-operation resolved executor inputs, parallel to
     /// [`Plan::operations`].
     pub operations: Vec<ResolvedOperation>,
-    /// Every `[[hook]]` entry across all modules, owned so the resolved
-    /// hooks can borrow from it during [`execute`].
-    pub hooks: Vec<HookEntry>,
+    /// Every `[[hook]]` entry paired with its declaring module.
+    pub hooks: Vec<PlannedHook>,
+    /// Module contexts in discovery order.
+    pub modules: Vec<ModuleContext>,
+    /// Canonical targets managed under this plan's variable overrides.
+    pub(crate) managed: crate::status::ManagedTargets,
     /// Per-machine state directory root (`<state>/patina`).
     pub state_dir: Utf8PathBuf,
     /// Resolved host OS family (drives hook shell defaults).
     pub host_os: HostOs,
     /// Timestamp keying this run's journal and backup files.
     pub timestamp: String,
-    /// Fully-resolved variable context (built-ins + CLI overrides +
-    /// per-module layers + resolved profile). Reused by the executors,
-    /// the hook `when` evaluator, and the CLI diff renderer so all three
-    /// agree on rendered template output.
+    /// Repository-wide variable resolver without module-local variables.
     pub resolver: Resolver,
     /// The names of every `[[remote]]` the root manifest declares, in
     /// declaration order. Carried so the stale-pin and cache sweeps work from
@@ -267,6 +324,52 @@ pub struct ResolvedPlan {
 }
 
 impl ResolvedPlan {
+    /// Return a module resolver or the repository-wide resolver for an invalid
+    /// index.
+    pub fn module_resolver(&self, index: usize) -> &Resolver {
+        self.modules
+            .get(index)
+            .map_or(&self.resolver, ModuleContext::resolver)
+    }
+
+    /// Return the resolver scoped to an operation's declaring module.
+    pub fn operation_resolver(&self, op: &ResolvedOperation) -> &Resolver {
+        self.module_resolver(op.module)
+    }
+
+    /// Return the module and mode that materialize `target`.
+    ///
+    /// Matching uses [`manage_key`](crate::status::manage_key). A tree-mode
+    /// entry owns paths beneath its declared targets.
+    #[must_use]
+    pub fn owner_of(&self, target: &Utf8Path) -> Option<TargetOwner<'_>> {
+        use crate::status::manage_key;
+
+        let key = manage_key(target);
+        let exact = self.operations.iter().find(|op| {
+            !matches!(op.mode, FileMode::CopyTree | FileMode::SymlinkTree)
+                && op
+                    .targets
+                    .iter()
+                    .any(|declared| manage_key(declared) == key)
+        });
+        // Exact ownership wins because a whole-directory symlink may sit
+        // inside a tree target.
+        let claiming = exact.or_else(|| {
+            self.operations.iter().find(|op| {
+                matches!(op.mode, FileMode::CopyTree | FileMode::SymlinkTree)
+                    && op
+                        .targets
+                        .iter()
+                        .any(|declared| key.starts_with(manage_key(declared)))
+            })
+        })?;
+        self.modules.get(claiming.module).map(|module| TargetOwner {
+            module,
+            mode: claiming.mode,
+        })
+    }
+
     /// The journal directory for this run.
     fn journal_dir(&self) -> Utf8PathBuf {
         self.state_dir.join("journal")
@@ -338,7 +441,7 @@ pub fn plan(
         state_dir,
         home,
         profile,
-        mut resolver,
+        resolver,
         engine,
         modules,
         remotes,
@@ -364,45 +467,56 @@ pub fn plan(
     // never canonicalized or validated (ordering).
     let mut file_entries: Vec<Option<ResolvedEntry>> = Vec::new();
     let mut directory_entries: Vec<Option<ResolvedEntry>> = Vec::new();
-    let mut hooks: Vec<HookEntry> = Vec::new();
+    let mut hooks: Vec<PlannedHook> = Vec::new();
 
-    for module in &modules {
-        let manifest = module.path.join(MANIFEST_FILENAME);
-        let config = parse_module_config(&manifest)?;
+    let mut managed = crate::status::ManagedTargets::default();
 
-        if let Some(table) = config.variables.as_ref() {
-            resolver = resolver.with_per_module(table_to_layer(table))?;
-        }
-
+    let scoped = module_contexts(&resolver, &modules)?;
+    for (index, (context, config)) in scoped.iter().enumerate() {
         for entry in &config.files {
-            file_entries.push(gate_and_resolve_entry(
+            let resolved = gate_and_resolve_entry(
                 entry,
-                module,
+                context,
+                index,
                 &mut registry,
                 &home,
                 &engine,
-                &resolver,
                 &repo_ignore,
                 &provenance,
-            )?);
+            )?;
+            if let Some(resolved) = resolved.as_ref() {
+                insert_managed_targets(&resolved.footprint(), &mut managed);
+            }
+            file_entries.push(resolved);
         }
         for entry in &config.directories {
-            directory_entries.push(gate_and_resolve_entry(
+            let resolved = gate_and_resolve_entry(
                 entry,
-                module,
+                context,
+                index,
                 &mut registry,
                 &home,
                 &engine,
-                &resolver,
                 &repo_ignore,
                 &provenance,
-            )?);
+            )?;
+            if let Some(resolved) = resolved.as_ref() {
+                insert_managed_targets(&resolved.footprint(), &mut managed);
+            }
+            directory_entries.push(resolved);
         }
 
-        hooks.extend(config.hooks.iter().cloned());
+        hooks.extend(config.hooks.iter().cloned().map(|entry| PlannedHook {
+            entry,
+            module: index,
+        }));
     }
+    let module_contexts: Vec<ModuleContext> = scoped
+        .into_iter()
+        .map(|(context, _config)| context)
+        .collect();
 
-    let expanded = expand_claims(&file_entries, &directory_entries)?;
+    let expanded = expand_claims(&module_contexts, &file_entries, &directory_entries);
     let claims: Vec<crate::apply::TargetClaim<'_>> =
         expanded.iter().map(ClaimTargets::claim).collect();
     crate::apply::collisions::validate_targets(&claims)?;
@@ -417,6 +531,8 @@ pub fn plan(
         plan: Plan::new(operations),
         operations: resolved_ops,
         hooks,
+        modules: module_contexts,
+        managed,
         state_dir,
         host_os,
         timestamp: timestamp.into(),
@@ -426,19 +542,35 @@ pub fn plan(
     })
 }
 
-/// The repository, profile, variable resolver, and `when` engine shared by
-/// the two passes that must agree on which entries are active and how their
-/// `when` predicates resolve: [`plan`] (which builds the apply plan) and
-/// [`current_managed_targets`] (which recomputes the managed-target set for
-/// `patina status` and the apply-time orphan reap).
+/// Derive module-scoped resolvers without accumulating variables across
+/// modules.
+fn module_contexts(
+    base: &Resolver,
+    modules: &[crate::discovery::ModuleHandle],
+) -> Result<Vec<(ModuleContext, crate::config::ModuleConfig)>, EngineError> {
+    let mut contexts = Vec::with_capacity(modules.len());
+    for module in modules {
+        let config = parse_module_config(&module.path.join(MANIFEST_FILENAME))?;
+        let mut resolver = base.clone();
+        if let Some(table) = config.variables.as_ref() {
+            resolver = resolver.with_per_module(table_to_layer(table))?;
+        }
+        contexts.push((
+            ModuleContext {
+                name: module.name.clone(),
+                dir: module.path.clone(),
+                resolver,
+            },
+            config,
+        ));
+    }
+    Ok(contexts)
+}
+
+/// Inputs shared by [`plan`] and [`current_managed_targets`].
 ///
-/// Everything up to the per-module entry loop, but not including it, is
-/// identical between the two passes (the repo-shared / per-profile
-/// layer pushes, the active-profile resolution, the shared `MiniJinja`
-/// engine). Sharing it here gives the `when` gate the same variable context
-/// in planning and in status. An entry that plans on this host is therefore
-/// the same entry status counts as managed, and the same entry the reap
-/// leaves alone.
+/// Both callers derive module resolvers through [`module_contexts`], so their
+/// `when` evaluations use the same variable scopes.
 struct PlanningContext {
     repo_root: Utf8PathBuf,
     state_dir: Utf8PathBuf,
@@ -710,9 +842,9 @@ fn declared_pins<'a>(
 /// Resolves the repository and state directory, the active profile, and the
 /// resolver's repo-shared (`[variables]`) and active-profile
 /// (`[profiles.<name>.variables]`) layers. The per-module layer is
-/// *not* pushed here; each pass pushes it during its own module loop, in
-/// declaration order, so a module's `[variables]` is in scope for that
-/// module's entries' `when` predicates.
+/// *not* pushed here; [`module_contexts`] derives one resolver per module from
+/// the returned base, so a module's `[variables]` is in scope for that
+/// module's own entries and for nothing else.
 ///
 /// # Errors
 ///
@@ -783,81 +915,141 @@ fn build_planning_context(
 /// manages, keyed by [`crate::status::manage_key`] for cross-time comparison
 /// against the recorded commit.
 ///
-/// Compute the `when`-aware, `symlink-tree`-aware managed set consumed by both
-/// `patina status` (to classify a dropped target ORPHANED) and the apply-time
-/// orphan reap. It mirrors [`plan`]'s entry walk with two
-/// differences that make it safe to run for status, where the plan would
-/// refuse:
+/// Compute the managed set for read-only callers.
 ///
-/// - **`when` gating.** An entry whose `when` is false on this host contributes
-///   no managed target. A `[[file]]` whose `when` has been edited to false
-///   therefore has its prior target fall out of the set, and classify ORPHANED.
-///   The gate uses the same [`Engine::eval_when`] and layered resolver as
-///   planning, so the two passes agree on which entries are active.
-/// - **Tree-mode leaf expansion.** A `symlink-tree` or `copy-tree`
-///   `[[directory]]` entry expands into one managed key per *live* source leaf,
-///   walked in the same `walk_files` order the executor used. A deleted source
-///   leaf is therefore absent from the set, and its recorded target leaf
-///   classifies ORPHANED. Both modes materialize one object per leaf and
-///   journal each leaf as its own target, so both must expand here; every other
-///   mode contributes its declared target(s) directly.
+/// A false `when` expression contributes no targets. Tree modes contribute one
+/// key per source leaf, while other modes contribute their declared targets.
 ///
-/// Unlike [`plan`], this never canonicalizes the source or kind-checks it:
-/// status must not fail because a `when`-true entry's source is missing or
-/// wrong-shaped (that is the apply plan's job to report). A `symlink-tree`
-/// source that is missing simply yields no leaves.
+/// Unlike [`plan`], this function does not fetch missing remote checkouts or
+/// reject missing and wrong-shaped sources. Unavailable trees contribute no
+/// enumerable leaves.
+///
+/// `cli_overrides` enter the resolver's highest-precedence layer.
 ///
 /// # Errors
 ///
 /// Returns an [`EngineError`] when repository discovery, profile resolution,
 /// module enumeration, manifest parsing, a reserved-key violation, or a
 /// `when` predicate evaluation fails.
-pub fn current_managed_targets() -> Result<crate::status::ManagedTargets, EngineError> {
+pub fn current_managed_targets(
+    cli_overrides: &[(String, String)],
+) -> Result<crate::status::ManagedTargets, EngineError> {
     let PlanningContext {
         repo_root,
         state_dir,
         home,
-        mut resolver,
+        resolver,
         engine,
         modules,
         remotes,
         repo_ignore,
         ..
-    } = build_planning_context(&[])?;
+    } = build_planning_context(cli_overrides)?;
 
     // Read-only: status must not fetch. An unpinned or uncached remote yields
     // no source root, which costs only tree-mode leaf expansion.
     let mut registry = RemoteRegistry::new(&remotes, &repo_root, &state_dir, CachePolicy::ReadOnly);
     let mut managed = crate::status::ManagedTargets::default();
-    for module in &modules {
-        let manifest = module.path.join(MANIFEST_FILENAME);
-        let config = parse_module_config(&manifest)?;
-
-        if let Some(table) = config.variables.as_ref() {
-            resolver = resolver.with_per_module(table_to_layer(table))?;
-        }
-
+    for (context, config) in module_contexts(&resolver, &modules)? {
         for entry in config.files.iter().chain(&config.directories) {
             // `when`-false entries manage nothing this run: their
             // prior targets fall out of the set and classify ORPHANED.
             if let Some(expr) = entry.when.as_deref()
-                && !engine.eval_when(expr, &resolver)?
+                && !engine.eval_when(expr, &context.resolver)?
             {
                 continue;
             }
-            let origin = registry.origin(entry, &module.path)?;
-            insert_managed_targets(entry, &origin, &home, &repo_ignore, &mut managed);
+            let origin = registry.origin(entry, &context.dir)?;
+            insert_declared_entry(entry, &origin, &home, &repo_ignore, &mut managed);
         }
     }
     Ok(managed)
 }
 
-/// Insert the managed `manage_key`(s) for one surviving (`when`-true) entry.
+/// Add one declared entry to the managed set using a lenient source walk.
+///
+/// A missing or wrong-shaped source and an invalid pattern list produce no
+/// leaves. [`plan`] resolves the same entries strictly.
+fn insert_declared_entry(
+    entry: &ManagedEntry,
+    origin: &EntryOrigin,
+    home: &Utf8Path,
+    repo_ignore: &[String],
+    managed: &mut crate::status::ManagedTargets,
+) {
+    let targets: Vec<Utf8PathBuf> = entry
+        .targets
+        .iter()
+        .map(|target| expand_tilde(target, home))
+        .collect();
+    let is_tree = matches!(entry.mode, FileMode::SymlinkTree | FileMode::CopyTree);
+    let leaves = is_tree
+        .then_some(origin.source_root.as_deref())
+        .flatten()
+        .and_then(|root| {
+            let source = root.join(&entry.source);
+            let rules = crate::ignore_rules::build(repo_ignore, &entry.ignore, &source)
+                .unwrap_or_else(|_| crate::ignore_rules::none());
+            split_source_leaves(&source, &rules).ok()
+        });
+    insert_managed_targets(
+        &ManagedFootprint {
+            mode: entry.mode,
+            targets: &targets,
+            leaves: leaves.as_ref(),
+            unmaterialized_remote: origin
+                .source_root
+                .is_none()
+                .then_some(origin.remote.as_deref())
+                .flatten(),
+        },
+        managed,
+    );
+}
+
+struct ManagedFootprint<'a> {
+    mode: FileMode,
+    targets: &'a [Utf8PathBuf],
+    leaves: Option<&'a SourceLeaves>,
+    unmaterialized_remote: Option<&'a str>,
+}
+
+#[derive(Default)]
+struct SourceLeaves {
+    kept: Vec<Utf8PathBuf>,
+    ignored: Vec<Utf8PathBuf>,
+}
+
+/// Split an unfiltered source walk into included and ignored leaves.
+///
+/// The unfiltered walk preserves ignored leaves so the reap can distinguish a
+/// removed source from a newly ignored source.
+///
+/// # Errors
+///
+/// Returns an [`EngineError`] when the source tree cannot be read.
+fn split_source_leaves(
+    source: &Utf8Path,
+    rules: &ignore::gitignore::Gitignore,
+) -> Result<SourceLeaves, EngineError> {
+    let mut split = SourceLeaves::default();
+    for leaf in crate::apply::walk_files(source, &crate::ignore_rules::none())? {
+        if crate::ignore_rules::prunes(rules, &leaf) {
+            split.ignored.push(leaf);
+        } else {
+            split.kept.push(leaf);
+        }
+    }
+    Ok(split)
+}
+
+/// Insert the managed `manage_key`(s) that one surviving (`when`-true) entry
+/// contributes.
 ///
 /// A tree-mode entry (`symlink-tree` or `copy-tree`) expands to one key per
 /// live source leaf, mirrored under each declared target the same way the
-/// executor materializes them (`target.join(rel)`); a missing local source
-/// contributes no leaves. Every other mode contributes its declared targets
+/// executor materializes them (`target.join(rel)`); a source that yielded no
+/// leaves contributes none. Every other mode contributes its declared targets
 /// directly.
 ///
 /// A tree-mode entry whose remote checkout is not on this machine is different
@@ -866,10 +1058,7 @@ pub fn current_managed_targets() -> Result<crate::status::ManagedTargets, Engine
 /// and reports its remote. The alternative would let every recorded leaf
 /// classify ORPHANED, and be reaped, over a checkout that merely is not here.
 fn insert_managed_targets(
-    entry: &ManagedEntry,
-    origin: &EntryOrigin,
-    home: &Utf8Path,
-    repo_ignore: &[String],
+    footprint: &ManagedFootprint<'_>,
     managed: &mut crate::status::ManagedTargets,
 ) {
     use crate::status::manage_key;
@@ -880,54 +1069,33 @@ fn insert_managed_targets(
     // declared directory would make every committed leaf look orphaned on the
     // next apply, and the reap pass would delete it (`copy-tree`'s journal
     // hashing would then fail on the just-reaped file).
-    if matches!(entry.mode, FileMode::SymlinkTree | FileMode::CopyTree) {
-        let root_keys: Vec<Utf8PathBuf> = entry
+    if matches!(footprint.mode, FileMode::SymlinkTree | FileMode::CopyTree) {
+        let root_keys: Vec<Utf8PathBuf> = footprint
             .targets
             .iter()
-            .map(|target| manage_key(&expand_tilde(target, home)))
+            .map(|target| manage_key(target))
             .collect();
         managed.tree_roots.extend(root_keys.iter().cloned());
-        let Some(source_root) = origin.source_root.as_deref() else {
-            if let Some(remote) = origin.remote.as_ref() {
-                managed.unmaterialized_remotes.insert(remote.clone());
+        let Some(leaves) = footprint.leaves else {
+            if let Some(remote) = footprint.unmaterialized_remote {
+                managed.unmaterialized_remotes.insert(remote.to_owned());
                 managed.indeterminate_roots.extend(root_keys);
             }
             return;
         };
-        let source = source_root.join(&entry.source);
-        // Deliberately unfiltered, unlike every other walk. A reap has to tell
-        // "the source leaf is gone" from "an ignore pattern now excludes it",
-        // and only an unfiltered walk still sees an excluded leaf. `status` and
-        // the reap therefore descend ignored directories, where the executor
-        // path prunes them.
-        let Ok(leaves) = crate::apply::walk_files(&source, &crate::ignore_rules::none()) else {
-            return;
-        };
-        // A malformed pattern fails the plan with a typed error; status has no
-        // error path, so it falls back to the empty matcher. Every leaf then
-        // counts as managed, and nothing is reaped over a pattern that never
-        // compiled.
-        let rules = crate::ignore_rules::build(repo_ignore, &entry.ignore, &source)
-            .unwrap_or_else(|_| crate::ignore_rules::none());
-        for target in &entry.targets {
-            let expanded = expand_tilde(target, home);
-            for rel in &leaves {
-                let key = manage_key(&expanded.join(rel));
-                // `prunes`, not `Gitignore::matched`: the walk above yields
-                // files inside an ignored directory.
-                if crate::ignore_rules::prunes(&rules, rel) {
-                    managed.ignored.insert(key);
-                } else {
-                    managed.targets.insert(key);
-                }
+        for target in footprint.targets {
+            for rel in &leaves.kept {
+                managed.targets.insert(manage_key(&target.join(rel)));
+            }
+            for rel in &leaves.ignored {
+                managed.ignored.insert(manage_key(&target.join(rel)));
             }
         }
         return;
     }
 
-    for target in &entry.targets {
-        let expanded = expand_tilde(target, home);
-        managed.targets.insert(manage_key(&expanded));
+    for target in footprint.targets {
+        managed.targets.insert(manage_key(target));
     }
 }
 
@@ -962,10 +1130,7 @@ struct ResolvedEntry {
     /// resolution while the template engine and resolver are in scope (a
     /// template target is classified against its freshly rendered output).
     dispositions: Vec<TargetDisposition>,
-    /// Name of the module that declared this entry, and the entry's declared
-    /// module-relative source. Neither drives materialization; both exist so a
-    /// target-collision error can point the author at a specific manifest line.
-    module: String,
+    module: usize,
     /// The entry's declared source, as written in the manifest.
     declared_source: Utf8PathBuf,
     /// The compiled ignore rules this entry's source walk filters through,
@@ -973,6 +1138,22 @@ struct ResolvedEntry {
     /// [`crate::apply::walk_files`] says why every phase shares one
     /// enumeration. Empty for every non-tree mode.
     ignore_rules: ignore::gitignore::Gitignore,
+    leaves: Option<SourceLeaves>,
+}
+
+impl ResolvedEntry {
+    fn kept_leaves(&self) -> &[Utf8PathBuf] {
+        self.leaves.as_ref().map_or(&[], |leaves| &leaves.kept)
+    }
+
+    fn footprint(&self) -> ManagedFootprint<'_> {
+        ManagedFootprint {
+            mode: self.mode,
+            targets: &self.targets,
+            leaves: self.leaves.as_ref(),
+            unmaterialized_remote: None,
+        }
+    }
 }
 
 /// One resolved entry paired with the targets it actually claims on the
@@ -981,6 +1162,7 @@ struct ResolvedEntry {
 /// leaves.
 struct ClaimTargets<'a> {
     entry: &'a ResolvedEntry,
+    module: &'a str,
     /// The declared directory target `targets` are the leaves of, for a
     /// tree-mode entry; `None` when they are the declared targets themselves.
     tree_target: Option<&'a Utf8Path>,
@@ -991,7 +1173,7 @@ impl ClaimTargets<'_> {
     /// Project this into the claim the target-collision check consumes.
     fn claim(&self) -> crate::apply::TargetClaim<'_> {
         crate::apply::TargetClaim {
-            module: &self.entry.module,
+            module: self.module,
             source: &self.entry.declared_source,
             mode: self.entry.mode,
             tree_target: self.tree_target,
@@ -1015,47 +1197,50 @@ impl ClaimTargets<'_> {
 /// appearing upstream under a tree source can newly fail a plan. Failing
 /// before any write is correct when a tree grows an unexpected file.
 ///
-/// The leaves are walked here rather than taken from the classified
+/// The leaves come from the entry's own split rather than from its classified
 /// dispositions. Classification deliberately records none for a tree target
 /// that does not exist yet (the whole-op Create shortcut), but a collision
 /// must still be caught even for a fresh target.
 ///
 /// Claims come out in declaration order, every `[[file]]` entry and then every
 /// `[[directory]]` entry, so the reported pair is a function of the manifest.
-///
-/// # Errors
-///
-/// Returns an [`EngineError`] when a tree source cannot be walked. Its
-/// existence and kind were validated during resolution, so this is a live IO
-/// failure rather than a manifest error.
 fn expand_claims<'a>(
+    modules: &'a [ModuleContext],
     file_entries: &'a [Option<ResolvedEntry>],
     directory_entries: &'a [Option<ResolvedEntry>],
-) -> Result<Vec<ClaimTargets<'a>>, EngineError> {
+) -> Vec<ClaimTargets<'a>> {
     let mut expanded = Vec::new();
     // Only surviving (`when`-true) entries claim anything, so `flatten` drops
     // the gated-off slots.
     for entry in file_entries.iter().chain(directory_entries).flatten() {
+        let module = modules
+            .get(entry.module)
+            .map_or("", |context| context.name.as_str());
         if !matches!(entry.mode, FileMode::SymlinkTree | FileMode::CopyTree) {
             expanded.push(ClaimTargets {
                 entry,
+                module,
                 tree_target: None,
                 targets: std::borrow::Cow::Borrowed(&entry.targets[..]),
             });
             continue;
         }
-        let leaves = crate::apply::walk_files(&entry.source, &entry.ignore_rules)?;
         for target in &entry.targets {
             expanded.push(ClaimTargets {
                 entry,
+                module,
                 tree_target: Some(target.as_path()),
                 targets: std::borrow::Cow::Owned(
-                    leaves.iter().map(|leaf| target.join(leaf)).collect(),
+                    entry
+                        .kept_leaves()
+                        .iter()
+                        .map(|leaf| target.join(leaf))
+                        .collect(),
                 ),
             });
         }
     }
-    Ok(expanded)
+    expanded
 }
 
 /// Impose the single deterministic order on the resolved entries and
@@ -1105,6 +1290,7 @@ fn assemble_plan_operations(
                 targets: resolved.targets,
                 dispositions: resolved.dispositions,
                 entry_index,
+                module: resolved.module,
                 ignore_rules: resolved.ignore_rules,
             });
         }
@@ -1139,29 +1325,29 @@ fn assemble_plan_operations(
 )]
 fn gate_and_resolve_entry(
     entry: &ManagedEntry,
-    module: &crate::discovery::ModuleHandle,
+    context: &ModuleContext,
+    module: usize,
     registry: &mut RemoteRegistry<'_>,
     home: &Utf8Path,
     engine: &Engine,
-    resolver: &Resolver,
     repo_ignore: &[String],
     provenance: &Provenance,
 ) -> Result<Option<ResolvedEntry>, EngineError> {
     if let Some(expr) = entry.when.as_deref()
-        && !engine.eval_when(expr, resolver)?
+        && !engine.eval_when(expr, &context.resolver)?
     {
         return Ok(None);
     }
     // The gate is above this, so an entry switched off on this host never
     // reaches the registry and never triggers a fetch.
-    let origin = registry.origin(entry, &module.path)?;
+    let origin = registry.origin(entry, &context.dir)?;
     Ok(Some(resolve_entry(
         entry,
         &origin,
-        &module.name,
+        module,
         home,
         engine,
-        resolver,
+        &context.resolver,
         repo_ignore,
         provenance,
     )?))
@@ -1222,7 +1408,7 @@ fn classify_entry(
     targets: &[Utf8PathBuf],
     engine: &Engine,
     resolver: &Resolver,
-    rules: &ignore::gitignore::Gitignore,
+    leaves: &[Utf8PathBuf],
     provenance: &Provenance,
 ) -> Result<Vec<TargetDisposition>, EngineError> {
     // Render a template source once; reuse the bytes to classify every
@@ -1242,7 +1428,7 @@ fn classify_entry(
             source,
             target,
             rendered.as_deref(),
-            rules,
+            leaves,
             provenance,
         )?);
     }
@@ -1266,7 +1452,7 @@ fn classify_target(
     source: &Utf8Path,
     target: &Utf8Path,
     rendered: Option<&str>,
-    rules: &ignore::gitignore::Gitignore,
+    leaves: &[Utf8PathBuf],
     provenance: &Provenance,
 ) -> Result<TargetDisposition, EngineError> {
     use crate::apply::classify::classify_leaf;
@@ -1295,7 +1481,7 @@ fn classify_target(
     // so an entry whose every leaf is ignored leaves the target absent. Calling
     // that a Create would re-prompt with the same empty plan on every apply.
     let Ok(root_meta) = fs_err::symlink_metadata(target) else {
-        let aggregate = if crate::apply::walk_files(source, rules)?.is_empty() {
+        let aggregate = if leaves.is_empty() {
             Disposition::Unchanged
         } else {
             Disposition::Create
@@ -1309,10 +1495,10 @@ fn classify_target(
     };
 
     if root_meta.file_type().is_symlink() {
-        let leaves: Vec<LeafDisposition> = crate::apply::walk_files(source, rules)?
-            .into_iter()
+        let dispositions: Vec<LeafDisposition> = leaves
+            .iter()
             .map(|relative| LeafDisposition {
-                relative,
+                relative: relative.clone(),
                 disposition: Disposition::Create,
                 mode_change: false,
             })
@@ -1320,7 +1506,7 @@ fn classify_target(
         let mode_change = provenance.mode_change(target, RecordedKind::Content, source);
         return Ok(TargetDisposition {
             aggregate: Disposition::Update,
-            leaves,
+            leaves: dispositions,
             replace_root: true,
             mode_change,
         });
@@ -1329,13 +1515,12 @@ fn classify_target(
     // The executor mirrors the live source tree to the target one leaf at a
     // time; classify each leaf at its mirrored target path. A missing source
     // yields no leaves (the entry would have failed source validation first).
-    let relative_files = crate::apply::walk_files(source, rules)?;
-    crate::apply::verify_interior_dirs_real(target, relative_files.iter())?;
-    let mut leaves = Vec::with_capacity(relative_files.len());
+    crate::apply::verify_interior_dirs_real(target, leaves.iter())?;
+    let mut dispositions = Vec::with_capacity(leaves.len());
     let mut all_unchanged = true;
-    for relative in relative_files {
-        let leaf_source = source.join(&relative);
-        let leaf_target = target.join(&relative);
+    for relative in leaves {
+        let leaf_source = source.join(relative);
+        let leaf_target = target.join(relative);
         let disposition = classify_leaf(mode, &leaf_source, &leaf_target, None)?;
         if disposition != Disposition::Unchanged {
             all_unchanged = false;
@@ -1343,8 +1528,8 @@ fn classify_target(
         let mode_change = disposition == Disposition::Update
             && target_kind_flips(mode, &leaf_target)
             && provenance.mode_change(&leaf_target, RecordedKind::of_mode(mode), &leaf_source);
-        leaves.push(LeafDisposition {
-            relative,
+        dispositions.push(LeafDisposition {
+            relative: relative.clone(),
             disposition,
             mode_change,
         });
@@ -1359,7 +1544,7 @@ fn classify_target(
     };
     Ok(TargetDisposition {
         aggregate,
-        leaves,
+        leaves: dispositions,
         replace_root: false,
         mode_change: false,
     })
@@ -1395,7 +1580,7 @@ fn classify_target(
 fn resolve_entry(
     entry: &ManagedEntry,
     origin: &EntryOrigin,
-    module: &str,
+    module: usize,
     home: &Utf8Path,
     engine: &Engine,
     resolver: &Resolver,
@@ -1436,6 +1621,12 @@ fn resolve_entry(
     let metadata = source_metadata(&source)?;
     // Anchored at the canonical source: the walk yields paths relative to it.
     let ignore_rules = crate::ignore_rules::build(repo_ignore, &entry.ignore, &source)?;
+    let leaves = match entry.mode {
+        FileMode::SymlinkTree | FileMode::CopyTree if metadata.is_dir() => {
+            Some(split_source_leaves(&source, &ignore_rules)?)
+        }
+        _ => None,
+    };
     if let Some(remote) = origin.remote.as_ref()
         && metadata.is_dir()
     {
@@ -1449,13 +1640,18 @@ fn resolve_entry(
         // A tree mode never deploys an ignored leaf, so skipping it here costs
         // nothing. A whole-directory symlink is different: one link exposes
         // everything beneath it, and no pattern may retire the check there.
-        let unfiltered = crate::ignore_rules::none();
-        let leaf_rules = if matches!(entry.mode, FileMode::SymlinkDir) {
-            &unfiltered
+        let walked = if let Some(leaves) = leaves.as_ref() {
+            std::borrow::Cow::Borrowed(&leaves.kept[..])
         } else {
-            &ignore_rules
+            let unfiltered = crate::ignore_rules::none();
+            let leaf_rules = if matches!(entry.mode, FileMode::SymlinkDir) {
+                &unfiltered
+            } else {
+                &ignore_rules
+            };
+            std::borrow::Cow::Owned(crate::apply::walk_files(&source, leaf_rules)?)
         };
-        reject_symlink_leaves(remote.as_str(), &source, leaf_rules)?;
+        reject_symlink_leaves(remote.as_str(), &source, &walked)?;
     }
     validate_source_kind(&source, entry.kind, &metadata)?;
     let mut targets = Vec::with_capacity(entry.targets.len());
@@ -1479,7 +1675,7 @@ fn resolve_entry(
         &targets,
         engine,
         resolver,
-        &ignore_rules,
+        leaves.as_ref().map_or(&[], |leaves| &leaves.kept),
         provenance,
     )?;
     Ok(ResolvedEntry {
@@ -1487,35 +1683,37 @@ fn resolve_entry(
         source,
         targets,
         dispositions,
-        module: module.to_owned(),
+        module,
         declared_source: entry.source.clone(),
         ignore_rules,
+        leaves,
     })
 }
 
 /// Refuse a remote directory source holding a symbolic link anywhere beneath
 /// it.
 ///
-/// The leaves come from the same [`crate::apply::walk_files`] enumeration the
-/// executors deploy, filtered through the same `rules`. That enumeration
-/// yields a symlink as a leaf rather than descending it, whether it points at
-/// a file, a directory, or nothing. The two passes can therefore never
-/// disagree about what the tree contains. The plan fails before any mutation.
+/// `leaves` comes from the same [`crate::apply::walk_files`] enumeration the
+/// executors deploy, through the same rules. That enumeration yields a symlink
+/// as a leaf rather than descending it, whether it points at a file, a
+/// directory, or nothing. The two passes can therefore never disagree about
+/// what the tree contains. The plan fails before any mutation.
 ///
-/// Nothing deploys an ignored link, so filtering it out here is safe. A link
-/// the author never asked for then cannot fail the plan.
+/// Nothing deploys an ignored link, so an enumeration that already filtered
+/// one out is safe here. A link the author never asked for then cannot fail
+/// the plan.
 ///
 /// # Errors
 ///
 /// Returns the [`RemoteError`](crate::remote::RemoteError) naming the first
-/// link found, or the walk's own error when the tree cannot be read.
+/// link found, or a [`crate::paths::PathError`] when a leaf cannot be stat'd.
 fn reject_symlink_leaves(
     remote: &str,
     source: &Utf8Path,
-    rules: &ignore::gitignore::Gitignore,
+    leaves: &[Utf8PathBuf],
 ) -> Result<(), EngineError> {
-    for leaf in crate::apply::walk_files(source, rules)? {
-        let path = source.join(&leaf);
+    for leaf in leaves {
+        let path = source.join(leaf);
         let metadata = fs_err::symlink_metadata(path.as_std_path()).map_err(|io_source| {
             EngineError::Path(crate::paths::PathError::Filesystem {
                 path: path.clone(),
@@ -1799,15 +1997,11 @@ pub async fn execute(
     // aborts before any file operation runs.
     let resolved_hooks = hooks::resolve_shells(&resolved.hooks, resolved.host_os)?;
 
-    // pre_apply hooks run before any file operation. Reuse the resolver
-    // built during planning so hook `when` predicates and template
-    // renders see the same CLI overrides and module variables.
-    let vars = &resolved.resolver;
     if let Some(failed) = run_hook_phase(
         &resolved_hooks,
         HookEvent::PreApply,
         &template_engine,
-        vars,
+        resolved,
         request.force_deploy,
     )
     .await?
@@ -1866,7 +2060,7 @@ pub async fn execute(
                 &backups_dir,
                 &resolved.timestamp,
                 &template_engine,
-                vars,
+                resolved.operation_resolver(op),
                 &op.ignore_rules,
             )?;
             for record in records {
@@ -1891,7 +2085,7 @@ pub async fn execute(
         &resolved_hooks,
         HookEvent::PostApply,
         &template_engine,
-        vars,
+        resolved,
         request.force_deploy,
         &mut warnings,
     )
@@ -2136,7 +2330,7 @@ fn expected_target(
 /// Returns an [`EngineError`] when the commit read, the managed-set
 /// recomputation, a backup, or a removal fails.
 fn reap_orphans(resolved: &ResolvedPlan, backups_dir: &Utf8Path) -> Result<(), EngineError> {
-    for orphan in detect_orphans(&resolved.journal_dir())? {
+    for orphan in detect_orphans(&resolved.journal_dir(), &resolved.managed)? {
         // Record the prior bytes in a backup before removal. The
         // stash uses this run's timestamped backup tree, the
         // same one materialize stashes overwrites into.
@@ -2191,7 +2385,7 @@ fn is_full_noop(resolved: &ResolvedPlan, reap: bool) -> Result<bool, EngineError
     }
     // A reap is work to do: an all-`Unchanged` plan that still has an
     // orphan to remove is not a no-op.
-    if !detect_orphans(&resolved.journal_dir())?.is_empty() {
+    if !detect_orphans(&resolved.journal_dir(), &resolved.managed)?.is_empty() {
         return Ok(false);
     }
     Ok(true)
@@ -2233,21 +2427,24 @@ pub fn plan_is_full_noop(resolved: &ResolvedPlan) -> Result<bool, EngineError> {
 /// Returns an [`EngineError`] when the commit read or the managed-set
 /// recomputation fails.
 pub fn plan_orphans(resolved: &ResolvedPlan) -> Result<Vec<Orphan>, EngineError> {
-    journal_orphans(&resolved.journal_dir())
+    let mut orphans = detect_orphans(&resolved.journal_dir(), &resolved.managed)?;
+    orphans.sort_by(|a, b| a.target.cmp(&b.target));
+    Ok(orphans)
 }
 
 /// The reap set for the apply recorded under `journal_dir`, sorted by target.
 ///
-/// [`plan_orphans`] is the same computation for a caller holding a resolved
-/// plan; `doctor` holds a state directory and no plan. Both run one detection,
-/// so no diagnostic promises a removal the reap would skip.
+/// [`plan_orphans`] reads the managed set from a resolved plan. Because
+/// `doctor` has no plan, this function recomputes the set without `-v`
+/// overrides. An undefined override-only variable fails that walk.
 ///
 /// # Errors
 ///
 /// Returns an [`EngineError`] when the commit read or the managed-set
 /// recomputation fails.
 pub fn journal_orphans(journal_dir: &Utf8Path) -> Result<Vec<Orphan>, EngineError> {
-    let mut orphans = detect_orphans(journal_dir)?;
+    let managed = current_managed_targets(&[])?;
+    let mut orphans = detect_orphans(journal_dir, &managed)?;
     orphans.sort_by(|a, b| a.target.cmp(&b.target));
     Ok(orphans)
 }
@@ -2318,15 +2515,16 @@ impl OrphanReason {
 ///
 /// Returns an [`EngineError`] when the commit read or the managed-set
 /// recomputation fails.
-fn detect_orphans(journal_dir: &Utf8Path) -> Result<Vec<Orphan>, EngineError> {
+fn detect_orphans(
+    journal_dir: &Utf8Path,
+    managed: &crate::status::ManagedTargets,
+) -> Result<Vec<Orphan>, EngineError> {
     use crate::status::manage_key;
 
     let Some(record) = crate::journal::read_latest_commit(journal_dir)? else {
         // No prior committed apply: nothing was ever materialized to orphan.
         return Ok(Vec::new());
     };
-
-    let managed = current_managed_targets()?;
 
     let mut orphans = Vec::new();
     for expected in &record.targets {
@@ -2394,11 +2592,11 @@ async fn run_hook_phase(
     hooks: &[ResolvedHook<'_>],
     event: HookEvent,
     engine: &Engine,
-    resolver: &Resolver,
+    resolved: &ResolvedPlan,
     force_deploy: ForceDeploy,
 ) -> Result<Option<String>, EngineError> {
     let mut sink = Vec::new();
-    run_hook_phase_collecting(hooks, event, engine, resolver, force_deploy, &mut sink).await
+    run_hook_phase_collecting(hooks, event, engine, resolved, force_deploy, &mut sink).await
 }
 
 /// Run every hook whose event matches `event`, pushing a human-readable
@@ -2408,7 +2606,7 @@ async fn run_hook_phase_collecting(
     hooks: &[ResolvedHook<'_>],
     event: HookEvent,
     engine: &Engine,
-    resolver: &Resolver,
+    resolved: &ResolvedPlan,
     force_deploy: ForceDeploy,
     warnings: &mut Vec<String>,
 ) -> Result<Option<String>, EngineError> {
@@ -2416,7 +2614,7 @@ async fn run_hook_phase_collecting(
         if hook.entry.event != event {
             continue;
         }
-        if !hooks::should_run(hook, engine, resolver)? {
+        if !hooks::should_run(hook, engine, resolved.module_resolver(hook.module))? {
             continue;
         }
         match hooks::run_hook(hook, force_deploy).await? {
@@ -2548,9 +2746,10 @@ mod tests {
             source: Utf8PathBuf::from(format!("/repo/{source_tag}")),
             targets,
             dispositions,
-            module: "m".to_owned(),
+            module: 0,
             declared_source: Utf8PathBuf::from(source_tag),
             ignore_rules: crate::ignore_rules::none(),
+            leaves: None,
         }
     }
 
@@ -2804,6 +3003,8 @@ mod tests {
                 plan: Plan::new(Vec::new()),
                 operations: Vec::new(),
                 hooks: Vec::new(),
+                modules: Vec::new(),
+                managed: crate::status::ManagedTargets::default(),
                 state_dir,
                 host_os: HostOs::current(),
                 timestamp: TS.to_owned(),
@@ -2992,7 +3193,7 @@ mod tests {
     /// materializes them. A source leaf that no longer exists therefore
     /// contributes no key, and its recorded target leaf classifies ORPHANED.
     #[test]
-    fn insert_managed_targets_expands_symlink_tree_per_live_leaf() {
+    fn a_symlink_tree_entry_manages_one_key_per_live_leaf() {
         use crate::status::manage_key;
 
         let td = TempDir::new().expect("tempdir");
@@ -3022,7 +3223,7 @@ mod tests {
             remote: None,
         };
         let mut got = crate::status::ManagedTargets::default();
-        insert_managed_targets(&entry, &origin, &root, &[], &mut got);
+        insert_declared_entry(&entry, &origin, &root, &[], &mut got);
 
         let expected: BTreeSet<Utf8PathBuf> = [
             manage_key(&target.join("a.conf")),
@@ -3039,7 +3240,7 @@ mod tests {
         // recorded target leaf would now classify ORPHANED.
         fs_err::remove_file(source.join("sub").join("b.conf")).expect("delete leaf");
         let mut after = crate::status::ManagedTargets::default();
-        insert_managed_targets(&entry, &origin, &root, &[], &mut after);
+        insert_declared_entry(&entry, &origin, &root, &[], &mut after);
         assert_eq!(
             after.targets,
             [manage_key(&target.join("a.conf"))].into_iter().collect(),
@@ -3052,7 +3253,7 @@ mod tests {
     /// are unknowable, so its declared target becomes an indeterminate root
     /// that still governs everything beneath it.
     #[test]
-    fn insert_managed_targets_marks_an_unmaterialized_remote_tree_indeterminate() {
+    fn an_unmaterialized_remote_tree_manages_an_indeterminate_root() {
         use crate::status::manage_key;
 
         let td = TempDir::new().expect("tempdir");
@@ -3075,7 +3276,7 @@ mod tests {
         };
 
         let mut got = crate::status::ManagedTargets::default();
-        insert_managed_targets(&entry, &origin, &root, &[], &mut got);
+        insert_declared_entry(&entry, &origin, &root, &[], &mut got);
 
         assert!(got.targets.is_empty(), "no leaf is enumerable");
         assert!(
@@ -3097,7 +3298,7 @@ mod tests {
     /// directly, with no source walk. That covers `[[file]]`
     /// symlink/copy/template and atomic `[[directory]]` symlink entries.
     #[test]
-    fn insert_managed_targets_inserts_declared_targets_for_non_tree_modes() {
+    fn a_non_tree_entry_manages_its_declared_targets() {
         use crate::status::manage_key;
 
         let td = TempDir::new().expect("tempdir");
@@ -3122,7 +3323,7 @@ mod tests {
             remote: None,
         };
         let mut got = crate::status::ManagedTargets::default();
-        insert_managed_targets(&entry, &origin, &root, &[], &mut got);
+        insert_declared_entry(&entry, &origin, &root, &[], &mut got);
 
         let expected: BTreeSet<Utf8PathBuf> =
             [manage_key(&t1), manage_key(&t2)].into_iter().collect();
@@ -3144,14 +3345,16 @@ mod tests {
         fs_err::create_dir_all(tree.join("sub")).expect("mkdir tree");
         fs_err::write(tree.join("ok.md"), b"fine").expect("write plain leaf");
 
-        reject_symlink_leaves("humanizer", &tree, &crate::ignore_rules::none())
-            .expect("a link-free tree passes");
+        let unfiltered = crate::ignore_rules::none();
+        let leaves = crate::apply::walk_files(&tree, &unfiltered).expect("walk the tree");
+        reject_symlink_leaves("humanizer", &tree, &leaves).expect("a link-free tree passes");
 
         let outside = root.join("secret");
         fs_err::write(&outside, b"key material").expect("write outside file");
         symlink_file(&outside, &tree.join("sub").join("creds"));
 
-        let err = reject_symlink_leaves("humanizer", &tree, &crate::ignore_rules::none())
+        let leaves = crate::apply::walk_files(&tree, &unfiltered).expect("re-walk the tree");
+        let err = reject_symlink_leaves("humanizer", &tree, &leaves)
             .expect_err("a nested symlink must fail the plan");
         let message = err.to_string();
         assert!(
@@ -3191,6 +3394,13 @@ mod tests {
         }
     }
 
+    fn source_leaves(source: &Utf8Path) -> Vec<Utf8PathBuf> {
+        if !source.is_dir() {
+            return Vec::new();
+        }
+        crate::apply::walk_files(source, &crate::ignore_rules::none()).expect("walk source tree")
+    }
+
     fn classify_one(mode: FileMode, source: &Utf8Path, target: &Utf8Path) -> Disposition {
         let engine = Engine::new();
         let resolver = Resolver::new(Builtins::for_tests());
@@ -3200,7 +3410,7 @@ mod tests {
             std::slice::from_ref(&target.to_path_buf()),
             &engine,
             &resolver,
-            &crate::ignore_rules::none(),
+            &source_leaves(source),
             &Provenance::default(),
         )
         .expect("classify entry");
@@ -3255,7 +3465,7 @@ mod tests {
             std::slice::from_ref(&tmpl_target),
             &engine,
             &resolver,
-            &crate::ignore_rules::none(),
+            &source_leaves(&tmpl_source),
             &Provenance::default(),
         )
         .expect("classify template");
@@ -3329,7 +3539,7 @@ mod tests {
             std::slice::from_ref(&target),
             &engine,
             &resolver,
-            &crate::ignore_rules::none(),
+            &source_leaves(&source),
             &Provenance::default(),
         )
         .expect("classify copy-tree");
@@ -3375,7 +3585,7 @@ mod tests {
             std::slice::from_ref(&target),
             &engine,
             &resolver,
-            &crate::ignore_rules::none(),
+            &source_leaves(&source),
             &Provenance::default(),
         )
         .expect("classify copy-tree");
@@ -3408,7 +3618,7 @@ mod tests {
             std::slice::from_ref(&target),
             &engine,
             &resolver,
-            &crate::ignore_rules::none(),
+            &source_leaves(&source),
             &Provenance::default(),
         )
         .expect("classify copy-tree");
@@ -3499,15 +3709,8 @@ mod tests {
         );
         let provenance = Provenance::read(&journal).expect("read provenance");
 
-        let disposition = classify_target(
-            FileMode::Copy,
-            &source,
-            &target,
-            None,
-            &crate::ignore_rules::none(),
-            &provenance,
-        )
-        .expect("classify");
+        let disposition = classify_target(FileMode::Copy, &source, &target, None, &[], &provenance)
+            .expect("classify");
 
         assert_eq!(
             disposition.aggregate,
@@ -3532,7 +3735,7 @@ mod tests {
             &source,
             &target,
             None,
-            &crate::ignore_rules::none(),
+            &source_leaves(&source),
             &Provenance::default(),
         )
         .expect("classify");
@@ -3577,7 +3780,7 @@ mod tests {
             &source,
             &target,
             None,
-            &crate::ignore_rules::none(),
+            &source_leaves(&source),
             &Provenance::default(),
         )
         .expect_err("classification must refuse the interior link");
@@ -3615,12 +3818,14 @@ mod tests {
         );
         let provenance = Provenance::read(&journal).expect("read provenance");
 
+        let leaves =
+            crate::apply::walk_files(&source, &crate::ignore_rules::none()).expect("walk source");
         let disposition = classify_target(
             FileMode::CopyTree,
             &source,
             &target,
             None,
-            &crate::ignore_rules::none(),
+            &leaves,
             &provenance,
         )
         .expect("classify");
@@ -3874,9 +4079,10 @@ mod tests {
                 replace_root: false,
                 mode_change: false,
             }],
-            module: "m".to_owned(),
+            module: 0,
             declared_source: Utf8PathBuf::from("config"),
             ignore_rules: crate::ignore_rules::none(),
+            leaves: None,
         };
 
         let (operations, resolved_ops) = assemble_plan_operations(vec![Some(resolved)], vec![]);

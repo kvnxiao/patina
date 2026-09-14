@@ -46,8 +46,8 @@ patina watch install        # auto-reapply on change via a per-OS background ser
 | --- | --- |
 | `init` | Scaffold a root `patina.toml` and persist the default-repo pointer. |
 | `add` | Bring an existing dotfile under management: copy it into a module and write a `[[file]]` or `[[directory]]` entry by source kind. |
-| `remove` | Unmanage a target (replace it with a plain file holding the last-applied content); `--purge` deletes it outright. |
-| `promote` | Copy a drifted copy-mode target's current bytes back into its repo source, then re-apply. |
+| `remove` | Stop managing a target and preserve its applied contents as a regular file. With `--purge`, delete the target instead. Individual leaves of a tree-mode entry cannot be removed this way. |
+| `promote` | Copy a changed copy-mode target back to its repository source, then apply again. Remote-backed targets cannot be promoted. |
 | `apply` | Materialize declarations as symlinks / rendered templates / byte copies. Diff-and-prompt by default; plan-only in a non-TTY. |
 | `status` | Classify each managed target: `clean` / `drifted` / `missing` / `orphaned`. |
 | `rollback` | Reverse the most recent successful apply from the journal and backups. |
@@ -65,6 +65,10 @@ absolute.
 Every command except the `debug` family accepts `--json` for
 deterministic structured output. Commands that prompt for confirmation
 accept `--yes` to skip the prompt.
+
+Use `-v key=value` to override variables for `apply` and `status`. The flag
+is repeatable. When overrides affect a `when` expression, pass the same
+values to both commands.
 
 ## Documentation
 

@@ -25,11 +25,18 @@ patina/
 ├── journal/             postcard-encoded plan + COMMIT/ROLLED_BACK sentinels
 ├── backups/<ts>/        last-applied byte content, last 10 cycles retained
 ├── logs/                rotating watcher logs, created lazily by `patina watch`
+├── remotes/             bare remote repositories and immutable checkouts
 ├── default_repo         persisted dotfiles repo pointer (UTF-8 text)
 ├── profile              persisted profile name (UTF-8 text)
 ├── lock                 advisory file lock (fs2)
 └── drift.cache          postcard-encoded drift events written by `patina watch`
 ```
+
+Each backup path mirrors an absolute target below `backups/<ts>/`. On Windows,
+a drive prefix becomes its drive letter: `C:\Users\u\.gitconfig` maps to
+`C/Users/u/.gitconfig`. A UNC prefix becomes
+`__unc__/<host>/<share>`, which preserves both UNC boundaries in the backup
+tree.
 
 ---
 

@@ -551,14 +551,16 @@ fn build_request(args: &ApplyArgs) -> Result<ApplyRequest> {
     } else {
         ForceDeploy::No
     };
-    let mut cli_overrides = Vec::with_capacity(args.var.len());
-    for raw in &args.var {
-        cli_overrides.push(parse_override(raw)?);
-    }
+    let cli_overrides = parse_overrides(&args.var)?;
     Ok(ApplyRequest {
         force_deploy,
         cli_overrides,
     })
+}
+
+/// Parse every `-v key=value` override and fail on the first malformed value.
+pub(crate) fn parse_overrides(raw: &[String]) -> Result<Vec<(String, String)>> {
+    raw.iter().map(|entry| parse_override(entry)).collect()
 }
 
 /// Parse a single `-v key=value` override.

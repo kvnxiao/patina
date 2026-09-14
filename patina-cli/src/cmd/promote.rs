@@ -14,6 +14,11 @@
 //! - **Template-rendered targets** (the journaled source ends in `.tmpl`).
 //!   Templating is non-invertible: the rendered bytes cannot be turned back
 //!   into a template, so promotion cannot recover the source.
+//! - **Remote-backed targets** (the journaled source lies under
+//!   `<state>/remotes/`). A pinned checkout is immutable third-party content:
+//!   writing into it would modify every entry reading that path until the pin
+//!   moves. `patina remote check` compares revisions, so it would never report
+//!   the edit.
 //!
 //! A `copy-tree` target promotes only the leaf file given on the command line,
 //! not the whole tree: the journal records one [`ExpectedTarget`] per
@@ -45,18 +50,21 @@ use camino::Utf8PathBuf;
 use patina_core::EngineError;
 use patina_core::ExpectedTarget;
 use patina_core::anchor_input;
+use patina_core::canonicalize_path;
 use patina_core::manage_key;
 use patina_core::read_latest_commit;
+use patina_core::remote::cache::remotes_root;
 
 /// Run `patina promote`. Returns the process exit code.
 ///
 /// # Errors
 ///
 /// Returns an error (exit 1, or exit 4 on a lock-acquisition timeout through
-/// the engine-error chain) when: the state directory cannot be resolved; the
-/// lock cannot be acquired; the target is not currently managed; the target is
-/// a symlink or template-rendered (refused); the target's bytes cannot be read;
-/// the repository source cannot be written; or the re-apply fails.
+/// the engine-error chain) when the state directory cannot be resolved, the
+/// lock cannot be acquired, the target's bytes cannot be read, the repository
+/// source cannot be written, or the re-apply fails. An unmanaged target and
+/// each refused shape (symbolic-link, template-rendered, remote-backed) return
+/// their exit code through the `Ok` value instead.
 pub async fn run(
     args: &PromoteArgs,
     tty: Tty,
@@ -81,9 +89,7 @@ pub async fn run(
         return Ok(report_unmanaged(args, reporter));
     };
 
-    // Refuse before any prompt or mutation, so a refused promote never
-    // touches the filesystem.
-    if let Some(code) = refuse_unpromotable(args, expected, reporter) {
+    if let Some(code) = refuse_unpromotable(args, expected, &state, reporter) {
         return Ok(code);
     }
 
@@ -104,14 +110,25 @@ pub async fn run(
     Ok(ExitCode::Success.code())
 }
 
-/// Refuse a target `promote` cannot reconcile. A symbolic-link or
-/// template-rendered target returns `Some(exit code)`, and the caller
-/// propagates it. A promotable copy-mode `Content` target returns `None`.
 fn refuse_unpromotable(
     args: &PromoteArgs,
     expected: &ExpectedTarget,
+    state: &Utf8Path,
     reporter: &mut impl Reporter,
 ) -> Option<i32> {
+    if let ExpectedTarget::Content { source, .. } = expected
+        && let Some(remote) = remote_backing(Utf8Path::new(source), state)
+    {
+        let message = format!(
+            "{} is deployed from the remote `{remote}`: its source {source} is a \
+             pinned checkout Patina treats as immutable, so the edited bytes \
+             cannot be promoted into it. Change the upstream repository and run \
+             `patina remote update {remote}`.",
+            args.target
+        );
+        report_refusal(args, "remote_backed_target", &message, reporter);
+        return Some(ExitCode::Generic.code());
+    }
     match expected {
         ExpectedTarget::Symlink { .. } => {
             let message = format!(
@@ -145,6 +162,22 @@ fn refuse_unpromotable(
             Some(ExitCode::Generic.code())
         }
     }
+}
+
+/// Return the remote whose pinned checkout contains `source`.
+///
+/// Apply records a canonical source, but the cache root retains the state
+/// directory's spelling. macOS can resolve `/var` to `/private/var`, Windows
+/// can return an 8.3 short name, and a symlinked home directory can produce
+/// another spelling. The lookup checks the original and canonical cache roots.
+fn remote_backing(source: &Utf8Path, state: &Utf8Path) -> Option<String> {
+    let root = remotes_root(state);
+    let canonical = canonicalize_path(&root).ok();
+    std::iter::once(root.as_path())
+        .chain(canonical.as_deref())
+        .find_map(|root| source.strip_prefix(root).ok())
+        .and_then(|relative| relative.components().next())
+        .map(|component| component.as_str().to_owned())
 }
 
 /// Report a refusal through the reporter: a JSON error envelope on stdout under
@@ -307,10 +340,84 @@ mod tests {
         }
     }
 
+    fn state() -> Utf8PathBuf {
+        Utf8PathBuf::from("/state/patina")
+    }
+
+    fn remote_backed_target() -> ExpectedTarget {
+        ExpectedTarget::Content {
+            target: "/home/u/.claude/skills/tone.md".to_owned(),
+            source: "/state/patina/remotes/humanizer/abc123/skills/tone.md".to_owned(),
+            hash: [0u8; 32],
+            entry: 0,
+            disposition: Disposition::Create,
+        }
+    }
+
+    #[test]
+    fn refuse_unpromotable_refuses_remote_backed_targets() {
+        let mut reporter = BufferReporter::new();
+        let code = refuse_unpromotable(
+            &args(false, true),
+            &remote_backed_target(),
+            &state(),
+            &mut reporter,
+        );
+        assert_eq!(code, Some(ExitCode::Generic.code()));
+        assert!(
+            reporter.err.contains("humanizer") && reporter.err.contains("remote update"),
+            "the refusal must name the remote and the command that moves its pin, got: {}",
+            reporter.err
+        );
+    }
+
+    #[test]
+    fn no_refusal_carries_collapsed_line_continuations() {
+        for expected in [
+            symlink_target(),
+            template_target(),
+            copy_target(),
+            remote_backed_target(),
+        ] {
+            let mut reporter = BufferReporter::new();
+            refuse_unpromotable(&args(false, true), &expected, &state(), &mut reporter);
+            assert!(
+                !reporter.err.contains("  "),
+                "refusal for {expected:?} carries a multi-space run: {}",
+                reporter.err
+            );
+        }
+    }
+
+    #[test]
+    fn remote_backing_names_the_remote_and_ignores_a_repository_source() {
+        assert_eq!(
+            remote_backing(
+                Utf8Path::new("/state/patina/remotes/humanizer/abc123/SKILL.md"),
+                &state()
+            )
+            .as_deref(),
+            Some("humanizer")
+        );
+        assert!(
+            remote_backing(Utf8Path::new("/repo/git/gitconfig"), &state()).is_none(),
+            "a repository source is promotable"
+        );
+        assert!(
+            remote_backing(Utf8Path::new("/state/patina/journal/x"), &state()).is_none(),
+            "another state-directory subtree is not a remote checkout"
+        );
+    }
+
     #[test]
     fn refuse_unpromotable_refuses_symlink_targets() {
         let mut reporter = BufferReporter::new();
-        let code = refuse_unpromotable(&args(false, true), &symlink_target(), &mut reporter);
+        let code = refuse_unpromotable(
+            &args(false, true),
+            &symlink_target(),
+            &state(),
+            &mut reporter,
+        );
         assert_eq!(code, Some(ExitCode::Generic.code()));
         assert!(
             reporter.err.contains("symbolic-link") && reporter.err.contains("source"),
@@ -322,7 +429,12 @@ mod tests {
     #[test]
     fn refuse_unpromotable_refuses_template_targets() {
         let mut reporter = BufferReporter::new();
-        let code = refuse_unpromotable(&args(false, true), &template_target(), &mut reporter);
+        let code = refuse_unpromotable(
+            &args(false, true),
+            &template_target(),
+            &state(),
+            &mut reporter,
+        );
         assert_eq!(code, Some(ExitCode::Generic.code()));
         assert!(
             reporter.err.contains("gitconfig.tmpl") && reporter.err.contains("template"),
@@ -334,7 +446,7 @@ mod tests {
     #[test]
     fn refuse_unpromotable_allows_copy_targets() {
         let mut reporter = BufferReporter::new();
-        let code = refuse_unpromotable(&args(false, true), &copy_target(), &mut reporter);
+        let code = refuse_unpromotable(&args(false, true), &copy_target(), &state(), &mut reporter);
         assert!(
             code.is_none(),
             "a copy-mode content target must be promotable"
