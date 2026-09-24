@@ -41,8 +41,7 @@ toml_edit = "0.25"
 tracing = "0.1"
 # NFC folding makes target-collision checks match macOS-equivalent spellings.
 unicode-normalization = "0.1"
-# Read host identity through OS APIs; watcher services may omit shell
-# environment variables.
+# Read host and user names through OS APIs instead of environment variables.
 whoami = "2.1"
 # Require 0.0.28 for `TokenElevation` reads.
 winsafe = { version = "0.0.28", features = ["advapi", "kernel"] }

@@ -52,8 +52,7 @@ pub(crate) struct Styles {
     pub prompt_affirm: Style,
     /// The default key in a `[y/N]` confirmation (the capitalized `N`).
     pub prompt_default: Style,
-    /// An action that reached the state the user asked for: a completed apply,
-    /// or a watch service already running.
+    /// An action that reached the state the user asked for: a completed apply.
     pub success: Style,
     /// The command's target path in a one-line result sentence.
     pub path: Style,
