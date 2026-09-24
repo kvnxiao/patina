@@ -48,7 +48,8 @@ flowchart TD
   `clap`, drives the engine, and renders results through the
   `output::Reporter` abstraction: human-readable by default, JSON under
   `--json`. All process exit codes flow through a single funnel that
-  maps engine outcomes onto the formalized codes.
+  maps engine outcomes, and lock timeouts from commands that take the
+  lock themselves, onto the formalized codes.
 - **`patina-elevate`** is a standalone Windows-only helper binary. It
   carries the smallest possible trust surface (no dependency on
   `patina-core` or `patina`) and performs one elevated action under a
