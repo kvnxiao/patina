@@ -67,8 +67,10 @@ flowchart TD
   effect.
 
 User-facing output never uses `println!` / `eprintln!` outside the
-`Reporter` layer; everything else logs through `tracing`. See
-AGENTS.md "Hard rules" for the enforcement detail.
+`Reporter` layer; everything else logs through `tracing`. The workspace
+denies Clippy's `print_stdout` and `print_stderr` lints, so any other print
+outside test code fails `just lint` unless an `#[expect]` attribute
+suppresses the lint.
 
 ## Journal format
 
