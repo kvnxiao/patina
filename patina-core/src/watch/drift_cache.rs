@@ -161,12 +161,12 @@ pub enum DriftCacheError {
     Filesystem(#[from] std::io::Error),
 
     /// The cache body could not be `postcard`-encoded.
-    #[error("failed to encode drift cache to postcard: {0}")]
-    Encode(postcard::Error),
+    #[error("failed to encode drift cache to postcard")]
+    Encode(#[source] postcard::Error),
 
     /// The cache body could not be `postcard`-decoded.
-    #[error("failed to decode drift cache from postcard: {0}")]
-    Decode(postcard::Error),
+    #[error("failed to decode drift cache from postcard")]
+    Decode(#[source] postcard::Error),
 
     /// The cache file was shorter than the fixed-size version envelope, so
     /// no major version could be read.
@@ -319,6 +319,8 @@ pub fn journal_ts_rfc3339(journal_ts: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_util::assert_source_rendered_once;
+    use crate::test_util::source_as;
     use tempfile::TempDir;
 
     fn sample() -> DriftCache {
@@ -402,6 +404,15 @@ mod tests {
             DriftCache::decode(&[]),
             Err(DriftCacheError::Truncated { got: 0, need: 2 })
         ));
+    }
+
+    #[test]
+    fn cut_off_body_decode_error_renders_its_postcard_source_once() {
+        let mut bytes = sample().encode().expect("the sample cache encodes");
+        bytes.truncate(version_envelope::ENVELOPE_LEN + 1);
+        let err = DriftCache::decode(&bytes).expect_err("a cut-off body cannot decode");
+        source_as::<postcard::Error>(&err);
+        assert_source_rendered_once(&err);
     }
 
     #[test]

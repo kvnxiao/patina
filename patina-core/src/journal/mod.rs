@@ -62,6 +62,7 @@ mod recovery;
 mod render;
 mod sync;
 
+use crate::error::chain_message;
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
 pub use disposition::Disposition;
@@ -105,12 +106,12 @@ pub enum JournalError {
     Filesystem(#[from] std::io::Error),
 
     /// The plan body could not be `postcard`-encoded.
-    #[error("failed to encode plan to postcard: {0}")]
-    Encode(postcard::Error),
+    #[error("failed to encode plan to postcard")]
+    Encode(#[source] postcard::Error),
 
     /// The plan body could not be `postcard`-decoded.
-    #[error("failed to decode plan from postcard: {0}")]
-    Decode(postcard::Error),
+    #[error("failed to decode plan from postcard")]
+    Decode(#[source] postcard::Error),
 
     /// A journal record (the plan file or a commit sentinel) was shorter
     /// than the fixed-size version envelope, so no major version could be
@@ -352,7 +353,7 @@ pub(crate) fn read_latest_commit_with_ts(
             Err(err @ (JournalError::Truncated { .. } | JournalError::Decode(_))) => {
                 tracing::warn!(
                     timestamp = %timestamp,
-                    error = %err,
+                    error = %chain_message(&err),
                     "skipping an unreadable journal commit sentinel; \
                      falling back to the previous committed apply"
                 );
