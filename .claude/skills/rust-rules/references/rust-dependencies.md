@@ -5,6 +5,16 @@ description: "Cargo dependency management; caret ranges with a committed Cargo.l
 
 # Dependency Management
 
+## Evaluate before adding (Default)
+
+Use the standard library or an existing dependency when it provides the required behavior with
+comparable clarity. Add a crate when its capability or maintained implementation materially reduces
+project code or correctness risk; preserve the preferred-crate policy below when its contracts fit.
+
+Check API fit, supported platforms, MSRV, maintenance and advisory history, license compatibility,
+enabled features, and transitive dependency cost. Inspect maintenance in context: a mature crate
+need not release frequently, and popularity or open-issue counts alone do not establish quality.
+
 ## Default to Caret/Semver Ranges (Default)
 
 For both libraries and applications, default dependency declarations to caret or SemVer ranges,
@@ -47,9 +57,6 @@ constraint:
 - **Behavioral dependency on a specific version.** You rely on a quirk that isn't part of the
   crate's contract and could shift across patches. Prefer fixing your code over pinning, but pin if
   the fix is non-trivial.
-- **`cargo install` distribution.** Binaries published via `cargo install` ignore `Cargo.lock` by
-  default unless `--locked` is passed; if you can't guarantee `--locked`, pinning is the only way to
-  lock end-user versions.
 - **Resolver conflict resolution.** A transitive-version conflict requires a specific version to
   keep the dep graph valid.
 - **Tightly-coupled internal crate pair.** A facade crate that re-exports a private helper relying
@@ -71,6 +78,11 @@ lasting pin such as a coupled internal crate pair, record the policy in project 
 named constraint applies, use a caret range; the lockfile already fixes resolved versions for
 reproducible builds.
 
+For binaries distributed through `cargo install`, document `cargo install --locked <crate>` to use
+the packaged lockfile. Pinning a direct dependency does not pin its transitive dependencies; Cargo
+can still select newer versions within their declared ranges. See
+[Cargo installation and lockfiles](https://doc.rust-lang.org/cargo/commands/cargo-install.html#dealing-with-the-lockfile).
+
 ## Enable Only Needed Features (Default)
 
 Default dependency declarations to the features the project uses. Enable a full feature set when the
@@ -84,15 +96,15 @@ serde = { version = "1.0", features = ["derive"] }
 
 ## Review Dependencies Regularly (Default)
 
-Default dependency maintenance to automated update checks, security audits, and unused-dependency
-detection. Substitute equivalent tools when the project already standardizes on them.
+Automate advisory and unused-dependency checks through the
+[shared local and CI tasks](rust-lints-and-formatting.md#share-local-fix-lint-and-ci-tasks-required).
+Use `cargo audit` and `cargo machete`, or equivalent tools already standardized by the project. When
+the project needs license, bans, or source restrictions, configure `cargo deny` with its actual
+policy in a committed `deny.toml`. Review automated dependency-update proposals and their check
+results before merging.
 
 ```bash
 cargo outdated
-
-cargo audit
-
-cargo machete
 ```
 
 ## Single-Source the MSRV (Default)
