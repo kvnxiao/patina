@@ -21,9 +21,6 @@ fs2 = { workspace = true }
 ignore = { workspace = true }
 jiff = { workspace = true }
 minijinja = { workspace = true }
-notify = { workspace = true }
-notify-debouncer-full = { workspace = true }
-notify-rust = { workspace = true }
 postcard = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -41,15 +38,12 @@ tokio = { workspace = true, features = [
 toml = { workspace = true }
 toml_edit = { workspace = true }
 tracing = { workspace = true }
-tracing-appender = { workspace = true }
-tracing-subscriber = { workspace = true }
 unicode-normalization = { workspace = true }
 whoami = { workspace = true }
 
-# Keep `shell` and `taskschd` local; patina-elevate needs only `advapi` and
-# `kernel`.
+# Keep `shell` local; patina-elevate needs only `advapi` and `kernel`.
 [target.'cfg(windows)'.dependencies]
-winsafe = { workspace = true, features = ["shell", "taskschd"] }
+winsafe = { workspace = true, features = ["shell"] }
 
 [dev-dependencies]
 insta = { workspace = true }

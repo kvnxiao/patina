@@ -27,7 +27,6 @@ use crate::cli::RemoteArgs;
 use crate::cli::RemoteCommand;
 use crate::cmd::apply::PromptReader;
 use crate::cmd::apply::Tty;
-use crate::cmd::shared_lock;
 use crate::exit_code::ExitCode;
 use crate::output::reporter::Reporter;
 use crate::output::style::Styles;
@@ -36,7 +35,9 @@ use crate::output::table::emit_aligned;
 use crate::output::table::row;
 use anyhow::Context;
 use anyhow::Result;
+use patina_core::LockGuard;
 use patina_core::LockKind;
+use patina_core::SHARED_TIMEOUT;
 use patina_core::acquire_lock;
 use patina_core::chain_message;
 use patina_core::exclusive_timeout;
@@ -158,6 +159,30 @@ fn run_update_locked(
 /// Enumerate the root manifest's declared remotes and their pins.
 fn declared_remotes() -> Result<RemoteInventory> {
     update::inventory().context("failed to enumerate the declared remotes")
+}
+
+/// Acquire the shared lock, or warn and return `None` when acquisition fails.
+///
+/// `quiet` suppresses the warning for `remote check --hook`, which times out
+/// on the shared lock while an apply holds the exclusive lock. Without
+/// `quiet`, every new shell would print the warning until the apply finishes.
+fn shared_lock(
+    lock_path: &camino::Utf8Path,
+    quiet: bool,
+    reporter: &mut impl Reporter,
+) -> Option<LockGuard> {
+    match acquire_lock(lock_path, LockKind::Shared, SHARED_TIMEOUT) {
+        Ok(guard) => Some(guard),
+        Err(error) => {
+            if !quiet {
+                reporter.warn(&format!(
+                    "proceeding without the shared lock: {}",
+                    chain_message(&error)
+                ));
+            }
+            None
+        }
+    }
 }
 
 /// Read the inventory under the shared lock, releasing it before returning.

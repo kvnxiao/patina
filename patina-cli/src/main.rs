@@ -65,7 +65,6 @@ async fn main() -> std::process::ExitCode {
             let mut reader = StdinReader;
             cmd::remote::run(&args, detect_tty(), &mut reader, &mut reporter)
         }
-        Command::Watch(args) => cmd::watch::run(&args, &mut reporter).await,
         #[cfg(windows)]
         Command::Defender(args) => {
             let mut reader = StdinReader;

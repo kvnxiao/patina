@@ -131,12 +131,6 @@ pub(crate) enum Command {
     /// checkouts no journal record references.
     Remote(RemoteArgs),
 
-    /// Watch the repository and re-apply on source changes. `--foreground`
-    /// runs the watcher inline in the current terminal; the
-    /// `install` / `uninstall` / `start` / `stop` / `restart` / `status`
-    /// subcommands manage the per-OS background service.
-    Watch(WatchArgs),
-
     /// Manage Windows Defender path exclusions for the repository and its
     /// deployed targets. Windows-only: absent from `--help` on macOS/Linux.
     /// `apply` reconciles (adds missing, reaps patina-owned stale), `status`
@@ -147,72 +141,9 @@ pub(crate) enum Command {
     Defender(DefenderArgs),
 
     /// Debugging utilities, hidden from the top-level help summary. `journal`
-    /// decodes a binary plan file post-mortem, and `drift-cache` decodes the
-    /// watcher's drift cache.
+    /// decodes a binary plan file post-mortem.
     #[command(hide = true, subcommand, disable_help_subcommand = true)]
     Debug(DebugCommand),
-}
-
-/// Flags for `patina watch`.
-///
-/// `--foreground` runs the watcher loop inline, attached to the invoking
-/// shell, and exits cleanly on Ctrl-C / SIGTERM. The lifecycle
-/// subcommands (`install` / `uninstall` / `start` / `stop` / `restart` /
-/// `status`) manage the per-OS background service. With
-/// neither, the command reports that a mode must be chosen.
-#[derive(Debug, Args, Default)]
-#[command(disable_help_subcommand = true)]
-pub(crate) struct WatchArgs {
-    /// The background-service lifecycle subcommand. Mutually exclusive with
-    /// `--foreground`; omit both to see the usage hint.
-    #[command(subcommand)]
-    pub command: Option<WatchCommand>,
-
-    /// Run the watcher inline in the current terminal instead of installing a
-    /// background service. Ctrl-C (SIGINT) or SIGTERM shuts it down cleanly.
-    #[arg(long)]
-    pub foreground: bool,
-
-    /// Emit a JSON envelope instead of human output. Global, so it is accepted
-    /// both before and after a lifecycle subcommand (`patina watch status
-    /// --json`).
-    #[arg(long, global = true)]
-    pub json: bool,
-}
-
-/// Background-service lifecycle subcommands under `patina watch`.
-///
-/// Each operates on the per-OS service registration through the
-/// `patina_core::watch::service` backend. `status` is read-only and acquires
-/// the shared lock. When the shared lock times out, `status` warns and proceeds
-/// without it. Every other subcommand acquires the exclusive lock, and a
-/// timeout on that one is exit `4`.
-#[derive(Debug, Subcommand, Clone)]
-pub(crate) enum WatchCommand {
-    /// Register the watcher as a per-user background service that launches at
-    /// login. When the service is already installed, exits 1.
-    Install,
-
-    /// Stop the running watcher and remove the service registration.
-    Uninstall {
-        /// Proceed without prompting. Mutating: acquires the exclusive lock.
-        #[arg(long)]
-        yes: bool,
-    },
-
-    /// Ask the platform supervisor to start the installed service.
-    Start,
-
-    /// Ask the platform supervisor to stop the running service without
-    /// removing its registration.
-    Stop,
-
-    /// Stop then start the installed service.
-    Restart,
-
-    /// Report the service's installed / running state, last-exit code, and the
-    /// watcher's recovered subscription / re-apply counters. Read-only.
-    Status,
 }
 
 /// Flags for `patina remote`.
@@ -280,23 +211,12 @@ pub(crate) enum RemoteCommand {
 pub(crate) enum DebugCommand {
     /// Decode a `<ts>.plan` journal file into a human-readable view.
     Journal(DebugJournalArgs),
-
-    /// Decode a `drift.cache` file into a human-readable view.
-    DriftCache(DebugDriftCacheArgs),
 }
 
 /// Flags for `patina debug journal`.
 #[derive(Debug, Args)]
 pub(crate) struct DebugJournalArgs {
     /// Path to the `<ts>.plan` file to decode.
-    #[arg(value_name = "path")]
-    pub path: Utf8PathBuf,
-}
-
-/// Flags for `patina debug drift-cache`.
-#[derive(Debug, Args)]
-pub(crate) struct DebugDriftCacheArgs {
-    /// Path to the `drift.cache` file to decode.
     #[arg(value_name = "path")]
     pub path: Utf8PathBuf,
 }
