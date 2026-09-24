@@ -84,7 +84,7 @@ pub enum ServiceError {
     ResolveBinary(String),
 
     /// Writing or removing the service descriptor file failed.
-    #[error("failed to write the service descriptor `{path}`: {source}")]
+    #[error("failed to write the service descriptor `{path}`")]
     WriteDescriptor {
         /// The descriptor path the backend attempted to write or remove.
         path: Utf8PathBuf,

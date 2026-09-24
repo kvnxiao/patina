@@ -31,6 +31,7 @@ use crate::EngineError;
 use crate::LockError;
 use crate::LockPolicy;
 use crate::current_timestamp;
+use crate::error::chain_message;
 use crate::execute_plan;
 use crate::plan_apply;
 
@@ -121,7 +122,7 @@ fn fail(id: &str, error: &EngineError) -> ReapplyOutcome {
     tracing::warn!(
         target: "patina_core",
         re_apply_id = id,
-        error = %error,
+        error = %chain_message(error),
         "re_apply_failed"
     );
     ReapplyOutcome::Failed

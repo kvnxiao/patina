@@ -789,7 +789,7 @@ pub fn serialize_request(diff: &DefenderDiff) -> String {
 #[non_exhaustive]
 pub enum DefenderError {
     /// Spawning the PowerShell process that runs `Get-MpPreference` failed.
-    #[error("failed to run `{command}`: {source}")]
+    #[error("failed to run `{command}`")]
     Command {
         /// The command that could not be spawned.
         command: &'static str,
@@ -807,7 +807,7 @@ pub enum DefenderError {
         stderr: String,
     },
     /// The `Get-MpPreference` JSON output could not be parsed.
-    #[error("failed to parse Get-MpPreference output: {source}")]
+    #[error("failed to parse Get-MpPreference output")]
     Parse {
         /// The JSON parse error.
         #[source]

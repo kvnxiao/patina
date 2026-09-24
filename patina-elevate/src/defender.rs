@@ -139,15 +139,11 @@ impl fmt::Display for DefenderError {
                 write!(f, "Defender rejected the exclusion change: {detail}")
             }
             #[cfg(windows)]
-            Self::ReadRequest { path, source } => {
-                write!(
-                    f,
-                    "failed to read the request file `{}`: {source}",
-                    path.display()
-                )
+            Self::ReadRequest { path, .. } => {
+                write!(f, "failed to read the request file `{}`", path.display())
             }
             #[cfg(windows)]
-            Self::PowerShell { source } => write!(f, "failed to run powershell: {source}"),
+            Self::PowerShell { .. } => write!(f, "failed to run powershell"),
             #[cfg(windows)]
             Self::Apply { detail } => {
                 write!(f, "Defender exclusions were not applied: {detail}")
@@ -364,7 +360,10 @@ pub fn receipt_body(outcome: &Result<(), DefenderError>) -> String {
         Err(DefenderError::Blocked { detail }) => {
             format!("{RECEIPT_BLOCKED} {}\n", one_line(detail))
         }
-        Err(other) => format!("{RECEIPT_FAILED} {}\n", one_line(&other.to_string())),
+        Err(other) => format!(
+            "{RECEIPT_FAILED} {}\n",
+            one_line(&crate::chain_message(other))
+        ),
     }
 }
 

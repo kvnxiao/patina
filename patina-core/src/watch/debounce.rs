@@ -104,7 +104,7 @@ impl EventBatch {
 #[non_exhaustive]
 pub enum DebounceError {
     /// Constructing the underlying `notify` watcher/debouncer failed.
-    #[error("failed to initialize the filesystem watcher: {source}")]
+    #[error("failed to initialize the filesystem watcher")]
     Build {
         /// The underlying `notify` error.
         #[source]
@@ -112,7 +112,7 @@ pub enum DebounceError {
     },
 
     /// Registering a subscription path with the watcher failed.
-    #[error("failed to watch path `{path}`: {source}")]
+    #[error("failed to watch path `{path}`")]
     Watch {
         /// The path the watcher failed to register.
         path: Utf8PathBuf,

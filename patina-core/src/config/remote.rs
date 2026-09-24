@@ -182,7 +182,7 @@ pub enum RemoteConfigError {
     /// A `name` (written or derived) is a legal filename on Unix but not on
     /// Windows.
     #[error(
-        "the remote name `{name}` is not a portable directory name: {reason}. A manifest must \
+        "the remote name `{name}` is not a portable directory name: {reason}; a manifest must \
          mean the same thing on macOS, Linux, and Windows, so such a name is refused on every \
          platform rather than only where it breaks"
     )]

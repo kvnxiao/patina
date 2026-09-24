@@ -69,7 +69,7 @@ pub struct ModuleConfig {
 #[non_exhaustive]
 pub enum ConfigParseError {
     /// IO failure reading the manifest file.
-    #[error("failed to read {path}: {source}")]
+    #[error("failed to read {path}")]
     Io {
         /// The manifest path that failed to read.
         path: Utf8PathBuf,
@@ -79,7 +79,7 @@ pub enum ConfigParseError {
     },
 
     /// TOML deserialization of the raw document failed.
-    #[error("failed to parse {path} as TOML: {source}")]
+    #[error("failed to parse {path} as TOML")]
     Toml {
         /// The manifest path whose TOML failed to parse.
         path: Utf8PathBuf,
@@ -111,7 +111,7 @@ pub enum ConfigParseError {
     /// believing a filter is in force that never runs.
     #[error(
         "module manifest declares `[patina] ignore`; a repo-wide ignore list is read only from \
-         the root patina.toml. Move the patterns there, or declare `ignore` on the \
+         the root patina.toml; move the patterns there, or declare `ignore` on the \
          `[[directory]]` entry they apply to"
     )]
     ModuleIgnoreList,

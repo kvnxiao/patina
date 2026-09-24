@@ -32,6 +32,7 @@ use patina_core::HostDevModeProbe;
 use patina_core::LockPolicy;
 use patina_core::Orphan;
 use patina_core::ResolvedPlan;
+use patina_core::chain_message;
 use patina_core::current_timestamp;
 use patina_core::decide_symlink_gate;
 use patina_core::execute_plan;
@@ -240,7 +241,10 @@ fn stale_pins(
     match Lockfile::load(path) {
         Ok(mut lockfile) => Some(names_of(&lockfile.retain_declared(&resolved.remote_names))),
         Err(error) => {
-            reporter.warn(&format!("leaving patina.lock alone: {error}"));
+            reporter.warn(&format!(
+                "leaving patina.lock alone: {}",
+                chain_message(&error)
+            ));
             None
         }
     }
@@ -270,7 +274,7 @@ fn run_remote_updates(tty: Tty, reader: &mut impl PromptReader, reporter: &mut i
              in patina.lock",
         ),
         Err(error) => reporter.warn(&format!(
-            "remote update failed ({error}); applying the pins already committed in patina.lock"
+            "remote update failed ({error:#}); applying the pins already committed in patina.lock"
         )),
     }
 }

@@ -26,7 +26,7 @@ const SHA_LEN: usize = 40;
 pub enum GitError {
     /// `git` could not be spawned. Most often it is not installed or not on
     /// `PATH`.
-    #[error("failed to run `git {args}`: {source}. Is git installed and on PATH?")]
+    #[error("failed to run `git {args}`; git must be installed and on PATH")]
     Spawn {
         /// The argument list, space-joined, for the failed invocation.
         args: String,
@@ -57,7 +57,7 @@ pub enum GitError {
     },
 
     /// A directory the cache layout requires could not be created.
-    #[error("failed to create the remote cache directory {path}: {source}")]
+    #[error("failed to create the remote cache directory {path}")]
     CacheDir {
         /// The directory that could not be created.
         path: camino::Utf8PathBuf,

@@ -160,7 +160,7 @@ pub enum LockError {
     /// Opening the lock file or issuing the advisory-lock syscall failed
     /// for a reason other than contention (a permissions problem, a
     /// missing parent directory, an unsupported filesystem).
-    #[error("failed to acquire lock on `{path}`: {source}")]
+    #[error("failed to acquire lock on `{path}`")]
     Io {
         /// The lock-file path.
         path: Utf8PathBuf,

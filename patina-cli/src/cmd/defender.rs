@@ -49,6 +49,7 @@ use patina_core::ExclusionKind;
 use patina_core::ExclusionState;
 use patina_core::HostDefenderProbe;
 use patina_core::ResolvedPlan;
+use patina_core::chain_message;
 use patina_core::current_timestamp;
 use patina_core::defender_ledger_path;
 use patina_core::defender_request_path;
@@ -379,7 +380,8 @@ fn run_status(json: bool, reporter: &mut impl Reporter) -> Result<i32> {
             // reports the desired set rather than hard-failing. Same downgrade
             // `doctor` takes on a shared-lock timeout.
             reporter.warn(&format!(
-                "could not read current Defender exclusions: {err}; showing the desired set only"
+                "could not read current Defender exclusions: {}; showing the desired set only",
+                chain_message(&err)
             ));
             if json {
                 reporter.json(&status_desired_only_json(&resolved, &desired));
@@ -636,12 +638,11 @@ fn exclusions_json(exclusions: &[Exclusion]) -> Vec<serde_json::Value> {
 fn blocked_error(detail: &str) -> anyhow::Error {
     anyhow!(
         "Defender rejected the exclusion change; the write did not take \
-         ({detail}). This usually means Tamper Protection is enabled or \
-         Defender is managed by policy (Intune / GPO). Check \
-         `Get-MpComputerStatus` (IsTamperProtected and AMRunningMode); apply \
-         the exclusions through your management tool, or consider a Windows 11 \
-         Dev Drive in Defender performance mode as a lower-risk alternative to \
-         path exclusions."
+         ({detail}); Tamper Protection or a management policy (Intune / GPO) \
+         usually causes this: check `Get-MpComputerStatus` (IsTamperProtected \
+         and AMRunningMode), apply the exclusions through your management tool, \
+         or consider a Windows 11 Dev Drive in Defender performance mode as a \
+         lower-risk alternative to path exclusions"
     )
 }
 
@@ -664,9 +665,9 @@ fn failed_error(detail: &str) -> anyhow::Error {
 fn unconfirmed_error() -> anyhow::Error {
     anyhow!(
         "the elevated helper did not report a result, so whether the Defender \
-         exclusions changed is unknown. They may have been applied without \
-         being recorded. Re-run `patina defender apply` (it is idempotent), or \
-         check the live list with `Get-MpPreference` from an elevated shell."
+         exclusions changed is unknown; they may have been applied without \
+         being recorded: re-run `patina defender apply` (it is idempotent), or \
+         check the live list with `Get-MpPreference` from an elevated shell"
     )
 }
 

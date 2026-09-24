@@ -41,7 +41,10 @@ pub(crate) fn shared_lock(
         Ok(guard) => Some(guard),
         Err(error) => {
             if !quiet {
-                reporter.warn(&format!("proceeding without the shared lock: {error}"));
+                reporter.warn(&format!(
+                    "proceeding without the shared lock: {}",
+                    patina_core::chain_message(&error)
+                ));
             }
             None
         }

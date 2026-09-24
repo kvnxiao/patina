@@ -92,7 +92,7 @@ pub enum StateDirError {
     },
 
     /// Creating one of the state-directory tree members failed.
-    #[error("failed to create state directory entry `{path}`: {source}")]
+    #[error("failed to create state directory entry `{path}`")]
     Io {
         /// The path the engine attempted to create.
         path: Utf8PathBuf,

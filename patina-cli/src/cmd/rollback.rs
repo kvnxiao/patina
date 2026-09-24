@@ -27,6 +27,7 @@ use anyhow::Result;
 use patina_core::EngineError;
 use patina_core::RollbackError;
 use patina_core::RollbackOptions;
+use patina_core::chain_message;
 
 /// Run `patina rollback`. Returns the process exit code.
 ///
@@ -76,7 +77,7 @@ pub(crate) async fn run(
         Err(EngineError::Rollback(
             err @ (RollbackError::NoPriorApply | RollbackError::RollbackPartial { .. }),
         )) => {
-            reporter.warn(&err.to_string());
+            reporter.warn(&chain_message(&err));
             Ok(ExitCode::Generic.code())
         }
         Err(other) => Err(other.into()),

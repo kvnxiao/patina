@@ -33,6 +33,7 @@ use patina_core::ServiceBackend;
 use patina_core::ServiceError;
 use patina_core::ServiceStatus;
 use patina_core::acquire_lock;
+use patina_core::chain_message;
 use patina_core::exclusive_timeout;
 
 /// Run `patina watch`. Returns the process exit code.
@@ -165,7 +166,7 @@ fn render_lifecycle(
             ExitCode::Success.code()
         }
         Err(error) => {
-            reporter.warn(&error.to_string());
+            reporter.warn(&chain_message(&error));
             ExitCode::Generic.code()
         }
     }
@@ -193,7 +194,7 @@ fn render_status(
             ExitCode::Success.code()
         }
         Err(error) => {
-            reporter.warn(&error.to_string());
+            reporter.warn(&chain_message(&error));
             ExitCode::Generic.code()
         }
     }

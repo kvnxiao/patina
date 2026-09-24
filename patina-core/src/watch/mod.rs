@@ -31,6 +31,7 @@ pub mod reapply;
 pub mod service;
 pub mod subscriptions;
 
+use crate::error::chain_message;
 use crate::journal::COMMIT_SUFFIX;
 use crate::journal::read_latest_commit;
 use crate::state_dir;
@@ -54,7 +55,7 @@ const DEBOUNCE_MS_KEY: &str = "debounce_ms";
 #[non_exhaustive]
 pub enum WatchError {
     /// Resolving the per-machine state directory failed.
-    #[error("failed to resolve the per-machine state directory: {source}")]
+    #[error("failed to resolve the per-machine state directory")]
     StateDir {
         /// The underlying state-directory resolution error.
         #[source]
@@ -66,7 +67,7 @@ pub enum WatchError {
     Logging(#[from] logging::LoggingError),
 
     /// Reading the most recent committed journal record failed.
-    #[error("failed to read the latest committed apply: {source}")]
+    #[error("failed to read the latest committed apply")]
     Journal {
         /// The underlying journal-read error.
         #[source]
@@ -424,7 +425,7 @@ fn rescan(
         Err(error) => {
             tracing::warn!(
                 target: "patina_core",
-                error = %error,
+                error = %chain_message(&error),
                 "journal_rescan_failed"
             );
             return None;
@@ -447,7 +448,7 @@ fn rescan(
         Err(error) => {
             tracing::warn!(
                 target: "patina_core",
-                error = %error,
+                error = %chain_message(&error),
                 "journal_rescan_failed"
             );
             return None;

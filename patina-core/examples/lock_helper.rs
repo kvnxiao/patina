@@ -132,7 +132,7 @@ fn run(args: &Args) -> Result<(), Failure> {
         Err(e) => {
             return Err(Failure {
                 code: EXIT_ERROR,
-                message: e.to_string(),
+                message: patina_core::chain_message(&e),
             });
         }
     };

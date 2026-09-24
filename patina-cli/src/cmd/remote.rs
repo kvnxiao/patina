@@ -38,6 +38,7 @@ use anyhow::Context;
 use anyhow::Result;
 use patina_core::LockKind;
 use patina_core::acquire_lock;
+use patina_core::chain_message;
 use patina_core::exclusive_timeout;
 use patina_core::remote::cache;
 use patina_core::remote::gate::GateConcern;
@@ -279,7 +280,7 @@ fn run_check(
         match update::check_upstream(view) {
             Ok(result) if result.has_update() => behind.push(result.name),
             Ok(_) => {}
-            Err(error) => failures.push(format!("{}: {error}", view.name())),
+            Err(error) => failures.push(format!("{}: {}", view.name(), chain_message(&error))),
         }
     }
 
@@ -307,7 +308,8 @@ fn run_check(
     {
         if output != CheckOutput::ShellHook {
             reporter.warn(&format!(
-                "failed to update the remote notice state: {error}"
+                "failed to update the remote notice state: {}",
+                chain_message(&error)
             ));
         }
     }
@@ -401,7 +403,7 @@ fn run_update(
         .collect();
     let proposals = propose_all(&views, |view| {
         update::propose(inventory, view, now_epoch, flags.bypass_age)
-            .map_err(|error| error.to_string())
+            .map_err(|error| chain_message(&error))
     });
 
     for (view, proposal) in views.iter().zip(proposals) {
@@ -601,7 +603,8 @@ fn reconcile_notice(
     }
     if let Err(error) = notice::settle(state_dir, &names) {
         reporter.warn(&format!(
-            "failed to update the remote notice state: {error}"
+            "failed to update the remote notice state: {}",
+            chain_message(&error)
         ));
     }
 }

@@ -57,7 +57,7 @@ pub enum ModuleDiscoveryError {
     },
 
     /// An IO error while traversing the repository.
-    #[error("failed to read {path}: {source}")]
+    #[error("failed to read {path}")]
     Io {
         /// The path being traversed when IO failed.
         path: Utf8PathBuf,
@@ -67,7 +67,7 @@ pub enum ModuleDiscoveryError {
     },
 
     /// A `patina.toml` failed to parse.
-    #[error("failed to parse {path} as TOML: {source}")]
+    #[error("failed to parse {path} as TOML")]
     Parse {
         /// The manifest file that failed to parse.
         path: Utf8PathBuf,

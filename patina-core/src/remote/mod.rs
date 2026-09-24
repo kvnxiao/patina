@@ -138,7 +138,7 @@ pub(crate) enum RemoteRepr {
     Git(#[from] git::GitError),
 
     /// A filesystem operation on the remote cache failed.
-    #[error("{action} {path} failed: {source}")]
+    #[error("{action} {path} failed")]
     Cache {
         /// What was being attempted, phrased to read before the path
         /// (`"reading"`, `"removing"`).
@@ -151,7 +151,7 @@ pub(crate) enum RemoteRepr {
     },
 
     /// The lockfile could not be read or written.
-    #[error("failed to access the lockfile {path}: {source}")]
+    #[error("failed to access the lockfile {path}")]
     LockfileIo {
         /// The lockfile path.
         path: Utf8PathBuf,
@@ -161,7 +161,7 @@ pub(crate) enum RemoteRepr {
     },
 
     /// The lockfile is not valid TOML.
-    #[error("failed to parse {path} as TOML: {source}")]
+    #[error("failed to parse {path} as TOML")]
     LockfileToml {
         /// The lockfile path.
         path: Utf8PathBuf,
@@ -207,7 +207,7 @@ pub(crate) enum RemoteRepr {
     },
 
     /// A `[remotes.<name>]` key is not a usable remote name.
-    #[error("the lock entry key `{name}` is not a usable remote name: {source}")]
+    #[error("the lock entry key `{name}` is not a usable remote name")]
     LockfileName {
         /// The offending key.
         name: String,
@@ -220,7 +220,7 @@ pub(crate) enum RemoteRepr {
     #[error(
         "the lockfile carries two entries for the remote `{name}`; a remote has one pin, and \
          names are compared ignoring case and Unicode normalization, so the two cannot both be \
-         honoured. Delete the stale entry, or re-pin with `patina remote update {name}`"
+         honoured; delete the stale entry, or re-pin with `patina remote update {name}`"
     )]
     LockfileDuplicate {
         /// The name claimed twice.
@@ -256,7 +256,7 @@ pub(crate) enum RemoteRepr {
     /// else.
     #[error(
         "the checkout for remote `{name}` contains a symbolic link ({path}); refusing to deploy \
-         from it. Remove the cache directory and re-run `patina apply` to re-materialize"
+         from it; remove the cache directory and re-run `patina apply` to re-materialize"
     )]
     SymlinkInCheckout {
         /// The remote whose checkout holds the link.
@@ -289,7 +289,7 @@ pub(crate) enum RemoteRepr {
     /// converge to the committed lock.
     #[error(
         "the remote `{name}` is pinned to rev {rev}, which is not in the local cache and could \
-         not be fetched: {source}"
+         not be fetched"
     )]
     ColdCache {
         /// The remote whose pin could not be materialized.

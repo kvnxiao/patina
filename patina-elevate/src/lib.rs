@@ -129,14 +129,25 @@ pub fn run(command: &Command) -> ExitCode {
     clippy::print_stderr,
     reason = "the helper has no Reporter; the typed error on stderr is the documented exit-1 path"
 )]
-fn report_result<E: std::error::Error>(action: &str, result: Result<(), E>) -> ExitCode {
+fn report_result<E: std::error::Error + 'static>(action: &str, result: Result<(), E>) -> ExitCode {
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("patina-elevate: {action} failed: {error}");
+            eprintln!("patina-elevate: {action} failed: {}", chain_message(&error));
             ExitCode::FAILURE
         }
     }
+}
+
+pub(crate) fn chain_message(error: &(dyn std::error::Error + 'static)) -> String {
+    let mut message = error.to_string();
+    let mut source = error.source();
+    while let Some(cause) = source {
+        message.push_str(": ");
+        message.push_str(&cause.to_string());
+        source = cause.source();
+    }
+    message
 }
 
 #[cfg(test)]

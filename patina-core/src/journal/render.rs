@@ -44,7 +44,7 @@ pub enum PlanRenderError {
     /// The plan file at `path` could not be opened or read. The wrapped
     /// error carries the underlying IO cause; `path` is surfaced so the
     /// CLI can name it.
-    #[error("could not read plan file `{path}`: {source}")]
+    #[error("could not read plan file `{path}`")]
     Read {
         /// The path that could not be read.
         path: Utf8PathBuf,
@@ -57,7 +57,7 @@ pub enum PlanRenderError {
     /// [`JournalError::VersionMismatch`](super::JournalError::VersionMismatch)
     /// for a plan from a newer binary, which the CLI surfaces naming both
     /// versions.
-    #[error("could not decode plan file `{path}`: {source}")]
+    #[error("could not decode plan file `{path}`")]
     Decode {
         /// The path whose contents failed to decode.
         path: Utf8PathBuf,

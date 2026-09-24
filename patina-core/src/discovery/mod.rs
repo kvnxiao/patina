@@ -68,13 +68,13 @@ pub(crate) fn read_manifest_head(path: &Utf8Path) -> Result<ManifestHead, Manife
 /// Failure modes when reading the `[patina]` head of a manifest.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum ManifestHeadError {
-    #[error("failed to read {path}: {source}")]
+    #[error("failed to read {path}")]
     Io {
         path: camino::Utf8PathBuf,
         #[source]
         source: std::io::Error,
     },
-    #[error("failed to parse {path} as TOML: {source}")]
+    #[error("failed to parse {path} as TOML")]
     Parse {
         path: camino::Utf8PathBuf,
         #[source]

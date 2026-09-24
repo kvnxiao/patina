@@ -34,7 +34,7 @@ use std::env;
 pub enum PathError {
     /// The current working directory could not be read while resolving a
     /// relative path.
-    #[error("failed to read current working directory while resolving {path}: {source}")]
+    #[error("failed to read current working directory while resolving {path}")]
     CwdUnavailable {
         /// The path being resolved when the CWD read failed.
         path: Utf8PathBuf,
@@ -57,7 +57,7 @@ pub enum PathError {
     /// A filesystem canonicalization call failed for a path the engine
     /// believed existed (existence is re-checked, so this is a TOCTOU
     /// race or a permission error rather than a plain not-found).
-    #[error("failed to canonicalize {path}: {source}")]
+    #[error("failed to canonicalize {path}")]
     Filesystem {
         /// The path that failed to canonicalize.
         path: Utf8PathBuf,

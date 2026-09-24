@@ -40,6 +40,26 @@ fn pre_apply_hook_failure_exits_2() {
 }
 
 #[test]
+fn malformed_module_manifest_prints_its_parse_error_once() {
+    let f = Fixture::new();
+    f.module("shell", "[[file]\n");
+
+    let out = f.apply(&["--yes"]);
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(
+        code(&out),
+        1,
+        "a manifest parse failure exits 1; stderr: {stderr}"
+    );
+    assert_eq!(
+        stderr.matches("TOML parse error").count(),
+        1,
+        "each cause in the error chain must print once; stderr: {stderr}"
+    );
+}
+
+#[test]
 fn post_apply_hook_failure_exits_3() {
     let f = Fixture::new();
     hook_module(&f, "post_apply", "exit 1");

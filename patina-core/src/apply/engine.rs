@@ -45,6 +45,7 @@ use crate::config::parse_root_config;
 use crate::discovery::discover_modules;
 use crate::discovery::resolve_repository_root;
 use crate::error::EngineError;
+use crate::error::chain_message;
 use crate::journal::ApplyRecord;
 use crate::journal::Disposition;
 use crate::journal::ExpectedTarget;
@@ -731,7 +732,7 @@ impl<'a> RemoteRegistry<'a> {
                 Err(error) => {
                     tracing::warn!(
                         remote = name,
-                        %error,
+                        error = %chain_message(&error),
                         "patina.lock could not be read; drift for remote-backed entries is \
                          unknown"
                     );
@@ -807,7 +808,7 @@ fn reread_pins(resolved: &ResolvedPlan) -> Option<Vec<(RemoteName, String)>> {
     let lockfile = Lockfile::load(&lockfile_path(&resolved.repo_root))
         .inspect_err(|error| {
             tracing::warn!(
-                %error,
+                error = %chain_message(error),
                 "leaving the declared remotes' checkouts alone: patina.lock could not be read, \
                  so which revs are pinned is unknown"
             );
@@ -2138,7 +2139,7 @@ pub async fn execute(
                 }
             }
             Err(error) => tracing::warn!(
-                %error,
+                error = %chain_message(&error),
                 "failed to prune unreferenced remote checkouts; the committed apply is unaffected"
             ),
         }

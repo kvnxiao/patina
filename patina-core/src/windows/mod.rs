@@ -83,7 +83,7 @@ pub enum DevModeStatus {
 #[non_exhaustive]
 pub enum WindowsError {
     /// A Win32 call backing one of the registry / token reads failed.
-    #[error("Windows API call `{call}` failed: {source}")]
+    #[error("Windows API call `{call}` failed")]
     WinApi {
         /// The Win32 / winsafe call that failed (e.g. `RegOpenKeyEx`).
         call: &'static str,
@@ -95,7 +95,7 @@ pub enum WindowsError {
     /// A previous run's Defender result file could not be removed before
     /// launching the elevated helper. Leaving it in place would let the stale
     /// verdict be read as this run's, so the launch is refused instead.
-    #[error("failed to clear the stale Defender result file `{path}`: {source}")]
+    #[error("failed to clear the stale Defender result file `{path}`")]
     StaleReceipt {
         /// The result file that could not be removed.
         path: camino::Utf8PathBuf,

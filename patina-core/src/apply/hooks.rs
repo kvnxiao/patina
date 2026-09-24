@@ -95,7 +95,7 @@ pub enum HookError {
 
     /// Evaluating a hook's `when` predicate failed (an undefined variable
     /// under strict-undefined, or a syntax / evaluation error).
-    #[error("hook `when` predicate failed: {source}")]
+    #[error("hook `when` predicate failed")]
     When {
         /// The underlying template-evaluation error.
         #[source]
@@ -105,7 +105,7 @@ pub enum HookError {
     /// Spawning or awaiting the hook's shell process failed at the OS
     /// level (the binary resolved but could not be executed, or the child
     /// could not be waited on).
-    #[error("hook command `{command}` failed to execute: {source}")]
+    #[error("hook command `{command}` failed to execute")]
     Spawn {
         /// The hook command that could not be run.
         command: String,

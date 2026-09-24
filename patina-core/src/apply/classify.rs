@@ -101,7 +101,7 @@ pub enum ClassifyError {
     /// engine canonicalizes sources before classification, so this is a
     /// genuine read failure (permissions, a source removed mid-plan) rather
     /// than a path slip.
-    #[error("failed to read source {path} for classification: {source}")]
+    #[error("failed to read source {path} for classification")]
     Io {
         /// The source path whose read failed.
         path: camino::Utf8PathBuf,

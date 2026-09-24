@@ -36,7 +36,7 @@ use ignore::gitignore::GitignoreBuilder;
 pub enum IgnoreRulesError {
     /// A declared pattern is not a valid glob. The pattern is quoted so the
     /// author can find it in the manifest without counting list positions.
-    #[error("ignore pattern `{pattern}` is not a valid glob: {source}")]
+    #[error("ignore pattern `{pattern}` is not a valid glob")]
     Pattern {
         /// The offending pattern exactly as authored.
         pattern: String,
@@ -46,7 +46,7 @@ pub enum IgnoreRulesError {
     },
 
     /// The assembled pattern set could not be compiled into a matcher.
-    #[error("failed to compile the ignore rules for source `{source_root}`: {source}")]
+    #[error("failed to compile the ignore rules for source `{source_root}`")]
     Build {
         /// The entry source directory the rules were anchored at.
         source_root: String,
