@@ -23,7 +23,7 @@ List the acceptance criteria this PR addresses and mark each as done:
 
 If any criteria are NOT addressed by this PR, explain why and what follow-up is planned:
 
-<!-- e.g., "Manual reboot-survival validation deferred to a follow-up PR; tracked in issue #N." -->
+<!-- e.g., "Manual Windows UAC-prompt validation deferred to a follow-up PR; tracked in issue #N." -->
 
 ## Notable decisions
 

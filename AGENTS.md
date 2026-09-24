@@ -24,7 +24,6 @@ V1.0 is complete when a user can:
 - **Preview safely.** Diff-and-prompt by default; non-interactive shells fall through to plan-only.
 - **Recover.** `patina status` reports drift; `patina rollback` restores pre-apply state; `patina debug journal` decodes the binary journal post-mortem.
 - **Bootstrap.** `init`, `add`, `remove`, `promote`, `doctor` cover repo setup and migration; Windows symlink elevation via Developer Mode or UAC.
-- **Watch.** A background service reapplies on source changes and reports files modified outside Patina.
 - **Consume remote sources.** The root manifest declares each third-party git repository as a `[[remote]]`. Any entry deploys from a pinned checkout of one with `remote = "<name>"`. `patina.lock` is the committed statement every machine converges to, and `patina remote list` / `check` / `update` / `prune` manage it. Normative spec: `docs/REMOTE_SOURCES.md`.
 
 ### Quality bar
@@ -54,13 +53,14 @@ Not in v1.0:
 - An embedded scripting language
 - Native encryption
 - Cross-machine state sync, machine inventory, or dashboards
+- A background service that re-applies on source changes and notifies on drift (see `docs/FUTURE_FEATURES.md`)
 
 If the user asks for one of these, the answer is "not in v1.0". Surface it as a question for a future change.
 
 ### Known unknowns
 
 - **`postcard` wire-format stability.** Mitigated by the journal version envelope.
-- **`fs2` advisory lock semantics.** Patina handles the POSIX `flock(2)` and Windows `LockFileEx` differences for single-CLI and watcher↔CLI coordination.
+- **`fs2` advisory lock semantics.** Patina handles the POSIX `flock(2)` and Windows `LockFileEx` differences for coordination between CLI processes.
 - **`tokio` file I/O remains `spawn_blocking`-backed** in v1.0.
 - **MiniJinja strict-undefined** (including the Jinja2 `{% else %}` empty-string rule) is acceptable.
 - **Power-loss / kernel-panic durability.** Backups are not fsync'd before an overwrite. Process termination (`kill -9`, page cache intact) therefore converges on the next run; a power cut can leave the overwrite durable and its backup not. Full never-intermediate durability under power loss (atomic temp+rename target writes plus fsync of backups and parent dirs) is a post-1.0 hardening item.
@@ -102,7 +102,7 @@ The next review rejects any violation of these rules.
 
 These Patina-specific rules extend the `rust-rules` Skill with crate choices. When they conflict with a Skill rule, the Skill wins; update this file.
 
-- **On-disk format version (pre-release no-bump policy):** the `postcard` binary formats (journal plan, committed apply record, watch drift cache) share one major-version envelope, `FILE_MAJOR_VERSION` in `patina-core/src/journal/plan.rs`. **Hold the major at `1` until v1.0.** Pre-release has no shipped state to preserve, so breaking layout changes keep major `1` with no migration; an older binary then refuses a newer file (`decode_envelope` rejects `found > supported`). Bump the major once, at the v1.0 boundary, where it becomes a real compatibility contract.
+- **On-disk format version (pre-release no-bump policy):** the `postcard` binary formats (journal plan, committed apply record) share one major-version envelope, `FILE_MAJOR_VERSION` in `patina-core/src/journal/plan.rs`. **Hold the major at `1` until v1.0.** Pre-release has no shipped state to preserve, so breaking layout changes keep major `1` with no migration; an older binary then refuses a newer file (`decode_envelope` rejects `found > supported`). Bump the major once, at the v1.0 boundary, where it becomes a real compatibility contract.
 - **CLI output:** human-readable by default with color where appropriate, JSON when `--json` is set. Use the `output::Reporter` abstraction, not direct prints.
 - **Tests:** integration tests use `tempfile::TempDir` for repo fixtures. Snapshot tests use `insta`. Declare `#![cfg(test)]` in an integration-test crate whose helper functions call `expect`, panic, index, or print, so the `clippy.toml` test allowances cover those helpers.
 - **Diagrams in docs:** prefer Mermaid (` ```mermaid ` fenced blocks) when it can express the diagram. GitHub renders Mermaid and diffs it per node. Use ASCII for directory trees with inline comments, exact-byte layouts, and terminal output.
