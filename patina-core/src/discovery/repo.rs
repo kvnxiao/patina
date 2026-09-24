@@ -13,7 +13,6 @@
 use super::MANIFEST_FILENAME;
 use super::ManifestHeadError;
 use super::read_manifest_head;
-use crate::error::chain_message;
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
 use std::env;
@@ -50,12 +49,13 @@ pub enum RepoDiscoveryError {
 
     /// The `PATINA_REPO` value pointed at a path that did not exist, was
     /// not a directory, or whose manifest could not be loaded.
-    #[error("PATINA_REPO points at {path} but no valid root patina.toml was found there: {reason}")]
+    #[error("PATINA_REPO points at {path} but no valid root patina.toml was found there")]
     EnvVarInvalid {
         /// The path read from `PATINA_REPO`.
         path: Utf8PathBuf,
-        /// Human-readable reason the path was rejected.
-        reason: String,
+        /// The reason [`validate_repo_root`] rejected the path.
+        #[source]
+        source: RepoRootError,
     },
 
     /// The current working directory was not valid UTF-8 (rare; only on
@@ -90,6 +90,71 @@ pub enum RepoDiscoveryError {
         #[source]
         source: std::io::Error,
     },
+}
+
+/// Reasons [`validate_repo_root`] rejects a path as a repository root.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum RepoRootError {
+    /// The path is not an existing directory.
+    #[error("{path} is not a directory")]
+    NotADirectory {
+        /// The rejected path.
+        path: Utf8PathBuf,
+    },
+
+    /// The directory contains no `patina.toml` file.
+    #[error("no {MANIFEST_FILENAME} found at {manifest}")]
+    ManifestMissing {
+        /// The path where the manifest was expected.
+        manifest: Utf8PathBuf,
+    },
+
+    /// The manifest's `[patina]` table does not declare `root = true`.
+    #[error("{manifest} is missing `root = true` in its `[patina]` table")]
+    NotRoot {
+        /// The manifest without the root declaration.
+        manifest: Utf8PathBuf,
+    },
+
+    /// The manifest could not be read.
+    #[error("failed to read the manifest")]
+    ReadManifest {
+        /// The manifest that could not be read.
+        manifest: Utf8PathBuf,
+        /// The underlying IO error.
+        #[source]
+        source: std::io::Error,
+    },
+
+    /// The manifest could not be parsed.
+    #[error("failed to parse {manifest} as TOML")]
+    ParseManifest {
+        /// The manifest that failed to parse.
+        manifest: Utf8PathBuf,
+        /// The underlying TOML parse error.
+        #[source]
+        source: Box<toml::de::Error>,
+    },
+
+    /// Canonicalizing the validated root failed.
+    #[error(transparent)]
+    Canonicalize(#[from] crate::paths::PathError),
+}
+
+impl From<ManifestHeadError> for RepoRootError {
+    fn from(value: ManifestHeadError) -> Self {
+        match value {
+            ManifestHeadError::Io { path, source } => Self::ReadManifest {
+                manifest: path,
+                source,
+            },
+            ManifestHeadError::Parse { path, source } => Self::ParseManifest {
+                manifest: path,
+                source,
+            },
+        }
+    }
 }
 
 /// Resolve the dotfiles repository root.
@@ -131,8 +196,8 @@ pub fn resolve_repository_root_with(
             let path = Utf8PathBuf::from(raw);
             match validate_repo_root(&path) {
                 Ok(canonical) => return Ok(canonical),
-                Err(reason) => {
-                    return Err(RepoDiscoveryError::EnvVarInvalid { path, reason });
+                Err(source) => {
+                    return Err(RepoDiscoveryError::EnvVarInvalid { path, source });
                 }
             }
         }
@@ -258,27 +323,23 @@ pub fn write_persisted_default(
 ///
 /// # Errors
 ///
-/// Returns a human-readable reason string when `path` is not a directory,
-/// contains no `patina.toml`, has a manifest missing `root = true`, or the
-/// manifest cannot be read, parsed, or canonicalized. The string is a
-/// diagnostic for display, not a structured error to branch on.
-pub fn validate_repo_root(path: &Utf8Path) -> Result<Utf8PathBuf, String> {
+/// Returns a [`RepoRootError`] when `path` is not a directory or cannot be
+/// canonicalized, or when its `patina.toml` is absent, cannot be read or
+/// parsed, or is missing `root = true`.
+pub fn validate_repo_root(path: &Utf8Path) -> Result<Utf8PathBuf, RepoRootError> {
     if !path.is_dir() {
-        return Err(format!("{path} is not a directory"));
+        return Err(RepoRootError::NotADirectory {
+            path: path.to_path_buf(),
+        });
     }
     let manifest = path.join(MANIFEST_FILENAME);
     if !manifest.is_file() {
-        return Err(format!("no {MANIFEST_FILENAME} found at {manifest}"));
+        return Err(RepoRootError::ManifestMissing { manifest });
     }
-    match read_manifest_head(&manifest) {
-        Ok(head) if head.patina.root == Some(true) => crate::paths::canonicalize(path)
-            .map_err(|e| format!("canonicalize failed: {}", chain_message(&e))),
-        Ok(_) => Err(format!(
-            "{manifest} is missing `root = true` in its `[patina]` table"
-        )),
-        Err(ManifestHeadError::Io { source, .. }) => Err(format!("read failed: {source}")),
-        Err(ManifestHeadError::Parse { source, .. }) => Err(format!("parse failed: {source}")),
+    if read_manifest_head(&manifest)?.patina.root != Some(true) {
+        return Err(RepoRootError::NotRoot { manifest });
     }
+    Ok(crate::paths::canonicalize(path)?)
 }
 
 /// Walk upward from `start` looking for a `patina.toml` with

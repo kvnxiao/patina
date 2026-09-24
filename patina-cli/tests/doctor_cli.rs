@@ -104,7 +104,7 @@ fn fix_yes_writes_default_repo_from_cwd_and_exits_zero() {
 }
 
 #[test]
-fn fix_yes_from_non_repo_cwd_exits_one_and_writes_no_pointer() {
+fn fix_yes_from_non_repo_cwd_exits_one_names_the_cause_and_writes_no_pointer() {
     let fx = Fixture::new();
     let not_a_repo = fx.home.join("not_a_repo");
     fs_err::create_dir_all(not_a_repo.as_std_path()).expect("mkdir non-repo cwd");
@@ -120,6 +120,10 @@ fn fix_yes_from_non_repo_cwd_exits_one_and_writes_no_pointer() {
     assert!(
         stderr.contains("not a valid Patina repository"),
         "the refusal must explain the CWD is not a repository, got stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("no patina.toml found"),
+        "the refusal must include the validation cause, got stderr: {stderr}"
     );
 
     let pointer = fx.state_root().join("default_repo");
