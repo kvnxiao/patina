@@ -520,7 +520,7 @@ fn mode_label(mode: patina_core::FileMode) -> &'static str {
 /// Patina never pipes to an external pager. The embedded renderer is the only
 /// source of the rendered string, so stdout stays deterministic.
 fn render_diff(resolved: &ResolvedPlan, orphans: &[Orphan]) -> Result<String> {
-    diff::render(resolved, orphans).map_err(|e| anyhow!(e))
+    diff::render(resolved, orphans)
 }
 
 /// Report a non-JSON apply result through the reporter.
