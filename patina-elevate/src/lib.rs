@@ -112,7 +112,7 @@ pub enum Command {
 ///
 /// The action's outcome maps to `0` on success, or `1` after writing the typed
 /// failure to stderr. [`parse`] owns the exit-`2` usage path.
-#[must_use = "the returned code is the process's terminal exit status"]
+#[must_use]
 pub fn run(command: &Command) -> ExitCode {
     match command {
         Command::EnableDeveloperMode => {

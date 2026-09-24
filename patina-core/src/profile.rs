@@ -80,7 +80,6 @@ pub enum ProfileSource {
 ///
 /// `name` is the empty string iff `source == ProfileSource::Fallback`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[must_use = "the resolved profile is consumed by the variable resolver"]
 pub struct Resolution {
     /// Resolved profile name, or the empty string for the no-profile
     /// fallback.

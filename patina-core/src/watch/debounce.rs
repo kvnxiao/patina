@@ -62,7 +62,6 @@ pub struct EventBatch {
 impl EventBatch {
     /// Build a batch from `paths` alone, stamping every entry with the current
     /// instant. For constructing a batch outside the debouncer callback.
-    #[must_use]
     pub fn from_paths(paths: Vec<Utf8PathBuf>) -> Self {
         let observed = vec![Instant::now(); paths.len()];
         Self { paths, observed }
@@ -95,7 +94,6 @@ impl EventBatch {
     }
 
     /// Whether the batch touches no paths.
-    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.paths.is_empty()
     }

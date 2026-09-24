@@ -24,7 +24,7 @@ use clap::ValueEnum;
 ///
 /// [`crate::main`] returns the resolved code as the process exit status. A
 /// code outside `0..=255` resolves to [`std::process::ExitCode::FAILURE`].
-#[must_use = "the returned exit code is the process's terminal status"]
+#[must_use]
 pub(crate) fn resolve_exit_code(
     outcome: anyhow::Result<i32>,
     reporter: &mut impl Reporter,
@@ -81,7 +81,6 @@ impl ColorChoiceArg {
     /// Map to the `anstream` policy the reporter's auto-stream consumes.
     /// `Auto` defers the per-stream terminal / `NO_COLOR` decision to
     /// `anstream`; `Always` / `Never` are unconditional.
-    #[must_use = "the returned policy drives whether output is styled"]
     pub(crate) fn choice(self) -> anstream::ColorChoice {
         match self {
             ColorChoiceArg::Auto => anstream::ColorChoice::Auto,

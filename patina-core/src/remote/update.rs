@@ -34,7 +34,6 @@ pub struct RemoteView {
 impl RemoteView {
     /// The remote's name, which entries select it by and which keys its pin,
     /// its cache directory, and every `patina remote` verb.
-    #[must_use = "the name keys the pin, the cache directory, and every verb"]
     pub fn name(&self) -> &RemoteName {
         &self.spec.name
     }
@@ -93,7 +92,6 @@ pub fn inventory() -> Result<RemoteInventory, EngineError> {
 impl RemoteInventory {
     /// The view for the remote `name` addresses, if the root manifest declares
     /// it.
-    #[must_use = "the view carries the spec and pin a command operates on"]
     pub fn find(&self, name: &str) -> Option<&RemoteView> {
         self.remotes.iter().find(|view| view.name().matches(name))
     }
@@ -113,7 +111,6 @@ pub struct CheckResult {
 impl CheckResult {
     /// Whether the upstream tip has moved off the pin (or the remote is
     /// unpinned, which is also something to act on).
-    #[must_use = "the answer decides whether this remote appears in the notice"]
     pub fn has_update(&self) -> bool {
         self.pinned_rev.as_deref() != Some(self.upstream_rev.as_str())
     }

@@ -78,7 +78,6 @@ pub const EXCLUSIVE_TIMEOUT_ENV: &str = "PATINA_LOCK_TIMEOUT_MS";
 /// that duration is used instead. The mutating subcommands acquire the
 /// exclusive lock with this value so the timeout cap is parameterisable
 /// from the test harness.
-#[must_use = "the returned duration is the exclusive-lock acquisition cap"]
 pub fn exclusive_timeout() -> Duration {
     match std::env::var(EXCLUSIVE_TIMEOUT_ENV) {
         Ok(raw) => match raw.parse::<u64>() {
@@ -118,7 +117,6 @@ impl LockKind {
     /// assert_eq!(LockKind::Exclusive.label(), "exclusive");
     /// assert_eq!(LockKind::Shared.label(), "shared");
     /// ```
-    #[must_use = "the label is a value to use, not a side effect"]
     pub const fn label(self) -> &'static str {
         match self {
             Self::Exclusive => "exclusive",
@@ -194,13 +192,11 @@ pub struct LockGuard {
 
 impl LockGuard {
     /// The lock-file path this guard holds.
-    #[must_use = "returns the lock path for diagnostics"]
     pub fn path(&self) -> &Utf8Path {
         &self.path
     }
 
     /// The acquisition mode this guard holds.
-    #[must_use = "returns the held lock mode"]
     pub fn kind(&self) -> LockKind {
         self.kind
     }

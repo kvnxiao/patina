@@ -30,7 +30,6 @@ use camino::Utf8PathBuf;
 /// function, not [`Utf8Path::exists`]. `exists` follows the link, so a
 /// backed-up symlink whose destination is gone reads as absent. Restore
 /// then deletes the target and fails to recreate the link.
-#[must_use = "the presence result decides whether to restore from or delete the entry"]
 pub(crate) fn entry_present(path: &Utf8Path) -> bool {
     fs_err::symlink_metadata(path).is_ok()
 }

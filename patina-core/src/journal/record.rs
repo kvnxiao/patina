@@ -91,7 +91,6 @@ pub enum ExpectedTarget {
 
 impl ExpectedTarget {
     /// The canonical absolute target path this expectation is for.
-    #[must_use = "the target path is the key status classifies against"]
     pub fn target(&self) -> &str {
         match self {
             Self::Symlink { target, .. } | Self::Content { target, .. } => target,
@@ -101,7 +100,6 @@ impl ExpectedTarget {
     /// The canonical absolute source path this target was materialized from:
     /// the recorded link target for a symlink, or the copied /
     /// rendered source for a content target.
-    #[must_use = "the source path maps the target back to its origin"]
     pub fn source(&self) -> &str {
         match self {
             Self::Symlink { link_target, .. } => link_target,
@@ -111,7 +109,6 @@ impl ExpectedTarget {
 
     /// The index of the `[[file]]` entry that materialized this target.
     /// Rollback groups targets by this index to honour per-entry atomicity.
-    #[must_use = "the entry index groups targets into atomic rollback units"]
     pub fn entry(&self) -> u32 {
         match self {
             Self::Symlink { entry, .. } | Self::Content { entry, .. } => *entry,
@@ -121,7 +118,6 @@ impl ExpectedTarget {
     /// How this target was classified at plan time. Per-leaf for a
     /// tree target; recovery and rollback leave an `Unchanged`
     /// target in place.
-    #[must_use = "the disposition decides whether rollback and recovery touch this target"]
     pub fn disposition(&self) -> Disposition {
         match self {
             Self::Symlink { disposition, .. } | Self::Content { disposition, .. } => *disposition,
@@ -132,7 +128,6 @@ impl ExpectedTarget {
 /// Compute the 32-byte `blake3` content hash of a byte slice. Used both
 /// when recording an apply and when probing the live file during status, so
 /// the two agree byte-for-byte.
-#[must_use = "the hash is compared to detect content drift"]
 pub fn content_hash(bytes: &[u8]) -> [u8; 32] {
     *blake3::hash(bytes).as_bytes()
 }
@@ -161,7 +156,6 @@ pub struct ApplyRecord {
 
 impl ApplyRecord {
     /// Build a record from its metadata and per-target expectations.
-    #[must_use = "an apply record must be written into the commit sentinel to take effect"]
     pub fn new(last_apply: LastApply, targets: Vec<ExpectedTarget>) -> Self {
         Self {
             last_apply,
@@ -202,7 +196,6 @@ impl ApplyRecord {
 /// 3339 string (`YYYY-MM-DDTHH:MM:SSZ`). Returns the input unchanged if it
 /// does not match the compact shape, so a non-standard timestamp is
 /// surfaced rather than silently mangled.
-#[must_use = "the RFC 3339 timestamp is the `at` field status reports"]
 pub fn timestamp_to_rfc3339(ts: &str) -> String {
     // The compact form is produced by `clock::current_timestamp` via jiff's
     // `strftime`, so jiff round-trips it. It is parsed back as a civil
@@ -218,7 +211,6 @@ pub fn timestamp_to_rfc3339(ts: &str) -> String {
 /// Whether `path` currently resolves to a symbolic link, reading its
 /// link target. Returns `Some(link_target)` when the path is a symlink,
 /// `None` when it is absent or not a link.
-#[must_use = "the read link target is compared to the recorded expectation"]
 pub fn read_symlink_target(path: &Utf8Path) -> Option<String> {
     let meta = fs_err::symlink_metadata(path).ok()?;
     if !meta.file_type().is_symlink() {

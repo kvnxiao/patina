@@ -16,7 +16,6 @@ use tabwriter::TabWriter;
 /// ANSI mode measures a cell by printable width, so a painted cell pads
 /// exactly as its stripped form does. Writing to a `Vec` cannot fail, so the
 /// unaligned fallback is unreachable. The fallback keeps printing panic-free.
-#[must_use = "use the aligned block"]
 pub(crate) fn align(table: &str) -> String {
     let mut aligned: Vec<u8> = Vec::new();
     let mut writer = TabWriter::new(&mut aligned)
@@ -34,7 +33,6 @@ pub(crate) fn align(table: &str) -> String {
 ///
 /// [`align`] pads a cell only when a tab follows it, so a row ends immediately
 /// after its last cell.
-#[must_use = "use the row in a table"]
 pub(crate) fn row(cells: &[&str]) -> String {
     let mut row = cells.join("\t");
     row.push('\n');

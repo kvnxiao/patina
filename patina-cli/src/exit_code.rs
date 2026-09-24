@@ -63,7 +63,6 @@ pub(crate) enum ExitCode {
 
 impl ExitCode {
     /// The numeric process exit code this outcome maps to.
-    #[must_use = "the returned exit code is the process's terminal status"]
     pub(crate) fn code(self) -> i32 {
         self as i32
     }
@@ -76,7 +75,6 @@ impl ExitCode {
     /// `EngineError`: the engine reports a failed `must_succeed` hook as an
     /// `ApplyResult` outcome, and a declined prompt is a control-flow decision
     /// in the command layer.
-    #[must_use = "the returned exit code is the process's terminal status"]
     pub(crate) fn from_engine_error(error: &EngineError) -> Self {
         match error {
             EngineError::Lock(LockError::Timeout { .. }) => ExitCode::LockTimeout,
@@ -90,7 +88,6 @@ impl ExitCode {
     /// `EngineError` is rarely the outermost error. A chain with no
     /// `EngineError` in it (a pure presentation-layer failure) maps to
     /// [`ExitCode::Generic`].
-    #[must_use = "the returned exit code is the process's terminal status"]
     pub(crate) fn from_error_chain(error: &anyhow::Error) -> Self {
         error
             .chain()

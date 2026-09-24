@@ -59,7 +59,7 @@ impl RemoteError {
 
     /// The plan-time failure for an entry naming a remote the root manifest
     /// does not declare.
-    #[must_use = "the error names the remote no declaration matches"]
+    #[must_use]
     pub fn undeclared_remote(name: &str) -> Self {
         RemoteRepr::UndeclaredRemote {
             name: name.to_owned(),
@@ -68,7 +68,7 @@ impl RemoteError {
     }
 
     /// The plan-time failure for a declared remote with no pin.
-    #[must_use = "the error tells the user which command creates the first pin"]
+    #[must_use]
     pub fn missing_lock_entry(name: &str) -> Self {
         RemoteRepr::MissingLockEntry {
             name: name.to_owned(),
@@ -79,7 +79,7 @@ impl RemoteError {
     /// The plan-time failure for a remote-sourced entry whose source resolves
     /// outside its checkout (a `..` in the declared source, or a symlink the
     /// checkout shipped).
-    #[must_use = "the error names the source that escaped its checkout"]
+    #[must_use]
     pub fn source_escapes_checkout(name: &str, source: &Utf8Path) -> Self {
         RemoteRepr::SourceEscapesCheckout {
             name: name.to_owned(),
@@ -89,7 +89,7 @@ impl RemoteError {
     }
 
     /// The plan-time failure for a remote checkout that holds a symbolic link.
-    #[must_use = "the error names the link that would dereference outside the checkout"]
+    #[must_use]
     pub fn symlink_in_checkout(name: &str, path: &Utf8Path) -> Self {
         RemoteRepr::SymlinkInCheckout {
             name: name.to_owned(),
@@ -100,7 +100,7 @@ impl RemoteError {
 
     /// The plan-time failure for a remote whose checkout was expected on this
     /// machine but is not materialized.
-    #[must_use = "the error names the remote whose checkout is missing"]
+    #[must_use]
     pub fn checkout_not_materialized(name: &str) -> Self {
         RemoteRepr::CheckoutNotMaterialized {
             name: name.to_owned(),

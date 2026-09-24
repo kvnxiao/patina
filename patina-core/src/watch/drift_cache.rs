@@ -81,7 +81,6 @@ pub struct DriftEntry {
 impl DriftEntry {
     /// Construct a drift entry from its target, the recorded and observed
     /// hashes, and the detection timestamp.
-    #[must_use = "the entry must be placed in a DriftCache to be persisted"]
     pub fn new(
         target: impl Into<Utf8PathBuf>,
         expected_hash: [u8; 32],
@@ -114,7 +113,6 @@ pub struct DriftCache {
 
 impl DriftCache {
     /// Build a drift cache bound to `journal_ts` carrying `entries`.
-    #[must_use = "the cache must be written with write_drift_cache to be persisted"]
     pub fn new(journal_ts: impl Into<String>, entries: Vec<DriftEntry>) -> Self {
         Self {
             journal_ts: journal_ts.into(),
@@ -252,7 +250,6 @@ pub fn load_drift_cache_file(path: impl AsRef<Utf8Path>) -> Result<DriftCache, D
 ///
 /// The output is for a human reading `patina debug drift-cache`; it is
 /// deliberately **not** a stable, machine-parsed format.
-#[must_use = "the rendered cache is the debug command's stdout payload"]
 pub fn render_drift_cache(cache: &DriftCache) -> String {
     use std::fmt::Write as _;
 
@@ -315,7 +312,6 @@ fn render_detected_at(detected_at_unix: i64) -> String {
 /// Reformat a compact journal timestamp the way the journal renderer does.
 /// Re-exported so a caller rendering the bound `journal_ts` in RFC 3339 form
 /// has the same helper the journal uses, rather than a parallel copy.
-#[must_use = "the RFC 3339 timestamp is the human-readable journal binding"]
 pub fn journal_ts_rfc3339(journal_ts: &str) -> String {
     timestamp_to_rfc3339(journal_ts)
 }

@@ -79,7 +79,6 @@ pub enum EnvelopeError {
 /// assert_eq!(&framed[..ENVELOPE_LEN], &1u16.to_le_bytes());
 /// assert_eq!(&framed[ENVELOPE_LEN..], b"abc");
 /// ```
-#[must_use = "the framed bytes are what gets written to disk"]
 pub fn encode_with_envelope(major: u16, body: &[u8]) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(ENVELOPE_LEN + body.len());
     bytes.extend_from_slice(&major.to_le_bytes());

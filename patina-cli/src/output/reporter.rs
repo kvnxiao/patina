@@ -89,7 +89,6 @@ impl StreamReporter {
     /// Construct a reporter with the given color policy. The palette is always
     /// the colored one; `choice` (plus the per-stream terminal check inside
     /// `anstream`) decides whether the styling is written or stripped.
-    #[must_use = "construct the reporter to route user-facing output through it"]
     pub(crate) fn new(choice: ColorChoice) -> Self {
         Self {
             choice,
@@ -206,14 +205,12 @@ pub(crate) struct BufferReporter {
 impl BufferReporter {
     /// Construct an empty capturing reporter over the plain palette, so the
     /// captured bytes contain no escape sequences.
-    #[must_use = "construct the reporter to capture user-facing output"]
     pub(crate) fn new() -> Self {
         Self::with_styles(&Styles::plain())
     }
 
     /// Construct an empty capturing reporter over the production palette, for a
     /// test that asserts on the bytes written to a terminal.
-    #[must_use = "construct the reporter to capture user-facing output"]
     pub(crate) fn colored() -> Self {
         Self::with_styles(&Styles::colored())
     }

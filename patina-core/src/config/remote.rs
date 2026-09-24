@@ -79,14 +79,12 @@ impl RemoteName {
     }
 
     /// The authored spelling.
-    #[must_use = "messages and the lockfile key use the display spelling"]
     pub fn as_str(&self) -> &str {
         &self.display
     }
 
     /// The folded identity key: what names a cache directory and what two
     /// spellings are compared under.
-    #[must_use = "the key is the identity, not the display spelling"]
     pub fn key(&self) -> &str {
         &self.key
     }
@@ -95,7 +93,6 @@ impl RemoteName {
     ///
     /// For the raw strings that arrive from outside a validated manifest: an
     /// entry's `remote = "..."`, a `patina remote update <name>` argument.
-    #[must_use = "the answer decides which declaration a raw spelling selects"]
     pub fn matches(&self, spelling: &str) -> bool {
         self.key == name_key(spelling)
     }
@@ -326,7 +323,6 @@ const RESERVED_NAMES: [&str; 3] = ["notice", "pending", "last_check"];
 /// [`RemoteName`] carries this for every validated name; the bare function is
 /// for the spellings that never went through validation: a directory name the
 /// cache sweep read off disk, a raw selector from a manifest or a command line.
-#[must_use = "the key is the identity every name comparison uses"]
 pub fn name_key(name: &str) -> String {
     crate::caseless::fold(name)
 }

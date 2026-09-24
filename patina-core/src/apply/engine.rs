@@ -238,13 +238,11 @@ pub struct ModuleContext {
 
 impl ModuleContext {
     /// Return the module directory.
-    #[must_use]
     pub fn directory(&self) -> &Utf8Path {
         &self.dir
     }
 
     /// Return the module manifest path.
-    #[must_use]
     pub fn manifest(&self) -> Utf8PathBuf {
         self.dir.join(MANIFEST_FILENAME)
     }
@@ -267,7 +265,6 @@ pub struct PlannedHook {
 
 impl PlannedHook {
     /// Pair a hook entry with its declaring module index.
-    #[must_use]
     pub fn new(entry: HookEntry, module: usize) -> Self {
         Self { entry, module }
     }
@@ -341,7 +338,6 @@ impl ResolvedPlan {
     ///
     /// Matching uses [`manage_key`](crate::status::manage_key). A tree-mode
     /// entry owns paths beneath its declared targets.
-    #[must_use]
     pub fn owner_of(&self, target: &Utf8Path) -> Option<TargetOwner<'_>> {
         use crate::status::manage_key;
 
@@ -2467,7 +2463,6 @@ pub struct Orphan {
 impl Orphan {
     /// [`Orphan`] is `#[non_exhaustive]`, so this constructor is the only way
     /// to build one outside patina-core.
-    #[must_use]
     pub fn new(target: Utf8PathBuf, reason: OrphanReason) -> Self {
         Self { target, reason }
     }
@@ -2492,7 +2487,6 @@ pub enum OrphanReason {
 impl OrphanReason {
     /// The stable lowercase label used in the apply diff and the `--json`
     /// `reaped` array.
-    #[must_use]
     pub fn label(self) -> &'static str {
         match self {
             Self::Ignored => "ignored",
@@ -2684,7 +2678,6 @@ fn remove_target(target: &Utf8Path) -> Result<(), EngineError> {
 /// Whether a materialization wrote rendered/copied content (as opposed to
 /// a symlink). Used by the CLI diff renderer to decide between a content
 /// diff and a link-target diff.
-#[must_use = "the materialization kind selects the diff rendering"]
 pub fn is_content_materialization(materialization: &Materialization) -> bool {
     matches!(
         materialization,

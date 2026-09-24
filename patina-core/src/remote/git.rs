@@ -71,7 +71,6 @@ pub enum GitError {
 ///
 /// Read by `patina doctor` to raise its git-missing finding before a remote
 /// operation fails deeper in.
-#[must_use = "the availability of git decides whether remote operations can run"]
 pub fn git_available() -> bool {
     crate::apply::resolve_on_path(GIT).is_some()
 }
@@ -525,7 +524,6 @@ pub fn resolve_commit(git_dir: &Utf8Path, rev: &str) -> Result<String, GitError>
 /// Every failure reads as "not behind". The repository may not be a git
 /// repository at all, may have no configured remote, or the network may be
 /// down. None of those should make a notify-only check noisy or fatal.
-#[must_use = "the answer selects which notice message is written"]
 pub fn repo_differs_from_origin(repo_root: &Utf8Path) -> bool {
     try_repo_differs_from_origin(repo_root).unwrap_or(false)
 }

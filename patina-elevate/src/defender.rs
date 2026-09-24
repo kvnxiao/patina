@@ -358,7 +358,6 @@ fn write_receipt(request: &Path, outcome: &Result<(), DefenderError>) {
 /// verdict, and multi-line PowerShell errors are flattened to one line. The
 /// CLI parses this format on every host, so the function stays public off
 /// Windows.
-#[must_use = "the launching CLI reads this body as the verdict"]
 pub fn receipt_body(outcome: &Result<(), DefenderError>) -> String {
     match outcome {
         Ok(()) => format!("{RECEIPT_APPLIED}\n"),

@@ -33,7 +33,7 @@ use patina_core::render_plan;
 /// A failed decode is printed through the reporter and maps to exit code 1:
 /// the `debug` group expresses its terminal states as exit codes, like the
 /// rest of the CLI.
-#[must_use = "the returned exit code is the process's terminal status"]
+#[must_use]
 pub(crate) fn run(command: &DebugCommand, reporter: &mut impl Reporter) -> i32 {
     match command {
         DebugCommand::Journal(args) => run_journal(args, reporter),

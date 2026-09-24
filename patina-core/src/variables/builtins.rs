@@ -45,7 +45,6 @@ pub struct Builtins {
 
 impl Builtins {
     /// Capture the built-ins from the current process environment.
-    #[must_use = "the captured snapshot feeds the variable resolver"]
     pub fn current() -> Self {
         Self {
             os: normalized_os(std::env::consts::OS),
@@ -60,7 +59,6 @@ impl Builtins {
     /// Construct a deterministic snapshot for tests. Values are stable
     /// strings, independent of the host environment.
     #[doc(hidden)]
-    #[must_use = "the captured snapshot feeds the variable resolver"]
     pub fn for_tests() -> Self {
         Self {
             os: normalized_os(std::env::consts::OS),

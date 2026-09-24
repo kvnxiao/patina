@@ -100,7 +100,6 @@ pub(crate) enum FindingCode {
 impl FindingCode {
     /// The stable string label for this code, used in both the JSON document
     /// and the human output.
-    #[must_use = "the label is part of the JSON and human output contract"]
     pub(crate) fn label(self) -> &'static str {
         match self {
             FindingCode::WinUnc => "DOC-WIN-UNC",
@@ -127,7 +126,6 @@ pub(crate) enum Level {
 impl Level {
     /// The stable lowercase label for this level, used in the JSON document
     /// and the human output.
-    #[must_use = "the label is part of the JSON and human output contract"]
     pub(crate) fn label(self) -> &'static str {
         match self {
             Level::Info => "info",
@@ -510,7 +508,6 @@ fn repository_declares_symlink(repo_root: &Utf8Path) -> bool {
 /// is unit-testable on any platform.
 ///
 /// The push order is fixed, so the rendered output is deterministic.
-#[must_use = "the computed findings drive the output and exit code"]
 pub(crate) fn compute_findings(inputs: &Inputs) -> Vec<Finding> {
     let mut findings = Vec::new();
 

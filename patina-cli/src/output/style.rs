@@ -169,7 +169,6 @@ impl Styles {
     /// always renders with [`Styles::colored`] and lets the reporter's
     /// auto-stream strip when color is not wanted.
     #[cfg(test)]
-    #[must_use = "construct the style set to render with it"]
     pub(crate) const fn plain() -> Self {
         let none = Style::new();
         Self {
@@ -229,7 +228,6 @@ impl Styles {
     /// (folder). Green, yellow, and red are left for the state tag: green in
     /// place and Patina's, yellow in place but not Patina's, red not in place.
     /// Path and state therefore never use the same hue on one line.
-    #[must_use = "construct the style set to render with it"]
     pub(crate) const fn colored() -> Self {
         Self {
             insert: Style::new().fg_color(Some(Color::Ansi(AnsiColor::Green))),
@@ -285,7 +283,6 @@ impl Styles {
 ///
 /// An empty style renders to zero bytes on both, so the plain palette preserves
 /// `text` byte-for-byte.
-#[must_use = "write or return the painted string"]
 pub(crate) fn paint(style: Style, text: &str) -> String {
     format!("{}{text}{}", style.render(), style.render_reset())
 }

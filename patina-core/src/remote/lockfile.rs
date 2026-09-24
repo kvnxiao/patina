@@ -60,7 +60,6 @@ impl LockEntry {
     /// Parsing succeeds for every entry that came through [`Lockfile::parse`],
     /// which validates the field. The `Option` covers an entry constructed
     /// in-process.
-    #[must_use = "the backdating check compares against the epoch"]
     pub fn updated_at_epoch(&self) -> Option<i64> {
         self.updated_at
             .parse::<jiff::Timestamp>()
@@ -79,7 +78,6 @@ pub struct Lockfile {
 }
 
 /// `<repo_root>/patina.lock`.
-#[must_use = "the CLI reads and writes pins at this path"]
 pub fn lockfile_path(repo_root: &Utf8Path) -> Utf8PathBuf {
     repo_root.join(LOCKFILE_NAME)
 }
@@ -197,7 +195,6 @@ impl Lockfile {
     /// renders of the same pins are therefore byte-identical, and a pin bump
     /// shows up as a one-entry diff. Each key keeps the spelling its author
     /// declared.
-    #[must_use = "commit the rendered document"]
     pub fn render(&self) -> String {
         let mut out = format!("version = {LOCKFILE_VERSION}\n");
         for (name, entry) in &self.remotes {
@@ -215,7 +212,6 @@ impl Lockfile {
     }
 
     /// The pin for `name`, if any.
-    #[must_use = "the pin is the rev apply materializes"]
     pub fn get(&self, name: &RemoteName) -> Option<&LockEntry> {
         self.remotes.get(name)
     }
@@ -256,7 +252,6 @@ impl Lockfile {
     }
 
     /// Whether any pin is recorded.
-    #[must_use = "an empty lockfile means no remote has ever been pinned"]
     pub fn is_empty(&self) -> bool {
         self.remotes.is_empty()
     }

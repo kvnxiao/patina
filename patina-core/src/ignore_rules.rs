@@ -105,7 +105,6 @@ pub fn build(
 ///
 /// The modes with no ignore list pass this. [`crate::walk_files`] says why it
 /// takes a matcher rather than offering an unfiltered variant.
-#[must_use]
 pub fn none() -> Gitignore {
     Gitignore::empty()
 }
@@ -123,7 +122,6 @@ pub fn none() -> Gitignore {
 /// [`Gitignore::matched_path_or_any_parents`] tests the leaf first and rescues
 /// it. A caller using that one marks the leaf managed, the executor never
 /// materializes it, and the target is never reaped.
-#[must_use]
 pub fn prunes(rules: &Gitignore, rel: &Utf8Path) -> bool {
     let mut prefix = Utf8PathBuf::new();
     let mut components = rel.components().peekable();

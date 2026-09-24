@@ -104,7 +104,6 @@ fn timestamp_from_plan_path(path: &Utf8Path) -> String {
 /// count. The timestamp appears in both the compact journal form and its
 /// RFC 3339 rendering. One block per operation follows, naming its mode,
 /// source, and target.
-#[must_use = "the rendered plan is the debug command's stdout payload"]
 pub fn render_plan(plan: &Plan, timestamp: &str) -> String {
     use std::fmt::Write as _;
 

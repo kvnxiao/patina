@@ -66,7 +66,6 @@ impl ProgressCursor {
     }
 
     /// The path of this progress cursor.
-    #[must_use = "the path locates the progress cursor for recovery"]
     pub fn path(&self) -> &Utf8Path {
         &self.path
     }
@@ -75,7 +74,6 @@ impl ProgressCursor {
     /// discarding any torn trailing record shorter than `RECORD_LEN`.
     /// Used by crash recovery to read back a cursor that was
     /// never `fsync`-ed.
-    #[must_use = "the decoded indices drive recovery reconciliation"]
     pub fn decode_completed(bytes: &[u8]) -> Vec<u32> {
         bytes
             .as_chunks::<RECORD_LEN>()
