@@ -41,7 +41,7 @@ use patina_core::LockError;
 /// with exactly that integer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(i32)]
-pub enum ExitCode {
+pub(crate) enum ExitCode {
     /// `0`: the command completed successfully.
     Success = 0,
     /// `1`: a generic failure (config parse, IO, undefined variable,
@@ -64,7 +64,7 @@ pub enum ExitCode {
 impl ExitCode {
     /// The numeric process exit code this outcome maps to.
     #[must_use = "the returned exit code is the process's terminal status"]
-    pub fn code(self) -> i32 {
+    pub(crate) fn code(self) -> i32 {
         self as i32
     }
 
@@ -77,7 +77,7 @@ impl ExitCode {
     /// `ApplyResult` outcome, and a declined prompt is a control-flow decision
     /// in the command layer.
     #[must_use = "the returned exit code is the process's terminal status"]
-    pub fn from_engine_error(error: &EngineError) -> Self {
+    pub(crate) fn from_engine_error(error: &EngineError) -> Self {
         match error {
             EngineError::Lock(LockError::Timeout { .. }) => ExitCode::LockTimeout,
             _ => ExitCode::Generic,
@@ -91,7 +91,7 @@ impl ExitCode {
     /// `EngineError` in it (a pure presentation-layer failure) maps to
     /// [`ExitCode::Generic`].
     #[must_use = "the returned exit code is the process's terminal status"]
-    pub fn from_error_chain(error: &anyhow::Error) -> Self {
+    pub(crate) fn from_error_chain(error: &anyhow::Error) -> Self {
         error
             .chain()
             .find_map(|cause| cause.downcast_ref::<EngineError>())

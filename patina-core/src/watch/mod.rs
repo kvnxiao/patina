@@ -572,14 +572,12 @@ mod tests {
         fs_err::create_dir_all(state.join("journal").as_std_path()).expect("mkdir journal");
 
         let (tx, rx) = tokio::sync::oneshot::channel::<()>();
-        let handle = tokio::spawn(async move {
-            run_foreground_in(&state, async {
-                // Resolve when the oneshot fires (or its sender drops); either
-                // way the shutdown future completes and ends the loop.
-                let _received = rx.await;
-            })
-            .await
-        });
+        // Resolve when the oneshot fires (or its sender drops); either way the
+        // shutdown future completes and ends the loop.
+        let shutdown = async move {
+            let _received = rx.await;
+        };
+        let handle = tokio::spawn(async move { run_foreground_in(&state, shutdown).await });
 
         // Let the loop arm its debouncer and reach the select, then shut down.
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;

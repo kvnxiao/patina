@@ -6,6 +6,8 @@
 //! [`Result<_, EngineError>`](EngineError). The CLI wraps that into
 //! `anyhow::Result` at the call site; `anyhow` lives only in the binary.
 
+#![warn(missing_debug_implementations)]
+
 pub mod apply;
 pub mod backups;
 pub mod caseless;

@@ -1,5 +1,7 @@
 //! Integration tests for watch service cli.
 
+#![cfg(test)]
+
 mod common;
 
 use common::Fixture;

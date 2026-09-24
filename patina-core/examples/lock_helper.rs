@@ -39,15 +39,16 @@ use camino::Utf8PathBuf;
 use patina_core::lock::LockError;
 use patina_core::lock::LockKind;
 use patina_core::lock::acquire;
+use std::process::ExitCode;
 use std::time::Duration;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
 /// Exit code the helper uses on a lock timeout. The integration test
 /// asserts on this; the real CLI's exit-code-4 mapping is handled elsewhere.
-const EXIT_TIMEOUT: i32 = 4;
+const EXIT_TIMEOUT: u8 = 4;
 /// Exit code for any non-timeout failure (bad args, I/O error).
-const EXIT_ERROR: i32 = 2;
+const EXIT_ERROR: u8 = 2;
 
 /// Parsed command-line arguments.
 struct Args {
@@ -60,7 +61,7 @@ struct Args {
 
 /// A non-zero exit with a stderr line already chosen.
 struct Failure {
-    code: i32,
+    code: u8,
     message: String,
 }
 
@@ -114,6 +115,10 @@ fn parse_millis(raw: &str, field: &str) -> Result<Duration, Failure> {
         })
 }
 
+#[expect(
+    clippy::print_stdout,
+    reason = "the helper reports lock timestamps to the parent test over stdout"
+)]
 fn run(args: &Args) -> Result<(), Failure> {
     let lock_path = args.state.join("lock");
     let guard = match acquire(&lock_path, args.kind, args.timeout) {
@@ -146,17 +151,7 @@ fn run(args: &Args) -> Result<(), Failure> {
         code: EXIT_ERROR,
         message: e.to_string(),
     })?;
-    // The test-harness example talks to its parent test process over stdout /
-    // stderr; it is not user-facing CLI output and has no `output::Reporter` to
-    // route through, so the workspace-wide `disallowed-macros` ban is
-    // scoped-out here.
-    #[expect(
-        clippy::disallowed_macros,
-        reason = "test-harness IPC over stdout, not user-facing CLI output"
-    )]
-    {
-        println!("ACQUIRED {acquired}");
-    }
+    println!("ACQUIRED {acquired}");
 
     if args.abort {
         // Terminate abnormally while still holding the lock. The OS must
@@ -166,27 +161,21 @@ fn run(args: &Args) -> Result<(), Failure> {
 
     std::thread::sleep(args.hold);
     let released = nanos_now();
-    #[expect(
-        clippy::disallowed_macros,
-        reason = "test-harness IPC over stdout, not user-facing CLI output"
-    )]
-    {
-        println!("RELEASED {released}");
-    }
+    println!("RELEASED {released}");
     drop(guard);
     Ok(())
 }
 
-fn main() {
-    let result = parse_args().and_then(|args| run(&args));
-    if let Err(failure) = result {
-        #[expect(
-            clippy::disallowed_macros,
-            reason = "test-harness IPC over stderr, not user-facing CLI output"
-        )]
-        {
+#[expect(
+    clippy::print_stderr,
+    reason = "the helper reports failures to the parent test over stderr"
+)]
+fn main() -> ExitCode {
+    match parse_args().and_then(|args| run(&args)) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(failure) => {
             eprintln!("{}", failure.message);
+            ExitCode::from(failure.code)
         }
-        std::process::exit(failure.code);
     }
 }

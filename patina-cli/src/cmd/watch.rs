@@ -48,7 +48,7 @@ use patina_core::exclusive_timeout;
 /// state-directory resolution, the log appender, the journal read, or watcher
 /// arming. Also returns an error when a lifecycle action fails: lock
 /// acquisition, the platform supervisor, or descriptor I/O.
-pub async fn run(args: &WatchArgs, reporter: &mut impl Reporter) -> Result<i32> {
+pub(crate) async fn run(args: &WatchArgs, reporter: &mut impl Reporter) -> Result<i32> {
     emit_debounce_warning(reporter);
 
     if let Some(command) = &args.command {

@@ -254,19 +254,16 @@ fn prune_at(
             if name == BARE_REPO_DIR {
                 continue;
             }
-            if is_scratch_name(name) {
-                if scratch_is_abandoned(&candidate, now, STAGING_MIN_AGE) {
-                    remove_any(&candidate)?;
-                    removed.push(candidate);
-                }
-                continue;
-            }
-            if !is_checkout_name(name)
-                || keep
-                    .iter()
-                    .any(|(kept, rev)| rev == name && kept.key() == module_key)
-                || is_referenced(&candidate, &referenced)
-            {
+            let reclaimable = if is_scratch_name(name) {
+                scratch_is_abandoned(&candidate, now, STAGING_MIN_AGE)
+            } else {
+                is_checkout_name(name)
+                    && !keep
+                        .iter()
+                        .any(|(kept, rev)| rev == name && kept.key() == module_key)
+                    && !is_referenced(&candidate, &referenced)
+            };
+            if !reclaimable {
                 continue;
             }
             remove_any(&candidate)?;

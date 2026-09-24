@@ -25,6 +25,7 @@
 
 use crate::cli::DefenderArgs;
 use crate::cli::DefenderCommand;
+use crate::cmd::apply::Consent;
 use crate::cmd::apply::PromptReader;
 use crate::cmd::apply::Tty;
 use crate::exit_code::ExitCode;
@@ -118,21 +119,25 @@ enum Action {
 /// the elevated helper fails at the engine level. A declined prompt or declined
 /// UAC consent is not an error; it maps to a non-zero exit via the returned
 /// `i32`.
-pub fn run(
+pub(crate) fn run(
     args: &DefenderArgs,
     tty: Tty,
     reader: &mut impl PromptReader,
     reporter: &mut impl Reporter,
 ) -> Result<i32> {
-    match &args.command {
-        DefenderCommand::Apply { yes, json } => {
-            run_reconcile(Action::Apply, *yes, *json, tty, reader, reporter)
-        }
-        DefenderCommand::Clear { yes, json } => {
-            run_reconcile(Action::Clear, *yes, *json, tty, reader, reporter)
-        }
-        DefenderCommand::Status { json } => run_status(*json, reporter),
-    }
+    let (action, yes, json) = match &args.command {
+        DefenderCommand::Apply { yes, json } => (Action::Apply, *yes, *json),
+        DefenderCommand::Clear { yes, json } => (Action::Clear, *yes, *json),
+        DefenderCommand::Status { json } => return run_status(*json, reporter),
+    };
+    run_reconcile(
+        action,
+        Consent::from_yes_flag(yes),
+        json,
+        tty,
+        reader,
+        reporter,
+    )
 }
 
 /// The confirmation decision for the human reconcile path (mirrors the `apply`
@@ -150,7 +155,7 @@ enum Confirmation {
 /// Reconcile the live Defender exclusions to `action`'s desired set.
 fn run_reconcile(
     action: Action,
-    yes: bool,
+    consent: Consent,
     json: bool,
     tty: Tty,
     reader: &mut impl PromptReader,
@@ -190,7 +195,7 @@ fn run_reconcile(
     };
 
     if json {
-        return run_reconcile_json(&reconcile, yes, reporter);
+        return run_reconcile_json(&reconcile, consent, reporter);
     }
 
     render_preview(&reconcile, reporter);
@@ -213,7 +218,7 @@ fn run_reconcile(
         return Ok(ExitCode::Success.code());
     }
 
-    match confirm(yes, tty, reader, reporter) {
+    match confirm(consent, tty, reader, reporter) {
         Confirmation::Proceed => {}
         Confirmation::PreviewOnly => return Ok(ExitCode::Success.code()),
         Confirmation::Declined => return Ok(ExitCode::UserDeclined.code()),
@@ -296,14 +301,14 @@ fn enact(reconcile: &Reconcile<'_>, reporter: &mut impl Reporter) -> Result<i32>
 /// JSON reconcile path: preview without `--yes`, otherwise enact and report.
 fn run_reconcile_json(
     reconcile: &Reconcile<'_>,
-    yes: bool,
+    consent: Consent,
     reporter: &mut impl Reporter,
 ) -> Result<i32> {
     let mut report = |result: &str, detail: &str| {
         reporter.json(&reconcile_json(reconcile, result, detail));
     };
 
-    if !yes {
+    if consent == Consent::Prompt {
         report("previewed", "");
         return Ok(ExitCode::Success.code());
     }
@@ -388,15 +393,15 @@ fn run_status(json: bool, reporter: &mut impl Reporter) -> Result<i32> {
 
 /// The interactive confirmation, prompting only on an interactive TTY.
 fn confirm(
-    yes: bool,
+    consent: Consent,
     tty: Tty,
     reader: &mut impl PromptReader,
     reporter: &mut impl Reporter,
 ) -> Confirmation {
-    match (yes, tty) {
-        (true, _) => Confirmation::Proceed,
-        (false, Tty::NonInteractive) => Confirmation::PreviewOnly,
-        (false, Tty::Interactive) => {
+    match (consent, tty) {
+        (Consent::Preapproved, _) => Confirmation::Proceed,
+        (Consent::Prompt, Tty::NonInteractive) => Confirmation::PreviewOnly,
+        (Consent::Prompt, Tty::Interactive) => {
             reporter.confirm("Modify Windows Defender exclusions?");
             let answer = reader.read_line().unwrap_or_default();
             if matches!(answer.trim(), "y" | "Y") {

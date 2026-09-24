@@ -57,25 +57,22 @@ pub(crate) fn with_sharing_violation_retry<T>(
     #[cfg(windows)]
     {
         for (index, &delay_ms) in BACKOFF_SCHEDULE_MS.iter().enumerate() {
-            match op() {
+            let err = match op() {
                 Ok(value) => return Ok(value),
-                Err(err) => {
-                    if err.raw_os_error() != Some(ERROR_SHARING_VIOLATION) {
-                        // Not a sharing violation: surface it to the apply
-                        // pipeline without consuming the retry budget.
-                        return Err(err);
-                    }
-                    let attempt = index + 1;
-                    tracing::debug!(
-                        target: "patina_core",
-                        attempt,
-                        delay_ms,
-                        error = %err,
-                        "fs_write_retry"
-                    );
-                    std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+                Err(err) if err.raw_os_error() != Some(ERROR_SHARING_VIOLATION) => {
+                    return Err(err);
                 }
-            }
+                Err(err) => err,
+            };
+            let attempt = index + 1;
+            tracing::debug!(
+                target: "patina_core",
+                attempt,
+                delay_ms,
+                error = %err,
+                "fs_write_retry"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(delay_ms));
         }
         // Six-retry budget spent: make the final attempt and surface its
         // result verbatim: the last `ERROR_SHARING_VIOLATION`, any other

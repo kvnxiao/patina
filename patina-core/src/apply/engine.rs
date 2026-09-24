@@ -2067,14 +2067,8 @@ pub async fn execute(
                 journal.record_progress(op_index)?;
                 op_index = op_index.saturating_add(1);
                 completed.push((entry_index, record));
-
-                // Test-only crash-injection point (see `abort_after_op` above):
-                // terminate immediately, before COMMIT, leaving `op_index`
-                // operations durably applied and the plan an orphan.
                 #[cfg(debug_assertions)]
-                if abort_after_op == Some(op_index) {
-                    std::process::exit(70);
-                }
+                exit_at_crash_seam(abort_after_op, op_index);
             }
         }
     }
@@ -2159,6 +2153,17 @@ pub async fn execute(
             warnings,
             up_to_date: false,
         })
+    }
+}
+
+#[cfg(debug_assertions)]
+#[expect(
+    clippy::exit,
+    reason = "the test-only crash seam must terminate without unwinding to simulate kill -9"
+)]
+fn exit_at_crash_seam(abort_after_op: Option<u32>, op_index: u32) {
+    if abort_after_op == Some(op_index) {
+        std::process::exit(70);
     }
 }
 

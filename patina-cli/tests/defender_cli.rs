@@ -1,15 +1,7 @@
 //! Integration tests for defender cli.
 
+#![cfg(test)]
 #![cfg(windows)]
-#![expect(
-    clippy::expect_used,
-    clippy::panic,
-    reason = "integration tests use .expect()/panic! on fixtures and asserted JSON; allow-*-in-tests covers #[cfg(test)] modules but not the helper functions in tests/*.rs integration crates."
-)]
-#![expect(
-    clippy::indexing_slicing,
-    reason = "`serde_json::Value` indexing yields Value::Null for a missing key rather than panicking, so an assertion on a renamed envelope field fails with the field name and the whole envelope, which is better test signal than an unwrapped .get()."
-)]
 
 mod common;
 

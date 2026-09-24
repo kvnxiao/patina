@@ -219,7 +219,7 @@ impl AddMode {
     clippy::unused_async,
     reason = "the subcommand dispatch in main.rs awaits every command uniformly; add's work is synchronous filesystem and lock I/O but keeps the async signature for parity."
 )]
-pub async fn run(
+pub(crate) async fn run(
     args: &AddArgs,
     tty: Tty,
     reader: &mut impl PromptReader,
@@ -526,12 +526,15 @@ fn find_managed(
     for module in modules {
         let manifest = module.path.join(MANIFEST_FILENAME);
         let config = parse_module_config(&manifest).map_err(EngineError::from)?;
-        for entry in config.files.iter().chain(config.directories.iter()) {
-            for entry_target in &entry.targets {
-                let anchored = anchor_input(entry_target, home).map_err(EngineError::from)?;
-                if manage_key(&anchored) == target_key {
-                    return Ok(Some(module.name));
-                }
+        let entry_targets = config
+            .files
+            .iter()
+            .chain(config.directories.iter())
+            .flat_map(|entry| &entry.targets);
+        for entry_target in entry_targets {
+            let anchored = anchor_input(entry_target, home).map_err(EngineError::from)?;
+            if manage_key(&anchored) == target_key {
+                return Ok(Some(module.name));
             }
         }
     }
@@ -750,13 +753,13 @@ mod tests {
         }
     }
 
-    fn args_with(symlink: bool, copy: bool, template: bool, module: Option<&str>) -> AddArgs {
+    fn args(module: Option<&str>) -> AddArgs {
         AddArgs {
             path: Utf8PathBuf::from("~/.zshrc"),
             module: module.map(str::to_owned),
-            symlink,
-            copy,
-            template,
+            symlink: false,
+            copy: false,
+            template: false,
             symlink_tree: false,
             json: false,
             yes: false,
@@ -853,7 +856,10 @@ mod tests {
 
     #[test]
     fn resolve_mode_flag_reads_the_set_flag() {
-        let args = args_with(true, false, false, None);
+        let args = AddArgs {
+            symlink: true,
+            ..args(None)
+        };
         let mut reader = ScriptedReader::new(&[]);
         let mut reporter = BufferReporter::new();
         let flag = resolve_mode_flag(&args, Tty::NonInteractive, &mut reader, &mut reporter)
@@ -864,7 +870,7 @@ mod tests {
 
     #[test]
     fn resolve_mode_flag_reads_symlink_tree() {
-        let mut args = args_with(false, false, false, Some("d"));
+        let mut args = args(Some("d"));
         args.symlink_tree = true;
         let mut reader = ScriptedReader::new(&[]);
         let mut reporter = BufferReporter::new();
@@ -876,7 +882,7 @@ mod tests {
 
     #[test]
     fn resolve_mode_flag_non_tty_without_flag_refuses() {
-        let args = args_with(false, false, false, Some("zsh"));
+        let args = args(Some("zsh"));
         let mut reader = ScriptedReader::new(&[]);
         let mut reporter = BufferReporter::new();
         let flag = resolve_mode_flag(&args, Tty::NonInteractive, &mut reader, &mut reporter)
@@ -894,7 +900,7 @@ mod tests {
 
     #[test]
     fn resolve_mode_flag_prompts_in_a_tty() {
-        let args = args_with(false, false, false, Some("zsh"));
+        let args = args(Some("zsh"));
         let mut reader = ScriptedReader::new(&["copy\n"]);
         let mut reporter = BufferReporter::new();
         let flag = resolve_mode_flag(&args, Tty::Interactive, &mut reader, &mut reporter)
@@ -905,7 +911,10 @@ mod tests {
 
     #[test]
     fn resolve_module_non_tty_without_flag_refuses() {
-        let args = args_with(true, false, false, None);
+        let args = AddArgs {
+            symlink: true,
+            ..args(None)
+        };
         let mut reader = ScriptedReader::new(&[]);
         let mut reporter = BufferReporter::new();
         let module = resolve_module(&args, Tty::NonInteractive, &mut reader, &mut reporter)
@@ -920,7 +929,10 @@ mod tests {
 
     #[test]
     fn resolve_module_uses_the_flag_value() {
-        let args = args_with(true, false, false, Some("zsh"));
+        let args = AddArgs {
+            symlink: true,
+            ..args(Some("zsh"))
+        };
         let mut reader = ScriptedReader::new(&[]);
         let mut reporter = BufferReporter::new();
         let module = resolve_module(&args, Tty::NonInteractive, &mut reader, &mut reporter)

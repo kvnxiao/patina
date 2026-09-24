@@ -83,7 +83,7 @@ use patina_core::remove_file_entry;
 /// resolved; the path is not currently managed; the journaled source cannot
 /// be read or re-rendered; the target replacement fails; the manifest edit
 /// fails; or the re-apply fails.
-pub async fn run(
+pub(crate) async fn run(
     args: &RemoveArgs,
     tty: Tty,
     reader: &mut impl PromptReader,
@@ -392,12 +392,12 @@ mod tests {
         }
     }
 
-    fn args(purge: bool, json: bool, yes: bool) -> RemoveArgs {
+    fn args() -> RemoveArgs {
         RemoveArgs {
             path: Utf8PathBuf::from("~/.zshrc"),
-            purge,
-            json,
-            yes,
+            purge: false,
+            json: false,
+            yes: false,
         }
     }
 
@@ -406,7 +406,10 @@ mod tests {
         let mut reader = ScriptedReader::new(&[]);
         let mut reporter = BufferReporter::new();
         assert!(confirm(
-            &args(false, false, true),
+            &RemoveArgs {
+                yes: true,
+                ..args()
+            },
             Tty::NonInteractive,
             &mut reader,
             &mut reporter
@@ -417,12 +420,7 @@ mod tests {
     fn confirm_non_tty_without_yes_declines() {
         let mut reader = ScriptedReader::new(&[]);
         let mut reporter = BufferReporter::new();
-        let proceed = confirm(
-            &args(false, false, false),
-            Tty::NonInteractive,
-            &mut reader,
-            &mut reporter,
-        );
+        let proceed = confirm(&args(), Tty::NonInteractive, &mut reader, &mut reporter);
         assert!(!proceed, "a non-TTY shell without --yes must decline");
         assert!(
             reporter.err.contains("--yes"),
@@ -436,7 +434,7 @@ mod tests {
         let mut reader = ScriptedReader::new(&["y\n"]);
         let mut reporter = BufferReporter::new();
         assert!(confirm(
-            &args(false, false, false),
+            &args(),
             Tty::Interactive,
             &mut reader,
             &mut reporter
@@ -445,7 +443,7 @@ mod tests {
         let mut reader = ScriptedReader::new(&["n\n"]);
         let mut reporter = BufferReporter::new();
         assert!(!confirm(
-            &args(false, false, false),
+            &args(),
             Tty::Interactive,
             &mut reader,
             &mut reporter

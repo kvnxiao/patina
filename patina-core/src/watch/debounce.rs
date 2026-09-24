@@ -25,6 +25,7 @@ use camino::Utf8Path;
 use camino::Utf8PathBuf;
 use notify::RecursiveMode;
 use notify_debouncer_full::DebounceEventResult;
+use notify_debouncer_full::DebouncedEvent;
 use notify_debouncer_full::Debouncer as InnerDebouncer;
 use notify_debouncer_full::RecommendedCache;
 use notify_debouncer_full::new_debouncer;
@@ -140,6 +141,14 @@ pub struct Debouncer {
     pub events: UnboundedReceiver<EventBatch>,
 }
 
+impl std::fmt::Debug for Debouncer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Debouncer")
+            .field("events", &self.events)
+            .finish_non_exhaustive()
+    }
+}
+
 /// Build the 500ms debouncer, subscribe it to every path in `subscriptions`,
 /// and bridge its coalesced batches into a [`tokio::sync::mpsc`] channel.
 ///
@@ -169,29 +178,8 @@ pub fn spawn(subscriptions: &[Utf8PathBuf]) -> Result<Debouncer, DebounceError> 
     // async loop without blocking the OS thread.
     let mut debouncer = new_debouncer(DEBOUNCE, None, move |result: DebounceEventResult| {
         if let Ok(events) = result {
-            let mut paths: Vec<Utf8PathBuf> = Vec::new();
-            let mut observed: Vec<Instant> = Vec::new();
-            for event in events {
-                for path in &event.event.paths {
-                    if let Ok(utf8) = Utf8PathBuf::try_from(path.clone()) {
-                        // A path written twice inside one window keeps the
-                        // later stamp, so a write during a re-apply survives
-                        // `observed_since` even when an earlier write to the
-                        // same path does not.
-                        if let Some(at) = paths
-                            .iter()
-                            .position(|seen| *seen == utf8)
-                            .and_then(|index| observed.get_mut(index))
-                        {
-                            *at = (*at).max(event.time);
-                        } else {
-                            paths.push(utf8);
-                            observed.push(event.time);
-                        }
-                    }
-                }
-            }
-            if !paths.is_empty() && tx.send(EventBatch { paths, observed }).is_err() {
+            let batch = collect_batch(events);
+            if !batch.is_empty() && tx.send(batch).is_err() {
                 // The receiver was dropped (the watcher is shutting down);
                 // there is nothing to forward to, so the batch is discarded.
             }
@@ -207,6 +195,32 @@ pub fn spawn(subscriptions: &[Utf8PathBuf]) -> Result<Debouncer, DebounceError> 
         _debouncer: debouncer,
         events: rx,
     })
+}
+
+fn collect_batch(events: Vec<DebouncedEvent>) -> EventBatch {
+    let mut paths: Vec<Utf8PathBuf> = Vec::new();
+    let mut observed: Vec<Instant> = Vec::new();
+    for event in events {
+        for path in &event.event.paths {
+            let Ok(utf8) = Utf8PathBuf::try_from(path.clone()) else {
+                continue;
+            };
+            // A path written twice inside one window keeps the later stamp, so
+            // a write during a re-apply survives `observed_since` even when an
+            // earlier write to the same path does not.
+            if let Some(at) = paths
+                .iter()
+                .position(|seen| *seen == utf8)
+                .and_then(|index| observed.get_mut(index))
+            {
+                *at = (*at).max(event.time);
+            } else {
+                paths.push(utf8);
+                observed.push(event.time);
+            }
+        }
+    }
+    EventBatch { paths, observed }
 }
 
 /// Register one subscription path with the debouncer, non-recursively.
@@ -295,11 +309,8 @@ mod tests {
             .expect("temp path is utf-8")
             .join("does-not-exist");
 
-        let err = spawn(std::slice::from_ref(&missing))
-            .err()
-            .expect("watching a missing path must error");
-        // `Debouncer` is not `Debug`, so inspect the error via `.err()` rather
-        // than `unwrap_err`. The error must be a `Watch` naming the bad path.
+        let err =
+            spawn(std::slice::from_ref(&missing)).expect_err("watching a missing path must error");
         assert!(
             matches!(&err, DebounceError::Watch { path, .. } if path == &missing),
             "expected a Watch error naming `{missing}`, got: {err:?}"

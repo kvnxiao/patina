@@ -61,7 +61,7 @@ use patina_core::write_persisted_default;
 
 /// A single doctor finding.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Finding {
+pub(crate) struct Finding {
     /// The stable code identifying the kind of finding.
     pub code: FindingCode,
     /// The severity level.
@@ -79,7 +79,7 @@ pub struct Finding {
 /// ([`FindingCode::label`]) is part of the JSON contract and the
 /// human output, so it is defined once on the enum.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FindingCode {
+pub(crate) enum FindingCode {
     /// On Windows, the resolved repository path is a UNC path.
     WinUnc,
     /// On Windows, the repository declares a symlink `[[file]]` and Developer
@@ -101,7 +101,7 @@ impl FindingCode {
     /// The stable string label for this code, used in both the JSON document
     /// and the human output.
     #[must_use = "the label is part of the JSON and human output contract"]
-    pub fn label(self) -> &'static str {
+    pub(crate) fn label(self) -> &'static str {
         match self {
             FindingCode::WinUnc => "DOC-WIN-UNC",
             FindingCode::WinDevMode => "DOC-WIN-DEVMODE",
@@ -115,7 +115,7 @@ impl FindingCode {
 
 /// A finding's severity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Level {
+pub(crate) enum Level {
     /// Advisory note; never affects the exit code.
     Info,
     /// A warning; the command still exits 0.
@@ -128,7 +128,7 @@ impl Level {
     /// The stable lowercase label for this level, used in the JSON document
     /// and the human output.
     #[must_use = "the label is part of the JSON and human output contract"]
-    pub fn label(self) -> &'static str {
+    pub(crate) fn label(self) -> &'static str {
         match self {
             Level::Info => "info",
             Level::Warning => "warning",
@@ -148,7 +148,7 @@ impl Level {
     clippy::struct_excessive_bools,
     reason = "each bool is an independent host-state fact gathered from a distinct source (the platform, the repository's declared modes, the OS-build query, the state-directory pointer, the PATH lookup for git), not a state machine that would be better modelled as an enum."
 )]
-pub struct Inputs {
+pub(crate) struct Inputs {
     /// Whether the running host is Windows. Off Windows, no `DOC-WIN-*`
     /// finding fires.
     pub is_windows: bool,
@@ -188,7 +188,7 @@ pub struct Inputs {
 ///
 /// Repository-discovery and manifest-parse failures are never fatal, and a
 /// shared-lock timeout is downgraded to a stderr warning.
-pub fn run(
+pub(crate) fn run(
     args: &DoctorArgs,
     tty: Tty,
     reader: &mut impl PromptReader,
@@ -511,7 +511,7 @@ fn repository_declares_symlink(repo_root: &Utf8Path) -> bool {
 ///
 /// The push order is fixed, so the rendered output is deterministic.
 #[must_use = "the computed findings drive the output and exit code"]
-pub fn compute_findings(inputs: &Inputs) -> Vec<Finding> {
+pub(crate) fn compute_findings(inputs: &Inputs) -> Vec<Finding> {
     let mut findings = Vec::new();
 
     if inputs.is_windows {

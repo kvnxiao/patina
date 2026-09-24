@@ -89,6 +89,12 @@ pub struct FileAppender {
     pub guard: WorkerGuard,
 }
 
+impl std::fmt::Debug for FileAppender {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FileAppender").finish_non_exhaustive()
+    }
+}
+
 /// Lazily create `<state>/patina/logs/` and build the watcher's
 /// daily-rotating, keep-7 non-blocking file appender.
 ///

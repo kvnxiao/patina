@@ -1,5 +1,7 @@
 //! Integration tests for conditional entries.
 
+#![cfg(test)]
+
 mod common;
 
 use common::Fixture;

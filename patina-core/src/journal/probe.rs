@@ -55,7 +55,7 @@ pub fn classify_target(target: &Utf8Path) -> Probe {
 
 /// The absolute target path an operation writes to.
 #[must_use = "recovery needs the target path to probe and reverse the operation"]
-pub fn operation_target(op: &PlannedOperation) -> &str {
+pub(super) fn operation_target(op: &PlannedOperation) -> &str {
     match op {
         PlannedOperation::Symlink { target, .. }
         | PlannedOperation::Render { target, .. }

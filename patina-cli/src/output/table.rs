@@ -17,7 +17,7 @@ use tabwriter::TabWriter;
 /// exactly as its stripped form does. Writing to a `Vec` cannot fail, so the
 /// unaligned fallback is unreachable. The fallback keeps printing panic-free.
 #[must_use = "use the aligned block"]
-pub fn align(table: &str) -> String {
+pub(crate) fn align(table: &str) -> String {
     let mut aligned: Vec<u8> = Vec::new();
     let mut writer = TabWriter::new(&mut aligned)
         .minwidth(0)
@@ -35,7 +35,7 @@ pub fn align(table: &str) -> String {
 /// [`align`] pads a cell only when a tab follows it, so a row ends immediately
 /// after its last cell.
 #[must_use = "use the row in a table"]
-pub fn row(cells: &[&str]) -> String {
+pub(crate) fn row(cells: &[&str]) -> String {
     let mut row = cells.join("\t");
     row.push('\n');
     row
@@ -47,7 +47,7 @@ pub fn row(cells: &[&str]) -> String {
 /// terminators, so one write reproduces the whole listing. One write also means
 /// one stdout lock and one flush, however long the listing. An empty block does
 /// not print.
-pub fn emit_aligned(table: &str, reporter: &mut impl Reporter) {
+pub(crate) fn emit_aligned(table: &str, reporter: &mut impl Reporter) {
     reporter.out_block(&align(table));
 }
 

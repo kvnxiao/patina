@@ -1,5 +1,7 @@
 //! Integration tests for diff render snapshot.
 
+#![cfg(test)]
+
 mod common;
 
 use common::Fixture;
@@ -106,10 +108,6 @@ mode = "copy"
     insta::assert_snapshot!(redact_home(&stdout, &f.home));
 }
 
-#[expect(
-    clippy::expect_used,
-    reason = "test helper on fixture paths; allow-expect-in-tests covers #[test] fns and #[cfg(test)] modules but not free helper fns in a tests/*.rs integration crate."
-)]
 fn redact_home(stdout: &str, home: &camino::Utf8Path) -> String {
     let canon_home = camino::Utf8PathBuf::from_path_buf(
         dunce::canonicalize(home.as_std_path()).expect("canonicalize fixture home"),

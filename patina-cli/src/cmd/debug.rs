@@ -34,7 +34,7 @@ use patina_core::render_plan;
 /// the `debug` group expresses its terminal states as exit codes, like the
 /// rest of the CLI.
 #[must_use = "the returned exit code is the process's terminal status"]
-pub fn run(command: &DebugCommand, reporter: &mut impl Reporter) -> i32 {
+pub(crate) fn run(command: &DebugCommand, reporter: &mut impl Reporter) -> i32 {
     match command {
         DebugCommand::Journal(args) => run_journal(args, reporter),
         DebugCommand::DriftCache(args) => run_drift_cache(args, reporter),

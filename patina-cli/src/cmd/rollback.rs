@@ -36,7 +36,7 @@ use patina_core::RollbackOptions;
 /// than `NoPriorApply` or `RollbackPartial`. Either of those is printed as a
 /// stderr warning and exits 1 instead of returning `Err`. A declined prompt
 /// maps to exit code 5.
-pub async fn run(
+pub(crate) async fn run(
     args: &RollbackArgs,
     tty: Tty,
     reader: &mut impl PromptReader,
