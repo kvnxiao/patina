@@ -50,7 +50,6 @@ pub struct SystemdBackend {
 
 impl SystemdBackend {
     /// Construct a backend bound to the resolved per-machine state root.
-    #[must_use = "construct the backend to perform a lifecycle action through it"]
     pub fn new(state_dir: Utf8PathBuf) -> Self {
         Self { state_dir }
     }
@@ -65,7 +64,6 @@ impl SystemdBackend {
     /// binary), or an explicit "Failed to connect to bus" message, means there
     /// is no user manager to drive. The factory then falls back to the
     /// foreground escape hatch.
-    #[must_use = "the availability decision selects the backend; ignoring it loses the dispatch"]
     pub fn is_available() -> bool {
         let Ok(output) = Command::new("systemctl")
             .args(["--user", "is-system-running"])

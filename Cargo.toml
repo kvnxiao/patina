@@ -1,6 +1,6 @@
 [workspace]
 members = ["patina-cli", "patina-core", "patina-elevate"]
-resolver = "2"
+resolver = "3"
 
 [workspace.package]
 version = "0.1.0"
@@ -55,17 +55,22 @@ winsafe = { version = "0.0.28", features = ["advapi", "kernel"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
+unsafe_op_in_unsafe_fn = "deny"
 missing_docs = "warn"
+unreachable_pub = "warn"
+unnameable_types = "warn"
+elided_lifetimes_in_paths = "warn"
 
 [workspace.lints.clippy]
-all = { level = "deny", priority = -1 }
-pedantic = { level = "deny", priority = -1 }
-cargo = { level = "deny", priority = -1 }
+all = { level = "warn", priority = -2 }
+pedantic = { level = "warn", priority = -2 }
+cargo = { level = "warn", priority = -2 }
+correctness = { level = "deny", priority = -1 }
 
-# Allow multiple transitive versions while the dependency graph stabilizes.
 multiple_crate_versions = "allow"
+cast_precision_loss = "allow"
+must_use_candidate = "allow"
 
-# Don't panic
 unwrap_used = "deny"
 expect_used = "deny"
 panic = "deny"
@@ -76,36 +81,29 @@ get_unwrap = "deny"
 unwrap_in_result = "deny"
 panic_in_result_fn = "deny"
 unchecked_time_subtraction = "deny"
-todo = "deny"
-unimplemented = "deny"
+todo = "warn"
+unimplemented = "warn"
 
-# Don't fail silently
 let_underscore_future = "deny"
 let_underscore_must_use = "deny"
 unused_result_ok = "deny"
 map_err_ignore = "deny"
-assertions_on_result_states = "deny"
 
-# Async correctness
 await_holding_lock = "deny"
 await_holding_refcell_ref = "deny"
 if_let_mutex = "deny"
 large_futures = "deny"
 
-# Unsafe hygiene
 mem_forget = "deny"
 undocumented_unsafe_blocks = "deny"
 multiple_unsafe_ops_per_block = "deny"
 unnecessary_safety_doc = "deny"
 unnecessary_safety_comment = "deny"
 
-# Float correctness
 float_cmp = "deny"
-float_cmp_const = "deny"
 lossy_float_literal = "deny"
 invalid_upcast_comparisons = "deny"
 
-# Misc footguns
 rc_mutex = "deny"
 debug_assert_with_mut_call = "deny"
 iter_not_returning_iterator = "deny"
@@ -113,20 +111,32 @@ expl_impl_clone_on_copy = "deny"
 infallible_try_from = "deny"
 dbg_macro = "deny"
 
-# Force #[expect(..., reason = "...")] over silent #[allow]
+print_stdout = "deny"
+print_stderr = "deny"
+exit = "deny"
+
+cast_lossless = "deny"
+cast_possible_truncation = "deny"
+cast_possible_wrap = "deny"
+cast_sign_loss = "deny"
+
 allow_attributes = "deny"
 allow_attributes_without_reason = "deny"
 
-# Performance
+inefficient_to_string = "deny"
 large_enum_variant = "warn"
 large_stack_arrays = "deny"
 needless_pass_by_value = "warn"
-
-# Style
 missing_errors_doc = "warn"
 missing_panics_doc = "warn"
 
+# Stdout must be byte-identical across runs, so hash iteration order must not reach it.
+iter_over_hash_type = "deny"
+
+[workspace.lints.rustdoc]
+broken_intra_doc_links = "deny"
+private_intra_doc_links = "deny"
+missing_crate_level_docs = "warn"
+
 [profile.release]
-opt-level = 3
-lto = "thin"
-strip = true
+debug = 1

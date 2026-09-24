@@ -19,19 +19,19 @@
 
 use patina_core::watch::reapply::ReapplyOutcome;
 use patina_core::watch::reapply::run_reapply;
+use std::process::ExitCode;
 
-fn main() {
+#[expect(
+    clippy::print_stdout,
+    clippy::print_stderr,
+    reason = "the probe reports its outcome to the parent test over stdout and stderr"
+)]
+fn main() -> ExitCode {
     let runtime = match tokio::runtime::Runtime::new() {
         Ok(runtime) => runtime,
         Err(error) => {
-            #[expect(
-                clippy::disallowed_macros,
-                reason = "test-harness IPC over stderr, not user-facing CLI output"
-            )]
-            {
-                eprintln!("ERROR {error}");
-            }
-            std::process::exit(2);
+            eprintln!("ERROR {error}");
+            return ExitCode::from(2);
         }
     };
 
@@ -40,12 +40,6 @@ fn main() {
         ReapplyOutcome::Skipped => "SKIPPED",
         ReapplyOutcome::Failed => "FAILED",
     };
-
-    #[expect(
-        clippy::disallowed_macros,
-        reason = "test-harness IPC over stdout, not user-facing CLI output"
-    )]
-    {
-        println!("{label}");
-    }
+    println!("{label}");
+    ExitCode::SUCCESS
 }

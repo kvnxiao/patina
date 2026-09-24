@@ -46,7 +46,6 @@ const PARTIAL_SUFFIX: &str = ".partial";
 const STAGING_MIN_AGE: Duration = Duration::from_hours(24);
 
 /// `<state>/remotes/`, the root of the remote cache.
-#[must_use = "the cache root locates every checkout and the notice files"]
 pub fn remotes_root(state_dir: &Utf8Path) -> Utf8PathBuf {
     state_dir.join("remotes")
 }
@@ -57,46 +56,39 @@ pub fn remotes_root(state_dir: &Utf8Path) -> Utf8PathBuf {
 /// A case-only respelling of a declaration therefore keeps addressing the
 /// checkouts already on disk, without cold-starting a second tree beside
 /// them.
-#[must_use = "the module cache directory holds the bare repo and its checkouts"]
 pub fn module_dir(state_dir: &Utf8Path, module: &RemoteName) -> Utf8PathBuf {
     remotes_root(state_dir).join(module.key())
 }
 
 /// `<state>/remotes/<module>/repo.git`, the bare repository fetches land in.
-#[must_use = "the bare repository is the git-dir every remote git call uses"]
 pub fn bare_repo(state_dir: &Utf8Path, module: &RemoteName) -> Utf8PathBuf {
     module_dir(state_dir, module).join(BARE_REPO_DIR)
 }
 
 /// `<state>/remotes/<module>/<rev>/`, the immutable checkout of one pinned
 /// rev.
-#[must_use = "entry sources use the checkout directory"]
 pub fn checkout_dir(state_dir: &Utf8Path, module: &RemoteName, rev: &str) -> Utf8PathBuf {
     module_dir(state_dir, module).join(rev)
 }
 
 /// `<state>/remotes/notice`, the plain-text pending-update notice a shell
 /// startup prints.
-#[must_use = "the notice path is read by the shell integration and by `patina status`"]
 pub fn notice_path(state_dir: &Utf8Path) -> Utf8PathBuf {
     remotes_root(state_dir).join("notice")
 }
 
 /// `<state>/remotes/pending`, the module names the last check found behind:
 /// the machine-readable twin of the prose notice.
-#[must_use = "the pending path carries the per-remote state `remote list` reports"]
 pub fn pending_path(state_dir: &Utf8Path) -> Utf8PathBuf {
     remotes_root(state_dir).join("pending")
 }
 
 /// `<state>/remotes/last_check`, the background-check throttle stamp.
-#[must_use = "the stamp path drives the `remote check --hook` self-throttle"]
 pub fn last_check_path(state_dir: &Utf8Path) -> Utf8PathBuf {
     remotes_root(state_dir).join("last_check")
 }
 
 /// Whether the checkout of `rev` for `module` is already materialized.
-#[must_use = "a warm checkout lets a plain apply run offline"]
 pub fn checkout_present(state_dir: &Utf8Path, module: &RemoteName, rev: &str) -> bool {
     checkout_dir(state_dir, module, rev).is_dir()
 }
@@ -254,19 +246,16 @@ fn prune_at(
             if name == BARE_REPO_DIR {
                 continue;
             }
-            if is_scratch_name(name) {
-                if scratch_is_abandoned(&candidate, now, STAGING_MIN_AGE) {
-                    remove_any(&candidate)?;
-                    removed.push(candidate);
-                }
-                continue;
-            }
-            if !is_checkout_name(name)
-                || keep
-                    .iter()
-                    .any(|(kept, rev)| rev == name && kept.key() == module_key)
-                || is_referenced(&candidate, &referenced)
-            {
+            let reclaimable = if is_scratch_name(name) {
+                scratch_is_abandoned(&candidate, now, STAGING_MIN_AGE)
+            } else {
+                is_checkout_name(name)
+                    && !keep
+                        .iter()
+                        .any(|(kept, rev)| rev == name && kept.key() == module_key)
+                    && !is_referenced(&candidate, &referenced)
+            };
+            if !reclaimable {
                 continue;
             }
             remove_any(&candidate)?;

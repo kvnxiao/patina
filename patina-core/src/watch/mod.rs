@@ -31,6 +31,7 @@ pub mod reapply;
 pub mod service;
 pub mod subscriptions;
 
+use crate::error::chain_message;
 use crate::journal::COMMIT_SUFFIX;
 use crate::journal::read_latest_commit;
 use crate::state_dir;
@@ -54,7 +55,7 @@ const DEBOUNCE_MS_KEY: &str = "debounce_ms";
 #[non_exhaustive]
 pub enum WatchError {
     /// Resolving the per-machine state directory failed.
-    #[error("failed to resolve the per-machine state directory: {source}")]
+    #[error("failed to resolve the per-machine state directory")]
     StateDir {
         /// The underlying state-directory resolution error.
         #[source]
@@ -66,7 +67,7 @@ pub enum WatchError {
     Logging(#[from] logging::LoggingError),
 
     /// Reading the most recent committed journal record failed.
-    #[error("failed to read the latest committed apply: {source}")]
+    #[error("failed to read the latest committed apply")]
     Journal {
         /// The underlying journal-read error.
         #[source]
@@ -424,7 +425,7 @@ fn rescan(
         Err(error) => {
             tracing::warn!(
                 target: "patina_core",
-                error = %error,
+                error = %chain_message(&error),
                 "journal_rescan_failed"
             );
             return None;
@@ -447,7 +448,7 @@ fn rescan(
         Err(error) => {
             tracing::warn!(
                 target: "patina_core",
-                error = %error,
+                error = %chain_message(&error),
                 "journal_rescan_failed"
             );
             return None;
@@ -572,14 +573,12 @@ mod tests {
         fs_err::create_dir_all(state.join("journal").as_std_path()).expect("mkdir journal");
 
         let (tx, rx) = tokio::sync::oneshot::channel::<()>();
-        let handle = tokio::spawn(async move {
-            run_foreground_in(&state, async {
-                // Resolve when the oneshot fires (or its sender drops); either
-                // way the shutdown future completes and ends the loop.
-                let _received = rx.await;
-            })
-            .await
-        });
+        // Resolve when the oneshot fires (or its sender drops); either way the
+        // shutdown future completes and ends the loop.
+        let shutdown = async move {
+            let _received = rx.await;
+        };
+        let handle = tokio::spawn(async move { run_foreground_in(&state, shutdown).await });
 
         // Let the loop arm its debouncer and reach the select, then shut down.
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;

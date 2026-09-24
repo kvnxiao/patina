@@ -1,9 +1,6 @@
 //! Integration tests for variable layers.
 
-#![expect(
-    clippy::expect_used,
-    reason = "the root_manifest_with helper is a free fn at the integration-crate root, not inside a #[cfg(test)] module, so allow-expect-in-tests does not cover it; fixture setup panicking on failure is the intended test behaviour."
-)]
+#![cfg(test)]
 
 mod common;
 

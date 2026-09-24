@@ -59,7 +59,7 @@ use patina_core::write_persisted_default;
     clippy::unused_async,
     reason = "the subcommand dispatch in main.rs awaits every command uniformly; init's work is synchronous filesystem and lock I/O but keeps the async signature for parity."
 )]
-pub async fn run(args: &InitArgs, reporter: &mut impl Reporter) -> Result<i32> {
+pub(crate) async fn run(args: &InitArgs, reporter: &mut impl Reporter) -> Result<i32> {
     let target = resolve_target_path(args.path.as_deref())?;
     let manifest_path = target.join(MANIFEST_FILENAME);
 

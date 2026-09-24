@@ -8,6 +8,27 @@ description: "Rust performance guidance activated by profiling; borrowing, alloc
 The default representation is a readable standard-library type. Profiling or benchmarks activate
 specialized data structures, storage formats, and build profiles.
 
+For async workloads, apply the
+[executor responsiveness](rust-async.md#keep-executor-workers-responsive-required) and
+[resource admission](rust-async.md#bound-resources-at-admission-required) contracts before tuning
+performance.
+
+Choose a measurement tool for the question: `criterion` or `divan` for benchmarks, `samply` or
+`cargo flamegraph` for CPU profiles, and `dhat` for allocation measurements. Reuse the project's
+existing tools when they provide the needed evidence.
+
+## Make ownership transfers explicit (Default)
+
+Before cloning owned data, check whether the caller can borrow it or transfer ownership. Retain a
+clone when independent ownership makes the code clearer or the consumer must outlive the borrow. Use
+`Arc` only for shared ownership, and `std::mem::take` only when leaving the default value behind
+preserves the containing type's invariant.
+
+## Measure inlining changes (Conditional)
+
+Add `#[inline]`, `#[inline(always)]`, or `#[inline(never)]` only when benchmarks support the change
+for the relevant callers. Measure runtime and code-size effects with the intended build profile.
+
 ## Use `Cow` for conditional cloning (Conditional)
 
 When profiling identifies cloning as material and most inputs can remain borrowed, return `Cow`.
@@ -28,27 +49,25 @@ fn process(input: &str) -> Cow<'_, str> {
 
 ## Allocations and capacity (Default)
 
-When the output size is known or has a reliable upper bound, reserve that capacity before repeated
-insertion.
+Collect or extend from an iterator when it expresses the construction directly; collection methods
+can use its size hint. For incremental insertion whose final size is known independently, reserve
+the capacity before repeated insertion.
 
 ```rust
-let mut values = Vec::with_capacity(1000);
-for value in 0..1000 {
-    values.push(value);
-}
+let values: Vec<_> = (0..1000).collect();
 ```
 
 ## Borrow or consume collections intentionally (Default)
 
-Borrow a collection when it remains in use, and consume it with `into_iter()` when ownership can
-move to the loop.
+Borrow a collection when it remains in use, and pass it by value to a `for` loop when ownership can
+move. Use `into_iter()` when constructing an iterator chain that consumes the collection.
 
 ```rust
 for item in &collection {
     process(item);
 }
 
-for item in collection.into_iter() {
+for item in collection {
     consume(item);
 }
 ```
@@ -64,7 +83,8 @@ such as `FxHash`. Maps keyed by untrusted input must retain a HashDoS-resistant 
 
 ```rust
 use rustc_hash::FxHasher;
-use std::{collections::HashMap, hash::BuildHasherDefault};
+use std::collections::HashMap;
+use std::hash::BuildHasherDefault;
 
 type FxHashMap<K, V> = HashMap<K, V, BuildHasherDefault<FxHasher>>;
 ```
@@ -119,6 +139,11 @@ const DEFAULT_BUFFER_CAPACITY: usize = 64 * (1 << 10);
 ```
 
 ## Release debug information (Default)
+
+Put profile tables in the workspace root manifest; Cargo ignores member-level profile tables. Use
+`[profile.PROFILE.package.NAME]` for supported per-package overrides. Package overrides cannot set
+`panic`, `lto`, or `rpath`. See
+[Cargo profiles and overrides](https://doc.rust-lang.org/cargo/reference/profiles.html#overrides).
 
 Line-table debug information remains in release builds for profilers and backtraces unless artifact
 size measurements require stripping it.

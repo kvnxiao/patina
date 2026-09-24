@@ -1,10 +1,6 @@
 //! Test variable overrides during orphan reaping.
 
-#![expect(
-    clippy::expect_used,
-    clippy::panic,
-    reason = "integration tests use .expect()/panic! on fixtures and asserted output; allow-*-in-tests covers #[cfg(test)] modules but not the helper functions in tests/*.rs integration crates."
-)]
+#![cfg(test)]
 
 mod common;
 

@@ -1,9 +1,9 @@
 #!/usr/bin/env sh
 # Patina pre-commit hook.
 #
-# Runs the same fast gate CI runs, so a clean commit means a clean PR check:
+# Runs the host-target part of `just lint`:
 #   1. cargo +nightly fmt --all --check       (formatting)
-#   2. cargo clippy --workspace --all-targets --all-features -- -D warnings  (linting)
+#   2. cargo +stable clippy --workspace --all-targets --all-features --locked -- -D warnings  (linting)
 #
 # Use `git commit --no-verify` to bypass for an emergency commit; the matching
 # CI jobs will still gate the PR, so this is rarely the right call.
@@ -36,8 +36,8 @@ if ! cargo +nightly fmt --all --check; then
     exit 1
 fi
 
-echo "pre-commit: cargo clippy --workspace --all-targets --all-features -- -D warnings"
-if ! cargo clippy --workspace --all-targets --all-features -- -D warnings; then
+echo "pre-commit: cargo +stable clippy --workspace --all-targets --all-features --locked -- -D warnings"
+if ! cargo +stable clippy --workspace --all-targets --all-features --locked -- -D warnings; then
     echo "" >&2
     echo "pre-commit: clippy failed. Fix the warnings above and re-stage." >&2
     exit 1

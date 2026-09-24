@@ -1,13 +1,6 @@
 //! Integration tests for watch foreground cli.
 
-#![cfg_attr(
-    unix,
-    expect(
-        clippy::expect_used,
-        clippy::indexing_slicing,
-        reason = "integration tests use .expect() on fixtures and a bounded read-buffer slice; allow-*-in-tests covers #[cfg(test)] modules but not the helper methods in tests/*.rs integration crates."
-    )
-)]
+#![cfg(test)]
 
 mod common;
 
@@ -89,20 +82,7 @@ mod foreground {
             let stderr = Arc::new(Mutex::new(String::new()));
             let mut pipe = child.stderr.take().expect("piped stderr");
             let sink = Arc::clone(&stderr);
-            std::thread::spawn(move || {
-                let mut buf = [0u8; 4096];
-                loop {
-                    match pipe.read(&mut buf) {
-                        Ok(0) | Err(_) => break,
-                        Ok(n) => {
-                            let chunk = String::from_utf8_lossy(&buf[..n]).into_owned();
-                            if let Ok(mut guard) = sink.lock() {
-                                guard.push_str(&chunk);
-                            }
-                        }
-                    }
-                }
-            });
+            std::thread::spawn(move || copy_into(&mut pipe, &sink));
 
             Self { child, stderr }
         }
@@ -112,14 +92,7 @@ mod foreground {
         }
 
         fn wait_for_stderr(&self, needle: &str, timeout: Duration) -> bool {
-            let deadline = Instant::now() + timeout;
-            while Instant::now() < deadline {
-                if self.stderr_snapshot().contains(needle) {
-                    return true;
-                }
-                std::thread::sleep(Duration::from_millis(25));
-            }
-            self.stderr_snapshot().contains(needle)
+            poll_until(timeout, || self.stderr_snapshot().contains(needle))
         }
 
         fn count_event_lines(&self, needle: &str) -> usize {
@@ -148,6 +121,33 @@ mod foreground {
             }
             let _killed = self.child.kill();
             None
+        }
+    }
+
+    fn copy_into(pipe: &mut impl Read, sink: &Mutex<String>) {
+        let mut buf = [0u8; 4096];
+        loop {
+            let n = match pipe.read(&mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => n,
+            };
+            let chunk = String::from_utf8_lossy(&buf[..n]);
+            if let Ok(mut guard) = sink.lock() {
+                guard.push_str(&chunk);
+            }
+        }
+    }
+
+    fn poll_until(timeout: Duration, mut done: impl FnMut() -> bool) -> bool {
+        let deadline = Instant::now() + timeout;
+        loop {
+            if done() {
+                return true;
+            }
+            if Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(25));
         }
     }
 
@@ -388,36 +388,19 @@ mod foreground {
         // returns. A write during the startup gap is lost, not delayed.
         // Repeat identical writes until the armed stream observes one; drift
         // detection treats repeated identical writes as a no-op.
-        let drift_logged = {
-            let deadline = Instant::now() + Duration::from_secs(15);
-            loop {
-                fs_err::write(target.as_std_path(), &drifted).expect("overwrite target");
-                if watcher.wait_for_stderr("drift", Duration::from_secs(1)) {
-                    break true;
-                }
-                if Instant::now() >= deadline {
-                    break false;
-                }
-            }
-        };
+        let drift_logged = poll_until(Duration::from_secs(15), || {
+            fs_err::write(target.as_std_path(), &drifted).expect("overwrite target");
+            watcher.wait_for_stderr("drift", Duration::from_secs(1))
+        });
         assert!(
             drift_logged,
             "the external edit must log a drift event; stderr: {}",
             watcher.stderr_snapshot()
         );
 
-        let cache_populated = {
-            let deadline = Instant::now() + Duration::from_secs(3);
-            loop {
-                if drift_entries_for(&f, ".gitconfig") >= 1 {
-                    break true;
-                }
-                if Instant::now() >= deadline {
-                    break false;
-                }
-                std::thread::sleep(Duration::from_millis(25));
-            }
-        };
+        let cache_populated = poll_until(Duration::from_secs(3), || {
+            drift_entries_for(&f, ".gitconfig") >= 1
+        });
         assert!(
             cache_populated,
             "the drift cache must hold an entry for .gitconfig; stderr: {}",
@@ -493,18 +476,7 @@ mod foreground {
             watcher.stderr_snapshot()
         );
 
-        let two_commits = {
-            let deadline = Instant::now() + Duration::from_secs(3);
-            loop {
-                if commit_count(&f) >= 2 {
-                    break true;
-                }
-                if Instant::now() >= deadline {
-                    break false;
-                }
-                std::thread::sleep(Duration::from_millis(25));
-            }
-        };
+        let two_commits = poll_until(Duration::from_secs(3), || commit_count(&f) >= 2);
 
         assert_eq!(
             watcher.count_event_lines("lock_contention_skip"),

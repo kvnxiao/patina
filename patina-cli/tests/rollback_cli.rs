@@ -1,9 +1,6 @@
 //! Integration tests for rollback cli.
 
-#![expect(
-    clippy::expect_used,
-    reason = "integration tests use .expect() on fixtures and asserted output; allow-expect-in-tests covers #[cfg(test)] modules but not the helper functions in tests/*.rs integration crates."
-)]
+#![cfg(test)]
 
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
@@ -85,12 +82,13 @@ fn find_dir_named(root: &Utf8Path, name: &str) -> Option<Utf8PathBuf> {
         let entries = fs_err::read_dir(&dir).ok()?;
         for entry in entries.flatten() {
             let path = Utf8PathBuf::from_path_buf(entry.path()).ok()?;
-            if entry.file_type().ok()?.is_dir() {
-                if path.file_name() == Some(name) {
-                    return Some(path);
-                }
-                stack.push(path);
+            if !entry.file_type().ok()?.is_dir() {
+                continue;
             }
+            if path.file_name() == Some(name) {
+                return Some(path);
+            }
+            stack.push(path);
         }
     }
     None

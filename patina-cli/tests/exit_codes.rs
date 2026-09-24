@@ -1,9 +1,6 @@
 //! Integration tests for exit codes.
 
-#![expect(
-    clippy::expect_used,
-    reason = "integration tests use .expect() on fixture setup; allow-expect-in-tests covers #[cfg(test)] modules but not the helper functions in tests/*.rs integration crates."
-)]
+#![cfg(test)]
 
 mod common;
 
@@ -39,6 +36,26 @@ fn pre_apply_hook_failure_exits_2() {
     assert!(
         fs_err::symlink_metadata(f.home.join(".rc")).is_err(),
         "no file operation may run when a pre_apply hook aborts the apply"
+    );
+}
+
+#[test]
+fn malformed_module_manifest_prints_its_parse_error_once() {
+    let f = Fixture::new();
+    f.module("shell", "[[file]\n");
+
+    let out = f.apply(&["--yes"]);
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(
+        code(&out),
+        1,
+        "a manifest parse failure exits 1; stderr: {stderr}"
+    );
+    assert_eq!(
+        stderr.matches("TOML parse error").count(),
+        1,
+        "each cause in the error chain must print once; stderr: {stderr}"
     );
 }
 

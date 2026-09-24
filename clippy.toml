@@ -1,15 +1,11 @@
-# Allow `.expect()` in test code; production code must use `?` with typed errors.
 allow-expect-in-tests = true
-
-# Raw print macros are denied workspace-wide. User-facing output must
-# route through the `output::Reporter` abstraction in `patina`; other code
-# logs through `tracing`. The `tracing` macros remain permitted because they
-# emit structured events, not user output. The `lock_helper` test-harness
-# example carries a scoped
-# `#[expect(clippy::disallowed_macros, reason = "...")]`.
-disallowed-macros = [
-    "std::println",
-    "std::eprintln",
-    "std::print",
-    "std::eprint",
+allow-print-in-tests = true
+allow-indexing-slicing-in-tests = true
+allow-panic-in-tests = true
+avoid-breaking-exported-api = false
+excessive-nesting-threshold = 4
+max-fn-params-bools = 1
+await-holding-invalid-types = [
+    "tracing::span::Entered",
+    "tracing::span::EnteredSpan",
 ]

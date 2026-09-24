@@ -45,6 +45,7 @@ use crate::config::parse_root_config;
 use crate::discovery::discover_modules;
 use crate::discovery::resolve_repository_root;
 use crate::error::EngineError;
+use crate::error::chain_message;
 use crate::journal::ApplyRecord;
 use crate::journal::Disposition;
 use crate::journal::ExpectedTarget;
@@ -238,13 +239,11 @@ pub struct ModuleContext {
 
 impl ModuleContext {
     /// Return the module directory.
-    #[must_use]
     pub fn directory(&self) -> &Utf8Path {
         &self.dir
     }
 
     /// Return the module manifest path.
-    #[must_use]
     pub fn manifest(&self) -> Utf8PathBuf {
         self.dir.join(MANIFEST_FILENAME)
     }
@@ -267,7 +266,6 @@ pub struct PlannedHook {
 
 impl PlannedHook {
     /// Pair a hook entry with its declaring module index.
-    #[must_use]
     pub fn new(entry: HookEntry, module: usize) -> Self {
         Self { entry, module }
     }
@@ -341,7 +339,6 @@ impl ResolvedPlan {
     ///
     /// Matching uses [`manage_key`](crate::status::manage_key). A tree-mode
     /// entry owns paths beneath its declared targets.
-    #[must_use]
     pub fn owner_of(&self, target: &Utf8Path) -> Option<TargetOwner<'_>> {
         use crate::status::manage_key;
 
@@ -735,7 +732,7 @@ impl<'a> RemoteRegistry<'a> {
                 Err(error) => {
                     tracing::warn!(
                         remote = name,
-                        %error,
+                        error = %chain_message(&error),
                         "patina.lock could not be read; drift for remote-backed entries is \
                          unknown"
                     );
@@ -811,7 +808,7 @@ fn reread_pins(resolved: &ResolvedPlan) -> Option<Vec<(RemoteName, String)>> {
     let lockfile = Lockfile::load(&lockfile_path(&resolved.repo_root))
         .inspect_err(|error| {
             tracing::warn!(
-                %error,
+                error = %chain_message(error),
                 "leaving the declared remotes' checkouts alone: patina.lock could not be read, \
                  so which revs are pinned is unknown"
             );
@@ -2067,14 +2064,8 @@ pub async fn execute(
                 journal.record_progress(op_index)?;
                 op_index = op_index.saturating_add(1);
                 completed.push((entry_index, record));
-
-                // Test-only crash-injection point (see `abort_after_op` above):
-                // terminate immediately, before COMMIT, leaving `op_index`
-                // operations durably applied and the plan an orphan.
                 #[cfg(debug_assertions)]
-                if abort_after_op == Some(op_index) {
-                    std::process::exit(70);
-                }
+                exit_at_crash_seam(abort_after_op, op_index);
             }
         }
     }
@@ -2148,7 +2139,7 @@ pub async fn execute(
                 }
             }
             Err(error) => tracing::warn!(
-                %error,
+                error = %chain_message(&error),
                 "failed to prune unreferenced remote checkouts; the committed apply is unaffected"
             ),
         }
@@ -2159,6 +2150,17 @@ pub async fn execute(
             warnings,
             up_to_date: false,
         })
+    }
+}
+
+#[cfg(debug_assertions)]
+#[expect(
+    clippy::exit,
+    reason = "the test-only crash seam must terminate without unwinding to simulate kill -9"
+)]
+fn exit_at_crash_seam(abort_after_op: Option<u32>, op_index: u32) {
+    if abort_after_op == Some(op_index) {
+        std::process::exit(70);
     }
 }
 
@@ -2462,7 +2464,6 @@ pub struct Orphan {
 impl Orphan {
     /// [`Orphan`] is `#[non_exhaustive]`, so this constructor is the only way
     /// to build one outside patina-core.
-    #[must_use]
     pub fn new(target: Utf8PathBuf, reason: OrphanReason) -> Self {
         Self { target, reason }
     }
@@ -2487,7 +2488,6 @@ pub enum OrphanReason {
 impl OrphanReason {
     /// The stable lowercase label used in the apply diff and the `--json`
     /// `reaped` array.
-    #[must_use]
     pub fn label(self) -> &'static str {
         match self {
             Self::Ignored => "ignored",
@@ -2679,7 +2679,6 @@ fn remove_target(target: &Utf8Path) -> Result<(), EngineError> {
 /// Whether a materialization wrote rendered/copied content (as opposed to
 /// a symlink). Used by the CLI diff renderer to decide between a content
 /// diff and a link-target diff.
-#[must_use = "the materialization kind selects the diff rendering"]
 pub fn is_content_materialization(materialization: &Materialization) -> bool {
     matches!(
         materialization,

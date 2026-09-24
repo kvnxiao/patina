@@ -59,7 +59,7 @@ impl RemoteError {
 
     /// The plan-time failure for an entry naming a remote the root manifest
     /// does not declare.
-    #[must_use = "the error names the remote no declaration matches"]
+    #[must_use]
     pub fn undeclared_remote(name: &str) -> Self {
         RemoteRepr::UndeclaredRemote {
             name: name.to_owned(),
@@ -68,7 +68,7 @@ impl RemoteError {
     }
 
     /// The plan-time failure for a declared remote with no pin.
-    #[must_use = "the error tells the user which command creates the first pin"]
+    #[must_use]
     pub fn missing_lock_entry(name: &str) -> Self {
         RemoteRepr::MissingLockEntry {
             name: name.to_owned(),
@@ -79,7 +79,7 @@ impl RemoteError {
     /// The plan-time failure for a remote-sourced entry whose source resolves
     /// outside its checkout (a `..` in the declared source, or a symlink the
     /// checkout shipped).
-    #[must_use = "the error names the source that escaped its checkout"]
+    #[must_use]
     pub fn source_escapes_checkout(name: &str, source: &Utf8Path) -> Self {
         RemoteRepr::SourceEscapesCheckout {
             name: name.to_owned(),
@@ -89,7 +89,7 @@ impl RemoteError {
     }
 
     /// The plan-time failure for a remote checkout that holds a symbolic link.
-    #[must_use = "the error names the link that would dereference outside the checkout"]
+    #[must_use]
     pub fn symlink_in_checkout(name: &str, path: &Utf8Path) -> Self {
         RemoteRepr::SymlinkInCheckout {
             name: name.to_owned(),
@@ -100,7 +100,7 @@ impl RemoteError {
 
     /// The plan-time failure for a remote whose checkout was expected on this
     /// machine but is not materialized.
-    #[must_use = "the error names the remote whose checkout is missing"]
+    #[must_use]
     pub fn checkout_not_materialized(name: &str) -> Self {
         RemoteRepr::CheckoutNotMaterialized {
             name: name.to_owned(),
@@ -138,7 +138,7 @@ pub(crate) enum RemoteRepr {
     Git(#[from] git::GitError),
 
     /// A filesystem operation on the remote cache failed.
-    #[error("{action} {path} failed: {source}")]
+    #[error("{action} {path} failed")]
     Cache {
         /// What was being attempted, phrased to read before the path
         /// (`"reading"`, `"removing"`).
@@ -151,7 +151,7 @@ pub(crate) enum RemoteRepr {
     },
 
     /// The lockfile could not be read or written.
-    #[error("failed to access the lockfile {path}: {source}")]
+    #[error("failed to access the lockfile {path}")]
     LockfileIo {
         /// The lockfile path.
         path: Utf8PathBuf,
@@ -161,7 +161,7 @@ pub(crate) enum RemoteRepr {
     },
 
     /// The lockfile is not valid TOML.
-    #[error("failed to parse {path} as TOML: {source}")]
+    #[error("failed to parse {path} as TOML")]
     LockfileToml {
         /// The lockfile path.
         path: Utf8PathBuf,
@@ -207,7 +207,7 @@ pub(crate) enum RemoteRepr {
     },
 
     /// A `[remotes.<name>]` key is not a usable remote name.
-    #[error("the lock entry key `{name}` is not a usable remote name: {source}")]
+    #[error("the lock entry key `{name}` is not a usable remote name")]
     LockfileName {
         /// The offending key.
         name: String,
@@ -220,7 +220,7 @@ pub(crate) enum RemoteRepr {
     #[error(
         "the lockfile carries two entries for the remote `{name}`; a remote has one pin, and \
          names are compared ignoring case and Unicode normalization, so the two cannot both be \
-         honoured. Delete the stale entry, or re-pin with `patina remote update {name}`"
+         honoured; delete the stale entry, or re-pin with `patina remote update {name}`"
     )]
     LockfileDuplicate {
         /// The name claimed twice.
@@ -256,7 +256,7 @@ pub(crate) enum RemoteRepr {
     /// else.
     #[error(
         "the checkout for remote `{name}` contains a symbolic link ({path}); refusing to deploy \
-         from it. Remove the cache directory and re-run `patina apply` to re-materialize"
+         from it; remove the cache directory and re-run `patina apply` to re-materialize"
     )]
     SymlinkInCheckout {
         /// The remote whose checkout holds the link.
@@ -289,7 +289,7 @@ pub(crate) enum RemoteRepr {
     /// converge to the committed lock.
     #[error(
         "the remote `{name}` is pinned to rev {rev}, which is not in the local cache and could \
-         not be fetched: {source}"
+         not be fetched"
     )]
     ColdCache {
         /// The remote whose pin could not be materialized.

@@ -45,7 +45,6 @@ pub enum Probe {
 /// Uses `symlink_metadata` so a symbolic link is reported as
 /// [`Probe::Present`], not followed to a missing destination. This
 /// includes a dangling link a partially-applied symlink op may have left.
-#[must_use = "the probe result decides whether the operation is reversed"]
 pub fn classify_target(target: &Utf8Path) -> Probe {
     match fs_err::symlink_metadata(target) {
         Ok(_) => Probe::Present,
@@ -54,8 +53,7 @@ pub fn classify_target(target: &Utf8Path) -> Probe {
 }
 
 /// The absolute target path an operation writes to.
-#[must_use = "recovery needs the target path to probe and reverse the operation"]
-pub fn operation_target(op: &PlannedOperation) -> &str {
+pub(super) fn operation_target(op: &PlannedOperation) -> &str {
     match op {
         PlannedOperation::Symlink { target, .. }
         | PlannedOperation::Render { target, .. }
@@ -84,7 +82,6 @@ pub fn operation_target(op: &PlannedOperation) -> &str {
 /// assert!(got.as_str().contains("20260528T120000Z"));
 /// assert_eq!(got.file_name(), Some(".zshrc"));
 /// ```
-#[must_use = "the mirrored path locates the original bytes recovery restores"]
 pub fn mirror_backup_path(
     backups_dir: &Utf8Path,
     timestamp: &str,

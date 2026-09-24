@@ -1,5 +1,7 @@
 //! Integration tests for source kind validation.
 
+#![cfg(test)]
+
 mod common;
 
 use common::Fixture;

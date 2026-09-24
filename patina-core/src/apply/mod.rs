@@ -167,7 +167,7 @@ pub enum ExecutorError {
     /// A symbolic-link creation, copy, directory walk, or write hit an
     /// underlying IO error. The path that failed is named so the message
     /// is actionable.
-    #[error("filesystem operation failed for {path}: {source}")]
+    #[error("filesystem operation failed for {path}")]
     Io {
         /// The path whose operation failed.
         path: Utf8PathBuf,
@@ -223,7 +223,7 @@ pub enum ExecutorError {
     /// engine surfaces the typed error so the CLI can exit non-zero with
     /// the message.
     #[error(
-        "creating a symbolic link at {target} requires Windows Developer Mode or an elevated process: {source}"
+        "creating a symbolic link at {target} requires Windows Developer Mode or an elevated process"
     )]
     WindowsSymlinkPermission {
         /// The target path the link creation was attempted at.

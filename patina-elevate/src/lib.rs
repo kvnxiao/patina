@@ -45,39 +45,41 @@ pub struct Cli {
     pub command: Command,
 }
 
-/// Parse the process arguments into a [`Cli`], or print a usage error and exit.
+/// Parse the process arguments into a [`Cli`].
+///
+/// # Errors
 ///
 /// On [`ErrorKind::InvalidSubcommand`], writes clap's rendered error to
 /// stderr, appends a line listing the subcommands derived from the command
-/// definition, and exits `2`. Every other error kind, the no-subcommand path
-/// included, exits through [`clap::Error::exit`] with clap's own code and
-/// stream.
+/// definition, and returns exit code `2`. On every other error kind,
+/// including help, version, and the no-subcommand path, prints the error
+/// through [`clap::Error::print`] and returns clap's own exit code.
 ///
 /// # Examples
 ///
 /// ```no_run
-/// let cli = patina_elevate::parse_or_exit();
-/// patina_elevate::run(&cli.command);
+/// let code = match patina_elevate::parse() {
+///     Ok(cli) => patina_elevate::run(&cli.command),
+///     Err(code) => code,
+/// };
 /// ```
-#[must_use = "the parsed command must be dispatched to `run`"]
-pub fn parse_or_exit() -> Cli {
-    match Cli::try_parse() {
-        Ok(cli) => cli,
-        Err(error) if error.kind() == ErrorKind::InvalidSubcommand => {
-            // The workspace `disallowed-macros` gate targets the print
-            // macros, not raw handle writes; clap's own `Error::exit` writes
-            // through a locked stderr handle too.
-            use std::io::Write as _;
-            let mut stderr = std::io::stderr().lock();
-            let listing = supported_subcommands();
-            let rendered = write!(stderr, "{error}")
-                .and_then(|()| writeln!(stderr, "Supported subcommands: {listing}"));
-            // Exit 2 even if the stderr write failed; the usage error stands.
-            drop(rendered);
-            std::process::exit(2);
-        }
-        Err(error) => error.exit(),
+pub fn parse() -> Result<Cli, ExitCode> {
+    let error = match Cli::try_parse() {
+        Ok(cli) => return Ok(cli),
+        Err(error) => error,
+    };
+    if error.kind() == ErrorKind::InvalidSubcommand {
+        use std::io::Write as _;
+        let mut stderr = std::io::stderr().lock();
+        let listing = supported_subcommands();
+        let rendered = write!(stderr, "{error}")
+            .and_then(|()| writeln!(stderr, "Supported subcommands: {listing}"));
+        // Return exit code 2 even if the stderr write failed.
+        drop(rendered);
+        return Err(ExitCode::from(2));
     }
+    drop(error.print());
+    Err(u8::try_from(error.exit_code()).map_or(ExitCode::FAILURE, ExitCode::from))
 }
 
 fn supported_subcommands() -> String {
@@ -109,8 +111,8 @@ pub enum Command {
 /// Dispatch a parsed command to its action and resolve the exit code.
 ///
 /// The action's outcome maps to `0` on success, or `1` after writing the typed
-/// failure to stderr. [`parse_or_exit`] owns the exit-`2` usage path.
-#[must_use = "the returned code is the process's terminal exit status"]
+/// failure to stderr. [`parse`] owns the exit-`2` usage path.
+#[must_use]
 pub fn run(command: &Command) -> ExitCode {
     match command {
         Command::EnableDeveloperMode => {
@@ -123,26 +125,29 @@ pub fn run(command: &Command) -> ExitCode {
     }
 }
 
-/// Map an action's result to an [`ExitCode`], writing the typed failure to
-/// stderr on the exit-1 path.
-///
-/// The helper has no `patina-core` dependency and therefore no `Reporter`, so
-/// the exit-1 line goes to stderr through a scoped `disallowed_macros`
-/// suppression.
-fn report_result<E: std::error::Error>(action: &str, result: Result<(), E>) -> ExitCode {
+#[expect(
+    clippy::print_stderr,
+    reason = "the helper has no Reporter; the typed error on stderr is the documented exit-1 path"
+)]
+fn report_result<E: std::error::Error + 'static>(action: &str, result: Result<(), E>) -> ExitCode {
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            #[expect(
-                clippy::disallowed_macros,
-                reason = "helper has no Reporter; typed error to stderr is the documented exit-1 path"
-            )]
-            {
-                eprintln!("patina-elevate: {action} failed: {error}");
-            }
+            eprintln!("patina-elevate: {action} failed: {}", chain_message(&error));
             ExitCode::FAILURE
         }
     }
+}
+
+pub(crate) fn chain_message(error: &(dyn std::error::Error + 'static)) -> String {
+    let mut message = error.to_string();
+    let mut source = error.source();
+    while let Some(cause) = source {
+        message.push_str(": ");
+        message.push_str(&cause.to_string());
+        source = cause.source();
+    }
+    message
 }
 
 #[cfg(test)]

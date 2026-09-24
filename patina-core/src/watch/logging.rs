@@ -54,7 +54,7 @@ const MAX_LOG_FILES: usize = 7;
 #[non_exhaustive]
 pub enum LoggingError {
     /// Creating `<state>/patina/logs/` failed.
-    #[error("failed to create watcher log directory `{path}`: {source}")]
+    #[error("failed to create watcher log directory `{path}`")]
     CreateLogDir {
         /// The log directory the watcher attempted to create.
         path: Utf8PathBuf,
@@ -64,7 +64,7 @@ pub enum LoggingError {
     },
 
     /// Initializing the rolling file appender failed.
-    #[error("failed to initialize rolling log appender in `{path}`: {source}")]
+    #[error("failed to initialize rolling log appender in `{path}`")]
     Appender {
         /// The log directory the appender was built against.
         path: Utf8PathBuf,
@@ -87,6 +87,12 @@ pub struct FileAppender {
     pub writer: NonBlocking,
     /// Flush guard; must be held for the watcher's process lifetime.
     pub guard: WorkerGuard,
+}
+
+impl std::fmt::Debug for FileAppender {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FileAppender").finish_non_exhaustive()
+    }
 }
 
 /// Lazily create `<state>/patina/logs/` and build the watcher's

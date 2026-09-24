@@ -6,6 +6,8 @@
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
-    let cli = patina_elevate::parse_or_exit();
-    patina_elevate::run(&cli.command)
+    match patina_elevate::parse() {
+        Ok(cli) => patina_elevate::run(&cli.command),
+        Err(code) => code,
+    }
 }

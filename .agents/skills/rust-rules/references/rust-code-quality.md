@@ -27,6 +27,32 @@ For tests over a catalog or fixture directory, discover members and derive count
 Keep expected parser results, serialized bytes, and golden outputs independent of the implementation
 under test.
 
+## Module and file organization (Default)
+
+Keep the binary entry point focused on argument parsing, configuration, invoking application logic,
+and reporting its result. Move substantive logic into cohesive modules; introduce a library target
+when integration tests or other callers need a Rust API.
+
+Name modules for their responsibility, such as `catalog` or `installation`. Keep a single-caller
+helper near its caller instead of creating a generic `utils` module. Follow the repository's module
+file layout unless a change improves navigation.
+
+Extract a function when its name expresses a distinct operation or removes repeated logic. Group
+values into a type when they share an invariant or lifecycle. Introduce a trait for required
+polymorphism or an explicit substitution boundary; keep a concrete type when neither is needed.
+
+When size or nesting lints fire, first simplify control flow or separate responsibilities. Extract
+an options type only when the arguments form a meaningful configuration; follow the
+[exception policy](rust-lints-and-formatting.md#limit-exceptions-to-their-approved-scope-required)
+when a cohesive implementation still exceeds a threshold.
+
+Keep unit tests in a `#[cfg(test)] mod tests` within the module they exercise. Use `tests/` for
+tests through the library's public API or the executable's external behavior.
+
+Use noun names for field-like getters and `as_`, `to_`, or `into_` according to conversion
+semantics. Name retrieval operations for the work they perform, such as `load_user`. See
+[Rust API naming conventions](https://rust-lang.github.io/api-guidelines/naming.html).
+
 ## Prefer Enums Over Booleans (Default)
 
 A `bool` parameter is opaque at the call site, and adjacent flags invite transposition.
@@ -89,24 +115,23 @@ needs no additional annotation.
 pub struct QueryBuilder { filters: Vec<Filter> }
 
 impl QueryBuilder {
-    #[must_use]
     pub fn filter(mut self, filter: Filter) -> Self {
         self.filters.push(filter);
         self
     }
 }
 
-impl Lock {
-    #[must_use = "hold the guard for as long as the lock must remain acquired"]
-    pub fn acquire(&self) -> LockGuard<'_> { todo!() }
-}
+#[must_use = "hold the guard for as long as the lock must remain acquired"]
+pub struct LockGuard<'a> { lock: &'a Lock }
 ```
 
 Side-effecting functions whose return is incidental, simple getters, and expensive computations with
-no discard bug do not meet this criterion. Work cost alone does not justify the attribute.
+no discard bug do not meet this criterion. Work cost alone does not justify the attribute. Keep
+`clippy::must_use_candidate` allowed in the
+[lint baseline](rust-lints-and-formatting.md#install-the-complete-lint-baseline-required) and apply
+the attribute according to the discard contract.
 
 ```rust
-pub fn log_event(event: &Event) -> usize { todo!() }
 pub fn len(&self) -> usize { self.items.len() }
 ```
 
@@ -138,7 +163,7 @@ use camino::Utf8Path;
 
 pub fn read_config(path: impl AsRef<Utf8Path>) -> Result<Config> {
     let content = fs_err::read_to_string(path.as_ref())?;
-    todo!()
+    Config::parse(&content)
 }
 ```
 

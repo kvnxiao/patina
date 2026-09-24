@@ -84,7 +84,7 @@ pub enum ServiceError {
     ResolveBinary(String),
 
     /// Writing or removing the service descriptor file failed.
-    #[error("failed to write the service descriptor `{path}`: {source}")]
+    #[error("failed to write the service descriptor `{path}`")]
     WriteDescriptor {
         /// The descriptor path the backend attempted to write or remove.
         path: Utf8PathBuf,
@@ -131,7 +131,6 @@ impl LifecycleResult {
     /// assert_eq!(LifecycleResult::Installed.label(), "installed");
     /// assert_eq!(LifecycleResult::NotInstalled.label(), "not_installed");
     /// ```
-    #[must_use = "the label is a value to render, not a side effect"]
     pub const fn label(self) -> &'static str {
         match self {
             Self::Installed => "installed",
@@ -252,7 +251,6 @@ pub trait ServiceBackend {
 /// println!("installed: {}", status.installed);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
-#[must_use = "the returned backend performs the lifecycle action; call one of its methods"]
 pub fn current(state_dir: &Utf8Path) -> Box<dyn ServiceBackend> {
     match HostOs::current() {
         #[cfg(target_os = "macos")]
@@ -306,7 +304,6 @@ use crate::watch::logging::LOGS_DIR;
 /// may never have started since the last rotation).
 ///
 /// The pair is `(subscriptions_count, re_applies_since_start)`.
-#[must_use = "the recovered counters populate the status object; ignoring them drops the metrics"]
 pub fn recover_log_counters(state_dir: &Utf8Path) -> (Option<u64>, Option<u64>) {
     let Some(log_path) = most_recent_log(state_dir) else {
         return (None, None);

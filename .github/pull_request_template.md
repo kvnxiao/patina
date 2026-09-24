@@ -45,14 +45,12 @@ If a checkbox doesn't apply (no observable change in that area), state that expl
 
 ## CI and tests
 
-- [ ] `cargo build --workspace` passes.
-- [ ] `cargo test --workspace --all-features` passes.
-- [ ] `cargo clippy --all-targets --all-features -- -D warnings` passes.
-- [ ] `cargo fmt --all --check` passes.
-- [ ] `cargo doc --workspace --no-deps --all-features` builds clean (with `RUSTDOCFLAGS=-D warnings`).
-- [ ] `cargo deny check` passes.
+- [ ] `just lint` passes (nightly fmt check and Clippy with `-D warnings`).
+- [ ] `just test` passes.
+- [ ] `just doc` passes.
+- [ ] `just dependencies` passes (`cargo audit`, `cargo machete`, `cargo deny check`).
 - [ ] Line coverage stays at or above 85%.
-- [ ] MSRV job (`cargo build` against the documented `rust-version`) passes.
+- [ ] `just check-msrv <package>` passes for each package.
 - [ ] If a manual validation checklist applies, it is signed off under `docs/manual-validation/`.
 
 ## Reviewer notes

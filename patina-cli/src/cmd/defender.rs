@@ -25,6 +25,7 @@
 
 use crate::cli::DefenderArgs;
 use crate::cli::DefenderCommand;
+use crate::cmd::apply::Consent;
 use crate::cmd::apply::PromptReader;
 use crate::cmd::apply::Tty;
 use crate::exit_code::ExitCode;
@@ -48,6 +49,7 @@ use patina_core::ExclusionKind;
 use patina_core::ExclusionState;
 use patina_core::HostDefenderProbe;
 use patina_core::ResolvedPlan;
+use patina_core::chain_message;
 use patina_core::current_timestamp;
 use patina_core::defender_ledger_path;
 use patina_core::defender_request_path;
@@ -118,21 +120,25 @@ enum Action {
 /// the elevated helper fails at the engine level. A declined prompt or declined
 /// UAC consent is not an error; it maps to a non-zero exit via the returned
 /// `i32`.
-pub fn run(
+pub(crate) fn run(
     args: &DefenderArgs,
     tty: Tty,
     reader: &mut impl PromptReader,
     reporter: &mut impl Reporter,
 ) -> Result<i32> {
-    match &args.command {
-        DefenderCommand::Apply { yes, json } => {
-            run_reconcile(Action::Apply, *yes, *json, tty, reader, reporter)
-        }
-        DefenderCommand::Clear { yes, json } => {
-            run_reconcile(Action::Clear, *yes, *json, tty, reader, reporter)
-        }
-        DefenderCommand::Status { json } => run_status(*json, reporter),
-    }
+    let (action, yes, json) = match &args.command {
+        DefenderCommand::Apply { yes, json } => (Action::Apply, *yes, *json),
+        DefenderCommand::Clear { yes, json } => (Action::Clear, *yes, *json),
+        DefenderCommand::Status { json } => return run_status(*json, reporter),
+    };
+    run_reconcile(
+        action,
+        Consent::from_yes_flag(yes),
+        json,
+        tty,
+        reader,
+        reporter,
+    )
 }
 
 /// The confirmation decision for the human reconcile path (mirrors the `apply`
@@ -150,7 +156,7 @@ enum Confirmation {
 /// Reconcile the live Defender exclusions to `action`'s desired set.
 fn run_reconcile(
     action: Action,
-    yes: bool,
+    consent: Consent,
     json: bool,
     tty: Tty,
     reader: &mut impl PromptReader,
@@ -190,7 +196,7 @@ fn run_reconcile(
     };
 
     if json {
-        return run_reconcile_json(&reconcile, yes, reporter);
+        return run_reconcile_json(&reconcile, consent, reporter);
     }
 
     render_preview(&reconcile, reporter);
@@ -213,7 +219,7 @@ fn run_reconcile(
         return Ok(ExitCode::Success.code());
     }
 
-    match confirm(yes, tty, reader, reporter) {
+    match confirm(consent, tty, reader, reporter) {
         Confirmation::Proceed => {}
         Confirmation::PreviewOnly => return Ok(ExitCode::Success.code()),
         Confirmation::Declined => return Ok(ExitCode::UserDeclined.code()),
@@ -296,14 +302,14 @@ fn enact(reconcile: &Reconcile<'_>, reporter: &mut impl Reporter) -> Result<i32>
 /// JSON reconcile path: preview without `--yes`, otherwise enact and report.
 fn run_reconcile_json(
     reconcile: &Reconcile<'_>,
-    yes: bool,
+    consent: Consent,
     reporter: &mut impl Reporter,
 ) -> Result<i32> {
     let mut report = |result: &str, detail: &str| {
         reporter.json(&reconcile_json(reconcile, result, detail));
     };
 
-    if !yes {
+    if consent == Consent::Prompt {
         report("previewed", "");
         return Ok(ExitCode::Success.code());
     }
@@ -374,7 +380,8 @@ fn run_status(json: bool, reporter: &mut impl Reporter) -> Result<i32> {
             // reports the desired set rather than hard-failing. Same downgrade
             // `doctor` takes on a shared-lock timeout.
             reporter.warn(&format!(
-                "could not read current Defender exclusions: {err}; showing the desired set only"
+                "could not read current Defender exclusions: {}; showing the desired set only",
+                chain_message(&err)
             ));
             if json {
                 reporter.json(&status_desired_only_json(&resolved, &desired));
@@ -388,15 +395,15 @@ fn run_status(json: bool, reporter: &mut impl Reporter) -> Result<i32> {
 
 /// The interactive confirmation, prompting only on an interactive TTY.
 fn confirm(
-    yes: bool,
+    consent: Consent,
     tty: Tty,
     reader: &mut impl PromptReader,
     reporter: &mut impl Reporter,
 ) -> Confirmation {
-    match (yes, tty) {
-        (true, _) => Confirmation::Proceed,
-        (false, Tty::NonInteractive) => Confirmation::PreviewOnly,
-        (false, Tty::Interactive) => {
+    match (consent, tty) {
+        (Consent::Preapproved, _) => Confirmation::Proceed,
+        (Consent::Prompt, Tty::NonInteractive) => Confirmation::PreviewOnly,
+        (Consent::Prompt, Tty::Interactive) => {
             reporter.confirm("Modify Windows Defender exclusions?");
             let answer = reader.read_line().unwrap_or_default();
             if matches!(answer.trim(), "y" | "Y") {
@@ -631,12 +638,11 @@ fn exclusions_json(exclusions: &[Exclusion]) -> Vec<serde_json::Value> {
 fn blocked_error(detail: &str) -> anyhow::Error {
     anyhow!(
         "Defender rejected the exclusion change; the write did not take \
-         ({detail}). This usually means Tamper Protection is enabled or \
-         Defender is managed by policy (Intune / GPO). Check \
-         `Get-MpComputerStatus` (IsTamperProtected and AMRunningMode); apply \
-         the exclusions through your management tool, or consider a Windows 11 \
-         Dev Drive in Defender performance mode as a lower-risk alternative to \
-         path exclusions."
+         ({detail}); Tamper Protection or a management policy (Intune / GPO) \
+         usually causes this: check `Get-MpComputerStatus` (IsTamperProtected \
+         and AMRunningMode), apply the exclusions through your management tool, \
+         or consider a Windows 11 Dev Drive in Defender performance mode as a \
+         lower-risk alternative to path exclusions"
     )
 }
 
@@ -659,9 +665,9 @@ fn failed_error(detail: &str) -> anyhow::Error {
 fn unconfirmed_error() -> anyhow::Error {
     anyhow!(
         "the elevated helper did not report a result, so whether the Defender \
-         exclusions changed is unknown. They may have been applied without \
-         being recorded. Re-run `patina defender apply` (it is idempotent), or \
-         check the live list with `Get-MpPreference` from an elevated shell."
+         exclusions changed is unknown; they may have been applied without \
+         being recorded: re-run `patina defender apply` (it is idempotent), or \
+         check the live list with `Get-MpPreference` from an elevated shell"
     )
 }
 

@@ -52,6 +52,7 @@
 //! notification daemon, drives a capture sink that records `(title, body)`
 //! tuples in memory. Only the production [`NotifySink`] touches `notify-rust`.
 
+use crate::error::chain_message;
 use crate::journal::content_hash;
 use crate::watch::drift_cache::DriftCache;
 use crate::watch::drift_cache::DriftEntry;
@@ -255,7 +256,7 @@ pub fn handle_target_events(
     if cache_dirty && let Err(error) = write_drift_cache(&cache_path, &cache) {
         tracing::warn!(
             target: "patina_core",
-            error = %error,
+            error = %chain_message(&error),
             "drift_cache_write_failed"
         );
     }

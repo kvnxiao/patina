@@ -38,6 +38,7 @@ use anyhow::Context;
 use anyhow::Result;
 use patina_core::LockKind;
 use patina_core::acquire_lock;
+use patina_core::chain_message;
 use patina_core::exclusive_timeout;
 use patina_core::remote::cache;
 use patina_core::remote::gate::GateConcern;
@@ -57,7 +58,7 @@ use patina_core::remote::update::RemoteView;
 /// remote that is individually unreachable or held back by the gate is not an
 /// error: it is reported and the run continues, so one bad remote never blocks
 /// the rest.
-pub fn run(
+pub(crate) fn run(
     args: &RemoteArgs,
     tty: Tty,
     reader: &mut impl PromptReader,
@@ -74,7 +75,14 @@ pub fn run(
         }
         RemoteCommand::Check { hook } => {
             let inventory = read_inventory(&lock_path, *hook, reporter)?;
-            Ok(run_check(&inventory, *hook, args.json, reporter))
+            let output = if *hook {
+                CheckOutput::ShellHook
+            } else if args.json {
+                CheckOutput::Json
+            } else {
+                CheckOutput::Human
+            };
+            Ok(run_check(&inventory, output, reporter))
         }
         RemoteCommand::Update { name, now, yes } => run_update_locked(
             &lock_path,
@@ -107,7 +115,7 @@ pub fn run(
 /// # Errors
 ///
 /// Returns an error under the same conditions as [`run`].
-pub fn run_update_all(
+pub(crate) fn run_update_all(
     tty: Tty,
     reader: &mut impl PromptReader,
     reporter: &mut impl Reporter,
@@ -244,15 +252,24 @@ fn list_row(view: &RemoteView, pending: bool, styles: &Styles) -> String {
     ])
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CheckOutput {
+    /// `--hook`: throttled and silent; the shell prints the notice file.
+    ShellHook,
+    Json,
+    Human,
+}
+
 /// Run `ls-remote` against every remote and refresh the notice.
 fn run_check(
     inventory: &RemoteInventory,
-    hook: bool,
-    json: bool,
+    output: CheckOutput,
     reporter: &mut impl Reporter,
 ) -> i32 {
     let now = patina_core::current_epoch_seconds();
-    if hook && !notice::hook_check_due(notice::last_check_epoch(&inventory.state_dir), now) {
+    if output == CheckOutput::ShellHook
+        && !notice::hook_check_due(notice::last_check_epoch(&inventory.state_dir), now)
+    {
         // A throttled check preserves the cached notice for the shell hook.
         return ExitCode::Success.code();
     }
@@ -263,7 +280,7 @@ fn run_check(
         match update::check_upstream(view) {
             Ok(result) if result.has_update() => behind.push(result.name),
             Ok(_) => {}
-            Err(error) => failures.push(format!("{}: {error}", view.name())),
+            Err(error) => failures.push(format!("{}: {}", view.name(), chain_message(&error))),
         }
     }
 
@@ -289,14 +306,15 @@ fn run_check(
     .into_iter()
     .flatten()
     {
-        if !hook {
+        if output != CheckOutput::ShellHook {
             reporter.warn(&format!(
-                "failed to update the remote notice state: {error}"
+                "failed to update the remote notice state: {}",
+                chain_message(&error)
             ));
         }
     }
 
-    if hook {
+    if output == CheckOutput::ShellHook {
         // Fully silent on success: the shell prints the notice file itself.
         return ExitCode::Success.code();
     }
@@ -310,7 +328,7 @@ fn run_check(
         ExitCode::Generic
     };
 
-    if json {
+    if output == CheckOutput::Json {
         reporter.json(&document(&serde_json::json!({
             "pending": behind,
             "repo_behind": repo_behind,
@@ -385,7 +403,7 @@ fn run_update(
         .collect();
     let proposals = propose_all(&views, |view| {
         update::propose(inventory, view, now_epoch, flags.bypass_age)
-            .map_err(|error| error.to_string())
+            .map_err(|error| chain_message(&error))
     });
 
     for (view, proposal) in views.iter().zip(proposals) {
@@ -585,7 +603,8 @@ fn reconcile_notice(
     }
     if let Err(error) = notice::settle(state_dir, &names) {
         reporter.warn(&format!(
-            "failed to update the remote notice state: {error}"
+            "failed to update the remote notice state: {}",
+            chain_message(&error)
         ));
     }
 }
@@ -892,15 +911,11 @@ mod tests {
             *count += 1;
             peak.fetch_max(*count, std::sync::atomic::Ordering::Relaxed);
             all_started.notify_all();
-            while *count < expected {
-                let (guard, timeout) = all_started
-                    .wait_timeout(count, std::time::Duration::from_secs(10))
-                    .expect("the start counter");
-                count = guard;
-                if timeout.timed_out() {
-                    break;
-                }
-            }
+            let (count, _timeout) = all_started
+                .wait_timeout_while(count, std::time::Duration::from_secs(10), |count| {
+                    *count < expected
+                })
+                .expect("the start counter");
             drop(count);
             Ok(Proposal {
                 name: view.name().to_string(),

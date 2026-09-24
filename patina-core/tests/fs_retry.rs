@@ -1,5 +1,6 @@
 //! Integration tests for fs retry.
 
+#![cfg(test)]
 #![cfg_attr(
     not(unix),
     allow(
@@ -7,10 +8,6 @@
         dead_code,
         reason = "all tests in this file are #[cfg(unix)]; the imports and helpers are unused on other targets by design"
     )
-)]
-#![expect(
-    clippy::expect_used,
-    reason = "integration tests use .expect() on fixture setup; allow-expect-in-tests covers #[cfg(test)] modules but not the helper functions in tests/*.rs integration crates."
 )]
 
 use camino::Utf8PathBuf;

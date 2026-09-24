@@ -100,22 +100,46 @@ contributions follow the same rules.
 # Activate the local git hooks (pre-commit: fmt + clippy; pre-push: `just check`):
 git config core.hooksPath .githooks
 
-# Install the nightly toolchain used for formatting:
-rustup toolchain install nightly --component rustfmt
+# Install stable Rust (builds, tests, Clippy) and nightly rustfmt:
+rustup toolchain install stable --profile minimal --component clippy
+rustup toolchain install nightly --profile minimal --component rustfmt
+
+# Add the targets `just lint` cross-checks:
+rustup target add --toolchain stable x86_64-unknown-linux-gnu x86_64-pc-windows-gnu
+
+# Install the dependency checkers `just dependencies` runs:
+cargo +stable install --locked cargo-audit cargo-machete cargo-deny
 ```
+
+`just check-msrv <package>` also needs Bash and `jq`.
 
 See [`.githooks/README.md`](.githooks/README.md) for details, the git 2.54
 `hook.*` alternative, and bypass options.
 
+Formatting uses nightly rustfmt because `.rustfmt.toml` sets unstable
+options. For rust-analyzer, set the formatter to nightly:
+
+```json
+{
+  "rust-analyzer.rustfmt.overrideCommand": ["rustup", "run", "nightly", "rustfmt"]
+}
+```
+
 ### Local quality gate
 
 ```sh
-just check        # = just lint + just test; run before opening a PR
+just check        # = just lint + just test + just doc + just dependencies
+just fix          # apply Clippy fixes and formatting, then run just lint
 ```
 
-CI runs the same gates natively across macOS, Linux, and Windows, plus the
-per-OS test-behaviour matrix, the MSRV build, and coverage. Watch the PR
-checks after pushing.
+On Windows, `just test` needs Developer Mode or an elevated shell. Without
+either, each `patina` CLI symlink test launches `patina-elevate`, which
+raises a UAC prompt, and the `patina-core` symlink tests fail.
+
+CI runs `just lint` and `just test` natively on macOS, Linux, and Windows;
+the Linux test job runs `just coverage` in place of `just test`. `just doc`,
+`just dependencies`, and `just check-msrv` for each package run on Linux.
+Watch the PR checks after pushing.
 
 ## License
 

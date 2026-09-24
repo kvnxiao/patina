@@ -11,6 +11,8 @@
 # warns about this setting and ignores those options, so `cargo fmt` on stable
 # does not match CI. Use `cargo +nightly fmt` for the repository format.
 
+edition = "2024"
+style_edition = "2024"
 unstable_features = true
 
 reorder_imports = true

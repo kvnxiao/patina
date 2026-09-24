@@ -28,7 +28,7 @@ const COMPLETED_MARKER: u8 = 1;
 
 /// Width of one progress record: a little-endian `u32` index plus the
 /// one-byte completion marker.
-pub const RECORD_LEN: usize = core::mem::size_of::<u32>() + 1;
+pub(super) const RECORD_LEN: usize = core::mem::size_of::<u32>() + 1;
 
 /// Append-only writer for one apply run's progress cursor. Holds the
 /// open file handle so each [`record`](ProgressCursor::record) is a bare
@@ -66,7 +66,6 @@ impl ProgressCursor {
     }
 
     /// The path of this progress cursor.
-    #[must_use = "the path locates the progress cursor for recovery"]
     pub fn path(&self) -> &Utf8Path {
         &self.path
     }
@@ -75,7 +74,6 @@ impl ProgressCursor {
     /// discarding any torn trailing record shorter than `RECORD_LEN`.
     /// Used by crash recovery to read back a cursor that was
     /// never `fsync`-ed.
-    #[must_use = "the decoded indices drive recovery reconciliation"]
     pub fn decode_completed(bytes: &[u8]) -> Vec<u32> {
         bytes
             .as_chunks::<RECORD_LEN>()

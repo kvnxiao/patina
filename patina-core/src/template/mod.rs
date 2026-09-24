@@ -103,7 +103,6 @@ pub enum TemplateError {
 /// inner [`Environment`] lives behind an [`Arc`], so every clone shares
 /// the same instance (the property under test).
 #[derive(Debug, Clone)]
-#[must_use = "construct the engine then call `render` / `eval_when`"]
 pub struct Engine {
     env: Arc<Environment<'static>>,
 }
@@ -127,7 +126,6 @@ impl Engine {
     /// The shared environment handle. Two [`Engine`] clones return
     /// [`Arc`] pointers to the same allocation, which proves the
     /// single-instance wiring property.
-    #[must_use = "inspect the shared environment handle"]
     pub fn shared_environment(&self) -> Arc<Environment<'static>> {
         Arc::clone(&self.env)
     }

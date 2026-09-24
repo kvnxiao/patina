@@ -1,10 +1,6 @@
 //! Integration tests for status cli.
 
-#![expect(
-    clippy::expect_used,
-    clippy::panic,
-    reason = "integration tests use .expect()/panic! on fixtures and asserted JSON; allow-*-in-tests covers #[cfg(test)] modules but not the helper functions in tests/*.rs integration crates."
-)]
+#![cfg(test)]
 
 use camino::Utf8Path;
 use camino::Utf8PathBuf;

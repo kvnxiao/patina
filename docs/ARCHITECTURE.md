@@ -48,7 +48,8 @@ flowchart TD
   `clap`, drives the engine, and renders results through the
   `output::Reporter` abstraction: human-readable by default, JSON under
   `--json`. All process exit codes flow through a single funnel that
-  maps engine outcomes onto the formalized codes.
+  maps engine outcomes, and lock timeouts from commands that take the
+  lock themselves, onto the formalized codes.
 - **`patina-elevate`** is a standalone Windows-only helper binary. It
   carries the smallest possible trust surface (no dependency on
   `patina-core` or `patina`) and performs one elevated action under a
@@ -67,8 +68,10 @@ flowchart TD
   effect.
 
 User-facing output never uses `println!` / `eprintln!` outside the
-`Reporter` layer; everything else logs through `tracing`. See
-AGENTS.md "Hard rules" for the enforcement detail.
+`Reporter` layer; everything else logs through `tracing`. The workspace
+denies Clippy's `print_stdout` and `print_stderr` lints, so any other print
+outside test code fails `just lint` unless an `#[expect]` attribute
+suppresses the lint.
 
 ## Journal format
 

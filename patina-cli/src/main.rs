@@ -2,8 +2,7 @@
 //!
 //! Parses the clap-derived command surface ([`cli`]) and dispatches to a
 //! subcommand in [`cmd`]. Every subcommand returns an `anyhow::Result<i32>`,
-//! and [`cli::resolve_exit_code`] maps that to the integer `main` passes to
-//! [`std::process::exit`].
+//! and [`cli::resolve_exit_code`] maps that to the exit status `main` returns.
 
 mod cli;
 mod cmd;
@@ -32,7 +31,7 @@ fn detect_tty() -> Tty {
 }
 
 #[tokio::main]
-async fn main() -> ! {
+async fn main() -> std::process::ExitCode {
     let cli = Cli::parse();
     let mut reporter = StreamReporter::new(cli.color.choice());
     let outcome = match cli.command {
@@ -76,5 +75,5 @@ async fn main() -> ! {
         // `debug` returns its exit code directly.
         Command::Debug(command) => Ok(cmd::debug::run(&command, &mut reporter)),
     };
-    std::process::exit(resolve_exit_code(outcome, &mut reporter));
+    resolve_exit_code(outcome, &mut reporter)
 }

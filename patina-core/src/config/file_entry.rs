@@ -236,7 +236,7 @@ pub enum FileEntryError {
     #[error(
         "[[directory]] entry source `{source_path}` declares `ignore` with the whole-directory \
          `symlink` mode; that mode creates one link and exposes the directory through it, so no \
-         ignore list can change what appears at the target. Use `mode = \"symlink-tree\"` to \
+         ignore list can change what appears at the target; use `mode = \"symlink-tree\"` to \
          materialize one link per leaf and filter them"
     )]
     DirectorySymlinkIgnoreDeclared {

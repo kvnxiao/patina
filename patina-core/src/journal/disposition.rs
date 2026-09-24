@@ -55,7 +55,6 @@ impl Disposition {
     ///
     /// assert_eq!(Disposition::Unchanged.label(), "unchanged");
     /// ```
-    #[must_use = "the label is the stable wire/JSON word for this disposition"]
     pub fn label(self) -> &'static str {
         match self {
             Self::Create => "create",

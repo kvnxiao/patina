@@ -1,17 +1,6 @@
 //! Integration tests for executor modes.
 
-#![expect(
-    clippy::expect_used,
-    reason = "integration tests use .expect() on fixture setup; allow-expect-in-tests covers #[cfg(test)] modules but not the helper functions in tests/*.rs integration crates."
-)]
-#![expect(
-    clippy::indexing_slicing,
-    reason = "integration tests use direct [0] / [1] indexing for assertion-only record inspection where the vector length is asserted immediately above; a bounds-check panic is acceptable test signal."
-)]
-#![expect(
-    clippy::cloned_ref_to_slice_refs,
-    reason = "single-target fixtures read most clearly as a `&[target.clone()]` slice literal alongside the multi-target `&[t1, t2]` cases they sit beside."
-)]
+#![cfg(test)]
 
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
@@ -57,7 +46,7 @@ fn symlink_mode_links_to_canonical_source() {
     let records = materialize(
         FileMode::Symlink,
         &source,
-        &[target.clone()],
+        std::slice::from_ref(&target),
         &TemplateEngine::new(),
         &resolver(),
         &ignore_rules::none(),
@@ -84,7 +73,7 @@ fn symlink_mode_directory_source_walks_per_file() {
     let records = materialize(
         FileMode::Symlink,
         &src,
-        &[target.clone()],
+        std::slice::from_ref(&target),
         &TemplateEngine::new(),
         &resolver(),
         &ignore_rules::none(),
@@ -119,7 +108,7 @@ fn symlink_dir_mode_creates_single_atomic_link() {
     let records = materialize(
         FileMode::SymlinkDir,
         &src,
-        &[target.clone()],
+        std::slice::from_ref(&target),
         &TemplateEngine::new(),
         &resolver(),
         &ignore_rules::none(),
@@ -146,7 +135,7 @@ fn copy_mode_writes_byte_identical_file() {
     let records = materialize(
         FileMode::Copy,
         &source,
-        &[target.clone()],
+        std::slice::from_ref(&target),
         &TemplateEngine::new(),
         &resolver(),
         &ignore_rules::none(),
@@ -176,7 +165,7 @@ fn copy_tree_mode_mirrors_directory() {
     let records = materialize(
         FileMode::CopyTree,
         &src,
-        &[target.clone()],
+        std::slice::from_ref(&target),
         &TemplateEngine::new(),
         &resolver(),
         &ignore_rules::none(),
@@ -205,7 +194,7 @@ fn template_render_mode_renders_to_declared_target() {
     let records = materialize(
         FileMode::TemplateRender,
         &source,
-        &[target.clone()],
+        std::slice::from_ref(&target),
         &TemplateEngine::new(),
         &resolver,
         &ignore_rules::none(),

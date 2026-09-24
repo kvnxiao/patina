@@ -1,9 +1,6 @@
 //! Integration tests for config hook entry.
 
-#![expect(
-    clippy::indexing_slicing,
-    reason = "integration tests use direct [0] indexing for assertion-only fixture inspection where the vector length is already asserted immediately above; bounds-check panics would be acceptable test signal anyway."
-)]
+#![cfg(test)]
 
 use patina_core::ConfigParseError;
 use patina_core::HookEvent;

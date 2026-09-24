@@ -23,6 +23,8 @@ use crate::cli::DebugDriftCacheArgs;
 use crate::cli::DebugJournalArgs;
 use crate::exit_code::ExitCode;
 use crate::output::reporter::Reporter;
+use patina_core::DriftCacheError;
+use patina_core::chain_message;
 use patina_core::load_drift_cache_file;
 use patina_core::load_plan_file;
 use patina_core::render_drift_cache;
@@ -33,8 +35,8 @@ use patina_core::render_plan;
 /// A failed decode is printed through the reporter and maps to exit code 1:
 /// the `debug` group expresses its terminal states as exit codes, like the
 /// rest of the CLI.
-#[must_use = "the returned exit code is the process's terminal status"]
-pub fn run(command: &DebugCommand, reporter: &mut impl Reporter) -> i32 {
+#[must_use]
+pub(crate) fn run(command: &DebugCommand, reporter: &mut impl Reporter) -> i32 {
     match command {
         DebugCommand::Journal(args) => run_journal(args, reporter),
         DebugCommand::DriftCache(args) => run_drift_cache(args, reporter),
@@ -50,11 +52,10 @@ fn run_journal(args: &DebugJournalArgs, reporter: &mut impl Reporter) -> i32 {
             ExitCode::Success.code()
         }
         Err(err) => {
-            // `PlanRenderError`'s `Display` formats the message, and its
-            // `Read` and `Decode` variants each include the path. `Decode`
-            // also interpolates its `JournalError`, whose version-mismatch arm
-            // includes both major versions.
-            reporter.warn(&err.to_string());
+            // `PlanRenderError`'s `Read` and `Decode` variants each include
+            // the path. `Decode`'s source is a `JournalError`, whose
+            // version-mismatch arm includes both major versions.
+            reporter.warn(&chain_message(&err));
             ExitCode::Generic.code()
         }
     }
@@ -69,13 +70,16 @@ fn run_drift_cache(args: &DebugDriftCacheArgs, reporter: &mut impl Reporter) -> 
             ExitCode::Success.code()
         }
         Err(err) => {
-            // `DriftCacheError`'s `Display` formats the failure reason, and
-            // its `VersionMismatch` arm includes both the found and the
-            // supported major version. Its `Filesystem` arm is a `#[from]
-            // std::io::Error` and drops the path, so this layer prefixes
-            // `args.path`: a debug failure has to identify the file it was
-            // pointed at.
-            reporter.warn(&format!("{}: {err}", args.path));
+            // `DriftCacheError`'s `VersionMismatch` arm includes both the
+            // found and the supported major version. The `fs-err` source of
+            // its `Filesystem` arm names the path; its decode arms do not, so
+            // this layer prefixes `args.path` to them: a debug failure has to
+            // identify the file it was pointed at.
+            let message = match &err {
+                DriftCacheError::Filesystem(_) => chain_message(&err),
+                _ => format!("{}: {}", args.path, chain_message(&err)),
+            };
+            reporter.warn(&message);
             ExitCode::Generic.code()
         }
     }

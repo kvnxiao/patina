@@ -5,6 +5,12 @@ description: "Rust error handling; anyhow for apps versus thiserror for librarie
 
 # Error Handling
 
+For spawned work, apply the
+[task outcome rules](rust-async.md#own-spawned-work-and-its-outcomes-required) when propagating join
+failures and operation errors. Use the
+[retry contract](rust-async.md#retry-only-repeatable-operations-conditional) when classifying
+failures for another attempt.
+
 ## `anyhow` for applications, `thiserror` for libraries (Default)
 
 The default error style depends on whether the caller branches on the failure.
@@ -14,10 +20,23 @@ The default error style depends on whether the caller branches on the failure.
 - **Libraries** whose callers react differently to distinct failures default to an owned error type,
   usually derived with `thiserror`.
 
+Apply the same caller-based choice to internal application crates. Use `anyhow` when their callers
+only report failures; use typed errors when callers need to classify failures and recover.
+
 The derive crate behind a public error type is an implementation detail, so switching between a
 hand-written `Error` implementation and `thiserror` need not change the API. Changing a public
 function's declared return type remains an API change, including a change from `anyhow::Error` to a
 typed error.
+
+## Write composable error messages (Default)
+
+Write concise lowercase error messages without terminal punctuation, preserving the spelling of
+identifiers and proper names. For example, use `invalid port` rather than `Invalid port.`.
+
+When a wrapper exposes an underlying error through `source()`, describe only the wrapper's context
+in `Display`. Let the reporting boundary format the source chain once. For example, use `reading
+config.toml` as the context and retain the I/O error as its source. See the
+[standard error conventions](https://doc.rust-lang.org/std/error/trait.Error.html).
 
 ## Typed errors: opaque wrapper over a private repr (Default)
 
@@ -75,7 +94,7 @@ use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct Error {
-    inner: Option<Arc<ErrorInner>>,
+    inner: Arc<ErrorInner>,
 }
 
 struct ErrorInner {
@@ -88,7 +107,7 @@ enum ErrorKind { NotFound }
 impl Error {
     /// Return whether the operation failed because a resource was absent.
     pub fn is_not_found(&self) -> bool {
-        matches!(self.inner.as_deref().map(|i| &i.kind), Some(ErrorKind::NotFound))
+        matches!(self.inner.kind, ErrorKind::NotFound)
     }
 }
 ```
@@ -104,16 +123,20 @@ pub type Result<T, E = Error> = core::result::Result<T, E>;
 
 ## Add context: eager vs lazy (Default)
 
+Preserve the underlying error while propagating it: use `#[from]`, `#[source]`, or a context wrapper
+so callers can inspect the source chain. Convert it to text at presentation or serialization
+boundaries, or when an explicit boundary contract requires a textual representation. Keep the
+original error available within the diagnostic path when the external representation omits it.
+
 `.context(v)` evaluates its argument eagerly, on every call including the success path.
 `.with_context(|| ...)` defers it until an error occurs. The message construction cost determines
 the choice.
 
 ```rust
-use anyhow::{Context, Result};
+use anyhow::Context;
+use anyhow::Result;
 
 fn load(path: &Utf8Path) -> Result<Config> {
-    let text = fs_err::read_to_string(path).context(format!("reading {path}"))?;
-
     let text = fs_err::read_to_string(path).with_context(|| format!("reading {path}"))?;
 
     toml::from_str(&text).context("parsing config")
@@ -154,7 +177,7 @@ impl Error {
     #[inline(never)]
     fn new(kind: ErrorKind) -> Error {
         Error {
-            inner: Some(Arc::new(ErrorInner { kind, source: None })),
+            inner: Arc::new(ErrorInner { kind, source: None }),
         }
     }
 }

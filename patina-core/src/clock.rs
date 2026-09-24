@@ -21,7 +21,6 @@
 /// assert_eq!(ts.as_bytes()[8], b'T');
 /// assert!(ts.ends_with('Z'));
 /// ```
-#[must_use = "the timestamp keys journal and backup filenames; use it"]
 pub fn current_timestamp() -> String {
     jiff::Timestamp::now()
         .strftime("%Y%m%dT%H%M%SZ")
@@ -43,14 +42,12 @@ pub fn current_timestamp() -> String {
 /// let now = patina_core::clock::current_epoch_seconds();
 /// assert!((1_577_836_800..4_102_444_800).contains(&now));
 /// ```
-#[must_use = "the update gate compares committer times against the epoch"]
 pub fn current_epoch_seconds() -> i64 {
     jiff::Timestamp::now().as_second()
 }
 
 /// The current time as an RFC 3339 UTC timestamp, the form `patina.lock`
 /// records in `updated_at`.
-#[must_use = "the timestamp is written into the lockfile entry"]
 pub fn current_rfc3339() -> String {
     crate::journal::timestamp_to_rfc3339(&current_timestamp())
 }
@@ -71,7 +68,6 @@ pub fn current_rfc3339() -> String {
 ///     "2026-08-11T14:00:00Z"
 /// );
 /// ```
-#[must_use = "the rendered instant is user-facing output"]
 pub fn epoch_to_rfc3339(epoch: i64) -> String {
     jiff::Timestamp::from_second(epoch).map_or_else(
         |_out_of_range| epoch.to_string(),

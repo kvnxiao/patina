@@ -1,5 +1,7 @@
 //! Integration tests for apply cli.
 
+#![cfg(test)]
+
 mod common;
 
 use common::Fixture;

@@ -6,6 +6,8 @@
 //! [`Result<_, EngineError>`](EngineError). The CLI wraps that into
 //! `anyhow::Result` at the call site; `anyhow` lives only in the binary.
 
+#![warn(missing_debug_implementations)]
+
 pub mod apply;
 pub mod backups;
 pub mod caseless;
@@ -104,6 +106,7 @@ pub use discovery::resolve_repository_root;
 pub use discovery::validate_repo_root;
 pub use discovery::write_persisted_default;
 pub use error::EngineError;
+pub use error::chain_message;
 pub use journal::ApplyRecord;
 pub use journal::Disposition;
 pub use journal::ExpectedTarget;

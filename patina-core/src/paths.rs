@@ -34,7 +34,7 @@ use std::env;
 pub enum PathError {
     /// The current working directory could not be read while resolving a
     /// relative path.
-    #[error("failed to read current working directory while resolving {path}: {source}")]
+    #[error("failed to read current working directory while resolving {path}")]
     CwdUnavailable {
         /// The path being resolved when the CWD read failed.
         path: Utf8PathBuf,
@@ -57,7 +57,7 @@ pub enum PathError {
     /// A filesystem canonicalization call failed for a path the engine
     /// believed existed (existence is re-checked, so this is a TOCTOU
     /// race or a permission error rather than a plain not-found).
-    #[error("failed to canonicalize {path}: {source}")]
+    #[error("failed to canonicalize {path}")]
     Filesystem {
         /// The path that failed to canonicalize.
         path: Utf8PathBuf,
@@ -233,7 +233,6 @@ fn canonical_cwd(path: &Utf8Path) -> Result<Utf8PathBuf, PathError> {
 /// is the de-facto-standard crate for this normalization and preserves the
 /// verbatim prefix for paths that genuinely require it (those exceeding the
 /// legacy `MAX_PATH`). On non-Windows targets it is the identity function.
-#[must_use = "simplified returns the normalized path; the input is not mutated"]
 pub(crate) fn simplified(path: &Utf8Path) -> Utf8PathBuf {
     // `dunce::simplified` only ever strips an ASCII prefix, so a UTF-8 input
     // always yields a UTF-8 result; the fallback is unreachable but keeps the
@@ -246,7 +245,6 @@ pub(crate) fn simplified(path: &Utf8Path) -> Utf8PathBuf {
 /// recorded path string against a freshly-read one (the `status` symlink
 /// classifier): the two may differ only by a verbatim prefix for the same
 /// destination, so both fold through this before comparison.
-#[must_use = "simplified_str returns the normalized path string"]
 pub(crate) fn simplified_str(path: &str) -> String {
     simplified(Utf8Path::new(path)).into_string()
 }
@@ -307,7 +305,6 @@ fn fold_dot_segments(path: &Utf8Path) -> Utf8PathBuf {
 ///     Utf8Path::new("/etc/hosts"),
 /// );
 /// ```
-#[must_use = "expand_tilde returns the expanded path; the input is not mutated"]
 pub fn expand_tilde(p: &Utf8Path, home: &Utf8Path) -> Utf8PathBuf {
     let s = p.as_str();
     if s == "~" {
@@ -389,7 +386,6 @@ pub fn anchor_input(input: &Utf8Path, home: &Utf8Path) -> Result<Utf8PathBuf, Pa
 ///     Utf8Path::new("/etc/hosts"),
 /// );
 /// ```
-#[must_use = "contract_home returns the rewritten path; the input is not mutated"]
 pub fn contract_home(path: &Utf8Path, home: &Utf8Path) -> Utf8PathBuf {
     #[cfg(not(windows))]
     let rest = match path.strip_prefix(home) {

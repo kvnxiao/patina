@@ -32,7 +32,7 @@ use anstyle::Style;
 /// because each is subordinate to the fact beside it. Separating those roles
 /// would spend scarce terminal hues on a distinction the reader does not need.
 #[derive(Debug, Clone, Copy)]
-pub struct Styles {
+pub(crate) struct Styles {
     /// Inserted / added lines: the diff `+` body and a new symlink target.
     pub insert: Style,
     /// Deleted / removed lines: the diff `-` body and an old symlink target.
@@ -78,7 +78,7 @@ pub struct Styles {
 /// The state word stays in each row's text, so the color only speeds the scan:
 /// a clean repository is legible at a glance rather than through the counters.
 #[derive(Debug, Clone, Copy)]
-pub struct StatusStyles {
+pub(crate) struct StatusStyles {
     /// A target matching the last apply.
     pub clean: Style,
     /// A target whose content or link destination has moved.
@@ -97,7 +97,7 @@ pub struct StatusStyles {
 /// The level also stays bracketed in the row's first cell, so an ANSI-stripped
 /// report still tells an advisory note from an error.
 #[derive(Debug, Clone, Copy)]
-pub struct FindingStyles {
+pub(crate) struct FindingStyles {
     /// An advisory note that never affects the exit code.
     pub info: Style,
     /// A warning the user should act on; the command still exits 0.
@@ -111,7 +111,7 @@ pub struct FindingStyles {
 /// Every colored cell also states its meaning in text, so an ANSI-stripped
 /// listing loses only the color.
 #[derive(Debug, Clone, Copy)]
-pub struct RemoteStyles {
+pub(crate) struct RemoteStyles {
     /// The remote's name.
     pub name: Style,
     /// The `ref` a `[[remote]]` declares.
@@ -140,7 +140,7 @@ pub struct RemoteStyles {
 /// for that reason.
 #[cfg(windows)]
 #[derive(Debug, Clone, Copy)]
-pub struct ExclusionStyles {
+pub(crate) struct ExclusionStyles {
     /// The path of a file exclusion.
     pub file: Style,
     /// The path of a folder exclusion. Distinct from
@@ -169,8 +169,7 @@ impl Styles {
     /// always renders with [`Styles::colored`] and lets the reporter's
     /// auto-stream strip when color is not wanted.
     #[cfg(test)]
-    #[must_use = "construct the style set to render with it"]
-    pub const fn plain() -> Self {
+    pub(crate) const fn plain() -> Self {
         let none = Style::new();
         Self {
             insert: none,
@@ -229,8 +228,7 @@ impl Styles {
     /// (folder). Green, yellow, and red are left for the state tag: green in
     /// place and Patina's, yellow in place but not Patina's, red not in place.
     /// Path and state therefore never use the same hue on one line.
-    #[must_use = "construct the style set to render with it"]
-    pub const fn colored() -> Self {
+    pub(crate) const fn colored() -> Self {
         Self {
             insert: Style::new().fg_color(Some(Color::Ansi(AnsiColor::Green))),
             delete: Style::new().fg_color(Some(Color::Ansi(AnsiColor::Red))),
@@ -285,8 +283,7 @@ impl Styles {
 ///
 /// An empty style renders to zero bytes on both, so the plain palette preserves
 /// `text` byte-for-byte.
-#[must_use = "write or return the painted string"]
-pub fn paint(style: Style, text: &str) -> String {
+pub(crate) fn paint(style: Style, text: &str) -> String {
     format!("{}{text}{}", style.render(), style.render_reset())
 }
 
