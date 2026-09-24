@@ -13,6 +13,7 @@
 use super::MANIFEST_FILENAME;
 use super::ManifestHeadError;
 use super::read_manifest_head;
+use crate::error::chain_message;
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
 use std::env;
@@ -33,7 +34,7 @@ pub enum RepoDiscoveryError {
     /// source so the CLI's stderr renderer can render it without
     /// reformatting.
     #[error(
-        "could not resolve a Patina repository root.\n\
+        "could not resolve a Patina repository root:\n\
          tried PATINA_REPO env var: {env_attempt}\n\
          tried walk-up from {walk_up_from}: no patina.toml with root = true found between this directory and the filesystem root\n\
          tried persisted default at {persisted_default_attempt}"
@@ -63,7 +64,7 @@ pub enum RepoDiscoveryError {
     CwdNotUtf8(std::path::PathBuf),
 
     /// The current working directory could not be read at all.
-    #[error("failed to read current working directory: {0}")]
+    #[error("failed to read current working directory")]
     CwdUnavailable(#[source] std::io::Error),
 
     /// Canonicalizing the resolved repository root failed. Routes
@@ -71,7 +72,7 @@ pub enum RepoDiscoveryError {
     /// which canonicalizes existing paths through the filesystem and
     /// falls back to a lexical absolute form for paths that do not yet
     /// exist.
-    #[error("failed to canonicalize repository root {path}: {source}")]
+    #[error("failed to canonicalize repository root {path}")]
     Canonicalize {
         /// The path that failed to canonicalize.
         path: Utf8PathBuf,
@@ -81,7 +82,7 @@ pub enum RepoDiscoveryError {
     },
 
     /// Writing the persisted-default pointer file failed.
-    #[error("failed to write persisted default-repo pointer at {path}: {source}")]
+    #[error("failed to write persisted default-repo pointer at {path}")]
     WritePersistedDefault {
         /// The pointer-file path that could not be written.
         path: Utf8PathBuf,
@@ -181,7 +182,6 @@ pub fn resolve_repository_root_with(
 /// let pointer = default_repo_pointer_path(Utf8Path::new("/var/state/patina"));
 /// assert_eq!(pointer, Utf8Path::new("/var/state/patina/default_repo"));
 /// ```
-#[must_use = "the computed pointer path should be used"]
 pub fn default_repo_pointer_path(state_dir: &Utf8Path) -> Utf8PathBuf {
     state_dir.join(PERSISTED_DEFAULT_FILENAME)
 }
@@ -203,7 +203,6 @@ pub fn default_repo_pointer_path(state_dir: &Utf8Path) -> Utf8PathBuf {
 /// // A state directory with no pointer file reports absent.
 /// assert!(!persisted_default_present(Utf8Path::new("/nonexistent/state")));
 /// ```
-#[must_use = "the presence result should be inspected"]
 pub fn persisted_default_present(state_dir: &Utf8Path) -> bool {
     default_repo_pointer_path(state_dir).exists()
 }
@@ -272,9 +271,8 @@ pub fn validate_repo_root(path: &Utf8Path) -> Result<Utf8PathBuf, String> {
         return Err(format!("no {MANIFEST_FILENAME} found at {manifest}"));
     }
     match read_manifest_head(&manifest) {
-        Ok(head) if head.patina.root == Some(true) => {
-            crate::paths::canonicalize(path).map_err(|e| format!("canonicalize failed: {e}"))
-        }
+        Ok(head) if head.patina.root == Some(true) => crate::paths::canonicalize(path)
+            .map_err(|e| format!("canonicalize failed: {}", chain_message(&e))),
         Ok(_) => Err(format!(
             "{manifest} is missing `root = true` in its `[patina]` table"
         )),

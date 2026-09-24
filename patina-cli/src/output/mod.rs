@@ -7,7 +7,7 @@
 //! palette off the reporter. Every other module logs through `tracing` rather
 //! than printing to stdout / stderr.
 
-pub mod diff;
-pub mod reporter;
-pub mod style;
-pub mod table;
+pub(crate) mod diff;
+pub(crate) mod reporter;
+pub(crate) mod style;
+pub(crate) mod table;

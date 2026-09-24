@@ -1,5 +1,7 @@
 //! Integration tests for help subcommand.
 
+#![cfg(test)]
+
 mod common;
 
 use common::Fixture;

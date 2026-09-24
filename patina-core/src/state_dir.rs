@@ -59,7 +59,6 @@ impl HostOs {
     /// Return the host family detected at compile time from
     /// `std::env::consts::OS`. Falls back to [`HostOs::Linux`] for any
     /// unknown OS string so XDG semantics apply on the BSDs.
-    #[must_use = "the resolved host family selects the state-directory layout"]
     pub fn current() -> Self {
         match std::env::consts::OS {
             "macos" => Self::MacOs,
@@ -93,7 +92,7 @@ pub enum StateDirError {
     },
 
     /// Creating one of the state-directory tree members failed.
-    #[error("failed to create state directory entry `{path}`: {source}")]
+    #[error("failed to create state directory entry `{path}`")]
     Io {
         /// The path the engine attempted to create.
         path: Utf8PathBuf,

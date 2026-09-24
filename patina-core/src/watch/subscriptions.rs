@@ -82,7 +82,6 @@ pub struct WatchSet {
 ///
 /// * `record` - the most recent committed [`ApplyRecord`].
 /// * `state_dir` - the resolved per-machine state directory.
-#[must_use = "the watch set must be handed to the debouncer and the classifier to take effect"]
 pub fn compute_watch_set(record: &ApplyRecord, state_dir: &Utf8Path) -> WatchSet {
     let watched = compute_subscriptions(record, state_dir);
     let mut sources: Vec<Utf8PathBuf> = Vec::with_capacity(record.targets.len());
@@ -157,7 +156,6 @@ pub fn compute_watch_set(record: &ApplyRecord, state_dir: &Utf8Path) -> WatchSet
 ///     Utf8Path::new("/state/patina/journal"),
 /// ]);
 /// ```
-#[must_use = "the subscription set must be handed to the debouncer to take effect"]
 pub fn compute_subscriptions(record: &ApplyRecord, state_dir: &Utf8Path) -> Vec<Utf8PathBuf> {
     let mut subscriptions: Vec<Utf8PathBuf> = Vec::with_capacity(record.targets.len() + 1);
     let push_unique = |path: Utf8PathBuf, set: &mut Vec<Utf8PathBuf>| {

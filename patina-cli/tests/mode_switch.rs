@@ -1,9 +1,6 @@
 //! Test mode edits for convergence, diff output, and rollback state.
 
-#![expect(
-    clippy::expect_used,
-    reason = "Clippy's allow-expect-in-tests covers #[cfg(test)] modules, not integration-test helper functions."
-)]
+#![cfg(test)]
 
 mod common;
 

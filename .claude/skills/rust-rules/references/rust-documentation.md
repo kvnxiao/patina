@@ -17,9 +17,13 @@ structures are omitted.
 ///
 /// # Errors
 ///
-/// Returns [`NameError::Empty`] if `input` contains no visible characters.
-pub fn normalize_name(input: &str) -> Result<AccountName, NameError> {
-    todo!()
+/// Returns [`NameError::Empty`] if `input` is empty after trimming whitespace.
+pub fn normalize_name(input: &str) -> Result<String, NameError> {
+    let name = input.trim();
+    if name.is_empty() {
+        return Err(NameError::Empty);
+    }
+    Ok(name.to_owned())
 }
 ```
 
@@ -56,8 +60,9 @@ need a fixed skeleton.
 //! - [`Time`]: a wall-clock time.
 //!
 //! ```
+//! use my_crate::civil::Date;
 //! use my_crate::civil::date;
-//! let d = date(2024, 3, 14);
+//! const DATE: Date = date(2024, 3, 14);
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
@@ -76,8 +81,15 @@ For a published library, the crate root:
 
 - Lists what the crate supports and does not support, with each unsupported feature linked to a
   tracking issue.
-- States the panic policy ("APIs that panic by design are few and clearly documented as such").
+- States the [runtime panic policy](rust-api-design.md#use-fallible-runtime-constructors-required)
+  and documents any explicitly approved exceptions.
 - Includes a short cookbook of runnable, task-oriented examples.
+
+When the README and crate documentation serve the same audience, share the content with `#![doc =
+include_str!("../README.md")]`; eligible Rust blocks then run as doctests. Keep separate documents
+when repository setup and API usage need different material. Run the
+[shared documentation check](rust-lints-and-formatting.md#share-local-fix-lint-and-ci-tasks-required)
+to catch broken intra-doc links and malformed markup.
 
 ## Long-Form Rationale via `include_str!` (Conditional)
 
@@ -98,7 +110,14 @@ pub mod _documentation {
 When a crate uses nightly-only documentation attributes, use a crate-specific cfg name instead of
 the shared `docsrs` name. Another crate can otherwise enable the shared cfg unexpectedly.
 
+Register the name with `check-cfg` in the existing Rust lint table. For a workspace, put the lint
+entry in `[workspace.lints.rust]` so members inherit it. Keep the docs.rs metadata in the package
+manifest.
+
 ```toml
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(docsrs_mycrate)'] }
+
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs_mycrate"]
@@ -107,3 +126,6 @@ rustdoc-args = ["--cfg", "docsrs_mycrate"]
 ```rust
 #![cfg_attr(docsrs_mycrate, feature(doc_cfg))]
 ```
+
+See
+[Cargo's custom cfg registration](https://doc.rust-lang.org/rustc/check-cfg/cargo-specifics.html).

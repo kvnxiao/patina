@@ -1,9 +1,6 @@
 //! Integration tests for journal fsync shape.
 
-#![expect(
-    clippy::expect_used,
-    reason = "integration tests use .expect() on fixture setup; allow-expect-in-tests covers #[cfg(test)] modules but not the helper functions in tests/*.rs integration crates."
-)]
+#![cfg(test)]
 
 use camino::Utf8Path;
 use camino::Utf8PathBuf;

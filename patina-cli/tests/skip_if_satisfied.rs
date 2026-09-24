@@ -1,9 +1,6 @@
 //! Integration tests for skip if satisfied.
 
-#![expect(
-    clippy::expect_used,
-    reason = "integration tests use .expect() on fixtures and asserted output; allow-expect-in-tests covers #[cfg(test)] modules but not the helper functions in tests/*.rs integration crates."
-)]
+#![cfg(test)]
 
 mod common;
 

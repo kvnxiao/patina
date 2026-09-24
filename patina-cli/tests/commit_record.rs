@@ -1,17 +1,6 @@
 //! Integration tests for commit record.
 
-#![expect(
-    clippy::expect_used,
-    reason = "integration tests use .expect() on fixture setup; allow-expect-in-tests covers #[cfg(test)] modules but not the helper functions in tests/*.rs integration crates."
-)]
-#![expect(
-    clippy::panic,
-    reason = "integration tests panic! on unexpected fixture/record shapes; allow-*-in-tests covers #[cfg(test)] modules but not the helper functions in tests/*.rs integration crates."
-)]
-#![expect(
-    clippy::indexing_slicing,
-    reason = "the COMMIT envelope and the single-element commit-file vector are indexed only after their length is asserted immediately above; a bounds-check panic is acceptable test signal."
-)]
+#![cfg(test)]
 
 use camino::Utf8Path;
 use camino::Utf8PathBuf;

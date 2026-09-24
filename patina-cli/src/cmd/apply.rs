@@ -32,6 +32,7 @@ use patina_core::HostDevModeProbe;
 use patina_core::LockPolicy;
 use patina_core::Orphan;
 use patina_core::ResolvedPlan;
+use patina_core::chain_message;
 use patina_core::current_timestamp;
 use patina_core::decide_symlink_gate;
 use patina_core::execute_plan;
@@ -44,22 +45,35 @@ use patina_core::remote::lockfile::lockfile_path;
 /// Whether stdin is attached to an interactive terminal. Injected so the TTY
 /// decision is unit-testable without a real tty.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Tty {
+pub(crate) enum Tty {
     /// stdin is a terminal; `patina apply` (no `--yes`) prompts.
     Interactive,
     /// stdin is not a terminal; `patina apply` (no `--yes`) previews.
     NonInteractive,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Consent {
+    Preapproved,
+    /// Prompt on an interactive terminal; preview only otherwise.
+    Prompt,
+}
+
+impl Consent {
+    pub(crate) fn from_yes_flag(yes: bool) -> Self {
+        if yes { Self::Preapproved } else { Self::Prompt }
+    }
+}
+
 /// A reader for the confirmation prompt line. Injected so the prompt path
 /// is testable; production reads one line from stdin.
-pub trait PromptReader {
+pub(crate) trait PromptReader {
     /// Read one response line. `None` on EOF.
     fn read_line(&mut self) -> Option<String>;
 }
 
 /// Production prompt reader: one line from stdin.
-pub struct StdinReader;
+pub(crate) struct StdinReader;
 
 impl PromptReader for StdinReader {
     fn read_line(&mut self) -> Option<String> {
@@ -80,7 +94,7 @@ impl PromptReader for StdinReader {
 /// (a real IO / discovery / parse failure). A failed `must_succeed` hook or a
 /// declined prompt is not an error. Either maps to a non-zero exit code through
 /// the returned `i32`.
-pub async fn run(
+pub(crate) async fn run(
     args: &ApplyArgs,
     tty: Tty,
     reader: &mut impl PromptReader,
@@ -125,7 +139,8 @@ pub async fn run(
         reporter.out_block(&rendered);
     }
 
-    match confirm_apply(is_full_noop, args.yes, tty, reader, reporter) {
+    let consent = Consent::from_yes_flag(args.yes);
+    match confirm_apply(is_full_noop, consent, tty, reader, reporter) {
         Confirmation::Proceed => {}
         Confirmation::PreviewOnly => return Ok(ExitCode::Success.code()),
         Confirmation::Declined => return Ok(ExitCode::UserDeclined.code()),
@@ -226,7 +241,10 @@ fn stale_pins(
     match Lockfile::load(path) {
         Ok(mut lockfile) => Some(names_of(&lockfile.retain_declared(&resolved.remote_names))),
         Err(error) => {
-            reporter.warn(&format!("leaving patina.lock alone: {error}"));
+            reporter.warn(&format!(
+                "leaving patina.lock alone: {}",
+                chain_message(&error)
+            ));
             None
         }
     }
@@ -256,7 +274,7 @@ fn run_remote_updates(tty: Tty, reader: &mut impl PromptReader, reporter: &mut i
              in patina.lock",
         ),
         Err(error) => reporter.warn(&format!(
-            "remote update failed ({error}); applying the pins already committed in patina.lock"
+            "remote update failed ({error:#}); applying the pins already committed in patina.lock"
         )),
     }
 }
@@ -279,7 +297,7 @@ enum Confirmation {
 /// A full no-op returns `Proceed` without reading a line from `reader`.
 fn confirm_apply(
     is_full_noop: bool,
-    yes: bool,
+    consent: Consent,
     tty: Tty,
     reader: &mut impl PromptReader,
     reporter: &mut impl Reporter,
@@ -288,10 +306,10 @@ fn confirm_apply(
         // A no-op does not write, so the answer could not change the outcome.
         return Confirmation::Proceed;
     }
-    match (yes, tty) {
-        (true, _) => Confirmation::Proceed,
-        (false, Tty::NonInteractive) => Confirmation::PreviewOnly,
-        (false, Tty::Interactive) => {
+    match (consent, tty) {
+        (Consent::Preapproved, _) => Confirmation::Proceed,
+        (Consent::Prompt, Tty::NonInteractive) => Confirmation::PreviewOnly,
+        (Consent::Prompt, Tty::Interactive) => {
             reporter.confirm("Apply?");
             let answer = reader.read_line().unwrap_or_default();
             if matches!(answer.trim(), "y" | "Y") {
@@ -617,8 +635,7 @@ mod tests {
         let decision = confirm_apply(
             // is_full_noop
             true,
-            // yes
-            false,
+            Consent::Prompt,
             Tty::Interactive,
             &mut reader,
             &mut reporter,
@@ -649,8 +666,7 @@ mod tests {
         let decision = confirm_apply(
             // is_full_noop
             false,
-            // yes
-            false,
+            Consent::Prompt,
             Tty::Interactive,
             &mut reader,
             &mut reporter,
@@ -672,7 +688,8 @@ mod tests {
         for tty in [Tty::Interactive, Tty::NonInteractive] {
             let mut reader = RecordingReader::default();
             let mut reporter = BufferReporter::new();
-            let decision = confirm_apply(false, true, tty, &mut reader, &mut reporter);
+            let decision =
+                confirm_apply(false, Consent::Preapproved, tty, &mut reader, &mut reporter);
             assert_eq!(decision, Confirmation::Proceed, "--yes proceeds on {tty:?}");
             assert_eq!(reader.reads, 0, "--yes must not read stdin on {tty:?}");
             assert!(reporter.err.is_empty(), "--yes must not prompt on {tty:?}");
@@ -685,7 +702,7 @@ mod tests {
         let mut reporter = BufferReporter::new();
         let decision = confirm_apply(
             false,
-            false,
+            Consent::Prompt,
             Tty::NonInteractive,
             &mut reader,
             &mut reporter,

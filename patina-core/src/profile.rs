@@ -80,7 +80,6 @@ pub enum ProfileSource {
 ///
 /// `name` is the empty string iff `source == ProfileSource::Fallback`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[must_use = "the resolved profile is consumed by the variable resolver"]
 pub struct Resolution {
     /// Resolved profile name, or the empty string for the no-profile
     /// fallback.
@@ -106,7 +105,7 @@ pub enum ProfileError {
     /// Reading the persisted-profile file failed for a reason other
     /// than `NotFound` (which is treated as "no persisted choice" and
     /// falls through to the next source).
-    #[error("failed to read persisted profile file {path}: {source}")]
+    #[error("failed to read persisted profile file {path}")]
     PersistedRead {
         /// Path that failed to read.
         path: Utf8PathBuf,
@@ -116,7 +115,7 @@ pub enum ProfileError {
     },
 
     /// Reading the root `patina.toml` failed.
-    #[error("failed to read root patina.toml at {path}: {source}")]
+    #[error("failed to read root patina.toml at {path}")]
     RootRead {
         /// Path that failed to read.
         path: Utf8PathBuf,
@@ -126,7 +125,7 @@ pub enum ProfileError {
     },
 
     /// The root `patina.toml` did not deserialize.
-    #[error("failed to parse root patina.toml at {path}: {source}")]
+    #[error("failed to parse root patina.toml at {path}")]
     RootParse {
         /// Path whose TOML failed to parse.
         path: Utf8PathBuf,

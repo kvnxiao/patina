@@ -141,7 +141,6 @@ pub enum ExclusionKind {
 
 impl ExclusionKind {
     /// A stable lowercase label for preview output.
-    #[must_use = "the label names the exclusion kind in the preview"]
     pub fn label(self) -> &'static str {
         match self {
             ExclusionKind::File => "file",
@@ -168,7 +167,6 @@ pub struct Exclusion {
 
 impl Exclusion {
     /// Construct an exclusion from a path and its kind.
-    #[must_use = "construct the exclusion to place it in the desired set"]
     pub fn new(path: impl Into<Utf8PathBuf>, kind: ExclusionKind) -> Self {
         Self {
             path: path.into(),
@@ -177,7 +175,6 @@ impl Exclusion {
     }
 
     /// The normalized comparison key for this exclusion's path.
-    #[must_use = "the key is the identity used for set membership and ordering"]
     pub fn key(&self) -> String {
         normalized_key(&self.path)
     }
@@ -217,7 +214,6 @@ impl Ord for Exclusion {
 /// `Get-MpPreference` may introduce when it echoes a path back. ASCII
 /// case-folding (not full Unicode) matches how the Windows filesystem compares
 /// paths in practice.
-#[must_use = "the normalized key is the identity used across the diff"]
 fn normalized_key(path: &Utf8Path) -> String {
     let unified: String = path
         .as_str()
@@ -234,7 +230,6 @@ fn normalized_key(path: &Utf8Path) -> String {
 /// The `match` is exhaustive with **no wildcard arm**, so adding a future
 /// [`FileMode`] variant fails to compile here until its exclusion kind is
 /// decided deliberately.
-#[must_use = "the kind determines how the exclusion is previewed"]
 pub fn exclusion_kind_for(mode: FileMode) -> ExclusionKind {
     match mode {
         FileMode::SymlinkDir | FileMode::SymlinkTree | FileMode::CopyTree => ExclusionKind::Folder,
@@ -257,7 +252,6 @@ pub fn exclusion_kind_for(mode: FileMode) -> ExclusionKind {
 /// [`validate_exclusion_path`] is skipped with a warning, rather than aborting
 /// the whole run. Such a candidate is a UNC path, a drive-relative path, or a
 /// system directory.
-#[must_use = "the desired set is the input to plan_defender"]
 pub fn derive_exclusions(resolved: &ResolvedPlan) -> BTreeSet<Exclusion> {
     let mut desired = BTreeSet::new();
 
@@ -336,7 +330,6 @@ impl ExclusionState {
     /// True for the states that read as "not in Defender as far as this
     /// process can tell". Matching one of those states puts an entry in
     /// [`DefenderDiff::to_add`].
-    #[must_use = "the verdict selects how the entry is rendered"]
     pub fn needs_add(self) -> bool {
         matches!(self, Self::Absent | Self::Unrecorded)
     }
@@ -360,7 +353,6 @@ pub struct ExclusionClassifier {
 
 impl ExclusionClassifier {
     /// Prepare a classifier over a live-list reading and a ledger.
-    #[must_use = "construct the classifier to classify with it"]
     pub fn new(current: &CurrentExclusions, ledger: &BTreeSet<Exclusion>) -> Self {
         let present = match current {
             CurrentExclusions::Known(paths) => {
@@ -375,7 +367,6 @@ impl ExclusionClassifier {
     }
 
     /// Classify one desired exclusion.
-    #[must_use = "the listing renders this state"]
     pub fn classify(&self, exclusion: &Exclusion) -> ExclusionState {
         let key = exclusion.key();
         let recorded = self.recorded.contains(&key);
@@ -399,7 +390,6 @@ impl ExclusionClassifier {
     /// The renderers need this to label their verdicts honestly: an inference
     /// drawn from Patina's own record must never be presented as an
     /// observation of Defender.
-    #[must_use = "the answer decides whether the output may claim to have seen Defender's list"]
     pub fn live_list_was_read(&self) -> bool {
         self.present.is_some()
     }
@@ -421,7 +411,6 @@ pub struct DefenderDiff {
 
 impl DefenderDiff {
     /// Whether the diff is a no-op: nothing to add and nothing to remove.
-    #[must_use = "an empty diff means the run writes nothing"]
     pub fn is_empty(&self) -> bool {
         self.to_add.is_empty() && self.to_remove.is_empty()
     }
@@ -456,7 +445,6 @@ impl DefenderDiff {
 /// Both readings run through [`ExclusionClassifier`], which also backs the
 /// listing. One implementation of "is this already excluded" means the
 /// preview cannot propose an add for an entry the listing calls present.
-#[must_use = "the diff must be previewed and enacted"]
 pub fn plan_defender(
     desired: &BTreeSet<Exclusion>,
     current: &CurrentExclusions,
@@ -717,7 +705,6 @@ pub enum DefenderReceipt {
 /// single-line detail. Anything else, an empty file included, yields `None`.
 /// The poll treats `None` as "no verdict yet" rather than as a failure, so a
 /// half-written or unrecognized receipt simply keeps the launcher polling.
-#[must_use = "the receipt is the helper's verdict and decides the outcome"]
 pub fn parse_receipt(content: &str) -> Option<DefenderReceipt> {
     let line = content.lines().next()?.trim();
     let (verdict, detail) = line.split_once(' ').unwrap_or((line, ""));
@@ -743,7 +730,6 @@ pub struct DefenderLedger {
 
 impl DefenderLedger {
     /// Build a ledger from a desired exclusion set, sorted deterministically.
-    #[must_use = "construct the ledger to persist it"]
     pub fn from_set(set: &BTreeSet<Exclusion>) -> Self {
         Self {
             exclusions: set.iter().cloned().collect(),
@@ -751,21 +737,18 @@ impl DefenderLedger {
     }
 
     /// The ledger's exclusions as a set keyed by the normalized path.
-    #[must_use = "the set is the ledger side of the diff"]
     pub fn to_set(&self) -> BTreeSet<Exclusion> {
         self.exclusions.iter().cloned().collect()
     }
 }
 
 /// The absolute path of the Defender ledger under a resolved state directory.
-#[must_use = "the returned path locates the ledger file"]
 pub fn defender_ledger_path(state_dir: &Utf8Path) -> Utf8PathBuf {
     state_dir.join(LEDGER_FILENAME)
 }
 
 /// The absolute path of the Defender request file under a resolved state
 /// directory.
-#[must_use = "the returned path locates the request file"]
 pub fn defender_request_path(state_dir: &Utf8Path) -> Utf8PathBuf {
     state_dir.join(REQUEST_FILENAME)
 }
@@ -776,7 +759,6 @@ pub fn defender_request_path(state_dir: &Utf8Path) -> Utf8PathBuf {
 /// The elevated helper derives the same path as a sibling of the request file
 /// it was handed, rather than recomputing the state directory. A `runas` to a
 /// different admin has a different `%LOCALAPPDATA%`.
-#[must_use = "the returned path locates the helper's result file"]
 pub fn defender_result_path(state_dir: &Utf8Path) -> Utf8PathBuf {
     state_dir.join(RESULT_FILENAME)
 }
@@ -787,7 +769,6 @@ pub fn defender_result_path(state_dir: &Utf8Path) -> Utf8PathBuf {
 /// path written verbatim (it is read back as literal data, never interpreted as
 /// code). The ordering is the diff's own and deterministic, so the request file
 /// is byte-stable for an unchanged plan.
-#[must_use = "the serialized request is written to the request file"]
 pub fn serialize_request(diff: &DefenderDiff) -> String {
     let mut body = String::new();
     for exclusion in &diff.to_add {
@@ -808,7 +789,7 @@ pub fn serialize_request(diff: &DefenderDiff) -> String {
 #[non_exhaustive]
 pub enum DefenderError {
     /// Spawning the PowerShell process that runs `Get-MpPreference` failed.
-    #[error("failed to run `{command}`: {source}")]
+    #[error("failed to run `{command}`")]
     Command {
         /// The command that could not be spawned.
         command: &'static str,
@@ -826,7 +807,7 @@ pub enum DefenderError {
         stderr: String,
     },
     /// The `Get-MpPreference` JSON output could not be parsed.
-    #[error("failed to parse Get-MpPreference output: {source}")]
+    #[error("failed to parse Get-MpPreference output")]
     Parse {
         /// The JSON parse error.
         #[source]

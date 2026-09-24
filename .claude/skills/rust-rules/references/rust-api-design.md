@@ -7,26 +7,33 @@ description: "Public API design for libraries; ergonomic, semver-evolvable inter
 
 These patterns keep public interfaces ergonomic for callers and compatible with later evolution.
 
+For async interfaces, apply the
+[public future contracts](rust-async.md#establish-public-future-contracts-required) to runtime
+requirements, auto-trait bounds, and supported callers.
+
 ## Options struct + `impl Into` for overload-like ergonomics (Conditional)
 
 When a public API benefits from overload-like call ergonomics, accept `impl Into<Options>` and
 provide a small family of `From` implementations. The simple call can pass a bare value, while
-richer calls pass a tuple or the full struct.
+richer calls pass the full struct with named fields.
 
 ```rust
-pub struct RoundOptions { smallest: Unit, increment: i64 }
+/// Configure the unit and step used when rounding a span.
+pub struct RoundOptions {
+    /// Select the smallest retained unit.
+    pub smallest: Unit,
+    /// Select the number of units in each rounding step.
+    pub increment: i64,
+}
 
 impl From<Unit> for RoundOptions {
     fn from(smallest: Unit) -> Self { Self { smallest, increment: 1 } }
-}
-impl From<(Unit, i64)> for RoundOptions {
-    fn from((smallest, increment): (Unit, i64)) -> Self { Self { smallest, increment } }
 }
 
 impl Span {
     pub fn round<R: Into<RoundOptions>>(self, options: R) -> Result<Span> {
         let options = options.into();
-        todo!()
+        self.round_to(options.smallest, options.increment)
     }
 }
 ```
@@ -58,6 +65,10 @@ A derived `PartialEq` compares field by field. Default to a semantic comparison 
 when values can be equivalent despite different representations. Derive equality when structural
 equality is the intended contract.
 
+When implementing `Hash`, ensure equal values hash equally. When implementing ordering traits, keep
+`PartialOrd`, `Ord`, and equality consistent. Derive these traits only when fieldwise behavior
+matches all implemented contracts.
+
 ```rust
 impl PartialEq for Zoned {
     fn eq(&self, other: &Self) -> bool {
@@ -85,29 +96,31 @@ pub enum Disambiguation {
 }
 ```
 
-## Paired panicking / fallible constructors (Default)
+## Use fallible runtime constructors (Required)
 
-Default author-controlled literals to a terse panicking constructor and untrusted input to a
-fallible constructor. A `const {}` block moves a literal panic to compile time.
+Use fallible constructors for runtime validation, including author-controlled literals. Permit
+invalid-literal rejection during forced compile-time evaluation. A `const fn` can also run at
+runtime; use a const item or an explicit `const {}` block to force evaluation. Obtain the user's
+approval before introducing a deliberate runtime panic API, then document its panic conditions and
+provide a fallible alternative.
 
 ```rust
-let literal = date(2024, 2, 29);
+let literal = Date::new(2024, 2, 29)?;
 let parsed = Date::new(year, month, day)?;
 
-const NEW_YEAR: Date = const { date(2025, 1, 1) };
+const NEW_YEAR: Date = date(2025, 1, 1);
+let anniversary = const { date(2025, 3, 14) };
 ```
 
 ## Extension traits for literal ergonomics (Conditional)
 
-When an API has many author-controlled literals, an extension trait can add literal syntax to
-primitives. Document the methods as literals-only and panicking, and pair them with `try_*` methods
-for user input.
+When repeated unit conversions benefit from an extension trait, use fallible methods for values that
+can exceed the representable range. Apply the runtime constructor policy to literal syntax as well.
 
 ```rust
 use jiff::ToSpan;
 
-let literal = 2.hours().minutes(30);
-let parsed = n.try_hours()?;
+let duration = n.try_hours()?;
 ```
 
 ## Sealed traits (Conditional)
@@ -121,6 +134,7 @@ pub trait Context<T>: private::Sealed {
 }
 
 mod private {
+    #[expect(unnameable_types, reason = "only this crate may implement the public trait")]
     pub trait Sealed {}
     impl<T, E: std::error::Error> Sealed for Result<T, E> {}
 }
@@ -143,26 +157,28 @@ pub mod __private {
 }
 ```
 
-## Private modules, one curated `pub use` (Default)
+## Private modules, curated re-exports (Default)
 
-Default modules to private and export a curated `pub use` block unless the module path is part of
-the intended public API. This separates file layout from public paths.
+Default modules to private and export curated items unless the module path is part of the intended
+public API. This separates file layout from public paths.
 
 ```rust
 mod error;
 mod span;
 pub mod civil;
 
-pub use crate::{
-    error::Error,
-    span::{Span, SpanRound, Unit},
-};
+pub use crate::error::Error;
+pub use crate::span::Span;
+pub use crate::span::SpanRound;
+pub use crate::span::Unit;
 ```
 
-## Lossless → `From`, lossy → `TryFrom` (Required)
+## Use `From` for lossless conversions and `TryFrom` for checked conversions (Required)
 
-A conversion that can overflow or lose data must be fallible. Never hide truncation behind an
-infallible `From`.
+Use `From` for lossless conversions and `TryFrom` when the conversion must reject out-of-range or
+unrepresentable values. Never hide truncation behind an infallible `From`. For intentionally
+approximate integer-to-float conversions, use an explicit cast and follow the numerical contract;
+require an exactness check only when the domain needs exact representation.
 
 ```rust
 let widened = i64::from(seconds);
@@ -172,7 +188,7 @@ impl TryFrom<std::time::Duration> for SignedDuration {
     type Error = Error;
     fn try_from(d: std::time::Duration) -> Result<Self> {
         let secs = i64::try_from(d.as_secs())?;
-        todo!()
+        Ok(Self { secs, nanos: d.subsec_nanos() })
     }
 }
 ```
@@ -214,7 +230,9 @@ rc = []
   itself requires them.
 - Conditional type selection stays in one module unless local `#[cfg]` attributes are clearer.
 - When a stable API cannot express a capability check, `build.rs` probes it and emits
-  `println!("cargo:rustc-check-cfg=cfg(...)")`.
+  `println!("cargo:rustc-check-cfg=cfg(...)")`. Scope the printing expectation to the function
+  emitting Cargo directives under the
+  [output exception](rust-lints-and-formatting.md#limit-exceptions-to-their-approved-scope-required).
 
 ## `unsafe` soundness obligations (Required)
 
@@ -222,17 +240,34 @@ Each `unsafe` block must state its safety invariant, and each `unsafe fn` must d
 obligations in a `# Safety` section. Enable `unsafe_op_in_unsafe_fn`, keep unsafe blocks minimal,
 and wrap raw unsafe operations behind safe public abstractions.
 
-```rust
-#![deny(unsafe_op_in_unsafe_fn)]
+For an approved FFI boundary with `unsafe_code = "deny"`, state the caller's obligations for the
+entire operation:
 
-// Safety: `ptr` is non-null and points to an initialized `T`.
-let value = unsafe { &*ptr };
+```rust
+/// Read a length supplied by an FFI caller.
+///
+/// # Safety
+///
+/// `ptr` must be non-null, aligned, and valid for reading one initialized `u32`.
+/// The allocation must remain live and its contents must not change during this call.
+#[expect(unsafe_code, reason = "FFI callers provide storage under the documented contract")]
+pub unsafe fn read_length(ptr: *const u32) -> u32 {
+    // SAFETY: The caller guarantees live, aligned, initialized storage without concurrent mutation.
+    unsafe { ptr.read() }
+}
 ```
 
-## `unsafe` project policy (Default)
+When an operation creates a reference from a raw pointer, require valid storage and compliance with
+aliasing rules for the reference's full lifetime. See
+[pointer-to-reference requirements](https://doc.rust-lang.org/std/ptr/index.html#pointer-to-reference-conversion).
 
-Default `unsafe_code` to `forbid`. When a crate needs unsafe implementation code, `unsafe_code =
-"warn"` permits reviewed exceptions.
+## `unsafe` project policy (Required)
+
+Set `unsafe_code = "forbid"` by default. Obtain the user's approval before changing the applicable
+crate or workspace policy to `deny` for unsafe implementation. Limit `#[expect(unsafe_code, reason =
+"...")]` to the approved implementation and keep all other baseline lints active. A local
+expectation cannot override `forbid`; follow the
+[lint inheritance and exception policy](rust-lints-and-formatting.md#limit-exceptions-to-their-approved-scope-required).
 
 Prefer a maintained safe wrapper when one covers the required API:
 
@@ -244,8 +279,9 @@ Prefer a maintained safe wrapper when one covers the required API:
 | OpenSSL     | `openssl-sys`    | `openssl`              |
 | Memory      | raw pointers     | `bytemuck`, `zerocopy` |
 
-Crates containing `unsafe` default to `cargo +nightly miri test`; projects without nightly test
-support can omit this job.
+For approved unsafe implementation, select verification for the safety contract, including
+ownership, aliasing, and drop behavior. When Miri can exercise the implementation, propose it as an
+additional project-specific nightly check; keep the baseline build, tests, and Clippy on stable.
 
 For a public library, default to `assert_send::<T>()`-style tests for the intended auto-trait
 surface. When code uses by-value ownership tricks, add drop-count tests.
@@ -257,10 +293,9 @@ Generated code runs in the caller's namespace, so it must be self-contained.
 ```rust
 quote! {
     #[automatically_derived]
-    #[allow(unused_qualifications)]
     impl #generics ::core::fmt::Display for #ty {
         fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
-            todo!()
+            ::core::fmt::Display::fmt(&self.value, f)
         }
     }
 }
@@ -269,5 +304,5 @@ quote! {
 - Fully-qualify every path (`::core::`, `::std::`, `::your_crate::`) so it works regardless of the
   caller's `use`s.
 - Emit `#[automatically_derived]` on generated impls.
-- Add targeted `#[allow(...)]` for lints your codegen cannot avoid, and test the output under
-  `#![deny(...)]`.
+- Test generated output under the lint baseline. When generated code needs a suppression outside the
+  predefined exceptions, obtain approval and scope it to the affected generated item.

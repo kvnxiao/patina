@@ -83,7 +83,7 @@ pub enum DevModeStatus {
 #[non_exhaustive]
 pub enum WindowsError {
     /// A Win32 call backing one of the registry / token reads failed.
-    #[error("Windows API call `{call}` failed: {source}")]
+    #[error("Windows API call `{call}` failed")]
     WinApi {
         /// The Win32 / winsafe call that failed (e.g. `RegOpenKeyEx`).
         call: &'static str,
@@ -95,7 +95,7 @@ pub enum WindowsError {
     /// A previous run's Defender result file could not be removed before
     /// launching the elevated helper. Leaving it in place would let the stale
     /// verdict be read as this run's, so the launch is refused instead.
-    #[error("failed to clear the stale Defender result file `{path}`: {source}")]
+    #[error("failed to clear the stale Defender result file `{path}`")]
     StaleReceipt {
         /// The result file that could not be removed.
         path: camino::Utf8PathBuf,
@@ -118,7 +118,6 @@ pub enum WindowsError {
 /// [`DevModeStatus::Disabled`], the safe default, since it routes the
 /// caller into the elevation flow rather than silently skipping a symlink
 /// the user asked for.
-#[must_use = "the Developer Mode status decides whether the symlink-elevation gate fires"]
 pub fn dev_mode_status() -> DevModeStatus {
     #[cfg(windows)]
     {
@@ -148,7 +147,6 @@ pub fn dev_mode_status() -> DevModeStatus {
 /// inspects the process token's `TokenElevation` information; a failed
 /// query is reported as `false` (not elevated), the conservative default
 /// that keeps the elevation gate engaged.
-#[must_use = "the elevation state suppresses the Developer Mode prompt when already elevated"]
 pub fn is_elevated() -> bool {
     #[cfg(windows)]
     {
@@ -166,7 +164,6 @@ pub fn is_elevated() -> bool {
 /// On non-Windows hosts this is always `false`. Developer Mode is a
 /// Windows-only concept and callers should never reach the build check on
 /// another platform.
-#[must_use = "the build floor distinguishes Unsupported from Disabled on Windows"]
 pub fn windows_build_supports_dev_mode() -> bool {
     #[cfg(windows)]
     {
@@ -194,7 +191,6 @@ pub fn windows_build_supports_dev_mode() -> bool {
 /// assert!(is_unc_path(Utf8Path::new(r"\\fileserver\share\dotfiles")));
 /// assert!(!is_unc_path(Utf8Path::new("/home/user/dotfiles")));
 /// ```
-#[must_use = "the UNC verdict drives the doctor finding"]
 pub fn is_unc_path(path: &Utf8Path) -> bool {
     path.as_str().starts_with(r"\\")
 }
@@ -206,7 +202,6 @@ pub fn is_unc_path(path: &Utf8Path) -> bool {
 /// Gate the whole Developer Mode flow: only a
 /// plan that creates symbolic links can require Developer Mode, so a plan
 /// of pure copies / renders never prompts.
-#[must_use = "the symlink predicate gates the Developer Mode flow"]
 pub fn plan_has_symlink_op(plan: &ResolvedPlan) -> bool {
     plan.operations.iter().any(|op| {
         matches!(
@@ -288,7 +283,6 @@ pub enum GateDecision {
 /// [`Proceed`]: GateDecision::Proceed
 /// [`ProceedElevatedWarning`]: GateDecision::ProceedElevatedWarning
 /// [`RequireElevation`]: GateDecision::RequireElevation
-#[must_use = "the gate decision selects the apply path"]
 pub fn decide_symlink_gate(plan: &ResolvedPlan, probe: &impl DevModeProbe) -> GateDecision {
     if !plan_has_symlink_op(plan) {
         return GateDecision::Proceed;

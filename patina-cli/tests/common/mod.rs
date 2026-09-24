@@ -1,7 +1,3 @@
-#![expect(
-    clippy::expect_used,
-    reason = "integration tests use .expect() on fixture setup; allow-expect-in-tests covers #[cfg(test)] modules but not the helper functions in tests/*.rs integration crates."
-)]
 #![allow(
     dead_code,
     reason = "this shared fixture module is included by several integration-test crates via `mod common;`; each crate uses a subset of the helpers, so methods unused by one crate would be flagged dead there but are live in another. `allow` (not `expect`) because the set of used helpers differs per including crate, so no single expectation is fulfilled everywhere."
@@ -15,7 +11,7 @@ use std::process::Output;
 use tempfile::TempDir;
 
 /// Provide an isolated repository, home, and state directory.
-pub struct Fixture {
+pub(crate) struct Fixture {
     _temp: TempDir,
     /// Repository root.
     pub root: Utf8PathBuf,
@@ -27,7 +23,7 @@ pub struct Fixture {
 
 impl Fixture {
     /// Create an isolated repository fixture.
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         let temp = TempDir::new().expect("tempdir");
         let root = Utf8Path::from_path(temp.path())
             .expect("utf8 temp path")
@@ -49,7 +45,7 @@ impl Fixture {
     }
 
     /// Append a remote declaration to the root manifest.
-    pub fn declare_remote(&self, name: &str, url: &str, git_ref: Option<&str>) {
+    pub(crate) fn declare_remote(&self, name: &str, url: &str, git_ref: Option<&str>) {
         let manifest = self.root.join("patina.toml");
         let existing = fs_err::read_to_string(&manifest).expect("read root manifest");
         let tracked = git_ref.map_or_else(String::new, |value| format!("ref = \"{value}\"\n"));
@@ -58,7 +54,7 @@ impl Fixture {
     }
 
     /// Write a module manifest and return its path.
-    pub fn module(&self, name: &str, manifest: &str) -> Utf8PathBuf {
+    pub(crate) fn module(&self, name: &str, manifest: &str) -> Utf8PathBuf {
         let dir = self.root.join(name);
         fs_err::create_dir_all(&dir).expect("mkdir module");
         fs_err::write(dir.join("patina.toml"), manifest).expect("write module manifest");
@@ -66,7 +62,7 @@ impl Fixture {
     }
 
     /// Resolve the fixture's state directory.
-    pub fn state_root(&self) -> Utf8PathBuf {
+    pub(crate) fn state_root(&self) -> Utf8PathBuf {
         patina_core::state_dir::resolve_with_env(HostOs::current(), |name| match name {
             "XDG_STATE_HOME" | "LOCALAPPDATA" => Some(self.state.as_str().to_owned()),
             "HOME" | "USERPROFILE" => Some(self.home.as_str().to_owned()),
@@ -76,7 +72,7 @@ impl Fixture {
     }
 
     /// Run `patina` with extra environment variables.
-    pub fn run(&self, args: &[&str], extra: &[(&str, &str)]) -> Output {
+    pub(crate) fn run(&self, args: &[&str], extra: &[(&str, &str)]) -> Output {
         let bin = env!("CARGO_BIN_EXE_patina");
         let mut cmd = Command::new(bin);
         cmd.args(args)
@@ -93,7 +89,7 @@ impl Fixture {
     }
 
     /// Run `patina` from a working directory with extra environment variables.
-    pub fn run_in(&self, cwd: &Utf8Path, args: &[&str], extra: &[(&str, &str)]) -> Output {
+    pub(crate) fn run_in(&self, cwd: &Utf8Path, args: &[&str], extra: &[(&str, &str)]) -> Output {
         let bin = env!("CARGO_BIN_EXE_patina");
         let mut cmd = Command::new(bin);
         cmd.args(args)
@@ -111,7 +107,7 @@ impl Fixture {
     }
 
     /// Run `patina apply` with extra environment variables.
-    pub fn apply_with_env(&self, args: &[&str], extra: &[(&str, &str)]) -> Output {
+    pub(crate) fn apply_with_env(&self, args: &[&str], extra: &[(&str, &str)]) -> Output {
         let mut full = Vec::with_capacity(args.len() + 1);
         full.push("apply");
         full.extend_from_slice(args);
@@ -119,43 +115,43 @@ impl Fixture {
     }
 
     /// Run `patina apply`.
-    pub fn apply(&self, args: &[&str]) -> Output {
+    pub(crate) fn apply(&self, args: &[&str]) -> Output {
         self.apply_with_env(args, &[])
     }
 }
 
 /// Return the process exit code.
-pub fn code(output: &Output) -> i32 {
+pub(crate) fn code(output: &Output) -> i32 {
     output.status.code().expect("process exited with a code")
 }
 
 #[cfg(unix)]
 /// Create a file symlink using the host platform.
-pub fn symlink_file(source: &Utf8Path, link: &Utf8Path) {
+pub(crate) fn symlink_file(source: &Utf8Path, link: &Utf8Path) {
     std::os::unix::fs::symlink(source.as_std_path(), link.as_std_path()).expect("create symlink");
 }
 
 #[cfg(windows)]
 /// Create a file symlink using the host platform.
-pub fn symlink_file(source: &Utf8Path, link: &Utf8Path) {
+pub(crate) fn symlink_file(source: &Utf8Path, link: &Utf8Path) {
     std::os::windows::fs::symlink_file(source.as_std_path(), link.as_std_path())
         .expect("create symlink");
 }
 
 #[cfg(unix)]
-pub fn symlink_dir(source: &Utf8Path, link: &Utf8Path) {
+pub(crate) fn symlink_dir(source: &Utf8Path, link: &Utf8Path) {
     std::os::unix::fs::symlink(source.as_std_path(), link.as_std_path())
         .expect("create dir symlink");
 }
 
 #[cfg(windows)]
-pub fn symlink_dir(source: &Utf8Path, link: &Utf8Path) {
+pub(crate) fn symlink_dir(source: &Utf8Path, link: &Utf8Path) {
     std::os::windows::fs::symlink_dir(source.as_std_path(), link.as_std_path())
         .expect("create dir symlink");
 }
 
 /// Run `git` with deterministic identity and timestamps.
-pub fn git_in(cwd: &Utf8Path, epoch: i64, args: &[&str]) -> String {
+pub(crate) fn git_in(cwd: &Utf8Path, epoch: i64, args: &[&str]) -> String {
     let date = format!("{epoch} +0000");
     let output = Command::new("git")
         .args(args)
@@ -179,14 +175,14 @@ pub fn git_in(cwd: &Utf8Path, epoch: i64, args: &[&str]) -> String {
 }
 
 /// Provide a throwaway git origin.
-pub struct Origin {
+pub(crate) struct Origin {
     /// Origin repository path.
     pub dir: Utf8PathBuf,
 }
 
 impl Origin {
     /// Create an origin in the fixture home directory.
-    pub fn new(f: &Fixture, name: &str, epoch: i64) -> Self {
+    pub(crate) fn new(f: &Fixture, name: &str, epoch: i64) -> Self {
         let dir = f.home.join(".origins").join(name);
         fs_err::create_dir_all(dir.as_std_path()).expect("mkdir origin");
         git_in(&dir, epoch, &["init", "--quiet", "-b", "main"]);
@@ -194,12 +190,12 @@ impl Origin {
     }
 
     /// Return the origin path in URL form.
-    pub fn url(&self) -> String {
+    pub(crate) fn url(&self) -> String {
         self.dir.as_str().replace('\\', "/")
     }
 
     /// Write files to the origin and commit them.
-    pub fn commit_files(&self, files: &[(&str, &str)], epoch: i64) -> String {
+    pub(crate) fn commit_files(&self, files: &[(&str, &str)], epoch: i64) -> String {
         for (path, body) in files {
             let full = self.dir.join(path);
             if let Some(parent) = full.parent() {

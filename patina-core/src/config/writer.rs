@@ -33,7 +33,7 @@ use toml_edit::value;
 #[non_exhaustive]
 pub enum ConfigWriteError {
     /// The supplied manifest text was not a well-formed TOML document.
-    #[error("failed to parse manifest text as TOML: {source}")]
+    #[error("failed to parse manifest text as TOML")]
     Parse {
         #[source]
         /// The underlying `toml_edit` parse error.

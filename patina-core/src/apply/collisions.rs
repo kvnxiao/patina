@@ -80,7 +80,7 @@ enum CollisionRepr {
     /// second would silently overwrite the first, so the plan is refused.
     #[error(
         "two entries resolve to the same target {target}: `{first_source}` in module \
-         `{first_module}`{} and `{second_source}` in module `{second_module}`{}. Give them \
+         `{first_module}`{} and `{second_source}` in module `{second_module}`{}; give them \
          distinct targets, or guard them with mutually exclusive `when` predicates",
         leaf_of(.first_tree_target.as_deref()), leaf_of(.second_tree_target.as_deref())
     )]
@@ -110,7 +110,7 @@ enum CollisionRepr {
     #[error(
         "the directory entry `{outer_source}` in module `{outer_module}` links its whole \
          target {outer_target}, which contains the target {inner_target} of \
-         `{inner_source}` in module `{inner_module}`{}. A `[[directory]]` `mode = \"symlink\"` \
+         `{inner_source}` in module `{inner_module}`{}; a `[[directory]]` `mode = \"symlink\"` \
          replaces its target path outright, so move one of the two, or switch it to \
          `symlink-tree`, which owns only the leaves it materializes",
         leaf_of(.inner_tree_target.as_deref())

@@ -16,16 +16,13 @@ malformed, and out-of-range data with an actionable error.
 ```rust
 pub fn process_user_input(input: &str) -> Result<ProcessedData> {
     if input.is_empty() {
-        return Err(MyLibraryError::ValidationError {
-            field: "input".to_string(),
-            constraint: "must not be empty".to_string(),
-        });
+        return Err(Error::validation("input", "must not be empty"));
     }
-    if input.len() > MAX_INPUT_LENGTH {
-        return Err(MyLibraryError::ValidationError {
-            field: "input".to_string(),
-            constraint: format!("must not exceed {MAX_INPUT_LENGTH} characters"),
-        });
+    if input.len() > MAX_INPUT_BYTES {
+        return Err(Error::validation(
+            "input",
+            format!("must not exceed {MAX_INPUT_BYTES} bytes"),
+        ));
     }
     Ok(ProcessedData::new(input))
 }
@@ -33,8 +30,10 @@ pub fn process_user_input(input: &str) -> Result<ProcessedData> {
 
 ## Builder Pattern for Complex Types (Default)
 
-When a configuration has optional fields or cross-field constraints, default the builder to stored
-`Option` values and one complete validation in `build()`.
+When a configuration has optional fields or cross-field constraints, consider a builder. Follow the
+[deferred-validation contract](rust-api-design.md#deferred-validation-builder-required) and
+construct errors through the
+[opaque error type](rust-error-handling.md#typed-errors-opaque-wrapper-over-a-private-repr-default).
 
 ```rust
 #[derive(Debug)]
@@ -58,14 +57,8 @@ impl ConfigBuilder {
 
     pub fn build(self) -> Result<Config> {
         Ok(Config {
-            host: self.host.ok_or_else(|| MyLibraryError::ValidationError {
-                field: "host".to_string(),
-                constraint: "must be specified".to_string(),
-            })?,
-            port: self.port.ok_or_else(|| MyLibraryError::ValidationError {
-                field: "port".to_string(),
-                constraint: "must be specified".to_string(),
-            })?,
+            host: self.host.ok_or_else(|| Error::validation("host", "must be specified"))?,
+            port: self.port.ok_or_else(|| Error::validation("port", "must be specified"))?,
             timeout: self.timeout.unwrap_or(Duration::from_secs(30)),
         })
     }
@@ -89,8 +82,11 @@ impl UserId {
     pub fn as_u64(self) -> u64 { self.0 }
 }
 
-fn get_user(id: UserId) -> Result<User> { todo!() }
+let user = get_user(UserId::new(42))?;
 ```
+
+Implement `Hash` when identifiers serve as hash keys and ordering traits when the domain defines an
+ordering. Keep their behavior consistent with equality.
 
 ## Safe Arithmetic (Required)
 
@@ -101,10 +97,8 @@ never undefined behavior. See
 [Behavior not considered unsafe](https://doc.rust-lang.org/reference/behavior-not-considered-unsafe.html#integer-overflow).
 
 ```rust
-let checked = a.checked_add(b).ok_or(MyLibraryError::ValidationError {
-    field: "sum".to_string(),
-    constraint: "result would overflow".to_string(),
-})?;
+let checked = a.checked_add(b)
+    .ok_or_else(|| Error::validation("sum", "result would overflow"))?;
 
 let capped = a.saturating_add(b);
 let wrapped = a.wrapping_add(b);

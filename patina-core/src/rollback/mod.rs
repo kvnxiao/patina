@@ -76,7 +76,7 @@ pub enum RollbackError {
     /// code 1.
     #[error(
         "rollback of `[[file]]` entry {entry} failed and was reverted to its \
-         post-apply state to preserve per-entry atomicity: {source}"
+         post-apply state to preserve per-entry atomicity"
     )]
     RollbackPartial {
         /// Index of the `[[file]]` entry whose rollback failed.

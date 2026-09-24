@@ -139,15 +139,11 @@ impl fmt::Display for DefenderError {
                 write!(f, "Defender rejected the exclusion change: {detail}")
             }
             #[cfg(windows)]
-            Self::ReadRequest { path, source } => {
-                write!(
-                    f,
-                    "failed to read the request file `{}`: {source}",
-                    path.display()
-                )
+            Self::ReadRequest { path, .. } => {
+                write!(f, "failed to read the request file `{}`", path.display())
             }
             #[cfg(windows)]
-            Self::PowerShell { source } => write!(f, "failed to run powershell: {source}"),
+            Self::PowerShell { .. } => write!(f, "failed to run powershell"),
             #[cfg(windows)]
             Self::Apply { detail } => {
                 write!(f, "Defender exclusions were not applied: {detail}")
@@ -358,14 +354,16 @@ fn write_receipt(request: &Path, outcome: &Result<(), DefenderError>) {
 /// verdict, and multi-line PowerShell errors are flattened to one line. The
 /// CLI parses this format on every host, so the function stays public off
 /// Windows.
-#[must_use = "the launching CLI reads this body as the verdict"]
 pub fn receipt_body(outcome: &Result<(), DefenderError>) -> String {
     match outcome {
         Ok(()) => format!("{RECEIPT_APPLIED}\n"),
         Err(DefenderError::Blocked { detail }) => {
             format!("{RECEIPT_BLOCKED} {}\n", one_line(detail))
         }
-        Err(other) => format!("{RECEIPT_FAILED} {}\n", one_line(&other.to_string())),
+        Err(other) => format!(
+            "{RECEIPT_FAILED} {}\n",
+            one_line(&crate::chain_message(other))
+        ),
     }
 }
 

@@ -1,9 +1,6 @@
 //! Integration tests for apply crash recovery.
 
-#![expect(
-    clippy::expect_used,
-    reason = "integration tests use .expect() on fixture setup and assertions; allow-expect-in-tests covers #[cfg(test)] modules but not the top level of a tests/*.rs integration crate."
-)]
+#![cfg(test)]
 
 mod common;
 

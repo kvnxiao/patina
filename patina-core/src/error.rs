@@ -12,6 +12,18 @@
 use camino::Utf8PathBuf;
 use thiserror::Error;
 
+/// Render `error` and every error in its `source()` chain, joined by `: `.
+pub fn chain_message(error: &(dyn std::error::Error + 'static)) -> String {
+    let mut message = error.to_string();
+    let mut source = error.source();
+    while let Some(cause) = source {
+        message.push_str(": ");
+        message.push_str(&cause.to_string());
+        source = cause.source();
+    }
+    message
+}
+
 /// Errors returned from [`apply`](fn@crate::apply),
 /// [`status`](fn@crate::status), and [`rollback`](fn@crate::rollback).
 ///
@@ -119,8 +131,8 @@ pub enum EngineError {
     /// Developer Mode and `patina doctor --fix` so even the backstop path
     /// is actionable.
     #[error(
-        "Developer Mode is disabled; creating symbolic links requires it. \
-         Run `patina doctor --fix` to enable Developer Mode, or re-run \
+        "Developer Mode is disabled; creating symbolic links requires it; \
+         run `patina doctor --fix` to enable Developer Mode, or re-run \
          `patina apply` and accept the elevation prompt"
     )]
     DevModeRequired,

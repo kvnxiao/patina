@@ -1109,7 +1109,6 @@ dependencies = [
  "insta",
  "jiff",
  "patina-core",
- "serde",
  "serde_json",
  "similar 3.1.2",
  "tabwriter",

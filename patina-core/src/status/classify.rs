@@ -30,7 +30,6 @@ impl TargetState {
     /// The lower-case word for this state in human and JSON output. The
     /// label is part of the status surface (the `files[].state` field and
     /// the human rows), so it is defined once here.
-    #[must_use = "the label is the value emitted in status output"]
     pub fn label(self) -> &'static str {
         match self {
             Self::Clean => "clean",
@@ -55,7 +54,6 @@ impl TargetState {
 /// expectation's kind. A symlink must still point at the recorded link
 /// target, and a content file must still `blake3`-hash to the recorded
 /// value.
-#[must_use = "the classification is the per-target status result"]
 pub fn classify(expected: &ExpectedTarget, still_managed: bool) -> TargetState {
     let target = Utf8Path::new(expected.target());
     let exists = fs_err::symlink_metadata(target).is_ok();
@@ -99,7 +97,6 @@ pub fn classify(expected: &ExpectedTarget, still_managed: bool) -> TargetState {
 /// The comparison is on the verbatim-stripped (`simplified_str`) form
 /// because the recorded/desired link target and the on-disk link may differ
 /// only by a Windows `\\?\` prefix for the same destination.
-#[must_use = "the comparison result drives the Clean/Unchanged classification"]
 pub(crate) fn symlink_matches(target: &Utf8Path, desired: &str) -> bool {
     read_symlink_target(target).is_some_and(|actual| {
         crate::paths::simplified_str(&actual) == crate::paths::simplified_str(desired)
@@ -115,7 +112,6 @@ pub(crate) fn symlink_matches(target: &Utf8Path, desired: &str) -> bool {
 /// "Clean". A target is not a match when it is not a regular file (a
 /// symlink, directory, or absent path), even if reading through a live
 /// symlink returns matching bytes.
-#[must_use = "the comparison result drives the Clean/Unchanged classification"]
 pub(crate) fn content_matches(target: &Utf8Path, desired: &[u8; 32]) -> bool {
     let is_regular_file =
         fs_err::symlink_metadata(target).is_ok_and(|meta| meta.file_type().is_file());

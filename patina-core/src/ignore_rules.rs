@@ -36,7 +36,7 @@ use ignore::gitignore::GitignoreBuilder;
 pub enum IgnoreRulesError {
     /// A declared pattern is not a valid glob. The pattern is quoted so the
     /// author can find it in the manifest without counting list positions.
-    #[error("ignore pattern `{pattern}` is not a valid glob: {source}")]
+    #[error("ignore pattern `{pattern}` is not a valid glob")]
     Pattern {
         /// The offending pattern exactly as authored.
         pattern: String,
@@ -46,7 +46,7 @@ pub enum IgnoreRulesError {
     },
 
     /// The assembled pattern set could not be compiled into a matcher.
-    #[error("failed to compile the ignore rules for source `{source_root}`: {source}")]
+    #[error("failed to compile the ignore rules for source `{source_root}`")]
     Build {
         /// The entry source directory the rules were anchored at.
         source_root: String,
@@ -105,7 +105,6 @@ pub fn build(
 ///
 /// The modes with no ignore list pass this. [`crate::walk_files`] says why it
 /// takes a matcher rather than offering an unfiltered variant.
-#[must_use]
 pub fn none() -> Gitignore {
     Gitignore::empty()
 }
@@ -123,7 +122,6 @@ pub fn none() -> Gitignore {
 /// [`Gitignore::matched_path_or_any_parents`] tests the leaf first and rescues
 /// it. A caller using that one marks the leaf managed, the executor never
 /// materializes it, and the target is never reaped.
-#[must_use]
 pub fn prunes(rules: &Gitignore, rel: &Utf8Path) -> bool {
     let mut prefix = Utf8PathBuf::new();
     let mut components = rel.components().peekable();

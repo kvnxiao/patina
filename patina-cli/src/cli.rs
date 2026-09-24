@@ -22,10 +22,14 @@ use clap::ValueEnum;
 /// the reporter's err stream, then [`ExitCode::from_error_chain`] picks the
 /// code: a lock timeout is `4`, every other failure `1`.
 ///
-/// [`crate::main`] passes the returned `i32` to [`std::process::exit`].
-#[must_use = "the returned exit code is the process's terminal status"]
-pub fn resolve_exit_code(outcome: anyhow::Result<i32>, reporter: &mut impl Reporter) -> i32 {
-    match outcome {
+/// [`crate::main`] returns the resolved code as the process exit status. A
+/// code outside `0..=255` resolves to [`std::process::ExitCode::FAILURE`].
+#[must_use]
+pub(crate) fn resolve_exit_code(
+    outcome: anyhow::Result<i32>,
+    reporter: &mut impl Reporter,
+) -> std::process::ExitCode {
+    let code = match outcome {
         Ok(code) => code,
         Err(error) => {
             // The outermost error is only the context wrapper. The root cause,
@@ -36,13 +40,17 @@ pub fn resolve_exit_code(outcome: anyhow::Result<i32>, reporter: &mut impl Repor
             }
             ExitCode::from_error_chain(&error).code()
         }
-    }
+    };
+    u8::try_from(code).map_or(
+        std::process::ExitCode::FAILURE,
+        std::process::ExitCode::from,
+    )
 }
 
 /// `patina`, a cross-platform dotfile manager.
 #[derive(Debug, Parser)]
 #[command(name = "patina", version, about, disable_help_subcommand = true)]
-pub struct Cli {
+pub(crate) struct Cli {
     /// The subcommand to run.
     #[command(subcommand)]
     pub command: Command,
@@ -59,7 +67,7 @@ pub struct Cli {
 /// reporter's auto-stream reads that policy to decide whether it styles the
 /// destination stream.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub enum ColorChoiceArg {
+pub(crate) enum ColorChoiceArg {
     /// Color when the stream is a terminal; strip to plain text when piped,
     /// redirected, or `NO_COLOR` is set. The default.
     Auto,
@@ -73,8 +81,7 @@ impl ColorChoiceArg {
     /// Map to the `anstream` policy the reporter's auto-stream consumes.
     /// `Auto` defers the per-stream terminal / `NO_COLOR` decision to
     /// `anstream`; `Always` / `Never` are unconditional.
-    #[must_use = "the returned policy drives whether output is styled"]
-    pub fn choice(self) -> anstream::ColorChoice {
+    pub(crate) fn choice(self) -> anstream::ColorChoice {
         match self {
             ColorChoiceArg::Auto => anstream::ColorChoice::Auto,
             ColorChoiceArg::Always => anstream::ColorChoice::Always,
@@ -85,7 +92,7 @@ impl ColorChoiceArg {
 
 /// Top-level subcommands.
 #[derive(Debug, Subcommand)]
-pub enum Command {
+pub(crate) enum Command {
     /// Scaffold a root `patina.toml` and persist the default-repo pointer.
     Init(InitArgs),
 
@@ -155,7 +162,7 @@ pub enum Command {
 /// neither, the command reports that a mode must be chosen.
 #[derive(Debug, Args, Default)]
 #[command(disable_help_subcommand = true)]
-pub struct WatchArgs {
+pub(crate) struct WatchArgs {
     /// The background-service lifecycle subcommand. Mutually exclusive with
     /// `--foreground`; omit both to see the usage hint.
     #[command(subcommand)]
@@ -181,7 +188,7 @@ pub struct WatchArgs {
 /// without it. Every other subcommand acquires the exclusive lock, and a
 /// timeout on that one is exit `4`.
 #[derive(Debug, Subcommand, Clone)]
-pub enum WatchCommand {
+pub(crate) enum WatchCommand {
     /// Register the watcher as a per-user background service that launches at
     /// login. When the service is already installed, exits 1.
     Install,
@@ -216,7 +223,7 @@ pub enum WatchCommand {
 /// `check` writes only the per-machine notice files it alone owns.
 #[derive(Debug, Args)]
 #[command(disable_help_subcommand = true)]
-pub struct RemoteArgs {
+pub(crate) struct RemoteArgs {
     /// The remote-source subcommand to run.
     #[command(subcommand)]
     pub command: RemoteCommand,
@@ -229,7 +236,7 @@ pub struct RemoteArgs {
 
 /// Subcommands under `patina remote`.
 #[derive(Debug, Subcommand, Clone)]
-pub enum RemoteCommand {
+pub(crate) enum RemoteCommand {
     /// Report each remote's URL, ref, pinned rev, and pending-update state.
     /// Read-only and offline: the pending state is read from the last
     /// `patina remote check`.
@@ -270,7 +277,7 @@ pub enum RemoteCommand {
 
 /// Subcommands under the `patina debug` namespace.
 #[derive(Debug, Subcommand)]
-pub enum DebugCommand {
+pub(crate) enum DebugCommand {
     /// Decode a `<ts>.plan` journal file into a human-readable view.
     Journal(DebugJournalArgs),
 
@@ -280,7 +287,7 @@ pub enum DebugCommand {
 
 /// Flags for `patina debug journal`.
 #[derive(Debug, Args)]
-pub struct DebugJournalArgs {
+pub(crate) struct DebugJournalArgs {
     /// Path to the `<ts>.plan` file to decode.
     #[arg(value_name = "path")]
     pub path: Utf8PathBuf,
@@ -288,7 +295,7 @@ pub struct DebugJournalArgs {
 
 /// Flags for `patina debug drift-cache`.
 #[derive(Debug, Args)]
-pub struct DebugDriftCacheArgs {
+pub(crate) struct DebugDriftCacheArgs {
     /// Path to the `drift.cache` file to decode.
     #[arg(value_name = "path")]
     pub path: Utf8PathBuf,
@@ -296,7 +303,7 @@ pub struct DebugDriftCacheArgs {
 
 /// Flags for `patina init`.
 #[derive(Debug, Args, Default)]
-pub struct InitArgs {
+pub(crate) struct InitArgs {
     /// Target directory to initialize. Defaults to the current working
     /// directory. A missing directory is created.
     #[arg(value_name = "path")]
@@ -327,7 +334,7 @@ pub struct InitArgs {
     clippy::struct_excessive_bools,
     reason = "this is a clap-derived flag struct: each bool is an independent CLI flag (the mode flags, plus --json, --yes, and --force), not a state machine that would be better modelled as an enum. The mode flags are unified at use-site into the AddMode enum."
 )]
-pub struct AddArgs {
+pub(crate) struct AddArgs {
     /// The dotfile to manage. A leading `~` expands to HOME, and a relative
     /// path resolves against the current directory. Manifest targets under
     /// HOME use `~`-relative paths.
@@ -374,7 +381,7 @@ pub struct AddArgs {
 
 /// Flags for `patina remove`.
 #[derive(Debug, Args, Default)]
-pub struct RemoveArgs {
+pub(crate) struct RemoveArgs {
     /// The managed target to remove. A leading `~` expands to HOME, and a
     /// relative path resolves against the current directory.
     #[arg(value_name = "path")]
@@ -396,7 +403,7 @@ pub struct RemoveArgs {
 
 /// Flags for `patina promote`.
 #[derive(Debug, Args, Default)]
-pub struct PromoteArgs {
+pub(crate) struct PromoteArgs {
     /// The drifted copy-mode target to promote. A leading `~` expands to HOME,
     /// and a relative path resolves against the current directory.
     #[arg(value_name = "target")]
@@ -413,7 +420,7 @@ pub struct PromoteArgs {
 
 /// Flags for `patina rollback`.
 #[derive(Debug, Args, Default)]
-pub struct RollbackArgs {
+pub(crate) struct RollbackArgs {
     /// Roll back unconditionally with no prompt, regardless of TTY state.
     #[arg(long)]
     pub yes: bool,
@@ -429,7 +436,7 @@ pub struct RollbackArgs {
 /// findings. `--fix` acquires the exclusive lock and interactively remediates
 /// fixable findings. `--yes` auto-accepts every prompt.
 #[derive(Debug, Args, Default)]
-pub struct DoctorArgs {
+pub(crate) struct DoctorArgs {
     /// Interactively remediate fixable findings instead of only reporting
     /// them. Mutating: acquires the exclusive lock.
     #[arg(long)]
@@ -447,7 +454,7 @@ pub struct DoctorArgs {
 
 /// Flags for `patina status`.
 #[derive(Debug, Args, Default)]
-pub struct StatusArgs {
+pub(crate) struct StatusArgs {
     /// Emit a JSON envelope instead of the human-readable table.
     #[arg(long)]
     pub json: bool,
@@ -463,7 +470,7 @@ pub struct StatusArgs {
     clippy::struct_excessive_bools,
     reason = "this is a clap-derived flag struct: each bool is an independent CLI flag (--yes / --force-deploy / --update / --json), not a state machine that would read better as an enum."
 )]
-pub struct ApplyArgs {
+pub(crate) struct ApplyArgs {
     /// Apply unconditionally with no prompt, regardless of TTY state.
     #[arg(long)]
     pub yes: bool,
@@ -496,7 +503,7 @@ pub struct ApplyArgs {
 #[cfg(windows)]
 #[derive(Debug, Args)]
 #[command(disable_help_subcommand = true)]
-pub struct DefenderArgs {
+pub(crate) struct DefenderArgs {
     /// The Defender exclusion subcommand to run.
     #[command(subcommand)]
     pub command: DefenderCommand,
@@ -505,7 +512,7 @@ pub struct DefenderArgs {
 /// Subcommands under `patina defender` (Windows-only).
 #[cfg(windows)]
 #[derive(Debug, Subcommand)]
-pub enum DefenderCommand {
+pub(crate) enum DefenderCommand {
     /// Reconcile Defender exclusions: add every desired exclusion that is
     /// missing and reap the patina-owned exclusions the current plan no
     /// longer manages. Previewed and consented; launches the elevated helper

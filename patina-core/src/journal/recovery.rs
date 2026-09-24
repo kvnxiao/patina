@@ -79,13 +79,11 @@ pub struct RecoveryReport {
 
 impl RecoveryReport {
     /// The `<ts>` timestamps of the orphan plans recovered this pass.
-    #[must_use = "inspect the recovered timestamps to report or assert what recovery reversed"]
     pub fn recovered_timestamps(&self) -> &[String] {
         &self.recovered
     }
 
     /// Whether this pass found and recovered at least one orphan plan.
-    #[must_use = "a true result means a prior partial apply was rolled back"]
     pub fn recovered_any(&self) -> bool {
         !self.recovered.is_empty()
     }

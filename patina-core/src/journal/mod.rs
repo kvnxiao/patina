@@ -253,14 +253,12 @@ impl Journal {
     }
 
     /// The journal directory this handle writes into.
-    #[must_use = "the journal directory locates the plan, progress, and commit files"]
     pub fn dir(&self) -> &Utf8Path {
         &self.dir
     }
 
     /// The `<ts>` timestamp shared by this run's plan, progress, and
     /// commit files.
-    #[must_use = "the timestamp keys this run's journal files"]
     pub fn timestamp(&self) -> &str {
         &self.timestamp
     }

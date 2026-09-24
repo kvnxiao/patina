@@ -62,7 +62,6 @@ pub enum GateConcern {
 
 impl GateConcern {
     /// A one-line description for the confirmation prompt.
-    #[must_use = "the user confirms the description"]
     pub fn describe(self) -> String {
         match self {
             Self::HistoryRewritten => "upstream history was rewritten: the candidate commit is \
@@ -102,7 +101,6 @@ pub enum GateOutcome {
 
 /// The age floor in force for one remote: its own `min_age`, else the root
 /// `[remotes] min_age`, else the shipped 72 hours.
-#[must_use = "the age gate compares against the effective floor"]
 pub fn effective_min_age(spec: &RemoteSpec, global: Option<Duration>) -> Duration {
     spec.min_age.or(global).unwrap_or(DEFAULT_MIN_AGE)
 }
@@ -113,7 +111,6 @@ pub fn effective_min_age(spec: &RemoteSpec, global: Option<Duration>) -> Duratio
 /// when an earlier check also raised a concern. The pin is not moving either
 /// way, and re-reporting a rewrite the user cannot yet act on would be noise.
 /// The concerns surface on the run where the candidate is actually eligible.
-#[must_use = "the outcome decides whether the pin moves"]
 pub fn evaluate(inputs: GateInputs) -> GateOutcome {
     // The future check runs first because a nonsensical timestamp makes every
     // later comparison meaningless.

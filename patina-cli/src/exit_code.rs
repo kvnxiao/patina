@@ -11,7 +11,7 @@
 //! | 1    | Generic error (config parse, IO, undefined variable, journal version mismatch, missing prior apply, unresolved shell). |
 //! | 2    | A `must_succeed` `pre_apply` hook failed; apply aborted before any file operation. |
 //! | 3    | A `must_succeed` `post_apply` hook failed; file operations rolled back. |
-//! | 4    | Exclusive-lock acquisition timed out (`apply` / `rollback`).  |
+//! | 4    | Exclusive-lock acquisition timed out.                         |
 //! | 5    | Interactive prompt declined (the user entered anything other than `y`/`Y`), or an elevation request refused. |
 //!
 //! The code assignments below look wrong and are deliberate:
@@ -41,7 +41,7 @@ use patina_core::LockError;
 /// with exactly that integer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(i32)]
-pub enum ExitCode {
+pub(crate) enum ExitCode {
     /// `0`: the command completed successfully.
     Success = 0,
     /// `1`: a generic failure (config parse, IO, undefined variable,
@@ -54,7 +54,7 @@ pub enum ExitCode {
     /// operations were rolled back.
     PostApplyRollback = 3,
     /// `4`: the exclusive advisory lock could not be acquired within the
-    /// configured timeout (`apply` / `rollback`).
+    /// configured timeout.
     LockTimeout = 4,
     /// `5`: the user declined the interactive confirmation prompt (or
     /// refused an elevation request).
@@ -63,8 +63,7 @@ pub enum ExitCode {
 
 impl ExitCode {
     /// The numeric process exit code this outcome maps to.
-    #[must_use = "the returned exit code is the process's terminal status"]
-    pub fn code(self) -> i32 {
+    pub(crate) fn code(self) -> i32 {
         self as i32
     }
 
@@ -76,8 +75,7 @@ impl ExitCode {
     /// `EngineError`: the engine reports a failed `must_succeed` hook as an
     /// `ApplyResult` outcome, and a declined prompt is a control-flow decision
     /// in the command layer.
-    #[must_use = "the returned exit code is the process's terminal status"]
-    pub fn from_engine_error(error: &EngineError) -> Self {
+    pub(crate) fn from_engine_error(error: &EngineError) -> Self {
         match error {
             EngineError::Lock(LockError::Timeout { .. }) => ExitCode::LockTimeout,
             _ => ExitCode::Generic,
@@ -87,15 +85,21 @@ impl ExitCode {
     /// Map the error chain of an `anyhow::Error` to an exit code.
     ///
     /// The command layer wraps engine failures with `anyhow` context, so the
-    /// `EngineError` is rarely the outermost error. A chain with no
-    /// `EngineError` in it (a pure presentation-layer failure) maps to
+    /// `EngineError` is rarely the outermost error. Some commands that acquire
+    /// the lock themselves add context to a bare [`LockError`] instead. The
+    /// first `EngineError` or lock timeout in the chain determines the code; a
+    /// chain with neither (a pure presentation-layer failure) maps to
     /// [`ExitCode::Generic`].
-    #[must_use = "the returned exit code is the process's terminal status"]
-    pub fn from_error_chain(error: &anyhow::Error) -> Self {
-        error
-            .chain()
-            .find_map(|cause| cause.downcast_ref::<EngineError>())
-            .map_or(ExitCode::Generic, ExitCode::from_engine_error)
+    pub(crate) fn from_error_chain(error: &anyhow::Error) -> Self {
+        for cause in error.chain() {
+            if let Some(engine) = cause.downcast_ref::<EngineError>() {
+                return ExitCode::from_engine_error(engine);
+            }
+            if let Some(LockError::Timeout { .. }) = cause.downcast_ref::<LockError>() {
+                return ExitCode::LockTimeout;
+            }
+        }
+        ExitCode::Generic
     }
 }
 
@@ -106,12 +110,16 @@ mod tests {
     use patina_core::LockKind;
     use std::time::Duration;
 
-    fn lock_timeout() -> EngineError {
-        EngineError::Lock(LockError::Timeout {
+    fn bare_lock_timeout() -> LockError {
+        LockError::Timeout {
             kind: LockKind::Exclusive,
             path: Utf8PathBuf::from("/state/lock"),
             waited: Duration::from_mins(1),
-        })
+        }
+    }
+
+    fn lock_timeout() -> EngineError {
+        EngineError::Lock(bare_lock_timeout())
     }
 
     #[test]
@@ -142,6 +150,13 @@ mod tests {
     #[test]
     fn error_chain_finds_wrapped_lock_timeout() {
         let wrapped = anyhow::Error::new(lock_timeout()).context("apply execution failed");
+        assert_eq!(ExitCode::from_error_chain(&wrapped), ExitCode::LockTimeout);
+    }
+
+    #[test]
+    fn error_chain_finds_bare_lock_timeout_under_context() {
+        let wrapped = anyhow::Error::new(bare_lock_timeout())
+            .context("failed to acquire the exclusive lock for `patina remote prune`");
         assert_eq!(ExitCode::from_error_chain(&wrapped), ExitCode::LockTimeout);
     }
 

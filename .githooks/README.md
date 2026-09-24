@@ -7,12 +7,12 @@ corresponding pull-request gate.
 
 | Hook | Checks |
 |---|---|
-| `pre-commit` | Fast inner-loop gate: `cargo +nightly fmt --all --check` and `cargo clippy --workspace --all-targets --all-features -- -D warnings` |
-| `pre-push` | Full local gate: `just check` (= `just lint`, which is fmt + clippy + **docs** (`cargo doc -D warnings`) + `cargo deny`, then `just test`, which is `cargo test --workspace --locked`) |
+| `pre-commit` | Fast inner-loop gate: `cargo +nightly fmt --all --check` and `cargo +stable clippy --workspace --all-targets --all-features --locked -- -D warnings` on the host target |
+| `pre-push` | Full local gate: `just check`, which runs `just lint` (the fmt check and Clippy on the host and cross targets), `just test`, `just doc` (`cargo doc` with warnings denied), and `just dependencies` (`cargo audit`, `cargo machete`, `cargo deny check`) |
 
-`pre-commit` keeps the per-commit loop fast: format and lint only. `pre-push` runs the heavier gate once before code leaves your machine, adding the `docs` and `cargo deny` checks the commit gate skips. It needs [`just`](https://github.com/casey/just) on `PATH`.
+`pre-commit` keeps the per-commit loop fast: format and host-target lint only. `pre-push` runs the heavier gate once before code leaves your machine and adds the cross-target lint, tests, docs, and dependency checks that `pre-commit` skips. It needs [`just`](https://github.com/casey/just), `cargo-audit`, `cargo-machete`, and `cargo-deny` on `PATH`.
 
-CI still runs gates neither hook can reproduce on one box: the Windows/macOS/Linux test matrix, the MSRV (Rust 1.95) build, and coverage. Watch the PR checks after pushing.
+CI also runs gates that neither hook runs: the Windows/macOS/Linux test matrix, `just check-msrv` for each package, and coverage. Watch the PR checks after pushing.
 
 Both hooks are a no-op when no `Cargo.toml` exists yet.
 
@@ -30,7 +30,7 @@ matching hook from this directory.
 You also need the nightly Rust toolchain (the `pre-commit` hook uses `cargo +nightly fmt`):
 
 ```sh
-rustup toolchain install nightly --component rustfmt
+rustup toolchain install nightly --profile minimal --component rustfmt
 ```
 
 ### Verify

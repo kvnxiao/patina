@@ -104,16 +104,16 @@ These Patina-specific rules extend the `rust-rules` Skill with crate choices. Wh
 
 - **On-disk format version (pre-release no-bump policy):** the `postcard` binary formats (journal plan, committed apply record, watch drift cache) share one major-version envelope, `FILE_MAJOR_VERSION` in `patina-core/src/journal/plan.rs`. **Hold the major at `1` until v1.0.** Pre-release has no shipped state to preserve, so breaking layout changes keep major `1` with no migration; an older binary then refuses a newer file (`decode_envelope` rejects `found > supported`). Bump the major once, at the v1.0 boundary, where it becomes a real compatibility contract.
 - **CLI output:** human-readable by default with color where appropriate, JSON when `--json` is set. Use the `output::Reporter` abstraction, not direct prints.
-- **Tests:** integration tests use `tempfile::TempDir` for repo fixtures. Snapshot tests use `insta`.
+- **Tests:** integration tests use `tempfile::TempDir` for repo fixtures. Snapshot tests use `insta`. Declare `#![cfg(test)]` in an integration-test crate whose helper functions call `expect`, panic, index, or print, so the `clippy.toml` test allowances cover those helpers.
 - **Diagrams in docs:** prefer Mermaid (` ```mermaid ` fenced blocks) when it can express the diagram. GitHub renders Mermaid and diffs it per node. Use ASCII for directory trees with inline comments, exact-byte layouts, and terminal output.
 
 ---
 
 ## Standard hygiene
 
-The project's hygiene gate is **`just check`** (= `just lint` + `just test`; the `pre-push` hook runs it once activated via `core.hooksPath .githooks`). Run it before a task is done or a PR opens. Do not substitute ad-hoc `cargo` commands.
+The project's hygiene gate is **`just check`** (= `just lint` + `just test` + `just doc` + `just dependencies`; the `pre-push` hook runs it once activated via `core.hooksPath .githooks`). Run it before a task is done or a PR opens. Do not substitute ad-hoc `cargo` commands.
 
-A green local `just check` is necessary, not sufficient: CI additionally runs the per-OS test-behaviour matrix, macOS-native clippy, the MSRV (1.95) build, and coverage. Watch PR checks after pushing. See the `justfile` header for cross-compile mechanics and one-time `rustup target add` setup.
+A green local `just check` is necessary, not sufficient: CI additionally runs the per-OS test-behaviour matrix, macOS-native clippy, `just check-msrv` for each package, and coverage. Watch PR checks after pushing. See the `cross_targets` comment in the `justfile` and the one-time setup in `README.md` for the cross-lint targets and tools.
 
 ---
 

@@ -125,7 +125,6 @@ type Layer = BTreeMap<String, String>;
 /// against the reserved namespace at ingest, so a successfully built
 /// `Resolver` has no `patina.*` keys outside the built-in layer.
 #[derive(Debug, Clone)]
-#[must_use = "construct then call `.get(...)` to resolve variables"]
 pub struct Resolver {
     cli: Layer,
     per_machine: Layer,
@@ -237,6 +236,7 @@ impl Resolver {
     /// Wired this way so the resolver does not depend on profile
     /// resolution being complete before construction; until this is
     /// called, `patina.profile` is undefined.
+    #[must_use]
     pub fn with_profile(mut self, profile: impl Into<String>) -> Self {
         self.builtins.profile = Some(profile.into());
         self
@@ -247,7 +247,6 @@ impl Resolver {
     /// Returns `None` when the name is unset at every layer. Templates
     /// turn that into a strict-undefined error; this
     /// resolver is intentionally schema-free at the lookup boundary.
-    #[must_use = "ignoring the resolved value defeats the lookup"]
     pub fn get(&self, key: &str) -> Option<String> {
         if let Some(v) = self.cli.get(key) {
             return Some(v.clone());

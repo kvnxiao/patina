@@ -76,7 +76,6 @@ pub enum PlannedOperation {
 impl PlannedOperation {
     /// Construct a [`PlannedOperation::Symlink`] from string-ish inputs and
     /// its classified [`Disposition`].
-    #[must_use = "construct the operation to include it in a plan"]
     pub fn symlink(
         source: impl Into<String>,
         target: impl Into<String>,
@@ -91,7 +90,6 @@ impl PlannedOperation {
 
     /// Construct a [`PlannedOperation::Render`] from string-ish inputs and
     /// its classified [`Disposition`].
-    #[must_use = "construct the operation to include it in a plan"]
     pub fn render(
         source: impl Into<String>,
         target: impl Into<String>,
@@ -106,7 +104,6 @@ impl PlannedOperation {
 
     /// Construct a [`PlannedOperation::Copy`] from string-ish inputs and its
     /// classified [`Disposition`].
-    #[must_use = "construct the operation to include it in a plan"]
     pub fn copy(
         source: impl Into<String>,
         target: impl Into<String>,
@@ -121,7 +118,6 @@ impl PlannedOperation {
 
     /// How this operation relates to the live filesystem. For a
     /// tree op this is the per-op aggregate disposition.
-    #[must_use = "the disposition decides whether the operation writes, and how recovery reverses it"]
     pub fn disposition(&self) -> Disposition {
         match self {
             Self::Symlink { disposition, .. }
@@ -146,25 +142,21 @@ pub struct Plan {
 
 impl Plan {
     /// Build a plan from an ordered list of operations.
-    #[must_use = "a plan must be flushed via Journal::flush_plan_and_fsync to take effect"]
     pub fn new(operations: Vec<PlannedOperation>) -> Self {
         Self { operations }
     }
 
     /// The operations in execution order.
-    #[must_use = "inspect the planned operations to drive execution or recovery"]
     pub fn operations(&self) -> &[PlannedOperation] {
         &self.operations
     }
 
     /// Number of operations in the plan.
-    #[must_use = "the operation count bounds the progress cursor"]
     pub fn len(&self) -> usize {
         self.operations.len()
     }
 
     /// Whether the plan contains no operations.
-    #[must_use = "an empty plan still writes a journal entry"]
     pub fn is_empty(&self) -> bool {
         self.operations.is_empty()
     }

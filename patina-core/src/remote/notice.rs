@@ -77,7 +77,6 @@ pub fn publish(
 ///
 /// An unreadable or empty notice reads as `None`: this is a notification, and
 /// failing a command over it would be worse than staying quiet.
-#[must_use = "`patina status` and shell snippets surface this notice"]
 pub fn read_notice(state_dir: &Utf8Path) -> Option<String> {
     let text = fs_err::read_to_string(cache::notice_path(state_dir).as_std_path()).ok()?;
     let trimmed = text.trim();
@@ -89,7 +88,6 @@ pub fn read_notice(state_dir: &Utf8Path) -> Option<String> {
 /// `modules` is expected in a stable order, because the caller iterates the
 /// name-ordered lockfile. The file's bytes are therefore a function of which
 /// remotes are behind, not of iteration order.
-#[must_use = "the message is the notice body"]
 pub fn pending_updates_message(modules: &[&str]) -> String {
     let names = modules.join(", ");
     let subject = if modules.len() == 1 {
@@ -104,7 +102,6 @@ pub fn pending_updates_message(modules: &[&str]) -> String {
 ///
 /// The pins another machine already bumped are decided and gated, so the user
 /// should pull them rather than re-run the gate here.
-#[must_use = "the message is the notice body"]
 pub fn repo_behind_message() -> String {
     "patina: your dotfiles repository is behind its origin, which may already carry \
      updated remote pins. Run `git pull && patina apply`.\n"
@@ -136,7 +133,6 @@ pub fn write_pending(state_dir: &Utf8Path, modules: &[String]) -> Result<(), Rem
 /// The file was written by an earlier process from the declaration as it was
 /// spelled then, so membership folds rather than matching bytes: a declaration
 /// respelled between the check and the report is still the same remote.
-#[must_use = "the answer is the per-remote pending state `remote list` reports"]
 pub fn is_pending(pending: &BTreeSet<String>, remote: &RemoteName) -> bool {
     pending.iter().any(|name| remote.matches(name))
 }
@@ -174,7 +170,6 @@ pub fn settle(state_dir: &Utf8Path, names: &[&RemoteName]) -> Result<(), RemoteE
 ///
 /// An absent or unreadable file reads as "none pending": this is notification
 /// state, and a stale read is better than a failed command.
-#[must_use = "the set is the per-remote pending state `remote list` reports"]
 pub fn read_pending(state_dir: &Utf8Path) -> BTreeSet<String> {
     fs_err::read_to_string(cache::pending_path(state_dir).as_std_path())
         .map(|text| {
@@ -188,7 +183,6 @@ pub fn read_pending(state_dir: &Utf8Path) -> BTreeSet<String> {
 }
 
 /// The Unix seconds recorded by the last real background check, if any.
-#[must_use = "the stamp drives the hook self-throttle"]
 pub fn last_check_epoch(state_dir: &Utf8Path) -> Option<i64> {
     fs_err::read_to_string(cache::last_check_path(state_dir).as_std_path())
         .ok()?
@@ -231,7 +225,6 @@ fn atomic_write(path: &Utf8Path, bytes: &[u8]) -> Result<(), RemoteError> {
 ///
 /// A stamp in the future (a clock that jumped back) reads as due rather than
 /// locking the check out until the clock catches up.
-#[must_use = "the answer decides whether the hook does any network work"]
 pub fn hook_check_due(last_check: Option<i64>, now_epoch: i64) -> bool {
     let Some(last) = last_check else {
         return true;

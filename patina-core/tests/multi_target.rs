@@ -1,13 +1,6 @@
 //! Integration tests for multi target.
 
-#![expect(
-    clippy::expect_used,
-    reason = "integration tests use .expect() on fixture setup; allow-expect-in-tests covers #[cfg(test)] modules but not the helper functions in tests/*.rs integration crates."
-)]
-#![expect(
-    clippy::indexing_slicing,
-    reason = "integration tests use direct [0] / [1] indexing for assertion-only record inspection where the vector length is asserted immediately above; a bounds-check panic is acceptable test signal."
-)]
+#![cfg(test)]
 
 use camino::Utf8Path;
 use camino::Utf8PathBuf;

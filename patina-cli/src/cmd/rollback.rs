@@ -27,6 +27,7 @@ use anyhow::Result;
 use patina_core::EngineError;
 use patina_core::RollbackError;
 use patina_core::RollbackOptions;
+use patina_core::chain_message;
 
 /// Run `patina rollback`. Returns the process exit code.
 ///
@@ -36,7 +37,7 @@ use patina_core::RollbackOptions;
 /// than `NoPriorApply` or `RollbackPartial`. Either of those is printed as a
 /// stderr warning and exits 1 instead of returning `Err`. A declined prompt
 /// maps to exit code 5.
-pub async fn run(
+pub(crate) async fn run(
     args: &RollbackArgs,
     tty: Tty,
     reader: &mut impl PromptReader,
@@ -76,7 +77,7 @@ pub async fn run(
         Err(EngineError::Rollback(
             err @ (RollbackError::NoPriorApply | RollbackError::RollbackPartial { .. }),
         )) => {
-            reporter.warn(&err.to_string());
+            reporter.warn(&chain_message(&err));
             Ok(ExitCode::Generic.code())
         }
         Err(other) => Err(other.into()),

@@ -71,7 +71,7 @@ pub struct RootConfig {
 pub enum RootConfigError {
     /// IO failure reading the root manifest, other than `NotFound`
     /// (which yields an empty [`RootConfig`]).
-    #[error("failed to read root patina.toml at {path}: {source}")]
+    #[error("failed to read root patina.toml at {path}")]
     Io {
         /// The manifest path that failed to read.
         path: Utf8PathBuf,
@@ -81,7 +81,7 @@ pub enum RootConfigError {
     },
 
     /// TOML deserialization of the root manifest failed.
-    #[error("failed to parse root patina.toml at {path} as TOML: {source}")]
+    #[error("failed to parse root patina.toml at {path} as TOML")]
     Toml {
         /// The manifest path whose TOML failed to parse.
         path: Utf8PathBuf,

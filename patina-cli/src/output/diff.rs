@@ -54,7 +54,7 @@ use std::fmt::Write as _;
 /// Returns an error string when a template source cannot be read, or cannot be
 /// rendered for preview (the same strict-undefined failure the apply would
 /// hit).
-pub fn render(resolved: &ResolvedPlan, orphans: &[Orphan]) -> Result<String, String> {
+pub(crate) fn render(resolved: &ResolvedPlan, orphans: &[Orphan]) -> Result<String, String> {
     let mut out = String::new();
     if resolved.operations.is_empty() && orphans.is_empty() {
         out.push_str("No changes: the plan is empty.\n");
@@ -86,42 +86,46 @@ pub fn render(resolved: &ResolvedPlan, orphans: &[Orphan]) -> Result<String, Str
                 );
                 continue;
             }
-            if disposition.leaves.is_empty() {
-                if disposition.aggregate == Disposition::Unchanged {
-                    unchanged += 1;
-                } else {
-                    render_leaf(
-                        &mut out,
-                        op.mode,
-                        &op.source,
-                        target,
-                        disposition.mode_change,
-                        &engine,
-                        vars,
-                        &styles,
-                    )?;
-                }
-            } else {
-                // Tree mode: render per materialized leaf, so a single drifted
-                // leaf does not put its clean siblings in the diff body.
-                for leaf in &disposition.leaves {
-                    if leaf.disposition == Disposition::Unchanged {
-                        unchanged += 1;
-                    } else {
-                        let leaf_source = op.source.join(&leaf.relative);
-                        let leaf_target = target.join(&leaf.relative);
-                        render_leaf(
-                            &mut out,
-                            op.mode,
-                            &leaf_source,
-                            &leaf_target,
-                            leaf.mode_change,
-                            &engine,
-                            vars,
-                            &styles,
-                        )?;
-                    }
-                }
+            let is_single = disposition.leaves.is_empty();
+            if is_single && disposition.aggregate == Disposition::Unchanged {
+                unchanged += 1;
+                continue;
+            }
+            if is_single {
+                render_leaf(
+                    &mut out,
+                    op.mode,
+                    &op.source,
+                    target,
+                    disposition.mode_change,
+                    &engine,
+                    vars,
+                    &styles,
+                )?;
+                continue;
+            }
+            // Tree mode: render per materialized leaf, so a single drifted
+            // leaf does not put its clean siblings in the diff body.
+            unchanged += disposition
+                .leaves
+                .iter()
+                .filter(|leaf| leaf.disposition == Disposition::Unchanged)
+                .count();
+            let drifted = disposition
+                .leaves
+                .iter()
+                .filter(|leaf| leaf.disposition != Disposition::Unchanged);
+            for leaf in drifted {
+                render_leaf(
+                    &mut out,
+                    op.mode,
+                    &op.source.join(&leaf.relative),
+                    &target.join(&leaf.relative),
+                    leaf.mode_change,
+                    &engine,
+                    vars,
+                    &styles,
+                )?;
             }
         }
     }

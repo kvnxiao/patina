@@ -65,7 +65,7 @@ use patina_core::remote::cache::remotes_root;
 /// source cannot be written, or the re-apply fails. An unmanaged target and
 /// each refused shape (symbolic-link, template-rendered, remote-backed) return
 /// their exit code through the `Ok` value instead.
-pub async fn run(
+pub(crate) async fn run(
     args: &PromoteArgs,
     tty: Tty,
     reader: &mut impl PromptReader,
@@ -303,11 +303,18 @@ mod tests {
         }
     }
 
-    fn args(json: bool, yes: bool) -> PromoteArgs {
+    fn args() -> PromoteArgs {
         PromoteArgs {
             target: Utf8PathBuf::from("~/.gitconfig"),
-            json,
-            yes,
+            json: false,
+            yes: false,
+        }
+    }
+
+    fn preapproved_args() -> PromoteArgs {
+        PromoteArgs {
+            yes: true,
+            ..args()
         }
     }
 
@@ -358,7 +365,7 @@ mod tests {
     fn refuse_unpromotable_refuses_remote_backed_targets() {
         let mut reporter = BufferReporter::new();
         let code = refuse_unpromotable(
-            &args(false, true),
+            &preapproved_args(),
             &remote_backed_target(),
             &state(),
             &mut reporter,
@@ -380,7 +387,7 @@ mod tests {
             remote_backed_target(),
         ] {
             let mut reporter = BufferReporter::new();
-            refuse_unpromotable(&args(false, true), &expected, &state(), &mut reporter);
+            refuse_unpromotable(&preapproved_args(), &expected, &state(), &mut reporter);
             assert!(
                 !reporter.err.contains("  "),
                 "refusal for {expected:?} carries a multi-space run: {}",
@@ -413,7 +420,7 @@ mod tests {
     fn refuse_unpromotable_refuses_symlink_targets() {
         let mut reporter = BufferReporter::new();
         let code = refuse_unpromotable(
-            &args(false, true),
+            &preapproved_args(),
             &symlink_target(),
             &state(),
             &mut reporter,
@@ -430,7 +437,7 @@ mod tests {
     fn refuse_unpromotable_refuses_template_targets() {
         let mut reporter = BufferReporter::new();
         let code = refuse_unpromotable(
-            &args(false, true),
+            &preapproved_args(),
             &template_target(),
             &state(),
             &mut reporter,
@@ -446,7 +453,8 @@ mod tests {
     #[test]
     fn refuse_unpromotable_allows_copy_targets() {
         let mut reporter = BufferReporter::new();
-        let code = refuse_unpromotable(&args(false, true), &copy_target(), &state(), &mut reporter);
+        let code =
+            refuse_unpromotable(&preapproved_args(), &copy_target(), &state(), &mut reporter);
         assert!(
             code.is_none(),
             "a copy-mode content target must be promotable"
@@ -463,7 +471,7 @@ mod tests {
         let mut reader = ScriptedReader::new(&[]);
         let mut reporter = BufferReporter::new();
         assert!(confirm(
-            &args(false, true),
+            &preapproved_args(),
             Tty::NonInteractive,
             &mut reader,
             &mut reporter
@@ -474,12 +482,7 @@ mod tests {
     fn confirm_non_tty_without_yes_declines() {
         let mut reader = ScriptedReader::new(&[]);
         let mut reporter = BufferReporter::new();
-        let proceed = confirm(
-            &args(false, false),
-            Tty::NonInteractive,
-            &mut reader,
-            &mut reporter,
-        );
+        let proceed = confirm(&args(), Tty::NonInteractive, &mut reader, &mut reporter);
         assert!(!proceed, "a non-TTY shell without --yes must decline");
         assert!(
             reporter.err.contains("--yes"),
@@ -493,7 +496,7 @@ mod tests {
         let mut reader = ScriptedReader::new(&["y\n"]);
         let mut reporter = BufferReporter::new();
         assert!(confirm(
-            &args(false, false),
+            &args(),
             Tty::Interactive,
             &mut reader,
             &mut reporter
@@ -502,7 +505,7 @@ mod tests {
         let mut reader = ScriptedReader::new(&["n\n"]);
         let mut reporter = BufferReporter::new();
         assert!(!confirm(
-            &args(false, false),
+            &args(),
             Tty::Interactive,
             &mut reader,
             &mut reporter

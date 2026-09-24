@@ -40,15 +40,8 @@ impl fmt::Display for DevModeError {
                 "enable-developer-mode is a Windows-only action; this binary was not built for Windows"
             ),
             #[cfg(windows)]
-            Self::Registry {
-                call,
-                symbol,
-                source,
-            } => {
-                write!(
-                    f,
-                    "Windows registry call `{call}` failed with {symbol}: {source}"
-                )
+            Self::Registry { call, symbol, .. } => {
+                write!(f, "Windows registry call `{call}` failed with {symbol}")
             }
         }
     }

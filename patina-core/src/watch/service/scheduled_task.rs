@@ -53,7 +53,6 @@ pub struct ScheduledTaskBackend {
 
 impl ScheduledTaskBackend {
     /// Construct a backend bound to the resolved per-machine state root.
-    #[must_use = "construct the backend to perform a lifecycle action through it"]
     pub fn new(state_dir: Utf8PathBuf) -> Self {
         Self { state_dir }
     }

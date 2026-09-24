@@ -1,13 +1,6 @@
 //! Integration tests for promote cli.
 
-#![expect(
-    clippy::expect_used,
-    reason = "integration tests use .expect() on fixture setup and assertions; allow-expect-in-tests covers #[cfg(test)] modules but not the top level of a tests/*.rs integration crate."
-)]
-#![expect(
-    clippy::panic,
-    reason = "integration tests panic! on unexpected fixture/record shapes; allow-*-in-tests covers #[cfg(test)] modules but not the helper functions in tests/*.rs integration crates."
-)]
+#![cfg(test)]
 
 mod common;
 

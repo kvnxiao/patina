@@ -96,7 +96,6 @@ pub struct ManagedTargets {
 impl ManagedTargets {
     /// Whether the current plan manages `key`, either enumerably or as part of
     /// a tree whose remote checkout is not on this machine.
-    #[must_use = "the answer decides ORPHANED classification and the reap"]
     pub fn governs(&self, key: &camino::Utf8Path) -> bool {
         self.targets.contains(key)
             || self
@@ -285,7 +284,6 @@ pub fn current_plan_targets(
 /// [`ExpectedTarget::target`](crate::ExpectedTarget::target) under the same
 /// cross-time key. They then need not re-derive the
 /// parent-canonical+verbatim-leaf technique at the call site.
-#[must_use = "the manage key is the cross-time comparison key for a target path"]
 pub fn manage_key(path: &camino::Utf8Path) -> Utf8PathBuf {
     let parent_key = match path.parent() {
         Some(parent) if !parent.as_str().is_empty() => parent

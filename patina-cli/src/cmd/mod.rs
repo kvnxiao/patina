@@ -3,20 +3,20 @@
 //! Each subcommand's control flow and presentation live here; the engine
 //! semantics live in `patina_core`.
 
-pub mod add;
-pub mod apply;
-pub mod debug;
+pub(crate) mod add;
+pub(crate) mod apply;
+pub(crate) mod debug;
 #[cfg(windows)]
-pub mod defender;
-pub mod doctor;
-pub mod init;
-pub mod managed;
-pub mod promote;
-pub mod remote;
-pub mod remove;
-pub mod rollback;
-pub mod status;
-pub mod watch;
+pub(crate) mod defender;
+pub(crate) mod doctor;
+pub(crate) mod init;
+pub(crate) mod managed;
+pub(crate) mod promote;
+pub(crate) mod remote;
+pub(crate) mod remove;
+pub(crate) mod rollback;
+pub(crate) mod status;
+pub(crate) mod watch;
 
 /// The manifest filename, at the repository root and in every module.
 pub(crate) const MANIFEST_FILENAME: &str = "patina.toml";
@@ -41,7 +41,10 @@ pub(crate) fn shared_lock(
         Ok(guard) => Some(guard),
         Err(error) => {
             if !quiet {
-                reporter.warn(&format!("proceeding without the shared lock: {error}"));
+                reporter.warn(&format!(
+                    "proceeding without the shared lock: {}",
+                    patina_core::chain_message(&error)
+                ));
             }
             None
         }

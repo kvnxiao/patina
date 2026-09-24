@@ -1,5 +1,7 @@
 //! Integration tests for target collisions.
 
+#![cfg(test)]
+
 mod common;
 
 use common::Fixture;

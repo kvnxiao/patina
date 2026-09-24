@@ -33,7 +33,7 @@ use std::io::Write;
 
 /// User-facing output sink. Rendered blocks and JSON go to the "out" stream;
 /// prompt text, warnings, and errors go to the "err" stream.
-pub trait Reporter {
+pub(crate) trait Reporter {
     /// The palette a renderer paints with.
     ///
     /// The sink decides whether escapes are written, so the palette belongs to
@@ -76,7 +76,7 @@ pub trait Reporter {
 /// Production reporter writing to the process stdout / stderr through an
 /// `anstream` auto-stream.
 #[derive(Debug)]
-pub struct StreamReporter {
+pub(crate) struct StreamReporter {
     /// The resolved color policy (from `--color`, then env / TTY under
     /// `Auto`). Handed to each per-write auto-stream.
     choice: ColorChoice,
@@ -89,8 +89,7 @@ impl StreamReporter {
     /// Construct a reporter with the given color policy. The palette is always
     /// the colored one; `choice` (plus the per-stream terminal check inside
     /// `anstream`) decides whether the styling is written or stripped.
-    #[must_use = "construct the reporter to route user-facing output through it"]
-    pub fn new(choice: ColorChoice) -> Self {
+    pub(crate) fn new(choice: ColorChoice) -> Self {
         Self {
             choice,
             styles: Styles::colored(),
@@ -192,7 +191,7 @@ impl Reporter for StreamReporter {
 /// Test reporter capturing both streams into in-memory strings.
 #[cfg(test)]
 #[derive(Debug)]
-pub struct BufferReporter {
+pub(crate) struct BufferReporter {
     /// Everything that would have gone to stdout.
     pub out: String,
     /// Everything that would have gone to stderr.
@@ -206,15 +205,13 @@ pub struct BufferReporter {
 impl BufferReporter {
     /// Construct an empty capturing reporter over the plain palette, so the
     /// captured bytes contain no escape sequences.
-    #[must_use = "construct the reporter to capture user-facing output"]
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self::with_styles(&Styles::plain())
     }
 
     /// Construct an empty capturing reporter over the production palette, for a
     /// test that asserts on the bytes written to a terminal.
-    #[must_use = "construct the reporter to capture user-facing output"]
-    pub fn colored() -> Self {
+    pub(crate) fn colored() -> Self {
         Self::with_styles(&Styles::colored())
     }
 
@@ -236,7 +233,7 @@ impl BufferReporter {
 /// stripped. Both streams are checked, so a renderer cannot pass by painting
 /// only one of them.
 #[cfg(test)]
-pub fn assert_color_is_additive(render: impl Fn(&mut BufferReporter)) {
+pub(crate) fn assert_color_is_additive(render: impl Fn(&mut BufferReporter)) {
     let mut plain = BufferReporter::new();
     render(&mut plain);
     let mut colored = BufferReporter::colored();
