@@ -201,7 +201,7 @@ sequenceDiagram
    writing files. Any other plan resolves hook shells and runs `pre_apply`
    hooks. If those hooks succeed, it flushes the journal and then backs up
    every target it will overwrite or remove in one pass, outermost first,
-   skipping a target inside a directory the pass backed up. Only then does it
+   skipping a target inside a target the pass backed up. Only then does it
    materialize its targets, run `post_apply` hooks, and remove each `Remove`
    target. Every backup is therefore a copy of the pre-apply state, and no
    backup is written inside another. A successful run writes the terminal
@@ -249,9 +249,13 @@ prefixes from the walked leaves, so an entry that deliberately places a
 the tree's `ignore` excludes that subtree. Ancestors above the declared
 root stay out of scope: a symlinked `~/.config` is the user's
 filesystem layout, and single-target writes resolve through it. The
-gate covers planning and leaf writes only; the orphan reap,
+gate covers planning and leaf writes only. A tree root replaced by a link
+does not redirect the revert paths: planning reaps no recorded target under
+a current tree root that is not a real directory, the backup pass backs up
+nothing beneath a target it backed up, and recovery reverts an operation
+beneath a stashed link as that link. Otherwise the orphan reap,
 `patina rollback`, and crash recovery revert recorded target paths
-without it, so a link planted after an apply can still redirect those
+without the gate, so a link planted after an apply can still redirect those
 single-path operations (see the Known unknowns note in AGENTS.md).
 
 Backup and restore preserve a symbolic link's Windows flavour from the
@@ -345,7 +349,10 @@ reads each journal envelope and converges deterministically:
   Without a backup, a `Create` target is deleted, and an `Update` or
   `Remove` target is left in place: the backup pass precedes every write,
   so a target with no entry at its mirror path was never written, or lies
-  inside a backed-up directory whose restore covers it. The decision reads the
+  inside a backed-up directory whose restore covers it. An operation whose
+  mirror path passes through a link stashed in the cycle reverts that ancestor
+  link instead, so recovery never reads or writes through the stashed link or
+  the live one. The decision reads the
   plan and the backup directory rather than the progress cursor. Before it restores over or
   deletes a live entry, recovery copies that entry to
   `<state>/recovered/<ts>.<n>/<op index>/<file name>` and reports the copy.

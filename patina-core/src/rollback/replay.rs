@@ -2,12 +2,12 @@
 //!
 //! [`replay_entry`] reverts every target of one `[[file]]` entry to its
 //! pre-apply state as an atomic unit. The inverse-operation rule has three
-//! outcomes, in evaluation order. A target the
-//! apply recorded as `Unchanged` is left in place, and is filtered out of the
-//! snapshot/roll-forward set before either branch below is reached; the apply
-//! touched neither its bytes nor its backup. A target with a backup is
-//! restored from it, because the apply overwrote a pre-existing file. A target
-//! with no backup is deleted, because the apply created it fresh.
+//! outcomes, in evaluation order. A target the apply recorded as `Unchanged`
+//! is left in place, and is filtered out of the snapshot/roll-forward set
+//! before either branch below is reached; the apply touched neither its bytes
+//! nor its backup. A target with a backup is restored from it, because the
+//! apply overwrote a pre-existing file. A target with no backup is deleted,
+//! because the apply created it fresh.
 //!
 //! ## Atomicity mechanism
 //!
@@ -171,19 +171,32 @@ pub(crate) fn replaced_root_ancestor(
     timestamp: &str,
     target: &Utf8Path,
 ) -> Option<Utf8PathBuf> {
+    let ancestor = stashed_link_ancestor(backups_dir, timestamp, target)?;
+    let live_is_real_dir = fs_err::symlink_metadata(&ancestor)
+        .is_ok_and(|meta| meta.is_dir() && !meta.file_type().is_symlink());
+    live_is_real_dir.then_some(ancestor)
+}
+
+/// Find the outermost strict ancestor of `target` whose backup mirror in this
+/// cycle is a symbolic link, whatever the live ancestor now is.
+///
+/// Ancestors are probed from the filesystem root toward `target`, so no probed
+/// mirror path passes through a stashed link.
+pub(crate) fn stashed_link_ancestor(
+    backups_dir: &Utf8Path,
+    timestamp: &str,
+    target: &Utf8Path,
+) -> Option<Utf8PathBuf> {
     let ancestors: Vec<&Utf8Path> = target.ancestors().skip(1).collect();
-    for ancestor in ancestors.into_iter().rev() {
-        if ancestor.as_str().is_empty() {
-            continue;
-        }
-        let backup = mirror_backup_path(backups_dir, timestamp, ancestor);
-        if fs_err::symlink_metadata(&backup).is_ok_and(|meta| meta.file_type().is_symlink()) {
-            let live_is_real_dir = fs_err::symlink_metadata(ancestor)
-                .is_ok_and(|meta| meta.is_dir() && !meta.file_type().is_symlink());
-            return live_is_real_dir.then(|| ancestor.to_path_buf());
-        }
-    }
-    None
+    ancestors
+        .into_iter()
+        .rev()
+        .filter(|ancestor| !ancestor.as_str().is_empty())
+        .find(|ancestor| {
+            let backup = mirror_backup_path(backups_dir, timestamp, ancestor);
+            fs_err::symlink_metadata(&backup).is_ok_and(|meta| meta.file_type().is_symlink())
+        })
+        .map(Utf8Path::to_path_buf)
 }
 
 /// Snapshot every target's current on-disk state into `stage`, returning one

@@ -18,7 +18,8 @@
 //!    plan, backs up every target it will overwrite or remove, materializes
 //!    every operation, runs `post_apply` hooks, performs the plan's `Remove`
 //!    operations, commits, and prunes old backups. A failed `post_apply` hook
-//!    rolls the file operations back instead of the last three steps.
+//!    rolls the file operations back instead of removing, committing, and
+//!    pruning.
 //!
 //! A caller that may execute runs [`recover_interrupted`] before [`plan`], so
 //! the plan describes the pre-apply state rather than what an interrupted apply
@@ -128,9 +129,10 @@ pub enum Reap {
     /// Plan a `Remove` for every such target still on disk. `patina apply`
     /// plans this way.
     Orphans,
-    /// Plan no `Remove`. `patina remove` and `patina promote` re-journal this
-    /// way: `remove` has just replaced its target with an owned regular file
-    /// and dropped the target's entry, so a reap would delete that file.
+    /// Do not plan any `Remove`. `patina remove` and `patina promote`
+    /// re-journal this way: `remove` has just replaced its target with an
+    /// owned regular file and dropped the target's entry, so a reap would
+    /// delete that file.
     Nothing,
 }
 
@@ -559,8 +561,6 @@ pub fn plan(
     })
 }
 
-/// Append one [`PlannedOperation::Remove`] per reap target after the
-/// materializing `operations`, and return the plan with its reap set.
 fn with_reap(
     mut operations: Vec<PlannedOperation>,
     reap: Reap,
@@ -1926,10 +1926,10 @@ fn materialize_target(
 /// Takes the exclusive lock and refuses when the journal holds an orphan plan.
 /// Then runs the symlink gate and the no-op check, runs `pre_apply` hooks,
 /// flushes the plan, backs up every target it will overwrite or remove,
-/// materializes every operation, runs `post_apply` hooks, and removes each
-/// [`PlannedOperation::Remove`] target. Finally commits and
-/// prunes old backups, or rolls the file operations back when a
-/// `must_succeed` `post_apply` hook fails.
+/// materializes every operation, and runs `post_apply` hooks. When those hooks
+/// succeed, it removes each [`PlannedOperation::Remove`] target, commits, and
+/// prunes old backups; when a `must_succeed` `post_apply` hook fails, it rolls
+/// the file operations back instead.
 ///
 /// # Errors
 ///
@@ -1985,14 +1985,14 @@ pub fn execute(
         return Err(EngineError::InterruptedApplyPending);
     }
 
-    // Windows-only symlink-elevation gate. Runs after
-    // the orphan check and BEFORE the first backup / materialize, so a plan
-    // that needs Developer Mode cannot mutate the filesystem without
-    // consent. The engine provides the backstop: the CLI normally drives
-    // the UAC prompt before calling `execute`, so a `RequireElevation`
-    // verdict here means the gate was reached without that orchestration.
-    // Refuse to proceed with a typed signal. On a host that is already
-    // elevated, proceed but warn (running Patina elevated is discouraged).
+    // Windows-only symlink-elevation gate. Runs after the orphan check and
+    // BEFORE the first backup / materialize, so a plan that needs Developer
+    // Mode cannot mutate the filesystem without consent. The engine provides
+    // the backstop: the CLI normally drives the UAC prompt before calling
+    // `execute`, so a `RequireElevation` verdict here means the gate was
+    // reached without that orchestration. Refuse to proceed with a typed
+    // signal. On a host that is already elevated, proceed but warn (running
+    // Patina elevated is discouraged).
     // On macOS / Linux `HostDevModeProbe` reports `NotWindows`, so the
     // decision is always `Proceed`: no registry read, no early return.
     match decide_symlink_gate(resolved, &HostDevModeProbe::default()) {
@@ -2054,8 +2054,8 @@ pub fn execute(
     // `PATINA_TEST_ABORT_AFTER_OP` environment variable is set. When set to
     // `k`, the process exits abruptly after the k-th completion, counting each
     // materialized object and then each `Remove`, before the COMMIT sentinel
-    // is written. That simulates a `kill -9` so an integration test can prove
-    // the next run converges to a consistent state.
+    // is written. The exit simulates a `kill -9`, so an integration test can
+    // prove the next run converges to a consistent state.
     // See `patina-cli/tests/apply_crash_recovery.rs`.
     #[cfg(debug_assertions)]
     let abort_after_op: Option<u32> = std::env::var("PATINA_TEST_ABORT_AFTER_OP")
@@ -2178,7 +2178,7 @@ pub fn execute(
 ///
 /// A caller that may [`execute`] a plan calls this before [`plan`], so the plan
 /// describes the pre-apply state. The report lists the reverted applies'
-/// timestamps; it is empty when none was pending.
+/// timestamps; it is empty when no interrupted apply was pending.
 ///
 /// # Errors
 ///
@@ -2198,11 +2198,11 @@ pub fn recover_interrupted(state_dir: &Utf8Path) -> Result<RecoveryReport, Engin
 /// command that reports on the files without recovering.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum PendingApply {
-    /// No plan lacks a terminal sentinel.
+    /// Every plan in the journal has a terminal sentinel.
     #[default]
     None,
-    /// A plan lacks a terminal sentinel and the journal was read under the
-    /// lock: an apply was interrupted and awaits recovery.
+    /// A plan lacks a terminal sentinel and no process holds the lock: an apply
+    /// was interrupted and awaits recovery.
     Interrupted,
     /// A plan lacks a terminal sentinel but the shared lock was not acquired,
     /// so the plan can belong to an apply that is still running.
@@ -2212,10 +2212,11 @@ pub enum PendingApply {
 /// Report whether an apply under the per-machine state directory `state_dir`
 /// has not committed, without writing.
 ///
-/// A plan without a terminal sentinel is re-read under the shared lock, waiting
-/// up to [`SHARED_TIMEOUT`], because an apply that is still running also has
-/// one. When no lock file exists, no process holds the lock, and the read
-/// proceeds without creating the file.
+/// A plan without a terminal sentinel is re-read under the shared lock,
+/// waiting up to [`SHARED_TIMEOUT`], because the plan of an apply that is
+/// still running also lacks a sentinel. When no lock file exists, no process
+/// holds the lock, so the plan is reported as interrupted without creating a
+/// lock file.
 ///
 /// # Errors
 ///
@@ -2414,14 +2415,16 @@ fn reap_target(target: &Utf8Path) -> Result<(), EngineError> {
 /// Back up every entry `resolved` will overwrite or remove, outermost first,
 /// before the first write.
 ///
-/// A target inside a directory this pass backed up is skipped: that
-/// directory's backup already holds the target's pre-apply entry, or lacks it
-/// when the target did not exist, and every reader finds it at the target's
-/// mirror path inside the directory's backup. Taking every backup before any
-/// write keeps each one a copy of the pre-apply state, so no backup captures
-/// bytes this apply wrote and none is staged inside another. A `Remove`
-/// target that is a directory is not backed up, because [`reap_target`]
-/// never removes it.
+/// A target inside a target this pass backed up is skipped. Under a backed-up
+/// directory, the directory's backup contains the target's pre-apply entry at
+/// the target's mirror path, where every reader looks for it, or omits the
+/// entry when the target did not exist. Under a backed-up symbolic link, the
+/// target's path resolves through the link, and recovery reverts the link as
+/// one unit instead. Because of the skip, no backup is staged inside another
+/// backup or reached through a link. Because every backup precedes the first
+/// write, each backup is a copy of the pre-apply state and contains no bytes
+/// this apply wrote. A `Remove` target that is a directory is not backed up,
+/// because [`reap_target`] never removes a directory.
 ///
 /// # Errors
 ///
@@ -2446,14 +2449,16 @@ fn back_up_targets(resolved: &ResolvedPlan, backups_dir: &Utf8Path) -> Result<()
     let mut targets: Vec<&Utf8Path> = written.chain(removed).collect();
     targets.sort_by_key(|target| target.components().count());
 
-    let mut directories: Vec<&Utf8Path> = Vec::new();
+    let mut backed_up: Vec<&Utf8Path> = Vec::new();
     for target in targets {
-        if directories.iter().any(|dir| target.starts_with(dir)) {
+        if backed_up
+            .iter()
+            .any(|covering| target.starts_with(covering))
+        {
             continue;
         }
-        backup_before_overwrite(backups_dir, &resolved.timestamp, target)?;
-        if is_real_dir(target) {
-            directories.push(target);
+        if backup_before_overwrite(backups_dir, &resolved.timestamp, target)? {
+            backed_up.push(target);
         }
     }
     Ok(())
@@ -2466,8 +2471,8 @@ fn is_real_dir(path: &Utf8Path) -> bool {
 
 /// Whether a `patina apply` over `resolved` would be a full no-op under
 /// [`LockPolicy::Blocking`]: every durable operation classifies `Unchanged`, so
-/// the plan holds no [`PlannedOperation::Remove`], and a prior committed apply
-/// exists to stay authoritative.
+/// the plan contains no [`PlannedOperation::Remove`], and a prior committed
+/// apply exists to stay authoritative.
 ///
 /// The CLI calls this *before* prompting so a fully-satisfied repo skips the
 /// diff-and-prompt confirmation and never reads stdin. The probe is read-only.
@@ -2553,15 +2558,14 @@ impl OrphanReason {
     }
 }
 
-/// The set of targets the reap removes, sorted by path: the orphan targets the
-/// `latest` committed apply materialized that the current plan no longer
-/// manages and that are still present on disk as non-directories.
+/// The targets the reap removes, sorted by path.
 ///
 /// Compares `latest` with the current managed-target set
 /// ([`current_managed_targets`]). Returns each recorded target whose
 /// [`manage_key`](crate::status::manage_key) is absent from the current set,
-/// is still on disk, is not a directory, and lies under no currently-managed
-/// target. [`plan`] schedules a [`PlannedOperation::Remove`] for each returned
+/// is still on disk, is not a directory, lies under no currently-managed
+/// target, and lies under no current tree root that is not a real directory.
+/// [`plan`] schedules a [`PlannedOperation::Remove`] for each returned
 /// target, and [`journal_orphans`] returns the set for `doctor`.
 fn detect_orphans(
     latest: Option<&ApplyRecord>,
@@ -2588,6 +2592,17 @@ fn detect_orphans(
         // consented replacement handles it; listing it would add a duplicate
         // `remove` block that the reap never performs.
         if managed.tree_roots.contains(&key) {
+            continue;
+        }
+        // Under a current tree root that is no longer a real directory, the
+        // recorded path resolves through whatever replaced the root, into
+        // entries Patina never materialized. The consented root replacement
+        // removes the root as a unit, so nothing under it is reaped. The check
+        // precedes any read of the target, because a read would follow the
+        // replacement.
+        if target.ancestors().skip(1).any(|ancestor| {
+            !is_real_dir(ancestor) && managed.tree_roots.contains(&manage_key(ancestor))
+        }) {
             continue;
         }
         // The current plan dropped this target. Only act on one that is still
@@ -4315,6 +4330,46 @@ mod tests {
             !crate::fsx::entry_present(&target),
             "rolling back the retry must delete the target it created, not restore \
              the rolled-back apply's backup"
+        );
+    }
+
+    #[test]
+    fn the_backup_pass_backs_up_nothing_under_a_backed_up_link() {
+        let mut scene = Scene::new();
+        let outside = scene.resolved.state_dir.join("elsewhere");
+        fs_err::create_dir_all(&outside).expect("mkdir the link destination");
+        let outside_z = outside.join("z.conf");
+        fs_err::write(&outside_z, b"OUTSIDE-Z").expect("write the outside file");
+        fs_err::hard_link(&outside_z, outside.join("z.hard")).expect("hard-link the outside file");
+        let home = scene.resolved.state_dir.join("home");
+        fs_err::create_dir_all(&home).expect("mkdir home");
+        let app = home.join("app");
+        make_symlink(&outside, &app);
+        let source = scene.resolved.state_dir.join("app-source");
+        fs_err::create_dir_all(&source).expect("mkdir the tree source");
+        plan_one_copy(&mut scene.resolved, &source, &app, Disposition::Update);
+        scene.resolved.plan = Plan::new(vec![
+            PlannedOperation::copy(source.as_str(), app.as_str(), Disposition::Update),
+            PlannedOperation::remove(app.join("z.conf").as_str()),
+        ]);
+
+        back_up_targets(&scene.resolved, &scene.resolved.backups_dir()).expect("back up");
+
+        let stashed = crate::journal::mirror_backup_path(&scene.resolved.backups_dir(), TS, &app);
+        assert!(
+            fs_err::symlink_metadata(&stashed).is_ok_and(|meta| meta.file_type().is_symlink()),
+            "the root link is backed up as a link"
+        );
+        let mut file = fs_err::OpenOptions::new()
+            .append(true)
+            .open(&outside_z)
+            .expect("open the outside file");
+        std::io::Write::write_all(&mut file, b"+").expect("append a marker");
+        drop(file);
+        assert_eq!(
+            fs_err::read(outside.join("z.hard")).expect("read the hard link"),
+            b"OUTSIDE-Z+",
+            "the backup pass must not replace a file behind the backed-up link"
         );
     }
 }

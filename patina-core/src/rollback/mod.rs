@@ -67,6 +67,7 @@ use camino::Utf8Path;
 pub use replay::RevertTarget;
 pub(crate) use replay::replaced_root_ancestor;
 pub use replay::replay_entry;
+pub(crate) use replay::stashed_link_ancestor;
 use thiserror::Error;
 
 /// Errors raised while rolling back a prior apply.

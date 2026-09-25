@@ -40,11 +40,13 @@
 //!
 //!    The last two rest on the backup pass: the apply backs up every target it
 //!    will overwrite or remove before its first write, outermost first, and
-//!    skips a target inside a directory the pass backed up. A target with no
+//!    skips a target inside a target the pass backed up. A target with no
 //!    entry at its mirror path was therefore never written, or lies inside a
 //!    backed-up directory whose restore covers it and did not exist before the
 //!    apply. A covered target that did exist is found at its mirror path
-//!    inside the directory's backup.
+//!    inside the directory's backup. A target whose mirror path passes through
+//!    a symbolic link stashed in the cycle is reversed as the ancestor that
+//!    link was backed up from.
 //!
 //!    Each outcome leaves the target in its pre-apply state. Before recovery
 //!    overwrites or removes an entry at a target, it copies that entry to
@@ -269,6 +271,11 @@ fn reverse_orphan(
 /// apply never reached, so a live entry that matches its backup is left in
 /// place and reported only through a copy an earlier pass kept.
 ///
+/// A target whose mirror path passes through a symbolic link stashed in this
+/// cycle lies under a link the apply replaced. Recovery reverts that ancestor
+/// link as the target instead, so it never reads or writes through either
+/// link.
+///
 /// Before either restores over or removes a live entry, the entry is copied
 /// aside through `keeper`. Copy, restore, and delete go through the
 /// kind-preserving [`crate::fsx`] helpers. The original is therefore recreated
@@ -287,7 +294,9 @@ fn reverse_operation(
         return Ok(None);
     }
 
-    let target = Utf8Path::new(operation_target(op));
+    let planned = Utf8Path::new(operation_target(op));
+    let covering = crate::rollback::stashed_link_ancestor(backups_dir, keeper.timestamp, planned);
+    let target = covering.as_deref().unwrap_or(planned);
     let backup = mirror_backup_path(backups_dir, keeper.timestamp, target);
     crate::fsx::remove_partial_siblings(&backup).map_err(JournalError::Filesystem)?;
 

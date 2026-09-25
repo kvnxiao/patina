@@ -883,3 +883,94 @@ fn a_reaped_leaf_inside_a_directory_backed_up_in_the_same_apply_is_restored_to_i
         .collect();
     assert!(partials.is_empty(), "the restored tree holds {partials:?}");
 }
+
+const APP: &str = "[[directory]]\nsource = \"app\"\ntarget = \"~/app\"\nmode = \"copy\"\n";
+
+/// Commit a copy `~/app` holding `a.conf` and `z.conf`, replace `~/app` outside
+/// Patina with a directory link to `~/elsewhere`, which holds its own `z.conf`,
+/// and drop `z.conf` from the source. Return the fixture and that outside file.
+fn app_replaced_by_a_link(link: &str) -> (Fixture, camino::Utf8PathBuf) {
+    let fx = Fixture::new();
+    let module = fx.module("app", APP);
+    fs_err::create_dir_all(module.join("app")).expect("mkdir the tree source");
+    fs_err::write(module.join("app").join("a.conf"), "A").expect("write a.conf source");
+    fs_err::write(module.join("app").join("z.conf"), "Z").expect("write z.conf source");
+    commit_first_apply(&fx);
+
+    let outside = fx.home.join("elsewhere");
+    fs_err::create_dir_all(&outside).expect("mkdir the link destination");
+    let outside_z = outside.join("z.conf");
+    fs_err::write(&outside_z, "OUTSIDE-Z").expect("write the outside file");
+    fs_err::hard_link(&outside_z, outside.join("z.hard")).expect("hard-link the outside file");
+    fs_err::remove_dir_all(fx.home.join("app")).expect("remove the applied tree");
+    let destination = if link == "absolute" {
+        outside.clone()
+    } else {
+        camino::Utf8PathBuf::from("elsewhere")
+    };
+    common::symlink_dir(&destination, &fx.home.join("app"));
+    fs_err::remove_file(module.join("app").join("z.conf")).expect("drop the z.conf source");
+    (fx, outside_z)
+}
+
+/// Assert that `outside` still holds its bytes and is the file its `z.hard`
+/// hard link names, so nothing deleted and recreated it.
+fn assert_untouched(outside: &Utf8Path) {
+    assert_eq!(read(outside).as_deref(), Some("OUTSIDE-Z"));
+    let mut file = fs_err::OpenOptions::new()
+        .append(true)
+        .open(outside)
+        .expect("open the outside file");
+    std::io::Write::write_all(&mut file, b"+").expect("append a marker");
+    drop(file);
+    assert_eq!(
+        read(&outside.with_file_name("z.hard")).as_deref(),
+        Some("OUTSIDE-Z+"),
+        "the outside file must be the same file as before the apply"
+    );
+}
+
+#[test]
+fn an_apply_over_a_root_replaced_by_a_link_leaves_the_link_destination_alone() {
+    for link in ["absolute", "relative"] {
+        let (fx, outside_z) = app_replaced_by_a_link(link);
+        let preview = fx.apply(&["--json"]);
+        let document: serde_json::Value =
+            serde_json::from_slice(&preview.stdout).expect("the preview is one JSON document");
+        assert_eq!(
+            document.get("reaped"),
+            Some(&serde_json::json!([])),
+            "{link} link: nothing behind the link is planned for removal"
+        );
+
+        let out = fx.apply(&["--yes"]);
+
+        assert_eq!(code(&out), 0, "{link} link; stderr: {}", stderr(&out));
+        assert_untouched(&outside_z);
+        assert_eq!(
+            read(&fx.home.join("app").join("a.conf")).as_deref(),
+            Some("A")
+        );
+        assert!(
+            plan_files(&fx.state_root().join("journal")).is_empty(),
+            "{link} link: the apply must leave no orphan plan"
+        );
+    }
+}
+
+#[test]
+fn recovery_of_an_apply_over_a_root_replaced_by_a_link_leaves_the_link_destination_alone() {
+    let (fx, outside_z) = app_replaced_by_a_link("absolute");
+    let killed = fx.apply_with_env(&["--yes"], &[("PATINA_TEST_ABORT_AFTER_OP", "1")]);
+    assert_eq!(code(&killed), 70, "stderr: {}", stderr(&killed));
+
+    let next = fx.apply(&["--yes"]);
+
+    assert_eq!(code(&next), 0, "stderr: {}", stderr(&next));
+    assert!(
+        stderr(&next).contains("reverted an interrupted apply"),
+        "stderr: {}",
+        stderr(&next)
+    );
+    assert_untouched(&outside_z);
+}

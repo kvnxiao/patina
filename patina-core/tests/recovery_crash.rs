@@ -546,3 +546,57 @@ fn recovery_reports_and_keeps_only_the_targets_it_changed() {
         "drifted-bytes"
     );
 }
+
+#[cfg(unix)]
+fn link_dir(destination: &Utf8Path, link: &Utf8Path) {
+    std::os::unix::fs::symlink(destination, link).expect("create a directory link");
+}
+
+#[cfg(windows)]
+fn link_dir(destination: &Utf8Path, link: &Utf8Path) {
+    std::os::windows::fs::symlink_dir(destination, link).expect("create a directory link");
+}
+
+#[test]
+fn recovery_restores_a_stashed_root_link_instead_of_writing_through_it() {
+    let scene = Scene::new();
+    let stashed = scene.root.join("stashed");
+    let current = scene.root.join("current");
+    for (dir, bytes) in [(&stashed, "STASHED-F"), (&current, "CURRENT-F")] {
+        fs_err::create_dir_all(dir).expect("mkdir a link destination");
+        fs_err::write(dir.join("f"), bytes).expect("write a destination file");
+    }
+    fs_err::hard_link(current.join("f"), current.join("f.hard")).expect("hard-link the file");
+    let app = scene.target("app");
+    let backup = mirror_backup_path(&scene.backups, TS, &app);
+    fs_err::create_dir_all(backup.parent().expect("backup parent")).expect("create backup parent");
+    link_dir(&stashed, &backup);
+    link_dir(&current, &app);
+    scene.write_orphan_plan(vec![
+        PlannedOperation::copy("repo/f", app.join("f").as_str(), Disposition::Update),
+        PlannedOperation::copy("repo/app", app.as_str(), Disposition::Update),
+    ]);
+    scene.write_progress(&[]);
+
+    recover_orphans(&scene.root).expect("recovery");
+
+    assert_eq!(
+        fs_err::read_link(&app).expect("read the restored link"),
+        stashed.as_std_path()
+    );
+    assert_eq!(
+        fs_err::read_to_string(stashed.join("f")).expect("read the stashed destination"),
+        "STASHED-F"
+    );
+    let mut file = fs_err::OpenOptions::new()
+        .append(true)
+        .open(current.join("f"))
+        .expect("open the current destination file");
+    std::io::Write::write_all(&mut file, b"+").expect("append a marker");
+    drop(file);
+    assert_eq!(
+        fs_err::read_to_string(current.join("f.hard")).expect("read the hard link"),
+        "CURRENT-F+",
+        "recovery must neither rewrite nor replace a file behind the live link"
+    );
+}
