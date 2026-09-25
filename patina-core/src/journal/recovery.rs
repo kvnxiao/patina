@@ -12,7 +12,10 @@
 //! 1. Decodes the plan, reusing the version-envelope check so a plan from a
 //!    newer binary is refused rather than mis-read.
 //! 2. Probes the per-apply backup directory for each operation's target
-//!    ([`mirror_backup_path`](super::mirror_backup_path)).
+//!    ([`mirror_backup_path`](super::mirror_backup_path)). A backup is present
+//!    only once it is complete, because the backup writer stages it in a
+//!    `.partial.<pid>` sibling and renames it into place. Recovery removes a
+//!    staged sibling left by a killed apply.
 //! 3. **Reverses backward**, never forward. The disposition the plan recorded
 //!    for the operation decides the outcome, evaluated in this order:
 //!    - `Unchanged`: the apply neither backed up nor wrote this target, so the
@@ -191,7 +194,9 @@ fn reverse_orphan(
 /// The executor backs up a pre-existing target immediately before its write.
 /// A missing backup therefore separates a `Create` target, which recovery
 /// removes, from an `Update` target the apply never reached, which recovery
-/// leaves in place.
+/// leaves in place. A backup the apply was killed while staging is not at the
+/// mirror path, so it counts as missing; recovery removes the staged
+/// `.partial.<pid>` sibling.
 ///
 /// Both restore and delete go through the kind-preserving [`crate::fsx`]
 /// helpers. The original is therefore recreated as the same kind it was: a
@@ -211,6 +216,7 @@ fn reverse_operation(
 
     let target = Utf8Path::new(operation_target(op));
     let backup = mirror_backup_path(backups_dir, timestamp, target);
+    crate::fsx::remove_partial_siblings(&backup).map_err(JournalError::Filesystem)?;
 
     if crate::fsx::entry_present(&backup) {
         return crate::fsx::clone_entry(&backup, target).map_err(JournalError::Filesystem);

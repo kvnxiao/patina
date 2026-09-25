@@ -14,7 +14,9 @@
 //!
 //! [`write_atomic`] is here for a related reason: several subsystems keep a
 //! small file whose readers must never see it half-written, and one
-//! implementation of stage-then-rename keeps them from drifting apart.
+//! implementation of stage-then-rename keeps them from drifting apart. The
+//! backup writer and the remote cache stage whole entries the same way, in the
+//! [`partial_sibling`] of the final path.
 //!
 //! These helpers are crate-internal plumbing, called from the modules that
 //! materialize, stash, and restore filesystem entries.
@@ -217,6 +219,66 @@ pub(crate) fn symlink_to(
     })
 }
 
+/// Suffix of the sibling an entry is staged in before a rename moves it onto
+/// its final path.
+///
+/// A writer that stages this way leaves only complete entries at the final
+/// path, so a `<name>.partial.<pid>` sibling is an interrupted write.
+pub(crate) const PARTIAL_SUFFIX: &str = ".partial";
+
+/// Return the `<path>.partial.<pid>` sibling this process stages `path` in.
+///
+/// The pid keeps two processes staging the same final path apart.
+pub(crate) fn partial_sibling(path: &Utf8Path) -> Utf8PathBuf {
+    Utf8PathBuf::from(format!("{path}{PARTIAL_SUFFIX}.{}", std::process::id()))
+}
+
+/// Remove every `<path>.partial.<pid>` sibling of `path`, whichever process
+/// staged it.
+///
+/// Call this only under a lock that excludes every writer staging beside
+/// `path`; otherwise it can remove a live writer's staging entry. A parent that
+/// is absent, is not a directory, or is a symbolic link, is not searched.
+///
+/// # Errors
+///
+/// Returns the underlying [`std::io::Error`] when the parent cannot be
+/// inspected for a reason other than its absence, cannot be read, or a staged
+/// sibling cannot be removed.
+pub(crate) fn remove_partial_siblings(path: &Utf8Path) -> std::io::Result<()> {
+    let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
+        return Ok(());
+    };
+    match fs_err::symlink_metadata(parent) {
+        Ok(meta) if meta.is_dir() => {}
+        Ok(_) => return Ok(()),
+        Err(err)
+            if matches!(
+                err.kind(),
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+            ) =>
+        {
+            return Ok(());
+        }
+        Err(err) => return Err(err),
+    }
+    let prefix = format!("{name}{PARTIAL_SUFFIX}.");
+    for entry in fs_err::read_dir(parent)? {
+        let entry = entry?;
+        let entry_name = entry.file_name();
+        let Some(entry_name) = entry_name.to_str() else {
+            continue;
+        };
+        let staged = entry_name
+            .strip_prefix(&prefix)
+            .is_some_and(|pid| !pid.is_empty() && pid.bytes().all(|byte| byte.is_ascii_digit()));
+        if staged {
+            remove_entry(&parent.join(entry_name))?;
+        }
+    }
+    Ok(())
+}
+
 /// Replace the file at `path` with `bytes` through a same-directory temporary
 /// and a rename, creating `path`'s parent chain if it is missing.
 ///
@@ -292,6 +354,20 @@ mod tests {
     fn make_dir_symlink(source: &Utf8Path, link: &Utf8Path) {
         std::os::windows::fs::symlink_dir(source.as_std_path(), link.as_std_path())
             .expect("create dir symlink");
+    }
+
+    #[test]
+    fn remove_partial_siblings_propagates_a_parent_error_other_than_absence() {
+        let err = remove_partial_siblings(Utf8Path::new("bad\0parent/entry"))
+            .expect_err("a parent path holding a NUL byte cannot be inspected");
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn remove_partial_siblings_ignores_an_absent_parent() {
+        let (_td, dir) = utf8_tempdir();
+        remove_partial_siblings(&dir.join("absent").join("entry"))
+            .expect("an absent parent has no staged siblings");
     }
 
     #[test]

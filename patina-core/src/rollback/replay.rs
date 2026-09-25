@@ -65,8 +65,9 @@ pub struct RevertTarget<'a> {
 ///
 /// - [`RollbackError::RollbackPartial`] when a target's revert fails; the entry
 ///   is rolled forward to its post-apply state before returning.
-/// - [`RollbackError::Filesystem`] when snapshotting itself fails before any
-///   target has been mutated (nothing to undo).
+/// - [`RollbackError::Filesystem`] when removing a leftover staged backup
+///   (`<backup>.partial.<pid>`) or snapshotting fails, before any target has
+///   been mutated (nothing to undo).
 pub fn replay_entry(
     entry: u32,
     targets: &[RevertTarget<'_>],
@@ -91,6 +92,11 @@ pub fn replay_entry(
     }
     if to_revert.is_empty() {
         return Ok(());
+    }
+
+    for unit in &to_revert {
+        crate::fsx::remove_partial_siblings(&mirror_backup_path(backups_dir, timestamp, unit))
+            .map_err(RollbackError::Filesystem)?;
     }
 
     // Stage each target's post-apply state so a mid-entry failure can be
@@ -386,6 +392,28 @@ mod tests {
             fs_err::read(&target).expect("read restored"),
             b"original",
             "an overwrite must be restored from its backup"
+        );
+    }
+
+    #[test]
+    fn a_leftover_staged_backup_is_removed_and_the_backup_restored() {
+        let e = env();
+        let ts = "TS";
+        let target = e.root.join("over");
+        fs_err::write(&target, b"new").expect("write post-apply target");
+        write_backup(&e.backups, ts, &target, b"original");
+        let staged = Utf8PathBuf::from(format!(
+            "{}.partial.4242",
+            mirror_backup_path(&e.backups, ts, &target)
+        ));
+        fs_err::write(&staged, b"orig").expect("write a torn staged backup");
+
+        replay_entry(0, &[update(&target)], &e.backups, ts).expect("revert");
+
+        assert_eq!(fs_err::read(&target).expect("read restored"), b"original");
+        assert!(
+            fs_err::symlink_metadata(&staged).is_err(),
+            "rollback must remove the leftover staged backup"
         );
     }
 

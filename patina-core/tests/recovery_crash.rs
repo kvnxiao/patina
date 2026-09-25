@@ -234,6 +234,32 @@ fn recovery_keeps_the_original_bytes_of_an_unstarted_update_target() {
 }
 
 #[test]
+fn recovery_ignores_and_removes_a_leftover_partial_backup() {
+    let scene = Scene::new();
+    let op = scene.stage_update_unstarted("edited", "live-bytes");
+    let target = scene.target("edited");
+    let backup = mirror_backup_path(&scene.backups, TS, &target);
+    let staged = Utf8PathBuf::from(format!("{backup}.partial.4242"));
+    fs_err::create_dir_all(staged.parent().expect("staged backup parent"))
+        .expect("create backup parent");
+    fs_err::write(&staged, "live-b").expect("write a torn staged backup");
+    scene.write_orphan_plan(vec![op]);
+    scene.write_progress(&[]);
+
+    recover_orphans(&scene.journal, &scene.backups).expect("recovery");
+
+    assert_eq!(
+        fs_err::read_to_string(&target).ok(),
+        Some("live-bytes".to_owned()),
+        "a staged backup is not a backup, so the target keeps its live bytes"
+    );
+    assert!(
+        fs_err::symlink_metadata(&staged).is_err(),
+        "recovery must remove the leftover staged backup"
+    );
+}
+
+#[test]
 fn lying_progress_cursor_is_ignored_in_favour_of_the_filesystem() {
     let scene = Scene::new();
     let ops = vec![

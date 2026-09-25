@@ -4,7 +4,8 @@
 //! the original. Before the executor overwrites any target that already
 //! exists on disk, including replacing a regular file with a symlink, it
 //! calls [`backup_before_overwrite`]. That call copies the original bytes
-//! to `<state>/patina/backups/<ts>/<mirrored-target-path>`. The mirrored
+//! to `<state>/patina/backups/<ts>/<mirrored-target-path>`, staging them in a
+//! `.partial.<pid>` sibling that it renames into place. The mirrored
 //! path is the inverse map crash recovery reads, so both
 //! agree on where an original lives; the mapping itself is owned by
 //! [`crate::journal::mirror_backup_path`] and reused here verbatim.

@@ -23,6 +23,7 @@ use super::RemoteError;
 use super::RemoteRepr;
 use super::git;
 use crate::config::remote::RemoteName;
+use crate::fsx::PARTIAL_SUFFIX;
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
 use std::collections::BTreeSet;
@@ -32,10 +33,6 @@ use std::time::SystemTime;
 /// Directory name of the bare fetch repository inside a module's cache
 /// directory.
 const BARE_REPO_DIR: &str = "repo.git";
-
-/// Suffix of the directory a checkout is written into before it is renamed into
-/// place. Its presence means an interrupted checkout, never a usable one.
-const PARTIAL_SUFFIX: &str = ".partial";
 
 /// Minimum staging-root age eligible for removal by [`prune`].
 ///
@@ -129,7 +126,7 @@ pub fn ensure_checkout(
         git::fetch_commit(&git_dir, url, rev, git_ref)?;
     }
 
-    let staging = staging_dir(&final_dir);
+    let staging = crate::fsx::partial_sibling(&final_dir);
     // A leftover staging directory from an interrupted run (same recycled pid)
     // would otherwise mix its files into this checkout.
     remove_any(&staging)?;
@@ -147,14 +144,6 @@ pub fn ensure_checkout(
         .into());
     }
     Ok(final_dir)
-}
-
-/// The `<rev>.partial.<pid>` sibling a checkout is staged in.
-fn staging_dir(final_dir: &Utf8Path) -> Utf8PathBuf {
-    Utf8PathBuf::from(format!(
-        "{final_dir}{PARTIAL_SUFFIX}.{}",
-        std::process::id()
-    ))
 }
 
 /// Sweep the cache. Remove the whole tree of every remote `declared` does not
