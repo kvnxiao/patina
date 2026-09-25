@@ -122,6 +122,16 @@ fn plan_files(journal: &Utf8Path) -> Vec<camino::Utf8PathBuf> {
         .collect()
 }
 
+fn kept_copy(stderr: &str) -> &str {
+    stderr
+        .lines()
+        .find_map(|line| {
+            line.split_once(" from before the recovery at ")
+                .map(|(_, path)| path.trim())
+        })
+        .unwrap_or_else(|| panic!("the recovery must name the kept copy; stderr: {stderr}"))
+}
+
 fn count_suffix(journal: &Utf8Path, suffix: &str) -> usize {
     fs_err::read_dir(journal)
         .expect("read journal dir")
@@ -462,6 +472,46 @@ fn promote_with_a_pending_orphan_recovers_it_before_its_own_writes() {
 }
 
 #[test]
+fn promote_refuses_a_case_respelled_target_its_recovery_reverted() {
+    let fx = two_copy_entries();
+    commit_first_apply(&fx);
+    fx.module("shell", &BOTH.replace("~/.a", "~/.A"));
+    fs_err::write(fx.root.join("shell").join("a"), "NEWER-A\n").expect("edit source a");
+    let killed = fx.apply_with_env(&["--yes"], &[("PATINA_TEST_ABORT_AFTER_OP", "1")]);
+    assert_eq!(code(&killed), 70, "stderr: {}", stderr(&killed));
+
+    let out = fx.run(&["promote", "~/.a", "--yes"], &[]);
+
+    assert_eq!(code(&out), 1, "stderr: {}", stderr(&out));
+    assert_eq!(
+        fs_err::read_to_string(fx.root.join("shell").join("a")).expect("read source a"),
+        "NEWER-A\n",
+        "a refused promotion must not write the repository source"
+    );
+}
+
+#[test]
+fn a_json_promote_refusal_names_the_kept_copy_only_on_stderr() {
+    let fx = committed_then_interrupted();
+
+    let out = fx.run(&["promote", "~/.a", "--yes", "--json"], &[]);
+
+    assert_eq!(code(&out), 1, "stderr: {}", stderr(&out));
+    let err = stderr(&out);
+    let kept = kept_copy(&err);
+    let document: serde_json::Value =
+        serde_json::from_slice(&out.stdout).expect("stdout is one JSON document");
+    let message = document
+        .get("message")
+        .and_then(serde_json::Value::as_str)
+        .expect("the refusal carries a message");
+    assert!(
+        !message.contains(kept),
+        "the stdout message must not carry the timestamped copy path: {message}"
+    );
+}
+
+#[test]
 fn plan_only_apply_with_a_pending_orphan_warns_and_writes_nothing() {
     let fx = setup(".a", "OLD-A\n");
     let killed = fx.apply_with_env(&["--yes"], &[("PATINA_TEST_ABORT_AFTER_OP", "1")]);
@@ -610,15 +660,8 @@ fn the_next_apply_keeps_bytes_written_after_the_crash_and_names_their_copy() {
     assert_eq!(code(&next), 0, "stderr: {}", stderr(&next));
 
     let err = stderr(&next);
-    let kept = err
-        .lines()
-        .find_map(|line| {
-            line.split_once(" from before the recovery at ")
-                .map(|(_, path)| path.trim())
-        })
-        .unwrap_or_else(|| panic!("the recovery must name the kept copy; stderr: {err}"));
     assert_eq!(
-        fs_err::read_to_string(kept).expect("read the kept copy"),
+        fs_err::read_to_string(kept_copy(&err)).expect("read the kept copy"),
         "USER-A\n",
         "the bytes written after the crash must survive the recovery"
     );
@@ -646,4 +689,28 @@ fn a_refused_remove_or_promote_with_a_pending_orphan_warns_and_writes_nothing() 
             stderr(&out)
         );
     }
+}
+
+#[test]
+fn promote_refuses_a_target_its_recovery_reverted_and_leaves_the_source() {
+    let fx = committed_then_interrupted();
+
+    let out = fx.run(&["promote", "~/.a", "--yes"], &[]);
+
+    assert_eq!(code(&out), 1, "stderr: {}", stderr(&out));
+    assert_eq!(
+        fs_err::read_to_string(fx.root.join("shell").join("a")).expect("read source a"),
+        "NEWER-A\n",
+        "a refused promotion must not write the repository source"
+    );
+    let err = stderr(&out);
+    assert!(
+        err.contains("re-run `patina promote`"),
+        "the refusal must tell the user to review and re-run; stderr: {err}"
+    );
+    assert_eq!(
+        fs_err::read_to_string(kept_copy(&err)).expect("read the kept copy"),
+        "NEWER-A\n",
+        "the kept copy holds the target as it was before the recovery"
+    );
 }

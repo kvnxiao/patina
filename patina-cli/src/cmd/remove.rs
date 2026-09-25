@@ -78,13 +78,22 @@ use patina_core::remove_file_entry;
 
 /// Run `patina remove`. Returns the process exit code.
 ///
+/// A path that is not currently managed and a tree-mode leaf are refused with
+/// exit 1, and a declined prompt returns exit 5 (`UserDeclined`). Each returns
+/// its exit code through the `Ok` value, after warning when an interrupted
+/// apply is pending.
+///
 /// # Errors
 ///
 /// Returns an error (exit 1, or exit 4 on a lock-acquisition timeout through
-/// the engine-error chain) when: the state directory or repository cannot be
-/// resolved; the path is not currently managed; recovering an interrupted apply
-/// fails; the journaled source cannot be read or re-rendered; the target
-/// replacement fails; the manifest edit fails; or the re-apply fails.
+/// the engine-error chain) when: neither `HOME` nor `USERPROFILE` is set; the
+/// path cannot be anchored; the state directory cannot be resolved or the lock
+/// cannot be acquired; the committed apply record cannot be read; the plan
+/// cannot be computed; no candidate manifest declares a `[[file]]` entry for
+/// the target, or one cannot be read or edited; the journal directory cannot be
+/// read while refusing; recovering an interrupted apply fails; the journaled
+/// source cannot be read or re-rendered; the target replacement fails; the
+/// manifest write fails; or the re-apply fails.
 pub(crate) fn run(
     args: &RemoveArgs,
     tty: Tty,

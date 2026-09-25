@@ -588,6 +588,13 @@ separate file entry exists for that leaf. The command names the declaring
 manifest, exits `1`, and leaves the target unchanged. To stop managing the
 leaf, add an `ignore` pattern or edit the directory entry.
 
+When an interrupted apply is pending, `promote` reverts it before copying the
+target. If that recovery changed the target, `promote` exits `1` without
+writing the source: the target no longer holds the bytes you asked to promote.
+When the target existed before the recovery, the recovery's warning names the
+copy it kept of the target's earlier contents.
+Review the target, then run `promote` again.
+
 ## Remote sources
 
 An entry can draw its source from someone else's git repository instead
@@ -664,14 +671,15 @@ An interrupted apply converges deterministically on the next command that
 recovers. Kill `patina apply` mid-write and the next `patina apply --yes`,
 interactive `patina apply`, `patina rollback`, `patina remove`, or
 `patina promote` first reverts the interrupted apply to its pre-apply state,
-then does its own work against those files. `remove` and `promote` revert only
-after you confirm; when they refuse or you decline, they warn that the
-interrupted apply is pending and change nothing. Each command reports a
-recovery on stderr with `reverted an interrupted apply to the state before it
-started`. The
-guarantee covers process termination (a `kill -9` or crash where the page
-cache survives). A power loss or kernel panic mid-apply is out of scope for
-v1.0.
+then does its own work against those files. `rollback` reverts only after you
+confirm or pass `--yes`. `remove` and `promote` revert only after you confirm
+and their target checks pass; when a check refuses or you decline, they warn
+that the interrupted apply is pending and change nothing. `promote` can still
+refuse after the recovery, when the recovery changed the target it was asked
+to promote. Each command reports a recovery on stderr with
+`reverted an interrupted apply to the state before it started`. The guarantee
+covers process termination (a `kill -9` or crash where the page cache
+survives). A power loss or kernel panic mid-apply is out of scope for v1.0.
 
 A preview does not recover, because it must not write: `patina apply` in a
 non-interactive shell without `--yes`, `patina apply --json` without `--yes`,
@@ -688,8 +696,8 @@ overwriting or removing it, or stays untouched if the apply never reached it. A
 file the apply created is deleted. Before recovery overwrites or deletes a file,
 it copies what is there to the `recovered/` directory of the state directory
 and prints `kept a copy of <target> from before the recovery at <path>`, so a
-file you edited or created after the crash is not lost. A recovery retried
-after a failure that finds a target changed since its earlier copy prints the
+file you edited or created after the crash is not lost. When a recovery retried
+after a failure finds a target changed since its earlier copy, it prints the
 line for both copies, the earlier one first. See
 [`OPERATING_ENVIRONMENT.md`](OPERATING_ENVIRONMENT.md) for the layout.
 

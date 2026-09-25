@@ -325,8 +325,10 @@ directories) is a post-1.0 hardening item.
 `patina apply` with `--yes` or at an interactive prompt and `patina rollback`
 recover under the exclusive lock before they read the last commit or plan.
 `patina remove` and `patina promote` recover under the lock they hold after the
-user consents and before their first write; when they refuse or are declined,
-they warn about a pending apply as a preview does and write nothing. Recovery
+user consents and before their first write; when they refuse or are declined
+before that point, they warn about a pending apply as a preview does and write
+nothing. `patina promote` refuses a target the recovery changed after the
+recovery has written. Recovery
 reads each journal envelope and converges deterministically:
 
 - A plan with no terminal sentinel is an orphan: an apply killed after

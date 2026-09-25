@@ -4,12 +4,14 @@
 //! `remove` and `promote` follow the same shape. Each takes one exclusive
 //! advisory lock for the whole command, then locates the journaled
 //! [`ExpectedTarget`](patina_core::ExpectedTarget) for an input path in the
-//! latest commit. A command that refuses or is declined returns through
-//! [`refused`], which warns about a pending interrupted apply and writes
-//! nothing. Otherwise the command reverts any interrupted apply with
+//! latest commit. A command that refuses or is declined before recovering
+//! returns through [`refused`], which warns about a pending interrupted apply
+//! and writes nothing. Otherwise the command reverts any interrupted apply with
 //! [`recover_held`] before its first write, does its own filesystem work, and
 //! re-journals by driving the engine re-apply under [`LockPolicy::Held`]. The
-//! fresh `<ts>.COMMIT` records the new managed state.
+//! fresh `<ts>.COMMIT` records the new managed state. `promote` can still
+//! refuse after [`recover_held`] has written, when the recovery changed its
+//! target.
 //!
 //! The lock acquisition and the re-apply live here. Neither command repeats
 //! the lock path, the engine-error mapping, or the re-plan / re-execute
@@ -108,9 +110,9 @@ pub(crate) fn refused(state: &Utf8Path, reporter: &mut impl Reporter, code: i32)
 ///
 /// The plan is computed against the manifests as they stand, so an edit the
 /// caller just made is included. It is planned under [`Reap::Nothing`], so the
-/// re-apply removes no target, including the one `remove` just replaced and
-/// unmanaged. Execution runs under [`LockPolicy::Held`] and writes a fresh
-/// `<ts>.COMMIT` recording the new expected state.
+/// re-apply does not remove any target, including the one `remove` just
+/// replaced and unmanaged. Execution runs under [`LockPolicy::Held`] and
+/// writes a fresh `<ts>.COMMIT` recording the new expected state.
 ///
 /// # Errors
 ///
