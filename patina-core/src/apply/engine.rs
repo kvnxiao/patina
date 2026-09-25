@@ -12,11 +12,18 @@
 //!    [`ResolvedPlan`]. Planning performs **no** filesystem mutation, so the
 //!    CLI can render a diff and (in a non-TTY, or with `--json` and no `--yes`)
 //!    exit without touching the user's `$HOME`.
-//! 2. [`execute`] takes the [`ResolvedPlan`] and mutates. It recovers any
-//!    orphan plan, takes the exclusive lock, and flushes the journal. It then
-//!    runs `pre_apply` hooks, materializes every operation (backing up each
-//!    pre-existing target first), and runs `post_apply` hooks. Finally it
-//!    either commits or rolls the file operations back.
+//! 2. [`execute`] takes the [`ResolvedPlan`] and mutates, in this order: it
+//!    takes the exclusive lock, refuses when an orphan plan is pending, runs
+//!    the symlink gate and the no-op check, runs `pre_apply` hooks, flushes the
+//!    plan, backs up every target it will overwrite or remove, materializes
+//!    every operation, runs `post_apply` hooks, performs the plan's `Remove`
+//!    operations, commits, and prunes old backups. A failed `post_apply` hook
+//!    rolls the file operations back instead of removing, committing, and
+//!    pruning.
+//!
+//! A caller that may execute runs [`recover_interrupted`] before [`plan`], so
+//! the plan describes the pre-apply state rather than what an interrupted apply
+//! left behind.
 //!
 //! The CLI (`patina`) owns the diff rendering, the TTY prompt, and the
 //! JSON envelope; this module owns the engine semantics so those presentation
@@ -54,12 +61,16 @@ use crate::journal::LastApply;
 use crate::journal::OsSyncer;
 use crate::journal::Plan;
 use crate::journal::PlannedOperation;
+use crate::journal::RecoveryReport;
 use crate::journal::content_hash;
+use crate::journal::orphan_plans;
 use crate::journal::prune_cycles;
 use crate::journal::recover_orphans;
 use crate::journal::timestamp_to_rfc3339;
+use crate::lock::LockError;
 use crate::lock::LockGuard;
 use crate::lock::LockKind;
+use crate::lock::SHARED_TIMEOUT;
 use crate::lock::acquire as acquire_lock;
 use crate::lock::exclusive_timeout;
 use crate::paths::canonicalize;
@@ -96,6 +107,9 @@ pub struct ApplyRequest {
     pub force_deploy: ForceDeploy,
     /// `-v key=value` CLI variable overrides, in declaration order.
     pub cli_overrides: Vec<(String, String)>,
+    /// Whether [`plan`] schedules the removal of targets the current manifests
+    /// no longer manage.
+    pub reap: Reap,
 }
 
 impl Default for ApplyRequest {
@@ -103,8 +117,23 @@ impl Default for ApplyRequest {
         Self {
             force_deploy: ForceDeploy::No,
             cli_overrides: Vec::new(),
+            reap: Reap::Orphans,
         }
     }
+}
+
+/// Whether [`plan`] appends a [`PlannedOperation::Remove`] for each target the
+/// latest committed apply recorded that the current manifests no longer manage.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reap {
+    /// Plan a `Remove` for every such target still on disk. `patina apply`
+    /// plans this way.
+    Orphans,
+    /// Do not plan any `Remove`. `patina remove` and `patina promote`
+    /// re-journal this way: `remove` has just replaced its target with an
+    /// owned regular file and dropped the target's entry, so a reap would
+    /// delete that file.
+    Nothing,
 }
 
 /// How [`execute`] obtains the exclusive advisory lock guarding the apply.
@@ -273,17 +302,22 @@ pub struct ResolvedPlan {
     pub repo_root: Utf8PathBuf,
     /// Resolved active profile name (empty for the no-profile fallback).
     pub profile: String,
-    /// The durable plan recorded to the journal before any mutation.
+    /// The durable plan recorded to the journal before any mutation: one
+    /// operation per materialized target, then one
+    /// [`PlannedOperation::Remove`] per [`reap`](Self::reap) entry, in that
+    /// entry's order.
     pub plan: Plan,
-    /// Per-operation resolved executor inputs, parallel to
-    /// [`Plan::operations`].
+    /// Per-entry resolved executor inputs for the materializing operations of
+    /// [`plan`](Self::plan).
     pub operations: Vec<ResolvedOperation>,
+    /// The targets this apply backs up and removes, sorted by path, each with
+    /// the reason the current manifests no longer manage it. Empty when the
+    /// request asked for [`Reap::Nothing`].
+    pub reap: Vec<Orphan>,
     /// Every `[[hook]]` entry paired with its declaring module.
     pub hooks: Vec<PlannedHook>,
     /// Module contexts in discovery order.
     pub modules: Vec<ModuleContext>,
-    /// Canonical targets managed under this plan's variable overrides.
-    pub(crate) managed: crate::status::ManagedTargets,
     /// Per-machine state directory root (`<state>/patina`).
     pub state_dir: Utf8PathBuf,
     /// Resolved host OS family (drives hook shell defaults).
@@ -404,12 +438,16 @@ pub enum ApplyResult {
 /// cache fails planning rather than half-way through a diff. Everything it
 /// writes stays inside `<state>/remotes/`; no managed target is touched.
 ///
+/// Under [`Reap::Orphans`] the plan ends with one [`PlannedOperation::Remove`]
+/// per target the latest commit recorded that the current manifests no longer
+/// manage and that is still on disk as a non-directory, sorted by path.
+///
 /// # Errors
 ///
 /// Returns an [`EngineError`] when repository discovery, module
 /// enumeration, manifest parsing, state-directory resolution, profile
-/// resolution, variable ingestion, remote-checkout materialization, or path
-/// canonicalization fails.
+/// resolution, variable ingestion, remote-checkout materialization, path
+/// canonicalization, or the read of the latest commit fails.
 pub fn plan(
     request: &ApplyRequest,
     timestamp: impl Into<String>,
@@ -427,7 +465,8 @@ pub fn plan(
         repo_ignore,
     } = build_planning_context(&request.cli_overrides)?;
     let mut registry = RemoteRegistry::new(&remotes, &repo_root, &state_dir, CachePolicy::Fetch);
-    let provenance = Provenance::read(&state_dir.join("journal"))?;
+    let latest = crate::journal::read_latest_commit(state_dir.join("journal"))?;
+    let provenance = Provenance::from_record(latest.as_ref());
 
     // Resolve every managed entry into its canonical source/targets, kept
     // in two ordered buckets, `[[file]]` entries and `[[directory]]`
@@ -501,17 +540,18 @@ pub fn plan(
     crate::apply::collisions::validate_targets(&claims)?;
 
     let (operations, resolved_ops) = assemble_plan_operations(file_entries, directory_entries);
+    let (plan, reap) = with_reap(operations, request.reap, latest.as_ref(), &managed);
     let remote_names: Vec<RemoteName> = remotes.iter().map(|spec| spec.name.clone()).collect();
     let remote_pins = registry.pins();
 
     Ok(ResolvedPlan {
         repo_root,
         profile: profile.name,
-        plan: Plan::new(operations),
+        plan,
         operations: resolved_ops,
+        reap,
         hooks,
         modules: module_contexts,
-        managed,
         state_dir,
         host_os,
         timestamp: timestamp.into(),
@@ -519,6 +559,24 @@ pub fn plan(
         remote_names,
         remote_pins,
     })
+}
+
+fn with_reap(
+    mut operations: Vec<PlannedOperation>,
+    reap: Reap,
+    latest: Option<&ApplyRecord>,
+    managed: &crate::status::ManagedTargets,
+) -> (Plan, Vec<Orphan>) {
+    let orphans = match reap {
+        Reap::Orphans => detect_orphans(latest, managed),
+        Reap::Nothing => Vec::new(),
+    };
+    operations.extend(
+        orphans
+            .iter()
+            .map(|orphan| PlannedOperation::remove(orphan.target.as_str())),
+    );
+    (Plan::new(operations), orphans)
 }
 
 /// Derive module-scoped resolvers without accumulating variables across
@@ -1353,9 +1411,9 @@ struct Provenance {
 }
 
 impl Provenance {
-    fn read(journal_dir: &Utf8Path) -> Result<Self, EngineError> {
-        let Some(record) = crate::journal::read_latest_commit(journal_dir)? else {
-            return Ok(Self::default());
+    fn from_record(latest: Option<&ApplyRecord>) -> Self {
+        let Some(record) = latest else {
+            return Self::default();
         };
         let mut targets = BTreeMap::new();
         for expected in &record.targets {
@@ -1368,7 +1426,7 @@ impl Provenance {
                 (kind, crate::paths::simplified_str(expected.source())),
             );
         }
-        Ok(Self { targets })
+        Self { targets }
     }
 
     fn mode_change(&self, target: &Utf8Path, kind: RecordedKind, source: &Utf8Path) -> bool {
@@ -1785,25 +1843,16 @@ fn planned_operation(
     }
 }
 
-/// Materialize one target after backing up any pre-existing entry.
+/// Materialize one target, which [`back_up_targets`] has already backed up.
 ///
 /// Tree updates write only non-`Unchanged` leaves unless `replace_root` is
 /// set; that branch removes the backed-up root and writes every leaf. A
 /// symlinked root is rejected when `replace_root` is not set.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the per-target write-skip needs the operation mode, source, \
-              target, disposition, backup tree, timestamp, template engine, \
-              resolver, and rules; a struct would only move the same fields \
-              behind a name."
-)]
 fn materialize_target(
     mode: FileMode,
     source: &Utf8Path,
     target: &Utf8Path,
     disposition: &TargetDisposition,
-    backups_dir: &Utf8Path,
-    timestamp: &str,
     engine: &Engine,
     resolver: &Resolver,
     rules: &ignore::gitignore::Gitignore,
@@ -1816,9 +1865,6 @@ fn materialize_target(
 
     let is_tree = matches!(mode, FileMode::CopyTree | FileMode::SymlinkTree);
     if !is_tree {
-        // Single-target Create/Update: back up the pre-existing target (a
-        // no-op for an absent Create target) and materialize it as today.
-        backup_before_overwrite(backups_dir, timestamp, target)?;
         return Ok(materialize(
             mode,
             source,
@@ -1829,13 +1875,11 @@ fn materialize_target(
         )?);
     }
 
-    // Tree Create/Update: back up the whole target directory as a
-    // unit so every leaf's prior bytes are captured, then write only the
-    // drifted leaves. A Create aggregate has no per-leaf entries (the target
-    // dir is absent), so write every leaf.
-    backup_before_overwrite(backups_dir, timestamp, target)?;
-    // Keep the backup before removing a consented root. Without plan-time
-    // consent, refuse before a leaf write can follow the link.
+    // Tree Create/Update: the backup pass captured the whole target directory
+    // as a unit, so write only the drifted leaves. A Create aggregate has no
+    // per-leaf entries (the target dir is absent), so write every leaf.
+    // Without plan-time consent to replace a symlinked root, refuse before a
+    // leaf write can follow the link.
     if fs_err::symlink_metadata(target).is_ok_and(|meta| meta.file_type().is_symlink()) {
         if !disposition.replace_root {
             return Err(EngineError::TreeTargetIsSymlink {
@@ -1879,15 +1923,19 @@ fn materialize_target(
 
 /// Execute a [`ResolvedPlan`] against the filesystem.
 ///
-/// Takes the exclusive lock, recovers any orphan plan under that held lock,
-/// and flushes the journal. Then runs `pre_apply` hooks, materializes every
-/// operation (backing up each pre-existing target first), and runs
-/// `post_apply` hooks. Finally commits, or rolls the file operations back
-/// when a `must_succeed` `post_apply` hook fails.
+/// Takes the exclusive lock and refuses when the journal holds an orphan plan.
+/// Then runs the symlink gate and the no-op check, runs `pre_apply` hooks,
+/// flushes the plan, backs up every target it will overwrite or remove,
+/// materializes every operation, and runs `post_apply` hooks. When those hooks
+/// succeed, it removes each [`PlannedOperation::Remove`] target, commits, and
+/// prunes old backups; when a `must_succeed` `post_apply` hook fails, it rolls
+/// the file operations back instead.
 ///
 /// # Errors
 ///
-/// Returns an [`EngineError`] when recovery, locking, journal flushing,
+/// Returns [`EngineError::InterruptedApplyPending`], before writing anything,
+/// when the journal holds an orphan plan; [`recover_interrupted`] reverts it.
+/// Returns an [`EngineError`] when locking, journal flushing,
 /// an executor, hook execution, backup, or retention GC fails. Returns
 /// [`EngineError::DevModeRequired`] when the plan contains a symbolic link
 /// operation, Developer Mode is disabled on Windows, and the process is not
@@ -1899,8 +1947,8 @@ fn materialize_target(
 /// (`post_apply`).
 #[expect(
     clippy::too_many_lines,
-    reason = "execute is the single linear apply orchestrator: lock, recover, \
-              no-op short-circuit, hooks, flush, materialize, commit/rollback, \
+    reason = "execute is the single linear apply orchestrator: lock, orphan check, \
+              no-op short-circuit, hooks, flush, backups, materialize, reap, commit/rollback, \
               and GC, in the fixed order the crash-safety contract depends on. \
               Splitting a phase into a helper would hide that ordering behind a \
               call without removing any step."
@@ -1914,19 +1962,16 @@ pub fn execute(
     let backups_dir = resolved.backups_dir();
     let template_engine = Engine::new();
 
-    // Whether this run reaps targets a prior apply committed that the current
-    // plan no longer manages. A full `apply` (`Blocking`) reaps. The `Held`
-    // path re-journals for `patina remove` / `patina promote` under a
-    // caller-held lock without showing a diff. `remove` has just replaced its
-    // target with an owned regular file and dropped the target's entry, so a
-    // reap would delete that file.
-    let reap = !matches!(policy, LockPolicy::Held(_));
+    // The `Held` path re-journals one target for `patina remove` / `patina
+    // promote`, often one whose bytes already match its just-rewritten source,
+    // and must commit that fresh record, so it never takes the no-op
+    // short-circuit.
+    let rejournal = matches!(policy, LockPolicy::Held(_));
 
     // Resolve the exclusive lock per policy BEFORE any filesystem
-    // mutation, including orphan recovery, so a lock timeout writes nothing
-    // (no recovery, no plan, no COMMIT, no backup). Recovering only under the
-    // held lock also prevents a second apply from reversing a live in-flight
-    // apply's operations.
+    // mutation, so a lock timeout writes nothing (no plan, no COMMIT, no
+    // backup). Under the lock, a plan without a sentinel is an orphan rather
+    // than another apply still running.
     let _guard = match policy {
         LockPolicy::Blocking => acquire_lock(
             &resolved.lock_path(),
@@ -1936,18 +1981,18 @@ pub fn execute(
         LockPolicy::Held(guard) => guard,
     };
 
-    // Recover any prior partial apply, under the held lock, before
-    // computing fresh work.
-    recover_orphans(&journal_dir, &backups_dir)?;
+    if !orphan_plans(&journal_dir)?.is_empty() {
+        return Err(EngineError::InterruptedApplyPending);
+    }
 
-    // Windows-only symlink-elevation gate. Runs after
-    // recovery and BEFORE the first backup / materialize, so a plan that
-    // needs Developer Mode cannot mutate the filesystem without consent.
-    // The engine provides the backstop: the CLI normally drives the UAC
-    // prompt before calling `execute`, so a `RequireElevation` verdict here
-    // means the gate was reached without that orchestration. Refuse to
-    // proceed with a typed signal. On a host that is already
-    // elevated, proceed but warn (running Patina elevated is discouraged).
+    // Windows-only symlink-elevation gate. Runs after the orphan check and
+    // BEFORE the first backup / materialize, so a plan that needs Developer
+    // Mode cannot mutate the filesystem without consent. The engine provides
+    // the backstop: the CLI normally drives the UAC prompt before calling
+    // `execute`, so a `RequireElevation` verdict here means the gate was
+    // reached without that orchestration. Refuse to proceed with a typed
+    // signal. On a host that is already elevated, proceed but warn (running
+    // Patina elevated is discouraged).
     // On macOS / Linux `HostDevModeProbe` reports `NotWindows`, so the
     // decision is always `Proceed`: no registry read, no early return.
     match decide_symlink_gate(resolved, &HostDevModeProbe::default()) {
@@ -1962,8 +2007,8 @@ pub fn execute(
     }
 
     // Full no-op short-circuit: return before the plan flush so
-    // nothing is written this run (see `is_full_noop` for the condition).
-    if is_full_noop(resolved, reap)? {
+    // nothing is written this run (see `plan_is_full_noop` for the condition).
+    if !rejournal && plan_is_full_noop(resolved)? {
         return Ok(ApplyResult::Applied {
             warnings: Vec::new(),
             up_to_date: true,
@@ -1993,10 +2038,11 @@ pub fn execute(
         &resolved.plan,
         &OsSyncer,
     )?;
+    back_up_targets(resolved, &backups_dir)?;
 
-    // Materialize every operation, backing up each pre-existing target
-    // first, except a target classified `Unchanged` at plan time, which is
-    // neither backed up nor (re)written so its inode/mtime is preserved.
+    // Materialize every operation except a target classified `Unchanged` at
+    // plan time, which is neither backed up nor (re)written so its
+    // inode/mtime is preserved.
     // Track completion records (paired with the index of the
     // `[[file]]` entry that produced them) so a post_apply hook failure can
     // reverse them and the commit record can group targets into atomic
@@ -2006,9 +2052,10 @@ pub fn execute(
     // Test-only crash-injection seam. Compiled only in debug builds, so it is
     // absent from the release binary users install, and dormant unless the
     // `PATINA_TEST_ABORT_AFTER_OP` environment variable is set. When set to
-    // `k`, the process exits abruptly after the k-th materialized operation,
-    // before the COMMIT sentinel is written, simulating a `kill -9` so an
-    // integration test can prove the next run converges to a consistent state.
+    // `k`, the process exits abruptly after the k-th completion, counting each
+    // materialized object and then each `Remove`, before the COMMIT sentinel
+    // is written. The exit simulates a `kill -9`, so an integration test can
+    // prove the next run converges to a consistent state.
     // See `patina-cli/tests/apply_crash_recovery.rs`.
     #[cfg(debug_assertions)]
     let abort_after_op: Option<u32> = std::env::var("PATINA_TEST_ABORT_AFTER_OP")
@@ -2032,8 +2079,6 @@ pub fn execute(
                 &op.source,
                 target,
                 disposition,
-                &backups_dir,
-                &resolved.timestamp,
                 &template_engine,
                 resolved.operation_resolver(op),
                 &op.ignore_rules,
@@ -2060,29 +2105,23 @@ pub fn execute(
     )?;
 
     if let Some(failed) = post_failure {
-        // Reverse the file operations to the pre-apply state, then mark
-        // the journal rolled back rather than committed. The journal
-        // handle is consumed by commit; for a rollback we drop it after
-        // the reversal so recovery treats it as an orphan that has
-        // already been reversed on disk. Re-running recovery is
-        // idempotent.
         reverse_completed(&completed, &backups_dir, &resolved.timestamp)?;
-        drop(journal);
+        journal.discard(&backups_dir)?;
         Ok(ApplyResult::RolledBack {
             failed_hook: failed,
         })
     } else {
-        // Reap targets a prior apply committed that the current plan no
-        // longer manages: a removed entry, a `when` flipped to false
-        // or a deleted `symlink-tree` source leaf. Each
-        // orphan's prior bytes are backed up into this run's backup tree
-        // before it is removed; a directory is never removed.
-        // Runs after the post_apply hooks succeed, so a hook
-        // failure rolls back the materializations without having reaped.
-        // Skipped on the `Held` path (`patina remove` / `promote`), which
-        // re-journals one surgically-modified target and must not reap.
-        if reap {
-            reap_orphans(resolved, &backups_dir)?;
+        // Runs after the post_apply hooks succeed, so a hook failure rolls
+        // back the materializations without having reaped.
+        for op in resolved.plan.operations() {
+            let PlannedOperation::Remove { target } = op else {
+                continue;
+            };
+            reap_target(Utf8Path::new(target))?;
+            journal.record_progress(op_index)?;
+            op_index = op_index.saturating_add(1);
+            #[cfg(debug_assertions)]
+            exit_at_crash_seam(abort_after_op, op_index);
         }
         let record = build_apply_record(resolved)?;
         journal.commit(&record, &OsSyncer)?;
@@ -2095,6 +2134,10 @@ pub fn execute(
         // rolling back to it correctly deletes its fresh targets.
         let pruned = gc_retain(&backups_dir, crate::backups::RETENTION_COUNT)?;
         prune_cycles(&journal_dir, &pruned)?;
+        gc_retain(
+            resolved.state_dir.join(crate::journal::RECOVERED_DIR),
+            crate::backups::RETENTION_COUNT,
+        )?;
         // Journal records can point rollback at remote checkouts, so pruning
         // runs after the commit and journal retention. Uncommitted plans can
         // still reference pinned checkouts.
@@ -2130,6 +2173,77 @@ pub fn execute(
     }
 }
 
+/// Take the exclusive lock, revert every interrupted apply recorded under the
+/// per-machine state directory `state_dir`, and release the lock.
+///
+/// A caller that may [`execute`] a plan calls this before [`plan`], so the plan
+/// describes the pre-apply state. The report lists the reverted applies'
+/// timestamps; it is empty when no interrupted apply was pending.
+///
+/// # Errors
+///
+/// Returns [`EngineError::Lock`] when the exclusive lock is not acquired within
+/// [`exclusive_timeout`], and [`EngineError::Journal`] when an orphan plan
+/// cannot be read or decoded or its reversal fails.
+pub fn recover_interrupted(state_dir: &Utf8Path) -> Result<RecoveryReport, EngineError> {
+    let _guard = acquire_lock(
+        &state_dir.join("lock"),
+        LockKind::Exclusive,
+        exclusive_timeout(),
+    )?;
+    Ok(recover_orphans(state_dir)?)
+}
+
+/// What the journal shows about an apply that has not committed, for a
+/// command that reports on the files without recovering.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum PendingApply {
+    /// Every plan in the journal has a terminal sentinel.
+    #[default]
+    None,
+    /// A plan lacks a terminal sentinel and no process holds the lock: an apply
+    /// was interrupted and awaits recovery.
+    Interrupted,
+    /// A plan lacks a terminal sentinel but the shared lock was not acquired,
+    /// so the plan can belong to an apply that is still running.
+    RunningOrInterrupted,
+}
+
+/// Report whether an apply under the per-machine state directory `state_dir`
+/// has not committed, without writing.
+///
+/// A plan without a terminal sentinel is re-read under the shared lock,
+/// waiting up to [`SHARED_TIMEOUT`], because the plan of an apply that is
+/// still running also lacks a sentinel. When no lock file exists, no process
+/// holds the lock, so the plan is reported as interrupted without creating a
+/// lock file.
+///
+/// # Errors
+///
+/// Returns [`EngineError::Journal`] when the journal directory cannot be read,
+/// and [`EngineError::Lock`] when the lock fails for a reason other than a
+/// timeout.
+pub fn pending_apply(state_dir: &Utf8Path) -> Result<PendingApply, EngineError> {
+    let journal_dir = state_dir.join("journal");
+    if orphan_plans(&journal_dir)?.is_empty() {
+        return Ok(PendingApply::None);
+    }
+    let lock_path = state_dir.join("lock");
+    if !lock_path.exists() {
+        return Ok(PendingApply::Interrupted);
+    }
+    let _guard = match acquire_lock(&lock_path, LockKind::Shared, SHARED_TIMEOUT) {
+        Ok(guard) => guard,
+        Err(LockError::Timeout { .. }) => return Ok(PendingApply::RunningOrInterrupted),
+        Err(other) => return Err(other.into()),
+    };
+    Ok(if orphan_plans(&journal_dir)?.is_empty() {
+        PendingApply::None
+    } else {
+        PendingApply::Interrupted
+    })
+}
+
 #[cfg(debug_assertions)]
 #[expect(
     clippy::exit,
@@ -2151,13 +2265,13 @@ fn exit_at_crash_seam(abort_after_op: Option<u32>, op_index: u32) {
 /// therefore produced no [`CompletionRecord`]. The record is sourced
 /// from the resolved plan rather than from the written objects. The commit
 /// therefore retains an `Unchanged` target, so `status` reports it managed
-/// (`Clean`) and [`reap_orphans`] never removes it. A symlink records its
-/// canonical link target (which is also its source); a copy or render records
-/// its canonical source path and a `blake3` hash of the live target bytes, read
-/// back so the recorded hash matches exactly what `status` computes; the live
-/// bytes hold the desired output whether the target was just written
-/// (`Create` / `Update`) or already matched (`Unchanged`). Each target carries
-/// its real plan-time [`Disposition`] (per-leaf for a tree), the
+/// (`Clean`) and a later [`plan`] never schedules its removal. A symlink
+/// records its canonical link target (which is also its source); a copy or
+/// render records its canonical source path and a `blake3` hash of the live
+/// target bytes, read back so the recorded hash matches exactly what `status`
+/// computes; the live bytes hold the desired output whether the target was just
+/// written (`Create` / `Update`) or already matched (`Unchanged`). Each target
+/// carries its real plan-time [`Disposition`] (per-leaf for a tree), the
 /// marker recovery and rollback read to leave an `Unchanged` target in place.
 fn build_apply_record(resolved: &ResolvedPlan) -> Result<ApplyRecord, EngineError> {
     let vars = &resolved.resolver;
@@ -2281,139 +2395,111 @@ fn expected_target(
     }
 }
 
-/// Reap targets a prior committed apply materialized that the current plan
-/// no longer manages.
+/// Remove one [`PlannedOperation::Remove`] target, which [`back_up_targets`]
+/// has already backed up.
 ///
-/// Reads the last committed [`ApplyRecord`] and the current managed-target
-/// set ([`current_managed_targets`], the same `when`-aware /
-/// `symlink-tree`-aware set `patina status` classifies against). A recorded
-/// target whose [`manage_key`](crate::status::manage_key) is absent from the
-/// current set is an orphan: the entry was removed, its `when` flipped false
-/// or, for a `symlink-tree` leaf, its source leaf was deleted.
-/// Each orphan still present on disk is backed up into
-/// this run's backup tree, under the same never-overwrite-without-backup
-/// guarantee every mutating path upholds, and then removed.
-///
-/// A directory is never removed, even one left empty after its last leaf
-/// link is reaped: Patina cannot prove it owns a directory that may also
-/// hold files written outside Patina. The check is on the live
-/// entry's kind, so an intermediate `symlink-tree` directory survives while
-/// its orphaned leaf links are removed.
-///
-/// Nor is a recorded target that now lies inside a live entry's target: the
-/// live entry owns those bytes, and where it materializes a whole-directory
-/// symlink the recorded path resolves through the link into its source.
+/// An absent target is a no-op. A directory is never removed, including one
+/// that replaced the planned target after planning: Patina cannot prove it owns
+/// a directory that may also hold files written outside Patina.
 ///
 /// # Errors
 ///
-/// Returns an [`EngineError`] when the commit read, the managed-set
-/// recomputation, a backup, or a removal fails.
-fn reap_orphans(resolved: &ResolvedPlan, backups_dir: &Utf8Path) -> Result<(), EngineError> {
-    for orphan in detect_orphans(&resolved.journal_dir(), &resolved.managed)? {
-        // Record the prior bytes in a backup before removal. The
-        // stash uses this run's timestamped backup tree, the
-        // same one materialize stashes overwrites into.
-        backup_before_overwrite(backups_dir, &resolved.timestamp, &orphan.target)?;
-        remove_target(&orphan.target)?;
+/// Returns an [`EngineError`] when the removal fails.
+fn reap_target(target: &Utf8Path) -> Result<(), EngineError> {
+    if is_real_dir(target) {
+        return Ok(());
+    }
+    remove_target(target)
+}
+
+/// Back up every entry `resolved` will overwrite or remove, outermost first,
+/// before the first write.
+///
+/// A target inside a target this pass backed up is skipped. Under a backed-up
+/// directory, the directory's backup contains the target's pre-apply entry at
+/// the target's mirror path, where every reader looks for it, or omits the
+/// entry when the target did not exist. Under a backed-up symbolic link, the
+/// target's path resolves through the link, and recovery reverts the link as
+/// one unit instead. Because of the skip, no backup is staged inside another
+/// backup or reached through a link. Because every backup precedes the first
+/// write, each backup is a copy of the pre-apply state and contains no bytes
+/// this apply wrote. A `Remove` target that is a directory is not backed up,
+/// because [`reap_target`] never removes a directory.
+///
+/// # Errors
+///
+/// Returns an [`EngineError`] when a backup fails.
+fn back_up_targets(resolved: &ResolvedPlan, backups_dir: &Utf8Path) -> Result<(), EngineError> {
+    let written = resolved.operations.iter().flat_map(|op| {
+        op.targets
+            .iter()
+            .zip(&op.dispositions)
+            .filter(|(_, disposition)| disposition.aggregate != Disposition::Unchanged)
+            .map(|(target, _)| target.as_path())
+    });
+    let removed = resolved
+        .plan
+        .operations()
+        .iter()
+        .filter_map(|op| match op {
+            PlannedOperation::Remove { target } => Some(Utf8Path::new(target.as_str())),
+            _ => None,
+        })
+        .filter(|target| !is_real_dir(target));
+    let mut targets: Vec<&Utf8Path> = written.chain(removed).collect();
+    targets.sort_by_key(|target| target.components().count());
+
+    let mut backed_up: Vec<&Utf8Path> = Vec::new();
+    for target in targets {
+        if backed_up
+            .iter()
+            .any(|covering| target.starts_with(covering))
+        {
+            continue;
+        }
+        if backup_before_overwrite(backups_dir, &resolved.timestamp, target)? {
+            backed_up.push(target);
+        }
     }
     Ok(())
 }
 
-/// Whether `resolved` is a full no-op: every planned target classifies
-/// `Unchanged`, a prior committed apply exists to stay authoritative, and the
-/// reap set is empty. `reap` mirrors [`execute`]'s policy gate: a
-/// `Held` run never reaps, so its orphan set is not consulted.
-///
-/// Share the full-no-op condition between
-/// [`execute`]'s pre-flush short-circuit and the public [`plan_is_full_noop`]
-/// probe the CLI calls to decide whether to skip the diff-and-prompt.
-/// The `Unchanged` check is pure (it reads the plan-time dispositions, no IO);
-/// the prior-commit and orphan checks read the journal and re-derive the
-/// managed set.
-///
-/// # Errors
-///
-/// Returns an [`EngineError`] when the commit read or the orphan-set
-/// recomputation fails.
-fn is_full_noop(resolved: &ResolvedPlan, reap: bool) -> Result<bool, EngineError> {
-    // A non-reaping policy is the `Held` surgical re-journal (`patina remove` /
-    // `promote`): it deliberately re-records one target, often one whose bytes
-    // now match its just-rewritten source and so classify `Unchanged`, and
-    // must always commit that fresh record. It is never a no-op, so the
-    // short-circuit is disabled for it; only the whole-plan reconcile policy
-    // (`Blocking`) can no-op.
-    if !reap {
-        return Ok(false);
-    }
-    // Pure, IO-free check next: a single Create/Update target means there is
-    // work to do, so skip the journal read entirely.
-    let all_unchanged = resolved.operations.iter().all(|op| {
-        op.dispositions
-            .iter()
-            .all(|d| d.aggregate == Disposition::Unchanged)
-    });
-    if !all_unchanged {
-        return Ok(false);
-    }
-    // A full no-op keeps the prior commit authoritative, so one must
-    // exist. A first-ever apply with an empty plan is vacuously all-`Unchanged`
-    // but has no baseline; it must fall through and commit an (empty) record to
-    // establish one, preserving the pre-existing commit-always contract.
-    if crate::journal::read_latest_commit(resolved.journal_dir())?.is_none() {
-        return Ok(false);
-    }
-    // A reap is work to do: an all-`Unchanged` plan that still has an
-    // orphan to remove is not a no-op.
-    if !detect_orphans(&resolved.journal_dir(), &resolved.managed)?.is_empty() {
-        return Ok(false);
-    }
-    Ok(true)
+/// Whether `path` is a directory rather than a symbolic link to one.
+fn is_real_dir(path: &Utf8Path) -> bool {
+    fs_err::symlink_metadata(path).is_ok_and(|meta| meta.is_dir())
 }
 
 /// Whether a `patina apply` over `resolved` would be a full no-op under
-/// [`LockPolicy::Blocking`]: every target `Unchanged`, a prior commit
-/// present, and nothing to reap.
+/// [`LockPolicy::Blocking`]: every durable operation classifies `Unchanged`, so
+/// the plan contains no [`PlannedOperation::Remove`], and a prior committed
+/// apply exists to stay authoritative.
 ///
 /// The CLI calls this *before* prompting so a fully-satisfied repo skips the
 /// diff-and-prompt confirmation and never reads stdin. The probe is read-only.
 /// [`execute`] re-checks the same condition under the held lock, so
-/// this decision only governs the prompt. Because the CLI's `apply` path
-/// always reaps, this fixes `reap` to `true`.
+/// this decision only governs the prompt.
 ///
 /// # Errors
 ///
-/// Returns an [`EngineError`] when the commit read or the orphan-set
-/// recomputation fails.
+/// Returns an [`EngineError`] when the commit read fails.
 pub fn plan_is_full_noop(resolved: &ResolvedPlan) -> Result<bool, EngineError> {
-    is_full_noop(resolved, true)
-}
-
-/// The targets a `patina apply` over `resolved` would reap this run, sorted by
-/// path: the orphan targets a prior committed apply materialized that the
-/// current plan no longer manages and that are still present on disk as
-/// non-directories.
-///
-/// The CLI calls this to render the reap in the diff / `--json` preview
-/// *before* prompting, so an entry removed from config is never silently
-/// deleted on confirm. It is a read-only probe over the same orphan set
-/// [`execute`] re-derives under the held lock, so it only informs the
-/// preview. Sorting makes the preview a stable function of the reap set
-/// (orphans have no config declaration order to preserve), upholding the
-/// byte-identical-stdout contract.
-///
-/// # Errors
-///
-/// Returns an [`EngineError`] when the commit read or the managed-set
-/// recomputation fails.
-pub fn plan_orphans(resolved: &ResolvedPlan) -> Result<Vec<Orphan>, EngineError> {
-    let mut orphans = detect_orphans(&resolved.journal_dir(), &resolved.managed)?;
-    orphans.sort_by(|a, b| a.target.cmp(&b.target));
-    Ok(orphans)
+    let all_unchanged = resolved
+        .plan
+        .operations()
+        .iter()
+        .all(|op| op.disposition() == Some(Disposition::Unchanged));
+    if !all_unchanged {
+        return Ok(false);
+    }
+    // A full no-op keeps the prior commit authoritative, so one must exist.
+    // An empty first apply is vacuously all-`Unchanged` and still commits an
+    // empty record, which establishes the baseline.
+    Ok(crate::journal::read_latest_commit(resolved.journal_dir())?.is_some())
 }
 
 /// The reap set for the apply recorded under `journal_dir`, sorted by target.
 ///
-/// [`plan_orphans`] reads the managed set from a resolved plan. Because
+/// [`plan`] reads the managed set from the plan it builds. Because
 /// `doctor` has no plan, this function recomputes the set without `-v`
 /// overrides. An undefined override-only variable fails that walk.
 ///
@@ -2423,9 +2509,8 @@ pub fn plan_orphans(resolved: &ResolvedPlan) -> Result<Vec<Orphan>, EngineError>
 /// recomputation fails.
 pub fn journal_orphans(journal_dir: &Utf8Path) -> Result<Vec<Orphan>, EngineError> {
     let managed = current_managed_targets(&[])?;
-    let mut orphans = detect_orphans(journal_dir, &managed)?;
-    orphans.sort_by(|a, b| a.target.cmp(&b.target));
-    Ok(orphans)
+    let latest = crate::journal::read_latest_commit(journal_dir)?;
+    Ok(detect_orphans(latest.as_ref(), &managed))
 }
 
 /// One target the reap phase would remove, and why.
@@ -2473,34 +2558,24 @@ impl OrphanReason {
     }
 }
 
-/// The set of targets the reap phase would remove this run: the orphan
-/// targets a prior committed apply materialized that the current plan no
-/// longer manages and that are still present on disk as non-directories.
+/// The targets the reap removes, sorted by path.
 ///
-/// Reads the last committed [`ApplyRecord`] and the current managed-target
-/// set ([`current_managed_targets`]). Returns each recorded target whose
+/// Compares `latest` with the current managed-target set
+/// ([`current_managed_targets`]). Returns each recorded target whose
 /// [`manage_key`](crate::status::manage_key) is absent from the current set,
-/// is still on disk, is not a directory, and lies under no currently-managed
-/// target. [`reap_orphans`] backs up and removes each returned target. The
-/// full-no-op short-circuit in [`execute`] only needs to know whether this set
-/// is empty: a non-empty reap set means there is work to do, so the run is not
-/// a no-op. [`journal_orphans`] sorts it for the CLI preview and for `doctor`.
-/// Splitting the detection out keeps the "what counts as an orphan" rule in one
-/// place rather than copying the guards to each caller.
-///
-/// # Errors
-///
-/// Returns an [`EngineError`] when the commit read or the managed-set
-/// recomputation fails.
+/// is still on disk, is not a directory, lies under no currently-managed
+/// target, and lies under no current tree root that is not a real directory.
+/// [`plan`] schedules a [`PlannedOperation::Remove`] for each returned
+/// target, and [`journal_orphans`] returns the set for `doctor`.
 fn detect_orphans(
-    journal_dir: &Utf8Path,
+    latest: Option<&ApplyRecord>,
     managed: &crate::status::ManagedTargets,
-) -> Result<Vec<Orphan>, EngineError> {
+) -> Vec<Orphan> {
     use crate::status::manage_key;
 
-    let Some(record) = crate::journal::read_latest_commit(journal_dir)? else {
+    let Some(record) = latest else {
         // No prior committed apply: nothing was ever materialized to orphan.
-        return Ok(Vec::new());
+        return Vec::new();
     };
 
     let mut orphans = Vec::new();
@@ -2517,6 +2592,17 @@ fn detect_orphans(
         // consented replacement handles it; listing it would add a duplicate
         // `remove` block that the reap never performs.
         if managed.tree_roots.contains(&key) {
+            continue;
+        }
+        // Under a current tree root that is no longer a real directory, the
+        // recorded path resolves through whatever replaced the root, into
+        // entries Patina never materialized. The consented root replacement
+        // removes the root as a unit, so nothing under it is reaped. The check
+        // precedes any read of the target, because a read would follow the
+        // replacement.
+        if target.ancestors().skip(1).any(|ancestor| {
+            !is_real_dir(ancestor) && managed.tree_roots.contains(&manage_key(ancestor))
+        }) {
             continue;
         }
         // The current plan dropped this target. Only act on one that is still
@@ -2558,7 +2644,8 @@ fn detect_orphans(
         };
         orphans.push(Orphan { target, reason });
     }
-    Ok(orphans)
+    orphans.sort_by(|a, b| a.target.cmp(&b.target));
+    orphans
 }
 
 /// Run every hook whose event matches `event`, returning the command of
@@ -2733,6 +2820,7 @@ mod tests {
                 PlannedOperation::Symlink { source, .. }
                 | PlannedOperation::Copy { source, .. }
                 | PlannedOperation::Render { source, .. } => source.as_str(),
+                PlannedOperation::Remove { target } => target.as_str(),
             })
             .collect();
         assert_eq!(
@@ -2817,6 +2905,7 @@ mod tests {
                 PlannedOperation::Symlink { source, .. }
                 | PlannedOperation::Copy { source, .. }
                 | PlannedOperation::Render { source, .. } => source.as_str(),
+                PlannedOperation::Remove { target } => target.as_str(),
             })
             .collect();
         assert_eq!(
@@ -2956,9 +3045,9 @@ mod tests {
                 profile: String::new(),
                 plan: Plan::new(Vec::new()),
                 operations: Vec::new(),
+                reap: Vec::new(),
                 hooks: Vec::new(),
                 modules: Vec::new(),
-                managed: crate::status::ManagedTargets::default(),
                 state_dir,
                 host_os: HostOs::current(),
                 timestamp: TS.to_owned(),
@@ -3012,6 +3101,246 @@ mod tests {
         assert!(
             !scene.journal_file_exists(crate::journal::PLAN_SUFFIX),
             "the plan file is removed after COMMIT"
+        );
+    }
+
+    #[test]
+    fn execute_with_a_pending_orphan_refuses_and_writes_no_journal_file() {
+        let scene = Scene::new();
+        let journal = scene.resolved.journal_dir();
+        let orphan = journal.join(format!("20260530T110000Z{}", crate::journal::PLAN_SUFFIX));
+        fs_err::write(
+            &orphan,
+            Plan::new(Vec::new()).encode().expect("encode plan"),
+        )
+        .expect("write an orphan plan");
+        let listing = || {
+            let mut names: Vec<String> = fs_err::read_dir(&journal)
+                .expect("read journal dir")
+                .map(|entry| {
+                    entry
+                        .expect("read journal entry")
+                        .file_name()
+                        .to_string_lossy()
+                        .into_owned()
+                })
+                .collect();
+            names.sort();
+            names
+        };
+        let before = listing();
+
+        let result = execute(
+            &scene.resolved,
+            &ApplyRequest::default(),
+            LockPolicy::Blocking,
+        );
+
+        assert!(
+            matches!(result, Err(EngineError::InterruptedApplyPending)),
+            "execute must refuse while an orphan plan is pending, got {result:?}"
+        );
+        assert_eq!(
+            listing(),
+            before,
+            "a refused execute writes no journal file"
+        );
+    }
+
+    #[test]
+    fn execute_removes_exactly_the_targets_the_plan_lists() {
+        let mut scene = Scene::new();
+        let home = scene.resolved.state_dir.join("home");
+        fs_err::create_dir_all(&home).expect("mkdir home");
+        let listed = home.join("listed");
+        let unlisted = home.join("unlisted");
+        fs_err::write(&listed, b"listed-bytes").expect("write listed target");
+        fs_err::write(&unlisted, b"unlisted-bytes").expect("write unlisted target");
+        let prior = record_with(
+            [&listed, &unlisted]
+                .into_iter()
+                .map(|target| ExpectedTarget::Content {
+                    target: target.as_str().to_owned(),
+                    source: "/repo/gone".to_owned(),
+                    hash: [0u8; 32],
+                    entry: 0,
+                    disposition: Disposition::Create,
+                })
+                .collect(),
+        );
+        write_commit(&scene.resolved.journal_dir(), "20260530T110000Z", &prior);
+        scene.resolved.plan = Plan::new(vec![PlannedOperation::remove(listed.as_str())]);
+
+        execute(
+            &scene.resolved,
+            &ApplyRequest::default(),
+            LockPolicy::Blocking,
+        )
+        .expect("apply the removal");
+
+        assert!(!listed.exists(), "the listed target must be removed");
+        assert_eq!(
+            fs_err::read(crate::journal::mirror_backup_path(
+                &scene.resolved.backups_dir(),
+                TS,
+                &listed
+            ))
+            .expect("read the removal's backup"),
+            b"listed-bytes",
+            "the removal must back the target up first"
+        );
+        assert_eq!(
+            fs_err::read(&unlisted).expect("read the unlisted target"),
+            b"unlisted-bytes",
+            "a target the plan does not list must survive even when no entry manages it"
+        );
+    }
+
+    #[test]
+    fn a_committed_apply_keeps_only_the_newest_recovered_copies() {
+        let scene = Scene::new();
+        let recovered = scene.resolved.state_dir.join(crate::journal::RECOVERED_DIR);
+        let names: Vec<String> = (0..crate::backups::RETENTION_COUNT + 2)
+            .map(|second| format!("20260530T1100{second:02}Z.1"))
+            .collect();
+        for name in &names {
+            fs_err::create_dir_all(recovered.join(name)).expect("seed a recovered copy");
+        }
+
+        execute(
+            &scene.resolved,
+            &ApplyRequest::default(),
+            LockPolicy::Blocking,
+        )
+        .expect("the first apply commits");
+
+        let mut left: Vec<String> = fs_err::read_dir(&recovered)
+            .expect("read the recovered copies")
+            .map(|entry| {
+                entry
+                    .expect("read a recovered copy")
+                    .file_name()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect();
+        left.sort();
+        let pruned = names.len() - crate::backups::RETENTION_COUNT;
+        assert_eq!(
+            left,
+            names
+                .get(pruned..)
+                .expect("the seeded names outnumber the retention count")
+                .to_vec()
+        );
+    }
+
+    #[test]
+    fn a_planned_removal_of_an_absent_target_commits() {
+        let mut scene = Scene::new();
+        let absent = scene.resolved.state_dir.join("home").join("gone");
+        scene.resolved.plan = Plan::new(vec![PlannedOperation::remove(absent.as_str())]);
+
+        execute(
+            &scene.resolved,
+            &ApplyRequest::default(),
+            LockPolicy::Blocking,
+        )
+        .expect("an absent removal target is a no-op");
+
+        assert!(
+            scene.journal_file_exists(crate::journal::COMMIT_SUFFIX),
+            "the apply commits"
+        );
+    }
+
+    struct ReapScene {
+        _temp: TempDir,
+        latest: ApplyRecord,
+        managed: crate::status::ManagedTargets,
+        materializing: Vec<PlannedOperation>,
+        orphans: Vec<Utf8PathBuf>,
+    }
+
+    fn reap_scene() -> ReapScene {
+        let temp = TempDir::new().expect("tempdir");
+        let home = Utf8Path::from_path(temp.path())
+            .expect("utf8 temp path")
+            .to_owned();
+        let kept = home.join("kept");
+        let orphans = vec![home.join("a-orphan"), home.join("b-orphan")];
+        for target in orphans.iter().chain(std::iter::once(&kept)) {
+            fs_err::write(target, b"bytes").expect("write target");
+        }
+        let recorded = [&orphans[1], &kept, &orphans[0]];
+        let latest = record_with(
+            recorded
+                .into_iter()
+                .map(|target| ExpectedTarget::Content {
+                    target: target.as_str().to_owned(),
+                    source: "/repo/source".to_owned(),
+                    hash: [0u8; 32],
+                    entry: 0,
+                    disposition: Disposition::Create,
+                })
+                .collect(),
+        );
+        let managed = crate::status::ManagedTargets {
+            targets: std::iter::once(crate::status::manage_key(&kept)).collect(),
+            ..crate::status::ManagedTargets::default()
+        };
+        let materializing = vec![PlannedOperation::copy(
+            "/repo/source",
+            kept.as_str(),
+            Disposition::Unchanged,
+        )];
+        ReapScene {
+            _temp: temp,
+            latest,
+            managed,
+            materializing,
+            orphans,
+        }
+    }
+
+    #[test]
+    fn reaping_orphans_appends_sorted_removes_after_the_materializing_operations() {
+        let scene = reap_scene();
+
+        let (plan, reap) = with_reap(
+            scene.materializing.clone(),
+            Reap::Orphans,
+            Some(&scene.latest),
+            &scene.managed,
+        );
+
+        let mut expected = scene.materializing.clone();
+        expected.extend(
+            scene
+                .orphans
+                .iter()
+                .map(|target| PlannedOperation::remove(target.as_str())),
+        );
+        assert_eq!(plan.operations(), expected.as_slice());
+        let reaped: Vec<&Utf8PathBuf> = reap.iter().map(|orphan| &orphan.target).collect();
+        assert_eq!(reaped, scene.orphans.iter().collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn reaping_nothing_plans_only_the_materializing_operations() {
+        let scene = reap_scene();
+
+        let (plan, reap) = with_reap(
+            scene.materializing.clone(),
+            Reap::Nothing,
+            Some(&scene.latest),
+            &scene.managed,
+        );
+
+        assert_eq!(plan.operations(), scene.materializing.as_slice());
+        assert!(
+            reap.is_empty(),
+            "Reap::Nothing must plan no removal: {reap:?}"
         );
     }
 
@@ -3475,6 +3804,14 @@ mod tests {
         )
     }
 
+    fn provenance_of(journal: &Utf8Path) -> Provenance {
+        Provenance::from_record(
+            crate::journal::read_latest_commit(journal)
+                .expect("read the latest commit")
+                .as_ref(),
+        )
+    }
+
     #[test]
     fn provenance_flags_a_same_source_kind_flip_and_nothing_else() {
         let (_td, dir) = utf8_tempdir();
@@ -3491,7 +3828,7 @@ mod tests {
                 disposition: Disposition::Create,
             }]),
         );
-        let provenance = Provenance::read(&journal).expect("read provenance");
+        let provenance = provenance_of(&journal);
 
         assert!(
             provenance.mode_change(&target, RecordedKind::Content, &source),
@@ -3534,7 +3871,7 @@ mod tests {
                 disposition: Disposition::Create,
             }]),
         );
-        let provenance = Provenance::read(&journal).expect("read provenance");
+        let provenance = provenance_of(&journal);
 
         let disposition = classify_target(FileMode::Copy, &source, &target, None, &[], &provenance)
             .expect("classify");
@@ -3643,7 +3980,7 @@ mod tests {
                 disposition: Disposition::Create,
             }]),
         );
-        let provenance = Provenance::read(&journal).expect("read provenance");
+        let provenance = provenance_of(&journal);
 
         let leaves =
             crate::apply::walk_files(&source, &crate::ignore_rules::none()).expect("walk source");
@@ -3672,7 +4009,6 @@ mod tests {
         fs_err::write(source.join("a.conf"), b"repo bytes").expect("write a");
         let target = dir.join("out");
         make_symlink(&source, &target);
-        let backups = dir.join("backups");
 
         let disposition = TargetDisposition {
             aggregate: Disposition::Update,
@@ -3689,8 +4025,6 @@ mod tests {
             &source,
             &target,
             &disposition,
-            &backups,
-            TS,
             &Engine::new(),
             &Resolver::new(Builtins::for_tests()),
             &crate::ignore_rules::none(),
@@ -3723,7 +4057,6 @@ mod tests {
         fs_err::write(source.join("a.conf"), b"repo bytes").expect("write a");
         let target = dir.join("out");
         make_symlink(&source, &target);
-        let backups = dir.join("backups");
 
         let disposition = TargetDisposition {
             aggregate: Disposition::Update,
@@ -3740,8 +4073,6 @@ mod tests {
             &source,
             &target,
             &disposition,
-            &backups,
-            TS,
             &Engine::new(),
             &Resolver::new(Builtins::for_tests()),
             &crate::ignore_rules::none(),
@@ -3762,14 +4093,6 @@ mod tests {
             fs_err::read(source.join("a.conf")).expect("read source leaf"),
             b"repo bytes",
             "the repository source survives byte-for-byte"
-        );
-        let stashed = crate::journal::mirror_backup_path(&backups, TS, &target);
-        assert!(
-            fs_err::symlink_metadata(&stashed)
-                .expect("stat stashed root")
-                .file_type()
-                .is_symlink(),
-            "the pre-apply link is stashed for rollback"
         );
     }
 
@@ -3916,12 +4239,137 @@ mod tests {
 
         assert_eq!(operations.len(), 1);
         let durable = operations.first().expect("one durable operation");
-        assert_eq!(durable.disposition(), Disposition::Unchanged);
+        assert_eq!(durable.disposition(), Some(Disposition::Unchanged));
         let resolved_op = resolved_ops.first().expect("one resolved operation");
         let target_disposition = resolved_op
             .dispositions
             .first()
             .expect("one disposition per target");
         assert_eq!(target_disposition.aggregate, Disposition::Unchanged);
+    }
+
+    fn plan_one_copy(
+        resolved: &mut ResolvedPlan,
+        source: &Utf8Path,
+        target: &Utf8Path,
+        disposition: Disposition,
+    ) {
+        resolved.plan = Plan::new(vec![PlannedOperation::copy(
+            source.as_str(),
+            target.as_str(),
+            disposition,
+        )]);
+        resolved.operations = vec![ResolvedOperation {
+            mode: FileMode::Copy,
+            source: source.to_path_buf(),
+            targets: vec![target.to_path_buf()],
+            dispositions: vec![TargetDisposition {
+                aggregate: disposition,
+                leaves: Vec::new(),
+                replace_root: false,
+                mode_change: false,
+            }],
+            entry_index: 0,
+            module: 0,
+            ignore_rules: crate::ignore_rules::none(),
+        }];
+    }
+
+    #[test]
+    fn a_same_second_apply_after_a_post_apply_rollback_keeps_no_backup_of_an_absent_target() {
+        let mut scene = Scene::new();
+        let source = scene.resolved.state_dir.join("rc");
+        fs_err::write(&source, b"payload").expect("write the source");
+        let home = scene.resolved.state_dir.join("home");
+        fs_err::create_dir_all(&home).expect("mkdir home");
+        let target = home.join(".rc");
+        fs_err::write(&target, b"original").expect("seed the target");
+        plan_one_copy(&mut scene.resolved, &source, &target, Disposition::Update);
+        scene.resolved.hooks = vec![PlannedHook::new(
+            HookEntry {
+                event: HookEvent::PostApply,
+                command: "exit 1".to_owned(),
+                shell: None,
+                when: None,
+                must_succeed: true,
+            },
+            0,
+        )];
+        let first = execute(
+            &scene.resolved,
+            &ApplyRequest::default(),
+            LockPolicy::Blocking,
+        )
+        .expect("the first apply runs");
+        assert!(
+            matches!(first, ApplyResult::RolledBack { .. }),
+            "the failing post_apply hook rolls the first apply back, got {first:?}"
+        );
+
+        fs_err::remove_file(&target).expect("delete the target before the retry");
+        plan_one_copy(&mut scene.resolved, &source, &target, Disposition::Create);
+        scene.resolved.hooks = Vec::new();
+        execute(
+            &scene.resolved,
+            &ApplyRequest::default(),
+            LockPolicy::Blocking,
+        )
+        .expect("the retry in the same second commits");
+
+        crate::rollback::replay_entry(
+            0,
+            &[crate::rollback::RevertTarget {
+                target: target.as_str(),
+                disposition: Disposition::Create,
+            }],
+            &scene.resolved.backups_dir(),
+            TS,
+        )
+        .expect("roll the retry back");
+        assert!(
+            !crate::fsx::entry_present(&target),
+            "rolling back the retry must delete the target it created, not restore \
+             the rolled-back apply's backup"
+        );
+    }
+
+    #[test]
+    fn the_backup_pass_backs_up_nothing_under_a_backed_up_link() {
+        let mut scene = Scene::new();
+        let outside = scene.resolved.state_dir.join("elsewhere");
+        fs_err::create_dir_all(&outside).expect("mkdir the link destination");
+        let outside_z = outside.join("z.conf");
+        fs_err::write(&outside_z, b"OUTSIDE-Z").expect("write the outside file");
+        fs_err::hard_link(&outside_z, outside.join("z.hard")).expect("hard-link the outside file");
+        let home = scene.resolved.state_dir.join("home");
+        fs_err::create_dir_all(&home).expect("mkdir home");
+        let app = home.join("app");
+        make_symlink(&outside, &app);
+        let source = scene.resolved.state_dir.join("app-source");
+        fs_err::create_dir_all(&source).expect("mkdir the tree source");
+        plan_one_copy(&mut scene.resolved, &source, &app, Disposition::Update);
+        scene.resolved.plan = Plan::new(vec![
+            PlannedOperation::copy(source.as_str(), app.as_str(), Disposition::Update),
+            PlannedOperation::remove(app.join("z.conf").as_str()),
+        ]);
+
+        back_up_targets(&scene.resolved, &scene.resolved.backups_dir()).expect("back up");
+
+        let stashed = crate::journal::mirror_backup_path(&scene.resolved.backups_dir(), TS, &app);
+        assert!(
+            fs_err::symlink_metadata(&stashed).is_ok_and(|meta| meta.file_type().is_symlink()),
+            "the root link is backed up as a link"
+        );
+        let mut file = fs_err::OpenOptions::new()
+            .append(true)
+            .open(&outside_z)
+            .expect("open the outside file");
+        std::io::Write::write_all(&mut file, b"+").expect("append a marker");
+        drop(file);
+        assert_eq!(
+            fs_err::read(outside.join("z.hard")).expect("read the hard link"),
+            b"OUTSIDE-Z+",
+            "the backup pass must not replace a file behind the backed-up link"
+        );
     }
 }

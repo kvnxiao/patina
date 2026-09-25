@@ -12,17 +12,16 @@
 //!   defined here and the backup writer reuses it.
 //! - [`classify_target`] reads the target path and reports whether it currently
 //!   **exists** (as any kind of entry, including a symlink) or is **absent**.
-//!   Recovery pairs that with backup presence to choose between restoring
-//!   original bytes and deleting a fresh creation.
 //!
 //! The probe is deliberately coarse. Recovery only requires
 //! that completed operations be reversed to the pre-apply state using
 //! backups and inverse ops. It does not need to distinguish a
 //! half-written copy from a fully-written one, because the reversal is
-//! the same either way: restore the backup (overwrite) or delete the
-//! target (fresh creation). A finer pre-state-hash probe can be added
-//! later, once the plan records per-operation hashes. The `Probe` enum
-//! is `non_exhaustive` to allow that extension without a breaking change.
+//! the same either way: restore the backup, or, without one, delete a
+//! `Create` target and leave an `Update` or `Remove` target in place. A finer
+//! pre-state-hash probe can be added later, once the plan records
+//! per-operation hashes. The `Probe` enum is `non_exhaustive` to allow that
+//! extension without a breaking change.
 
 use super::PlannedOperation;
 use camino::Utf8Path;
@@ -57,7 +56,8 @@ pub(super) fn operation_target(op: &PlannedOperation) -> &str {
     match op {
         PlannedOperation::Symlink { target, .. }
         | PlannedOperation::Render { target, .. }
-        | PlannedOperation::Copy { target, .. } => target,
+        | PlannedOperation::Copy { target, .. }
+        | PlannedOperation::Remove { target } => target,
     }
 }
 
@@ -250,6 +250,10 @@ mod tests {
         assert_eq!(
             operation_target(&PlannedOperation::copy("s", "/t/cp", Disposition::Create)),
             "/t/cp"
+        );
+        assert_eq!(
+            operation_target(&PlannedOperation::remove("/t/rm")),
+            "/t/rm"
         );
     }
 }

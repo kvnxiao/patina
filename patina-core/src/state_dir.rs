@@ -16,9 +16,9 @@
 //! canonical absolute path. It is idempotent: a second call on the same
 //! host returns the same path and is a filesystem no-op.
 //!
-//! The lazily-created files `profile`, `default_repo`, and `lock` belong to
-//! their owning subsystems. The state-directory layer only creates the
-//! directory tree.
+//! The lazily-created files `profile`, `default_repo`, and `lock`, and the
+//! `recovered/` directory, which crash recovery writes, belong to their owning
+//! subsystems. The state-directory layer only creates the directory tree.
 //!
 //! The dotfiles repository is never written to by this module.
 //!

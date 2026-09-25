@@ -16,9 +16,9 @@
 //! advisory. It is written through to the kernel page cache but is
 //! deliberately **not** `fsync`-ed per operation, because crash recovery
 //! probes the real filesystem rather than trusting the cursor.
-//! After every operation settles the engine writes and
-//! `fsync`s a `<ts>.COMMIT` sentinel, and only then deletes the plan and
-//! progress files for that timestamp.
+//! After every operation settles the engine writes and `fsync`s the
+//! `<ts>.COMMIT` sentinel in a staged sibling, renames it into place, and only
+//! then deletes the plan and progress files for that timestamp.
 //!
 //! ## Durability ordering
 //!
@@ -27,11 +27,16 @@
 //! 2. fsync <ts>.plan          ┐ both complete before any mutation
 //! 3. fsync journal dir        ┘
 //! 4. (engine mutates; appends to <ts>.progress, never fsync'd)
-//! 5. write <ts>.COMMIT
-//! 6. fsync <ts>.COMMIT
-//! 7. fsync journal dir
-//! 8. delete <ts>.plan and <ts>.progress
+//! 5. write <ts>.COMMIT.partial.<pid>
+//! 6. fsync <ts>.COMMIT.partial.<pid>
+//! 7. rename it onto <ts>.COMMIT
+//! 8. fsync journal dir
+//! 9. delete <ts>.plan and <ts>.progress
 //! ```
+//!
+//! A `<ts>.COMMIT` therefore always contains a whole record: a process killed
+//! before the rename leaves only the staged sibling, the apply stays an orphan,
+//! and recovery removes the sibling.
 //!
 //! The [`Syncer`] trait abstracts the two durability syscalls, `fsync` on a
 //! file and `fsync` on a directory. The executor and the recovery suite can
@@ -79,8 +84,11 @@ pub use record::LastApply;
 pub use record::content_hash;
 pub use record::read_symlink_target;
 pub use record::timestamp_to_rfc3339;
+pub use recovery::RECOVERED_DIR;
 pub use recovery::ROLLED_BACK_SUFFIX;
+pub use recovery::RecoveredTarget;
 pub use recovery::RecoveryReport;
+pub use recovery::orphan_plans;
 pub use recovery::recover_orphans;
 pub use render::PlanRenderError;
 pub use render::load_plan_file;
@@ -220,10 +228,11 @@ impl Journal {
         self.progress.record(op_index)
     }
 
-    /// Write `<ts>.COMMIT` carrying the committed [`ApplyRecord`], `fsync`
-    /// it and the journal directory, then delete this run's plan and
-    /// progress files. After this returns the apply is durably committed
-    /// and recovery will skip its timestamp.
+    /// Write the committed [`ApplyRecord`] to a staged sibling of
+    /// `<ts>.COMMIT`, `fsync` it, rename it onto `<ts>.COMMIT`, and `fsync` the
+    /// journal directory, then delete this run's plan and progress files.
+    /// After this returns the apply is durably committed and recovery will
+    /// skip its timestamp.
     ///
     /// The sentinel body is the encoded `record`. Crash recovery keys on the
     /// sentinel's *existence* and never decodes the body, so the payload is
@@ -237,20 +246,37 @@ impl Journal {
     /// fails.
     pub fn commit(self, record: &ApplyRecord, syncer: &impl Syncer) -> Result<(), JournalError> {
         let commit_path = self.dir.join(format!("{}{COMMIT_SUFFIX}", self.timestamp));
-        fs_err::write(&commit_path, record.encode()?)?;
-        syncer.sync_file(&commit_path)?;
+        let staged = crate::fsx::partial_sibling(&commit_path);
+        fs_err::write(&staged, record.encode()?)?;
+        syncer.sync_file(&staged)?;
+        crate::apply::with_staged_rename_retry(|| fs_err::rename(&staged, &commit_path))?;
         syncer.sync_dir(&self.dir)?;
 
         // The plan and progress files are removed only after COMMIT is
         // durable. A crash between the two leaves a recoverable (plan,
         // no-commit) pair, rather than an orphan commit.
-        let plan_path = self.dir.join(format!("{}{PLAN_SUFFIX}", self.timestamp));
-        let progress_path = self
-            .dir
-            .join(format!("{}{PROGRESS_SUFFIX}", self.timestamp));
-        remove_if_present(&plan_path)?;
-        remove_if_present(&progress_path)?;
-        Ok(())
+        remove_plan_and_progress(&self.dir, &self.timestamp)
+    }
+
+    /// Delete this run's backup cycle under `backups_dir`, then its plan and
+    /// progress files, leaving the journal as recovery leaves it.
+    ///
+    /// Call this after reverting every operation the run performed. The cycle
+    /// is kept when a committed apply shares this run's timestamp, because
+    /// that apply's rollback reads it. A process killed before the plan is
+    /// deleted leaves an orphan, which recovery reverts again: restoring a
+    /// reverted target is idempotent, a reverted `Create` target is already
+    /// absent, and any other target without a backup is left in place.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`JournalError::Filesystem`] if a delete fails.
+    pub fn discard(self, backups_dir: &Utf8Path) -> Result<(), JournalError> {
+        let committed = self.dir.join(format!("{}{COMMIT_SUFFIX}", self.timestamp));
+        if !crate::fsx::entry_present(&committed) {
+            crate::fsx::remove_entry(&backups_dir.join(&self.timestamp))?;
+        }
+        remove_plan_and_progress(&self.dir, &self.timestamp)
     }
 
     /// The journal directory this handle writes into.
@@ -316,10 +342,10 @@ fn unrolled_commit_timestamps(dir: &Utf8Path) -> Result<Vec<String>, JournalErro
 /// present but **unreadable** is skipped with a `warn!`, and the scan falls
 /// back to the next-older commit. Unreadable means a torn or empty body
 /// ([`JournalError::Truncated`]), or a corrupt same-version body
-/// ([`JournalError::Decode`]). This keeps `patina status` and `patina
-/// rollback` working when a `kill -9` between creating a `<ts>.COMMIT` file
-/// and flushing its bytes leaves a torn sentinel, rather than failing the
-/// whole command on one bad record.
+/// ([`JournalError::Decode`]). [`Journal::commit`] never leaves such a
+/// sentinel, so an unreadable sentinel was damaged outside the staged write.
+/// Skipping it keeps `patina status` and `patina rollback` working rather than
+/// failing the whole command on one bad record.
 ///
 /// A sentinel from a **newer** format major ([`JournalError::VersionMismatch`])
 /// is deliberately **not** skipped: it propagates. The version envelope exists
@@ -417,16 +443,20 @@ pub fn prune_cycles(
         remove_if_present(&journal_dir.join(format!("{ts}{ROLLED_BACK_SUFFIX}")))?;
         // The plan and progress files are normally deleted at commit;
         // remove them defensively so a pruned cycle leaves nothing behind.
-        remove_if_present(&journal_dir.join(format!("{ts}{PLAN_SUFFIX}")))?;
-        remove_if_present(&journal_dir.join(format!("{ts}{PROGRESS_SUFFIX}")))?;
+        remove_plan_and_progress(journal_dir, ts)?;
     }
     Ok(())
 }
 
-/// Remove a file, treating an already-absent file as success. The commit path
-/// uses it, because a prior partial run may have removed one of the pair
-/// already. The `recovery` sibling uses it when cleaning up orphan plan and
-/// progress files.
+pub(super) fn remove_plan_and_progress(
+    dir: &Utf8Path,
+    timestamp: &str,
+) -> Result<(), JournalError> {
+    remove_if_present(&dir.join(format!("{timestamp}{PLAN_SUFFIX}")))?;
+    remove_if_present(&dir.join(format!("{timestamp}{PROGRESS_SUFFIX}")))
+}
+
+/// Remove a file, treating an already-absent file as success.
 pub(super) fn remove_if_present(path: &Utf8Path) -> Result<(), JournalError> {
     match fs_err::remove_file(path) {
         Ok(()) => Ok(()),
@@ -462,6 +492,30 @@ mod tests {
             dir.join(format!("NEW{COMMIT_SUFFIX}")).exists(),
             "a retained cycle's sentinel must survive"
         );
+    }
+
+    #[test]
+    fn discard_keeps_a_backup_cycle_a_committed_apply_shares() {
+        let temp = TempDir::new().expect("tempdir");
+        let root = Utf8Path::from_path(temp.path()).expect("utf8 temp path");
+        let journal_dir = root.join("journal");
+        let backups_dir = root.join("backups");
+        let ts = "20260528T120000Z";
+        let shared = backups_dir.join(ts).join("home").join(".rc");
+        fs_err::create_dir_all(shared.parent().expect("backup parent")).expect("mkdir cycle");
+        fs_err::write(&shared, b"committed-backup").expect("seed the committed backup");
+        let journal =
+            Journal::flush_plan_and_fsync(&journal_dir, ts, &Plan::new(vec![]), &OsSyncer)
+                .expect("flush the plan");
+        write_commit(&journal_dir, ts);
+
+        journal.discard(&backups_dir).expect("discard");
+
+        assert_eq!(
+            fs_err::read(&shared).expect("read the committed backup"),
+            b"committed-backup"
+        );
+        assert!(!journal_dir.join(format!("{ts}{PLAN_SUFFIX}")).exists());
     }
 
     #[test]
@@ -554,10 +608,6 @@ mod tests {
 
     #[test]
     fn read_latest_commit_skips_a_torn_newest_sentinel_and_falls_back() {
-        // Regression: a `kill -9` between creating the `<ts>.COMMIT` file and
-        // flushing its bytes leaves a 0-byte sentinel. Reading the latest
-        // commit must skip it and report the previous, decodable apply,
-        // instead of failing `status` / `rollback` with a Truncated error.
         let temp = TempDir::new().expect("tempdir");
         let dir = Utf8Path::from_path(temp.path()).expect("utf8 temp path");
         write_commit(dir, "20260101T000000Z");

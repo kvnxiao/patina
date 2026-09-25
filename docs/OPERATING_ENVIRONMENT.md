@@ -23,6 +23,7 @@ Layout under the state directory:
 patina/
 ├── journal/             postcard-encoded plan + COMMIT/ROLLED_BACK sentinels
 ├── backups/<ts>/        last-applied byte content, last 10 cycles retained
+├── recovered/<ts>.<n>/  entries recovery replaced, last 10 recoveries retained
 ├── remotes/             bare remote repositories and immutable checkouts
 ├── default_repo         persisted dotfiles repo pointer (UTF-8 text)
 ├── profile              persisted profile name (UTF-8 text)
@@ -34,6 +35,18 @@ a drive prefix becomes its drive letter: `C:\Users\u\.gitconfig` maps to
 `C/Users/u/.gitconfig`. A UNC prefix becomes
 `__unc__/<host>/<share>`, which preserves both UNC boundaries in the backup
 tree.
+
+Before recovery overwrites or removes an entry at a target of an interrupted
+apply, it copies that entry to `recovered/<ts>.<n>/<index>/<name>`. `<ts>` is
+the interrupted apply's timestamp, `<n>` is one past the highest number already
+used for that timestamp (starting at 1), `<index>` is the operation's position
+in the apply's plan, and `<name>` is the target's file name. A recovery retried
+after a failure reuses the earlier copy of an entry that has not changed since
+that copy, and reports both the earlier copy and a new one for an entry that
+has changed. The directory is separate from `backups/`, so no apply's backup
+cycle can overwrite a kept copy. Each successful apply prunes all but the ten
+newest `recovered/` directories, ordered by timestamp and then by `<n>` as a
+number, as it does for `backups/`.
 
 ---
 

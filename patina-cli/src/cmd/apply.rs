@@ -5,6 +5,11 @@
 //! journaling, the executors, the hooks, and rollback live in `patina_core`;
 //! this module is presentation and control flow.
 //!
+//! An invocation that can write (`--yes`, or the interactive prompt) first
+//! reverts any interrupted apply, then plans. A preview writes nothing, so it
+//! does not recover; it warns instead that its diff describes the files as the
+//! interrupted apply left them.
+//!
 //! ## Exit codes
 //!
 //! | Outcome                                   | Code |
@@ -26,21 +31,26 @@ use patina_core::ApplyRequest;
 use patina_core::ApplyResult;
 #[cfg(windows)]
 use patina_core::DEV_MODE_REGISTRY_PATH;
+use patina_core::EngineError;
 use patina_core::ForceDeploy;
 use patina_core::GateDecision;
 use patina_core::HostDevModeProbe;
 use patina_core::LockPolicy;
-use patina_core::Orphan;
+use patina_core::PendingApply;
+use patina_core::Reap;
+use patina_core::RecoveryReport;
 use patina_core::ResolvedPlan;
 use patina_core::chain_message;
 use patina_core::current_timestamp;
 use patina_core::decide_symlink_gate;
 use patina_core::execute_plan;
+use patina_core::pending_apply;
 use patina_core::plan_apply;
 use patina_core::plan_is_full_noop;
-use patina_core::plan_orphans;
+use patina_core::recover_interrupted;
 use patina_core::remote::lockfile::Lockfile;
 use patina_core::remote::lockfile::lockfile_path;
+use patina_core::resolve_state_dir;
 
 /// Whether stdin is attached to an interactive terminal. Injected so the TTY
 /// decision is unit-testable without a real tty.
@@ -117,9 +127,19 @@ pub(crate) fn run(
             );
         }
     }
+    let can_write = may_execute(args, tty);
+    if can_write {
+        recover_before_planning(reporter)?;
+    }
     let timestamp = current_timestamp();
     let resolved = plan_apply(&request, timestamp).context("failed to compute the apply plan")?;
     prune_stale_pins(&resolved, mutating, reporter)?;
+    let pending = if can_write {
+        PendingApply::None
+    } else {
+        pending_apply(&resolved.state_dir).context("failed to check for a pending apply")?
+    };
+    warn_pending_apply(pending, reporter);
 
     if args.json {
         return run_json(&resolved, &request, args.yes, reporter);
@@ -131,12 +151,14 @@ pub(crate) fn run(
         plan_is_full_noop(&resolved).context("failed to determine apply plan state")?;
 
     if !is_full_noop {
-        // Orphans the reap phase would delete are not plan operations, so they
-        // are passed to the renderer explicitly. The engine re-derives the
-        // same set under the held lock.
-        let orphans = plan_orphans(&resolved).context("failed to determine the reap set")?;
-        let rendered = render_diff(&resolved, &orphans)?;
+        let rendered = render_diff(&resolved)?;
         reporter.out_block(&rendered);
+    }
+    if pending != PendingApply::None {
+        if is_full_noop {
+            report_applied(true, reporter);
+        }
+        return Ok(ExitCode::Success.code());
     }
 
     let consent = Consent::from_yes_flag(args.yes);
@@ -154,6 +176,58 @@ pub(crate) fn run(
         .context("apply execution failed")?;
     report_result(&result, reporter);
     Ok(exit_code_for(&result))
+}
+
+fn may_execute(args: &ApplyArgs, tty: Tty) -> bool {
+    args.yes || (!args.json && tty == Tty::Interactive)
+}
+
+fn recover_before_planning(reporter: &mut impl Reporter) -> Result<()> {
+    let state = resolve_state_dir().map_err(EngineError::from)?;
+    let report = recover_interrupted(&state).context("failed to recover an interrupted apply")?;
+    report_recovery(&report, reporter);
+    Ok(())
+}
+
+/// Warn that the interrupted applies in `report` were reverted, when there
+/// were any, and name each copy recovery kept of an entry it replaced.
+///
+/// The messages contain no timestamp or pid. A kept copy's path contains the
+/// interrupted apply's timestamp, and only the run that recovers that apply
+/// prints it.
+pub(crate) fn report_recovery(report: &RecoveryReport, reporter: &mut impl Reporter) {
+    let message = match report.recovered_timestamps().len() {
+        0 => return,
+        1 => "reverted an interrupted apply to the state before it started".to_owned(),
+        count => format!("reverted {count} interrupted applies to the state before they started"),
+    };
+    reporter.warn(&message);
+    for changed in report.changed_targets() {
+        for kept in changed.kept() {
+            reporter.warn(&format!(
+                "kept a copy of {} from before the recovery at {kept}",
+                changed.target()
+            ));
+        }
+    }
+}
+
+/// Warn about an apply that has not committed, for a command that reports on
+/// the files without recovering it.
+pub(crate) fn warn_pending_apply(pending: PendingApply, reporter: &mut impl Reporter) {
+    let message = match pending {
+        PendingApply::None => return,
+        PendingApply::Interrupted => {
+            "an interrupted apply is pending: this output describes the files as it left them; \
+             an interactive `patina apply` or `patina apply --yes` reverts it first"
+        }
+        PendingApply::RunningOrInterrupted => {
+            "another apply is running or was interrupted: this output can describe files it has \
+             not finished changing; if none is running, an interactive `patina apply` or \
+             `patina apply --yes` reverts it first"
+        }
+    };
+    reporter.warn(message);
 }
 
 /// Whether this invocation may rewrite the working-tree `patina.lock`.
@@ -398,13 +472,8 @@ fn run_json(
     yes: bool,
     reporter: &mut impl Reporter,
 ) -> Result<i32> {
-    // The reap set is computed before any mutation, so the envelope reports
-    // what this run would remove. The engine re-derives the same set under the
-    // lock.
-    let reaped = plan_orphans(resolved).context("failed to determine the reap set")?;
-
     if !yes {
-        let document = json_envelope(resolved, &reaped, "previewed");
+        let document = json_envelope(resolved, "previewed");
         reporter.json(&document);
         return Ok(ExitCode::Success.code());
     }
@@ -420,7 +489,7 @@ fn run_json(
         ApplyResult::RolledBack { .. } => "rolled_back",
         ApplyResult::Aborted { .. } => "aborted",
     };
-    let document = json_envelope(resolved, &reaped, result_field);
+    let document = json_envelope(resolved, result_field);
     reporter.json(&document);
     Ok(exit_code_for(&result))
 }
@@ -435,16 +504,16 @@ fn run_json(
 /// pure function of the plan-time classification, so it inherits the
 /// deterministic-stdout contract.
 ///
-/// `reaped` lists what this run would remove: orphans of a prior apply the
-/// current plan no longer manages. They are not plan operations, so they are
-/// reported in their own array rather than as `plan` rows; the human diff
-/// renders the same set as `remove` blocks. Each row is an object carrying the
-/// `target` and the `reason` it is no longer managed
-/// ([`OrphanReason::label`](patina_core::OrphanReason::label)), so a consumer
-/// can tell a deletion caused by a new `ignore` pattern from one caused by a
-/// dropped entry. `plan_orphans` sorted them by target, so the array is a
-/// stable function of the reap set.
-fn json_envelope(resolved: &ResolvedPlan, reaped: &[Orphan], result: &str) -> String {
+/// `reaped` lists what this run removes: the plan's
+/// [`reap`](patina_core::ResolvedPlan::reap) set, targets of a prior apply the
+/// current plan no longer manages. They are reported in their own array rather
+/// than as `plan` rows; the human diff renders the same set as `remove` blocks.
+/// Each row is an object with the `target` and the `reason` it is no longer
+/// managed ([`OrphanReason::label`](patina_core::OrphanReason::label)), so a
+/// consumer can tell a deletion caused by a new `ignore` pattern from one
+/// caused by a dropped entry. The plan sorts the set by target, so the array is
+/// a stable function of the reap set.
+fn json_envelope(resolved: &ResolvedPlan, result: &str) -> String {
     let plan: Vec<serde_json::Value> = resolved
         .operations
         .iter()
@@ -455,7 +524,8 @@ fn json_envelope(resolved: &ResolvedPlan, reaped: &[Orphan], result: &str) -> St
                 .flat_map(move |(target, disposition)| plan_rows(op, target, disposition))
         })
         .collect();
-    let reaped: Vec<serde_json::Value> = reaped
+    let reaped: Vec<serde_json::Value> = resolved
+        .reap
         .iter()
         .map(|orphan| {
             serde_json::json!({
@@ -517,8 +587,8 @@ fn mode_label(mode: patina_core::FileMode) -> &'static str {
 ///
 /// Patina never pipes to an external pager. The embedded renderer is the only
 /// source of the rendered string, so stdout stays deterministic.
-fn render_diff(resolved: &ResolvedPlan, orphans: &[Orphan]) -> Result<String> {
-    diff::render(resolved, orphans)
+fn render_diff(resolved: &ResolvedPlan) -> Result<String> {
+    diff::render(resolved)
 }
 
 /// Report a non-JSON apply result through the reporter.
@@ -531,13 +601,7 @@ fn report_result(result: &ApplyResult, reporter: &mut impl Reporter) {
             for warning in warnings {
                 reporter.warn(warning);
             }
-            // Both lines are deterministic: no timestamp, PID, or state path.
-            let outcome = if *up_to_date {
-                "Already up to date. No changes to apply."
-            } else {
-                "Applied."
-            };
-            reporter.line(&paint(reporter.styles().success, outcome));
+            report_applied(*up_to_date, reporter);
         }
         ApplyResult::RolledBack { failed_hook } => {
             reporter.warn(&format!(
@@ -550,6 +614,16 @@ fn report_result(result: &ApplyResult, reporter: &mut impl Reporter) {
             ));
         }
     }
+}
+
+fn report_applied(up_to_date: bool, reporter: &mut impl Reporter) {
+    // Both lines are deterministic: no timestamp, PID, or state path.
+    let outcome = if up_to_date {
+        "Already up to date. No changes to apply."
+    } else {
+        "Applied."
+    };
+    reporter.line(&paint(reporter.styles().success, outcome));
 }
 
 fn exit_code_for(result: &ApplyResult) -> i32 {
@@ -571,6 +645,7 @@ fn build_request(args: &ApplyArgs) -> Result<ApplyRequest> {
     Ok(ApplyRequest {
         force_deploy,
         cli_overrides,
+        reap: Reap::Orphans,
     })
 }
 

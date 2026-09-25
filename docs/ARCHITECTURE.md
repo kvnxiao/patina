@@ -96,13 +96,17 @@ flowchart LR
 
 - The **version envelope** lets recovery refuse an unknown format.
 - The **encoded plan** is the full set of operations, written and
-  fsynced upfront in a single durable write.
+  fsynced upfront in a single durable write: one symlink, copy, or render
+  operation per materialized target, then one `remove` operation per
+  target the apply reaps.
 - The **progress cursor** records per-operation completion as the apply
   proceeds. The cursor is written without a per-operation `fsync`: the
   upfront plan fsync plus the filesystem-probing recovery makes per-op
   durability unnecessary.
 - The **terminal sentinel** records whether the cycle committed or
-  rolled back.
+  rolled back. The commit sentinel is written and fsynced in a
+  `.partial.<pid>` sibling and renamed into place, so a present sentinel
+  always contains a whole record.
 
 `patina debug journal <path>` decodes a journal back into
 human-readable form for post-mortem inspection.
@@ -162,37 +166,51 @@ sequenceDiagram
     participant D as Diff
     participant M as Mutate
     U->>P: patina apply
+    P->>P: recover an interrupted apply (runs that can write)
     P->>P: resolve config and build plan
-    P->>D: pass operations and managed targets
+    P->>D: pass operations and the reap set
     D->>U: display diff
     U-->>D: confirm (TTY) / plan-only (non-TTY)
     D->>M: confirmed plan
-    M->>M: lock, recover, and check for work
+    M->>M: lock, refuse an orphan plan, and check for work
     M->>M: pre_apply hooks
-    M->>M: journal, target writes, and cursor
-    M->>M: post_apply hooks and COMMIT
+    M->>M: journal, then back up every target
+    M->>M: target writes and cursor
+    M->>M: post_apply hooks, removals, and COMMIT
     M->>U: result
 ```
 
-1. **Plan.** Resolve the repository, parse `patina.toml`, and resolve the
-   variable precedence chain and profile. Render templates, canonicalize
-   paths, and produce an ordered list of operations across the
-   `[[file]]` / `[[directory]]` entry kinds and their materialization
-   modes.
+1. **Plan.** A run that can write (`--yes`, or the prompt on an interactive
+   TTY) first reverts any interrupted apply under the exclusive lock (see
+   [Recovery](#recovery)). Planning then resolves the repository, parses
+   `patina.toml`, and resolves the variable precedence chain and profile. It
+   renders templates, canonicalizes paths, and produces an ordered list of
+   operations across the `[[file]]` / `[[directory]]` entry kinds and their
+   materialization modes. The list ends with one `Remove` operation per target
+   the last commit recorded that the current manifests no longer manage, so
+   the reap is part of the durable plan.
 2. **Diff.** Compare the planned end-state against the live filesystem
-   and present the diff. An interactive TTY prompts for confirmation; a
-   non-interactive shell falls through to plan-only and modifies no repository
-   file or target. Planning may already have filled the remote cache.
+   and present the diff, including a `remove` block for each planned removal.
+   An interactive TTY prompts for confirmation; a non-interactive shell falls
+   through to plan-only and modifies no repository file or target. Planning
+   may already have filled the remote cache.
    Re-applying against unchanged source is a no-op with byte-identical
    stdout.
-3. **Mutate.** After acquiring the advisory lock and recovering an interrupted
-   apply, check for work. A plan with only `Unchanged` targets, no orphans, and
-   an earlier commit returns without running hooks or writing files. Any other
-   plan resolves hook shells and runs `pre_apply` hooks. If those hooks
-   succeed, it flushes the journal, backs up and materializes its targets, and
-   runs `post_apply` hooks. A successful run writes the terminal sentinel; a
-   required `post_apply` hook failure rolls back the target operations. The CLI
-   maps the result to the documented exit code.
+3. **Mutate.** After acquiring the advisory lock, `execute` checks the journal
+   and, when it holds an orphan plan, refuses with `InterruptedApplyPending`
+   (exit 1) before writing anything. It then checks for work. A plan with only
+   `Unchanged` targets, no `Remove`, and an earlier commit returns without
+   running hooks or writing files. Any other plan resolves hook shells and runs
+   `pre_apply` hooks. If those hooks succeed, `execute` flushes the journal and
+   then backs up every target it will overwrite or remove in one pass,
+   outermost first, skipping a target inside a target the pass backed up, so
+   no backup is written inside another. Only then does `execute` materialize
+   its targets and run `post_apply` hooks, so every backup is a copy of the
+   pre-apply state. When those hooks succeed, it removes each `Remove`
+   target, writes the terminal sentinel, and prunes old backups. A required
+   `post_apply` hook failure instead rolls back the target operations, deletes
+   the run's backup cycle unless a committed apply shares its timestamp, and
+   then deletes the plan. The CLI maps the result to the documented exit code.
 
 ### Target kind and mode edits
 
@@ -233,9 +251,13 @@ prefixes from the walked leaves, so an entry that deliberately places a
 the tree's `ignore` excludes that subtree. Ancestors above the declared
 root stay out of scope: a symlinked `~/.config` is the user's
 filesystem layout, and single-target writes resolve through it. The
-gate covers planning and leaf writes only; the orphan reap,
+gate covers planning and leaf writes only. A tree root replaced by a link
+does not redirect the revert paths: planning does not reap a recorded target
+under a current tree root that is not a real directory, the backup pass skips
+every target beneath a target it backed up, and recovery reverts an operation
+beneath a stashed link as that link. Otherwise the orphan reap,
 `patina rollback`, and crash recovery revert recorded target paths
-without it, so a link planted after an apply can still redirect those
+without the gate, so a link planted after an apply can still redirect those
 single-path operations (see the Known unknowns note in AGENTS.md).
 
 Backup and restore preserve a symbolic link's Windows flavour from the
@@ -268,7 +290,7 @@ each leaf into managed or ignored, because attributing a reap to a pattern
 means seeing the leaves that pattern dropped. Each leaf goes through
 `ignore_rules::prunes`, which replays the walk's decision for one relative
 path; that function's doc comment says why neither `Gitignore` method
-substitutes for it. The partition lets `plan_orphans` return `ignored`
+substitutes for it. The partition lets the plan's reap set report `ignored`
 rather than an unexplained removal. It costs a read inside every ignored
 directory, in `status` and the reap; the executor path skips them.
 
@@ -284,10 +306,10 @@ the on-disk format is unchanged.
 ### Managed targets within a plan
 
 Planning derives operations and managed targets in one pass. Both results use
-the same module variables, profile, and command-line overrides. The resolved
-plan supplies its managed-target set to the orphan preview, orphan reap, and
-full-no-op check; none of those paths reevaluates `when` without the plan's
-overrides.
+the same module variables, profile, and command-line overrides. Planning
+computes the reap set from that managed-target set and records it in the plan,
+so the orphan preview, the reap, and the full-no-op check read one set; none of
+those paths reevaluates `when` without the plan's overrides.
 
 `status` and `doctor` have no resolved plan, so
 `current_managed_targets` rebuilds the set from the manifests. The walk
@@ -310,21 +332,59 @@ intermediate state. Full power-loss durability (atomic
 temp+rename target writes plus `fsync` of backups and parent
 directories) is a post-1.0 hardening item.
 
-On the next run, before computing a fresh plan, recovery reads each
-journal envelope and converges deterministically:
+`patina apply` with `--yes` or at an interactive prompt, and `patina rollback`
+with `--yes` or once confirmed, recover under the exclusive lock before they
+read the last commit or plan. `patina remove` and `patina promote` recover
+under the lock they hold after the user consents and before their first write;
+when they refuse or are declined before that point, they warn about a pending
+apply as a preview does and write nothing. After its recovery has written,
+`patina promote` refuses a target that the recovery changed. Recovery reads
+each journal envelope and converges deterministically:
 
 - A plan with no terminal sentinel is an orphan: an apply killed after
   the journal became durable but before it committed. Recovery reverses
   it to the pre-apply state, deciding per operation from the
   recorded disposition and whether a backup exists. An `Unchanged`
-  target is left alone. A target with a backup is restored from it. A
-  target with no backup was a fresh creation, so it is deleted. The
-  decision reads the filesystem and the backup directory rather than
-  the progress cursor. The engine then computes and applies a fresh plan.
+  target is left alone. A target whose live entry matches its backup (same
+  kind, bytes, link target, or tree) was never written and is left alone; a
+  first recovery pass does not report it. Any other target with a backup is
+  restored from it. Without a backup, a `Create` target is deleted, and an
+  `Update` or `Remove` target is left in place: the backup pass precedes every
+  write, so a target with no entry at its mirror path was never written, or
+  lies inside a backed-up directory whose restore covers it. An operation
+  whose mirror path passes through a link stashed in the cycle reverts that
+  ancestor link instead, so recovery never reads or writes through the stashed
+  link or the live one. The decision reads the plan and the backup directory
+  rather than the progress cursor. Before it restores over or deletes a live
+  entry, recovery copies that entry to
+  `<state>/recovered/<ts>.<n>/<op index>/<file name>` and reports the copy.
+  The per-operation index separates the copies of different operations. A
+  retry of a recovery that failed partway reports the copy an earlier pass
+  made for the same operation when the live entry still matches that copy or
+  the backup. Otherwise the retry reports any earlier copy and then a new one,
+  which it copies into `<n>` one past the highest existing number, so no pass
+  overwrites an earlier copy. The command then works from the recovered
+  filesystem.
+- A backup is cloned into a `<mirror path>.partial.<pid>` sibling and renamed
+  onto its mirror path, a directory as one unit, so an entry at the mirror
+  path is always a complete backup. Recovery and rollback treat a staged
+  sibling as no backup and remove it. Retention prunes whole backup cycles,
+  including any staged sibling inside a pruned cycle.
+- A preview (`patina apply` in a non-interactive shell without `--yes`, or
+  with `--json` and no `--yes`) and `patina status` do not recover. A plan
+  without a sentinel is an orphan only when read under the lock, so each
+  re-reads the journal under the shared lock. Under the lock, they warn on
+  stderr that an interrupted apply is pending and describe the files as it
+  left them; when the shared lock times out, they warn that an apply is running
+  or was interrupted. A preview does not call `execute`. `execute` refuses with
+  `InterruptedApplyPending` when it finds an orphan plan under its lock; in the
+  CLI that happens only when another apply was killed between this run's
+  recovery and its execution.
 - Backups taken before an overwrite are retained for the last ten apply
   cycles; older cycles are pruned at the end of each successful apply,
-  right after its COMMIT. Backups live in the per-machine state
-  directory, outside the repository.
+  right after its COMMIT. The same step keeps the ten newest `recovered/`
+  directories. Both live in the per-machine state directory, outside the
+  repository.
 
 `patina rollback` reverses the last successful apply. It reads the
 journal and restores the recorded pre-apply bytes. Afterwards the

@@ -8,6 +8,7 @@ use camino::Utf8PathBuf;
 use common::Fixture;
 use common::Origin;
 use common::code;
+use common::wait_for_next_second;
 
 const EPOCH: i64 = 1_700_000_000;
 
@@ -22,18 +23,6 @@ fn write_lock(f: &Fixture, name: &str, origin: &Origin, rev: &str) {
 
 fn declare(f: &Fixture, name: &str, origin: &Origin) {
     f.declare_remote(name, &origin.url(), Some("main"));
-}
-
-fn wait_for_next_second() {
-    let now = || {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |elapsed| elapsed.as_secs())
-    };
-    let start = now();
-    while now() == start {
-        std::thread::sleep(std::time::Duration::from_millis(20));
-    }
 }
 
 fn checkout(f: &Fixture, name: &str, rev: &str) -> Utf8PathBuf {

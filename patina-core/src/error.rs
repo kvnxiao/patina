@@ -132,6 +132,18 @@ pub enum EngineError {
     )]
     DevModeRequired,
 
+    /// The journal holds an orphan plan: an apply was interrupted and has not
+    /// been recovered. [`execute_plan`](crate::execute_plan) refuses before it
+    /// writes anything, because the plan it was given describes the
+    /// filesystem the interrupted apply left, not the pre-apply state.
+    /// [`recover_interrupted`](crate::recover_interrupted) reverts the
+    /// interrupted apply.
+    #[error(
+        "an interrupted apply has not been recovered; re-run the command to \
+         recover it before applying"
+    )]
+    InterruptedApplyPending,
+
     /// A managed entry's declared kind does not match the kind of its
     /// source on disk: a `[[file]]` entry whose source is a directory, or a
     /// `[[directory]]` entry whose source is a file. Raised at plan time,

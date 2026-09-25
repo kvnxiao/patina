@@ -8,10 +8,12 @@
 //!
 //! `status` does not write, and exits 0 on any successful read. A shared-lock
 //! timeout is printed as a stderr warning (the read-only escape hatch) and does
-//! not change the exit code.
+//! not change the exit code. A pending interrupted apply is reported the same
+//! way; `status` does not recover it.
 
 use crate::cli::StatusArgs;
 use crate::cmd::apply::parse_overrides;
+use crate::cmd::apply::warn_pending_apply;
 use crate::exit_code::ExitCode;
 use crate::output::reporter::Reporter;
 use crate::output::style::Styles;
@@ -41,6 +43,7 @@ pub(crate) fn run(args: &StatusArgs, reporter: &mut impl Reporter) -> Result<i32
     for warning in &report.warnings {
         reporter.warn(warning);
     }
+    warn_pending_apply(report.pending_apply, reporter);
 
     if args.json {
         reporter.json(&json_envelope(&report));

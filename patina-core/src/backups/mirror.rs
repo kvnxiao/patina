@@ -26,12 +26,19 @@ use camino::Utf8Path;
 /// flattened to its destination's bytes, and a directory is captured
 /// recursively.
 ///
+/// The clone is written into a `<mirror path>.partial.<pid>` sibling. Any
+/// entry already at the mirror path is then removed, and the sibling is renamed
+/// onto the mirror path, a directory as one unit. An entry at the mirror path
+/// is therefore always a complete backup, and a process killed mid-copy leaves
+/// only the staged sibling, which recovery and rollback remove.
+///
 /// Write only under `backups_dir`; never touch the dotfiles repository.
 ///
 /// # Errors
 ///
 /// Returns [`BackupError::Filesystem`] if the backup parent directory
-/// cannot be created or the clone fails.
+/// cannot be created, or the clone, the removal of a prior backup, or the
+/// rename fails.
 ///
 /// # Examples
 ///
@@ -61,9 +68,10 @@ pub fn backup_before_overwrite(
     }
 
     let backup = mirror_backup_path(backups_dir, timestamp, target);
-    // `clone_entry` clears any stale backup, creates the parent chain, and
-    // preserves the target's kind (file / symlink / directory).
-    crate::fsx::clone_entry(target, &backup)?;
+    let staged = crate::fsx::partial_sibling(&backup);
+    crate::fsx::clone_entry(target, &staged)?;
+    crate::fsx::remove_entry(&backup)?;
+    crate::apply::with_staged_rename_retry(|| fs_err::rename(&staged, &backup))?;
     Ok(true)
 }
 
@@ -175,6 +183,81 @@ mod tests {
             fs_err::read_link(&backup).expect("read backup link"),
             std::path::Path::new("/elsewhere/zshrc")
         );
+    }
+
+    #[test]
+    fn a_backup_replaces_a_stale_entry_and_leaves_no_staged_sibling() {
+        let f = fixture();
+        let target = f.root.join("home").join("u").join(".zshrc");
+        fs_err::create_dir_all(target.parent().expect("target parent")).expect("mkdir target dir");
+        fs_err::write(&target, b"original").expect("write original");
+        let backup = mirror_backup_path(&f.backups, "TS", &target);
+        fs_err::create_dir_all(backup.join("stale")).expect("seed a stale directory backup");
+
+        backup_before_overwrite(&f.backups, "TS", &target).expect("backup over a stale entry");
+
+        assert_eq!(
+            fs_err::read(&backup).expect("read backup"),
+            b"original",
+            "the stale entry must be replaced by the target's bytes"
+        );
+        let siblings: Vec<String> = fs_err::read_dir(backup.parent().expect("backup parent"))
+            .expect("read backup parent")
+            .map(|entry| {
+                entry
+                    .expect("read backup parent entry")
+                    .file_name()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect();
+        assert_eq!(
+            siblings,
+            vec![".zshrc".to_owned()],
+            "only the backup itself may remain beside the mirror path"
+        );
+    }
+
+    #[test]
+    fn a_directory_backup_that_fails_mid_copy_leaves_the_mirror_path_absent() {
+        let f = fixture();
+        let target = f.root.join("home").join("u").join(".config");
+        fs_err::create_dir_all(&target).expect("mkdir target tree");
+        fs_err::write(target.join("a.conf"), b"a").expect("write a readable leaf");
+        let unreadable = target.join("z.conf");
+        fs_err::write(&unreadable, b"z").expect("write the leaf to lock");
+
+        let result = with_reads_denied(&unreadable, || {
+            backup_before_overwrite(&f.backups, "TS", &target)
+        });
+
+        assert!(
+            result.is_err(),
+            "an unreadable leaf must fail the backup, got {result:?}"
+        );
+        assert!(
+            !crate::fsx::entry_present(&mirror_backup_path(&f.backups, "TS", &target)),
+            "a backup that failed mid-copy must leave nothing at the mirror path"
+        );
+    }
+
+    #[cfg(windows)]
+    fn with_reads_denied<T>(path: &Utf8Path, op: impl FnOnce() -> T) -> T {
+        use std::os::windows::fs::OpenOptionsExt as _;
+        let _unshared = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(path)
+            .expect("open the leaf without sharing");
+        op()
+    }
+
+    #[cfg(unix)]
+    fn with_reads_denied<T>(path: &Utf8Path, op: impl FnOnce() -> T) -> T {
+        use std::os::unix::fs::PermissionsExt as _;
+        fs_err::set_permissions(path, std::fs::Permissions::from_mode(0o000))
+            .expect("remove every permission from the leaf");
+        op()
     }
 
     #[test]

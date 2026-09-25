@@ -1,32 +1,66 @@
 //! Crash recovery: converge backward to the pre-apply state via a
 //! filesystem probe.
 //!
-//! On every apply startup, before computing a fresh plan, the engine
-//! calls [`recover_orphans`]. It scans the journal directory for *orphan*
-//! plans: a `<ts>.plan` with neither a `<ts>.COMMIT` (the apply
-//! committed) nor a `<ts>.ROLLED_BACK` (a prior rollback closed it
-//! out) sentinel. An orphan indicates a `kill -9` mid-apply: the plan
-//! was made durable but the run never reached commit.
+//! [`recover_orphans`] scans the journal directory for *orphan* plans: a
+//! `<ts>.plan` with neither a `<ts>.COMMIT` (the apply committed) nor a
+//! `<ts>.ROLLED_BACK` (a prior rollback closed it out) sentinel. An orphan
+//! indicates a `kill -9` mid-apply: the plan was made durable but the run
+//! never reached commit. [`orphan_plans`] lists the same orphans without
+//! reversing them.
+//!
+//! The mutating commands (`apply` on a path that can write, `rollback`,
+//! `remove`, and `promote`) recover under the exclusive lock before their first
+//! write, so each works from the pre-apply state.
 //!
 //! For each orphan, recovery:
 //!
 //! 1. Decodes the plan, reusing the version-envelope check so a plan from a
 //!    newer binary is refused rather than mis-read.
-//! 2. Probes the filesystem for each operation's target
-//!    ([`probe`](super::probe)) and consults the per-apply backup directory
-//!    ([`mirror_backup_path`](super::mirror_backup_path)).
+//! 2. Probes the per-apply backup directory for each operation's target
+//!    ([`mirror_backup_path`](super::mirror_backup_path)). A backup is present
+//!    only once it is complete, because the backup writer stages it in a
+//!    `.partial.<pid>` sibling and renames it into place. Recovery removes a
+//!    staged sibling left by a killed apply.
 //! 3. **Reverses backward**, never forward. The disposition the plan recorded
-//!    for the operation decides the outcome, evaluated in this order:
-//!    - disposition == `Unchanged`: the apply neither backed up nor wrote this
-//!      target, so the live entry is already the pre-apply entry. Leave it in
-//!      place and do **not** consult the backup directory.
-//!    - a target with a backup is an *overwrite*: restore the original bytes
-//!      from the backup.
-//!    - a target with no backup is a *fresh creation*: delete it.
+//!    for the operation, its backup, and the live entry decide the outcome,
+//!    evaluated in this order:
+//!    - `Unchanged`: the apply neither backed up nor wrote this target, so the
+//!      live entry is already the pre-apply entry. Leave it in place and do
+//!      **not** consult the backup directory.
+//!    - a backup exists and the live entry matches it (same kind, bytes, link
+//!      target, or tree): the apply never wrote the target. Leave it in place
+//!      and report it only through a copy an earlier pass kept.
+//!    - a backup exists: the apply overwrote, or was about to overwrite, a
+//!      pre-existing entry. Restore the original from the backup.
+//!    - no backup and `Create`: the target was absent before the apply. Remove
+//!      whatever the apply created there, if anything.
+//!    - no backup and `Update`: the write never started. Leave the target in
+//!      place.
+//!    - no backup and `Remove`: the removal never started. Leave the target in
+//!      place.
 //!
-//!    Either way the post-recovery state of that target matches pre-apply.
-//! 4. Deletes the orphan `<ts>.plan` and `<ts>.progress` files once every
-//!    operation has been reversed.
+//!    The `Update` and `Remove` cases without a backup depend on the backup
+//!    pass: the apply backs up every target it will overwrite or remove before
+//!    its first write, outermost first, and skips a target inside a target the
+//!    pass backed up. A target with no entry at its mirror path was therefore
+//!    never written, or lies inside a backed-up directory whose restore covers
+//!    it and did not exist before the apply. A covered target that did exist
+//!    is found at its mirror path inside the directory's backup. A target
+//!    whose mirror path passes through a symbolic link stashed in the cycle is
+//!    reversed as the ancestor that link was backed up from.
+//!
+//!    Each outcome leaves the target in its pre-apply state. Before recovery
+//!    overwrites or removes an entry at a target, it copies that entry to
+//!    `<state>/recovered/<ts>.<n>/<op index>/<file name>`, so bytes written
+//!    after the crash survive. A retry of a recovery that failed partway finds
+//!    the copy an earlier pass made for the same `<ts>` and op index, and
+//!    reports that copy instead of copying again when the live entry still
+//!    matches it or the backup. Otherwise the retry reports any earlier copy
+//!    and then a new one, which it copies into `<n>` one past the highest
+//!    existing number, so no pass overwrites an earlier copy.
+//! 4. Removes a staged `<ts>.COMMIT.partial.<pid>` sentinel the apply was
+//!    killed before renaming, then deletes the orphan `<ts>.plan` and
+//!    `<ts>.progress` files once every operation has been reversed.
 //!
 //! Recovery is **idempotent**: the second run finds no orphan because the
 //! first run removed the plan file. The second run leaves the filesystem
@@ -36,7 +70,7 @@
 //! is a no-op.
 //!
 //! The advisory progress cursor is **ignored** for the reversal decision:
-//! recovery trusts the filesystem probe and the backup directory, not the
+//! recovery trusts the recorded disposition and the backup directory, not the
 //! cursor's last record, which may not reflect how far the apply
 //! actually got.
 //!
@@ -46,9 +80,7 @@
 //! use camino::Utf8Path;
 //! use patina_core::journal::recover_orphans;
 //!
-//! let journal_dir = Utf8Path::new("/state/patina/journal");
-//! let backups_dir = Utf8Path::new("/state/patina/backups");
-//! let report = recover_orphans(journal_dir, backups_dir)?;
+//! let report = recover_orphans(Utf8Path::new("/state/patina"))?;
 //! println!("recovered {} orphan plan(s)", report.recovered_timestamps().len());
 //! # Ok::<(), patina_core::journal::JournalError>(())
 //! ```
@@ -57,12 +89,16 @@ use super::COMMIT_SUFFIX;
 use super::Disposition;
 use super::JournalError;
 use super::PLAN_SUFFIX;
-use super::PROGRESS_SUFFIX;
 use super::Plan;
 use super::PlannedOperation;
 use super::probe::mirror_backup_path;
 use super::probe::operation_target;
 use camino::Utf8Path;
+use camino::Utf8PathBuf;
+
+/// Directory under the state directory that holds the entries recovery copied
+/// aside before overwriting or removing them.
+pub const RECOVERED_DIR: &str = "recovered";
 
 /// Filename suffix for the rollback sentinel written by `patina rollback`.
 /// Recovery treats a `<ts>.ROLLED_BACK` plan as already closed,
@@ -71,10 +107,13 @@ pub const ROLLED_BACK_SUFFIX: &str = ".ROLLED_BACK";
 
 /// Summary of one [`recover_orphans`] pass: the timestamps of the orphan
 /// plans that were reversed and cleaned up, in lexical (chronological)
-/// order. An empty list means there was no partial apply to recover.
+/// order, and each target the pass restored or removed.
+/// [`recovered_timestamps`](Self::recovered_timestamps) is empty when no
+/// interrupted apply was pending.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct RecoveryReport {
     recovered: Vec<String>,
+    changed: Vec<RecoveredTarget>,
 }
 
 impl RecoveryReport {
@@ -87,47 +126,81 @@ impl RecoveryReport {
     pub fn recovered_any(&self) -> bool {
         !self.recovered.is_empty()
     }
+
+    /// Every target this pass restored from a backup or removed, in plan
+    /// order.
+    pub fn changed_targets(&self) -> &[RecoveredTarget] {
+        &self.changed
+    }
 }
 
-/// Recover every orphan plan in `journal_dir`, reversing each backward to
-/// the pre-apply filesystem state using backups under `backups_dir`, then
-/// deleting the orphan plan and progress files.
+/// One target a recovery pass restored from a backup or removed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecoveredTarget {
+    target: Utf8PathBuf,
+    kept: Vec<Utf8PathBuf>,
+}
+
+impl RecoveredTarget {
+    /// The target path as the orphan plan recorded it.
+    pub fn target(&self) -> &Utf8Path {
+        &self.target
+    }
+
+    /// Where recovery copied the entries it found at the target, earliest
+    /// first: the first copy any pass kept, then this pass's copy when the
+    /// entry differed from it. Empty when the target was absent before
+    /// recovery.
+    pub fn kept(&self) -> &[Utf8PathBuf] {
+        &self.kept
+    }
+}
+
+/// Recover every orphan plan under the per-machine state directory
+/// `state_dir`, reversing each backward to the pre-apply filesystem state using
+/// the backups under `<state_dir>/backups`, then deleting the orphan plan and
+/// progress files.
 ///
-/// Call this on apply startup, before computing a new plan. After it
-/// returns, the engine proceeds with the user's new invocation as if no
-/// prior partial work had occurred. Running it again with no intervening
-/// apply is a no-op (idempotence).
+/// Call this under the exclusive lock, before reading the filesystem to plan
+/// or roll back. Running it again with no intervening apply is a no-op
+/// (idempotence).
 ///
 /// # Errors
 ///
-/// - [`JournalError::Filesystem`] if the journal directory cannot be read, or a
-///   backup restore / target delete / orphan cleanup fails.
+/// - [`JournalError::Filesystem`] if the journal directory cannot be read, or
+///   copying a live entry aside, a backup restore, a target delete, or orphan
+///   cleanup fails.
 /// - [`JournalError::VersionMismatch`] / [`JournalError::Decode`] /
 ///   [`JournalError::Truncated`] if an orphan plan cannot be decoded.
-pub fn recover_orphans(
-    journal_dir: impl AsRef<Utf8Path>,
-    backups_dir: impl AsRef<Utf8Path>,
-) -> Result<RecoveryReport, JournalError> {
-    let journal_dir = journal_dir.as_ref();
-    let backups_dir = backups_dir.as_ref();
+pub fn recover_orphans(state_dir: impl AsRef<Utf8Path>) -> Result<RecoveryReport, JournalError> {
+    let state_dir = state_dir.as_ref();
+    let journal_dir = state_dir.join("journal");
 
-    let mut timestamps = orphan_timestamps(journal_dir)?;
     // Reverse orphans in chronological order so the report is
     // deterministic and any later-apply backup wins a same-target race in
     // a (pathological) multi-orphan state.
-    timestamps.sort();
+    let timestamps = orphan_plans(&journal_dir)?;
 
-    let mut recovered = Vec::with_capacity(timestamps.len());
+    let mut report = RecoveryReport::default();
     for timestamp in timestamps {
-        reverse_orphan(journal_dir, backups_dir, &timestamp)?;
-        recovered.push(timestamp);
+        reverse_orphan(state_dir, &timestamp, &mut report.changed)?;
+        report.recovered.push(timestamp);
     }
-    Ok(RecoveryReport { recovered })
+    Ok(report)
 }
 
-/// Collect the `<ts>` of every plan file in `journal_dir` that has neither
-/// a `COMMIT` nor a `ROLLED_BACK` sentinel beside it.
-fn orphan_timestamps(journal_dir: &Utf8Path) -> Result<Vec<String>, JournalError> {
+/// Return the `<ts>` of every orphan plan in `journal_dir`, sorted: a plan file
+/// with neither a `COMMIT` nor a `ROLLED_BACK` sentinel beside it.
+///
+/// Reads only. An apply still running also has a plan without a sentinel, so
+/// only a caller holding the lock can tell an orphan from a live plan.
+///
+/// # Errors
+///
+/// Returns [`JournalError::Filesystem`] if the journal directory cannot be
+/// read.
+pub fn orphan_plans(journal_dir: impl AsRef<Utf8Path>) -> Result<Vec<String>, JournalError> {
+    let journal_dir = journal_dir.as_ref();
     if !journal_dir.exists() {
         // No journal directory yet means no prior apply, so nothing to do.
         return Ok(Vec::new());
@@ -153,83 +226,186 @@ fn orphan_timestamps(journal_dir: &Utf8Path) -> Result<Vec<String>, JournalError
             orphans.push(timestamp.to_owned());
         }
     }
+    orphans.sort();
     Ok(orphans)
 }
 
 /// Reverse one orphan plan and delete its plan + progress files.
 fn reverse_orphan(
-    journal_dir: &Utf8Path,
-    backups_dir: &Utf8Path,
+    state_dir: &Utf8Path,
     timestamp: &str,
+    changed: &mut Vec<RecoveredTarget>,
 ) -> Result<(), JournalError> {
+    let journal_dir = state_dir.join("journal");
     let plan_path = journal_dir.join(format!("{timestamp}{PLAN_SUFFIX}"));
     let bytes = fs_err::read(&plan_path)?;
     let plan = Plan::decode(&bytes)?;
 
-    for op in plan.operations() {
-        reverse_operation(backups_dir, timestamp, op)?;
+    let backups_dir = state_dir.join("backups");
+    let mut keeper = Keeper::new(state_dir.join(RECOVERED_DIR), timestamp)?;
+    for (index, op) in plan.operations().iter().enumerate() {
+        if let Some(recovered) = reverse_operation(&backups_dir, &mut keeper, index, op)? {
+            changed.push(recovered);
+        }
     }
 
+    crate::fsx::remove_partial_siblings(&journal_dir.join(format!("{timestamp}{COMMIT_SUFFIX}")))
+        .map_err(JournalError::Filesystem)?;
     // The plan and progress files are removed only after every reversal
     // succeeds. A crash mid-recovery leaves the orphan in place, and the
     // next startup retries it. This retry is still idempotent: restoring
     // a backup rewrites the same bytes, and deleting an absent target is
     // a no-op.
-    super::remove_if_present(&plan_path)?;
-    super::remove_if_present(&journal_dir.join(format!("{timestamp}{PROGRESS_SUFFIX}")))?;
-    Ok(())
+    super::remove_plan_and_progress(&journal_dir, timestamp)
 }
 
 /// Reverse a single planned operation back to its pre-apply state.
 ///
-/// An operation the plan recorded as [`Disposition::Unchanged`] is left in
-/// place before the backup-presence check runs. Apply skipped the write
-/// and the backup for such a target, so nothing needs reversing: its
-/// live state already matches the pre-apply state. This holds at any
-/// crash point, because the plan is fsync'd before any mutation, so the
-/// disposition the orphan plan carries is authoritative. The
-/// disposition read here is the durable per-op aggregate, so a tree
-/// operation whose aggregate is `Unchanged` is left whole.
+/// The disposition the plan recorded is authoritative at any crash point,
+/// because the plan is fsync'd before any mutation. For a tree operation it is
+/// the durable per-op aggregate, so a tree whose aggregate is `Unchanged` is
+/// left whole.
 ///
-/// Otherwise the decision is driven by the backup directory, not the
-/// progress cursor. A backup existing for the target means the apply
-/// was about to, or did, overwrite a pre-existing entry, so the original
-/// is restored. No backup means the target was created fresh, so it is
-/// deleted if present.
+/// The backup pass precedes every write, so a missing backup separates a
+/// `Create` target, which recovery removes, from an `Update` or
+/// [`Remove`](PlannedOperation::Remove) target the apply never reached, which
+/// recovery leaves in place. A backup the apply was still staging when it was
+/// killed is not at the mirror path, so it counts as missing; recovery removes
+/// the staged `.partial.<pid>` sibling. The pass also backs up targets the
+/// apply never reached, so a live entry that matches its backup is left in
+/// place and reported only through a copy an earlier pass kept.
 ///
-/// Both restore and delete go through the kind-preserving [`crate::fsx`]
-/// helpers. The original is therefore recreated as the same kind it was: a
-/// symlink as a symlink, a directory as a directory. Backup presence is
-/// probed with [`crate::fsx::entry_present`], so a backed-up symlink whose
-/// destination is gone is still seen. `exists` would follow the dead link and
-/// wrongly delete the target.
+/// A target whose mirror path passes through a symbolic link stashed in this
+/// cycle lies under a link the apply replaced. Recovery reverts that ancestor
+/// link as the target instead, so it never reads or writes through either
+/// link.
+///
+/// Before recovery restores over or removes a live entry, it copies the entry
+/// aside through `keeper`. Copy, restore, and delete go through the
+/// kind-preserving [`crate::fsx`] helpers. The original is therefore recreated
+/// as the same kind it was: a symlink as a symlink, a directory as a
+/// directory. Backup presence is probed with [`crate::fsx::entry_present`],
+/// which does not follow links, so a backed-up symlink whose destination is
+/// gone is still seen.
 fn reverse_operation(
     backups_dir: &Utf8Path,
-    timestamp: &str,
+    keeper: &mut Keeper<'_>,
+    index: usize,
     op: &PlannedOperation,
-) -> Result<(), JournalError> {
-    if op.disposition() == Disposition::Unchanged {
-        // The apply neither backed up nor wrote this target, so the live
-        // entry is already the pre-apply entry. Leave it untouched
-        // regardless of backup presence.
-        return Ok(());
+) -> Result<Option<RecoveredTarget>, JournalError> {
+    let disposition = op.disposition();
+    if disposition == Some(Disposition::Unchanged) {
+        return Ok(None);
     }
 
-    let target = Utf8Path::new(operation_target(op));
-    let backup = mirror_backup_path(backups_dir, timestamp, target);
+    let planned = Utf8Path::new(operation_target(op));
+    let covering = crate::rollback::stashed_link_ancestor(backups_dir, keeper.timestamp, planned);
+    let target = covering.as_deref().unwrap_or(planned);
+    let backup = mirror_backup_path(backups_dir, keeper.timestamp, target);
+    crate::fsx::remove_partial_siblings(&backup).map_err(JournalError::Filesystem)?;
 
-    if crate::fsx::entry_present(&backup) {
-        // Overwrite case: restore the original entry the engine stashed
-        // before mutating. This replaces whatever is at the target now: a
-        // new symlink, a half-written copy, or the already-restored
-        // original.
-        crate::fsx::clone_entry(&backup, target).map_err(JournalError::Filesystem)
+    let live = crate::fsx::entry_present(target);
+    let restore = crate::fsx::entry_present(&backup);
+    let remove = live && disposition == Some(Disposition::Create);
+    let unwritten = restore && live && crate::fsx::same_entry(target, &backup)?;
+    if unwritten || (!restore && !remove) {
+        return Ok(keeper.earlier(index, target).map(|kept| RecoveredTarget {
+            target: target.to_path_buf(),
+            kept: vec![kept],
+        }));
+    }
+    let kept = if live {
+        keeper.keep(index, target)?
     } else {
-        // Fresh-creation case: there was nothing to back up, so reversing
-        // means removing the target the apply created. If the operation
-        // never started, the target is already absent and this is a no-op.
-        crate::fsx::remove_entry(target).map_err(JournalError::Filesystem)
+        keeper.earlier(index, target).into_iter().collect()
+    };
+    if restore {
+        crate::fsx::clone_entry(&backup, target)?;
+    } else {
+        crate::fsx::remove_entry(target)?;
     }
+    Ok(Some(RecoveredTarget {
+        target: target.to_path_buf(),
+        kept,
+    }))
+}
+
+/// Copies live entries aside under `<root>/<timestamp>.<n>/`.
+struct Keeper<'a> {
+    root: Utf8PathBuf,
+    timestamp: &'a str,
+    /// The `<timestamp>.<n>` directories earlier passes made, by ascending
+    /// `<n>`.
+    earlier: Vec<Utf8PathBuf>,
+    next: u64,
+    dir: Option<Utf8PathBuf>,
+}
+
+impl<'a> Keeper<'a> {
+    fn new(root: Utf8PathBuf, timestamp: &'a str) -> Result<Self, JournalError> {
+        let numbers = copy_numbers(&root, timestamp)?;
+        let next = numbers.last().map_or(1, |last| last.saturating_add(1));
+        let earlier = numbers
+            .into_iter()
+            .map(|number| root.join(format!("{timestamp}.{number}")))
+            .collect();
+        Ok(Self {
+            root,
+            timestamp,
+            earlier,
+            next,
+            dir: None,
+        })
+    }
+
+    /// The first copy an earlier pass kept of `target` for op `index`.
+    fn earlier(&self, index: usize, target: &Utf8Path) -> Option<Utf8PathBuf> {
+        self.earlier
+            .iter()
+            .map(|dir| copy_path(dir, index, target))
+            .find(|kept| crate::fsx::entry_present(kept))
+    }
+
+    /// Copy the live entry at `target` aside unless it matches an earlier
+    /// pass's copy, and return the earlier copy, if any, before the new one.
+    fn keep(&mut self, index: usize, target: &Utf8Path) -> Result<Vec<Utf8PathBuf>, JournalError> {
+        let mut copies: Vec<Utf8PathBuf> = self.earlier(index, target).into_iter().collect();
+        if let Some(earlier) = copies.first()
+            && crate::fsx::same_entry(target, earlier)?
+        {
+            return Ok(copies);
+        }
+        let dir = self
+            .dir
+            .get_or_insert_with(|| self.root.join(format!("{}.{}", self.timestamp, self.next)));
+        let kept = copy_path(dir, index, target);
+        crate::fsx::clone_entry(target, &kept)?;
+        copies.push(kept);
+        Ok(copies)
+    }
+}
+
+fn copy_numbers(root: &Utf8Path, timestamp: &str) -> std::io::Result<Vec<u64>> {
+    if !crate::fsx::entry_present(root) {
+        return Ok(Vec::new());
+    }
+    let prefix = format!("{timestamp}.");
+    let mut numbers = Vec::new();
+    for entry in fs_err::read_dir(root)? {
+        let name = entry?.file_name();
+        let number = name
+            .to_str()
+            .and_then(|name| name.strip_prefix(&prefix))
+            .and_then(|number| number.parse::<u64>().ok());
+        numbers.extend(number);
+    }
+    numbers.sort_unstable();
+    Ok(numbers)
+}
+
+fn copy_path(dir: &Utf8Path, index: usize, target: &Utf8Path) -> Utf8PathBuf {
+    dir.join(index.to_string())
+        .join(target.file_name().unwrap_or("entry"))
 }
 
 #[cfg(test)]
@@ -240,19 +416,23 @@ mod tests {
 
     struct Dirs {
         _temp: TempDir,
+        root: Utf8PathBuf,
         journal: Utf8PathBuf,
         backups: Utf8PathBuf,
     }
 
     fn dirs() -> Dirs {
         let temp = TempDir::new().expect("tempdir");
-        let root = Utf8Path::from_path(temp.path()).expect("utf8 temp path");
+        let root = Utf8Path::from_path(temp.path())
+            .expect("utf8 temp path")
+            .to_owned();
         let journal = root.join("journal");
         let backups = root.join("backups");
         fs_err::create_dir_all(&journal).expect("create journal dir");
         fs_err::create_dir_all(&backups).expect("create backups dir");
         Dirs {
             _temp: temp,
+            root,
             journal,
             backups,
         }
@@ -267,8 +447,8 @@ mod tests {
     fn missing_journal_dir_is_a_clean_no_op() {
         let temp = TempDir::new().expect("tempdir");
         let root = Utf8Path::from_path(temp.path()).expect("utf8 temp path");
-        let report = recover_orphans(root.join("nope"), root.join("backups"))
-            .expect("recovery on a missing journal dir succeeds");
+        let report =
+            recover_orphans(root.join("nope")).expect("recovery on a missing journal dir succeeds");
         assert!(!report.recovered_any());
     }
 
@@ -279,13 +459,27 @@ mod tests {
         write_plan(&d.journal, ts, &Plan::new(vec![]));
         fs_err::write(d.journal.join(format!("{ts}{COMMIT_SUFFIX}")), []).expect("commit sentinel");
 
-        let report = recover_orphans(&d.journal, &d.backups).expect("recovery");
+        let report = recover_orphans(&d.root).expect("recovery");
         assert!(
             !report.recovered_any(),
             "a committed plan must be left alone"
         );
         // The committed plan file is untouched by recovery.
         assert!(d.journal.join(format!("{ts}{PLAN_SUFFIX}")).exists());
+    }
+
+    #[test]
+    fn a_staged_commit_sentinel_leaves_the_plan_an_orphan_and_is_removed() {
+        let d = dirs();
+        let ts = "20260528T100000Z";
+        write_plan(&d.journal, ts, &Plan::new(vec![]));
+        let staged = d.journal.join(format!("{ts}{COMMIT_SUFFIX}.partial.4242"));
+        fs_err::write(&staged, []).expect("stage a commit sentinel");
+
+        let report = recover_orphans(&d.root).expect("recovery");
+
+        assert_eq!(report.recovered_timestamps(), &[ts.to_owned()]);
+        assert!(!crate::fsx::entry_present(&staged));
     }
 
     #[test]
@@ -296,7 +490,7 @@ mod tests {
         fs_err::write(d.journal.join(format!("{ts}{ROLLED_BACK_SUFFIX}")), [])
             .expect("rolled-back sentinel");
 
-        let report = recover_orphans(&d.journal, &d.backups).expect("recovery");
+        let report = recover_orphans(&d.root).expect("recovery");
         assert!(!report.recovered_any());
     }
 
@@ -330,7 +524,7 @@ mod tests {
             )]),
         );
 
-        let report = recover_orphans(&d.journal, &d.backups).expect("recover");
+        let report = recover_orphans(&d.root).expect("recover");
         assert!(
             report.recovered_any(),
             "the orphan plan is still consumed and cleaned up"
@@ -375,7 +569,7 @@ mod tests {
             )]),
         );
 
-        let report = recover_orphans(&d.journal, &d.backups).expect("recover");
+        let report = recover_orphans(&d.root).expect("recover");
         assert!(report.recovered_any(), "the orphan must be recovered");
         assert!(
             !target.exists(),
@@ -416,7 +610,7 @@ mod tests {
             )]),
         );
 
-        let report = recover_orphans(&d.journal, &d.backups).expect("recover");
+        let report = recover_orphans(&d.root).expect("recover");
         assert!(report.recovered_any(), "the orphan must be recovered");
 
         let meta = fs_err::symlink_metadata(&target).expect("stat restored target");

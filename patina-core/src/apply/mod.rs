@@ -62,6 +62,7 @@ pub use hooks::resolve_shells;
 pub use hooks::run_hook;
 pub use hooks::should_run;
 pub(crate) use retry::with_sharing_violation_retry;
+pub(crate) use retry::with_staged_rename_retry;
 
 /// Which leaves of a tree-mode target a tree executor (re)writes.
 ///

@@ -14,6 +14,12 @@
 //! - **Template-rendered targets** (the journaled source ends in `.tmpl`).
 //!   Templating is non-invertible: the rendered bytes cannot be turned back
 //!   into a template, so promotion cannot recover the source.
+//! - **Targets the recovery of an interrupted apply just reverted.** The
+//!   recovery runs after consent, and once it changes the target or an
+//!   ancestor, the bytes on disk are no longer the ones the user asked to
+//!   promote. The refusal comes after the recovery has written. When the
+//!   changed path existed before the recovery, the recovery's warning names the
+//!   copy it kept.
 //! - **Remote-backed targets** (the journaled source lies under
 //!   `<state>/remotes/`). A pinned checkout is immutable third-party content:
 //!   writing into it would modify every entry reading that path until the pin
@@ -39,6 +45,8 @@ use crate::cmd::apply::PromptReader;
 use crate::cmd::apply::Tty;
 use crate::cmd::managed::TEMPLATE_SUFFIX;
 use crate::cmd::managed::acquire_state_and_lock;
+use crate::cmd::managed::recover_held;
+use crate::cmd::managed::refused;
 use crate::cmd::managed::rejournal;
 use crate::exit_code::ExitCode;
 use crate::output::reporter::Reporter;
@@ -49,6 +57,8 @@ use camino::Utf8Path;
 use camino::Utf8PathBuf;
 use patina_core::EngineError;
 use patina_core::ExpectedTarget;
+use patina_core::RecoveredTarget;
+use patina_core::RecoveryReport;
 use patina_core::anchor_input;
 use patina_core::canonicalize_path;
 use patina_core::manage_key;
@@ -57,14 +67,22 @@ use patina_core::remote::cache::remotes_root;
 
 /// Run `patina promote`. Returns the process exit code.
 ///
+/// An unmanaged target, each refused shape (symbolic-link, template-rendered,
+/// remote-backed, or unrecognized), and a target the recovery changed (after
+/// the recovery has written) are refused with exit 1, and a declined prompt
+/// returns exit 5 (`UserDeclined`). Each returns its exit code through the
+/// `Ok` value. The refusals before the prompt and the decline first warn when
+/// an interrupted apply is pending.
+///
 /// # Errors
 ///
 /// Returns an error (exit 1, or exit 4 on a lock-acquisition timeout through
-/// the engine-error chain) when the state directory cannot be resolved, the
-/// lock cannot be acquired, the target's bytes cannot be read, the repository
-/// source cannot be written, or the re-apply fails. An unmanaged target and
-/// each refused shape (symbolic-link, template-rendered, remote-backed) return
-/// their exit code through the `Ok` value instead.
+/// the engine-error chain) when: neither `HOME` nor `USERPROFILE` is set; the
+/// target path cannot be anchored; the state directory cannot be resolved or
+/// the lock cannot be acquired; the committed apply record cannot be read; the
+/// journal directory cannot be read while refusing; recovering an interrupted
+/// apply fails; the target's bytes cannot be read; the repository source cannot
+/// be written; or the re-apply fails.
 pub(crate) fn run(
     args: &PromoteArgs,
     tty: Tty,
@@ -86,18 +104,24 @@ pub(crate) fn run(
             .find(|expected| manage_key(Utf8Path::new(expected.target())) == target_key)
     });
     let Some(expected) = expected else {
-        return Ok(report_unmanaged(args, reporter));
+        let code = report_unmanaged(args, reporter);
+        return refused(&state, reporter, code);
     };
 
     if let Some(code) = refuse_unpromotable(args, expected, &state, reporter) {
-        return Ok(code);
+        return refused(&state, reporter, code);
     }
 
     if !confirm(args, tty, reader, reporter) {
-        return Ok(ExitCode::UserDeclined.code());
+        return refused(&state, reporter, ExitCode::UserDeclined.code());
     }
+    let recovery = recover_held(&state, reporter)?;
 
     let target_path = Utf8PathBuf::from(expected.target());
+    if let Some(changed) = reverted_ancestor(&target_path, &recovery) {
+        report_recovered_target(args, changed, reporter);
+        return Ok(ExitCode::Generic.code());
+    }
     let source_path = Utf8PathBuf::from(expected.source());
     let bytes = fs_err::read(target_path.as_std_path())
         .with_context(|| format!("failed to read the target {target_path}"))?;
@@ -108,6 +132,26 @@ pub(crate) fn run(
 
     report_success(args, &target_path, &source_path, reporter);
     Ok(ExitCode::Success.code())
+}
+
+/// The target `recovery` changed that is `target` or one of its ancestors,
+/// compared by [`manage_key`].
+fn reverted_ancestor<'a>(
+    target: &Utf8Path,
+    recovery: &'a RecoveryReport,
+) -> Option<&'a RecoveredTarget> {
+    let changed: Vec<(Utf8PathBuf, &RecoveredTarget)> = recovery
+        .changed_targets()
+        .iter()
+        .map(|changed| (manage_key(changed.target()), changed))
+        .collect();
+    target.ancestors().find_map(|ancestor| {
+        let key = manage_key(ancestor);
+        changed
+            .iter()
+            .find(|(changed_key, _)| *changed_key == key)
+            .map(|(_, changed)| *changed)
+    })
 }
 
 fn refuse_unpromotable(
@@ -178,6 +222,28 @@ fn remote_backing(source: &Utf8Path, state: &Utf8Path) -> Option<String> {
         .find_map(|root| source.strip_prefix(root).ok())
         .and_then(|relative| relative.components().next())
         .map(|component| component.as_str().to_owned())
+}
+
+/// Report the refusal of a target the recovery changed.
+///
+/// The message omits the kept copy's timestamped path, which the recovery's
+/// warning prints on stderr.
+fn report_recovered_target(
+    args: &PromoteArgs,
+    changed: &RecoveredTarget,
+    reporter: &mut impl Reporter,
+) {
+    let before = if changed.kept().is_empty() {
+        "it did not exist before the recovery"
+    } else {
+        "the recovery kept a copy of its earlier contents"
+    };
+    let message = format!(
+        "{} was reverted by the recovery of an interrupted apply, so it was not \
+         promoted; {before}. Review the target and re-run `patina promote`.",
+        args.target
+    );
+    report_refusal(args, "recovered_target", &message, reporter);
 }
 
 /// Report a refusal through the reporter: a JSON error envelope on stdout under

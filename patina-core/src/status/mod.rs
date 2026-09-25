@@ -5,7 +5,9 @@
 //! the `<ts>.COMMIT` sentinel the commit path populates. It recomputes the
 //! *current* repository plan to know which targets are still managed, then
 //! compares each recorded target to the live filesystem. It writes nothing
-//! to disk.
+//! to disk, and does not recover an interrupted apply: it reports one through
+//! [`StatusReport::pending_apply`] and classifies the files as that apply left
+//! them.
 //!
 //! ## States
 //!
@@ -32,8 +34,10 @@
 
 pub(crate) mod classify;
 
+use crate::apply::engine::PendingApply;
 use crate::error::EngineError;
 use crate::journal::LastApply;
+use crate::journal::orphan_plans;
 use crate::journal::read_latest_commit;
 use crate::lock::LockError;
 use crate::lock::LockKind;
@@ -128,6 +132,11 @@ pub struct StatusReport {
     /// in module-name order. Read from the per-machine notice state, so this is
     /// as fresh as the last check and never triggers network work of its own.
     pub remotes_pending: Vec<String>,
+    /// Whether the journal holds a plan without a terminal sentinel, and
+    /// whether status held the shared lock when it read the journal. When a
+    /// plan is pending, the classification describes the files as its apply
+    /// left them.
+    pub pending_apply: PendingApply,
 }
 
 impl StatusReport {
@@ -165,7 +174,7 @@ pub fn report(managed: &ManagedTargets) -> Result<StatusReport, EngineError> {
     // The shared lock has a read-only escape hatch. A timeout means a
     // mutating apply held the lock past SHARED_TIMEOUT, so status warns and
     // reads anyway instead of blocking the user.
-    let _guard = match acquire_lock(&lock_path, LockKind::Shared, SHARED_TIMEOUT) {
+    let guard = match acquire_lock(&lock_path, LockKind::Shared, SHARED_TIMEOUT) {
         Ok(guard) => Some(guard),
         Err(LockError::Timeout { path, waited, .. }) => {
             warnings.push(format!(
@@ -192,6 +201,13 @@ pub fn report(managed: &ManagedTargets) -> Result<StatusReport, EngineError> {
     let record = read_latest_commit(&journal_dir)?;
     let mut report = StatusReport {
         warnings,
+        pending_apply: if orphan_plans(&journal_dir)?.is_empty() {
+            PendingApply::None
+        } else if guard.is_some() {
+            PendingApply::Interrupted
+        } else {
+            PendingApply::RunningOrInterrupted
+        },
         remotes_pending: crate::remote::notice::read_pending(&state_dir)
             .into_iter()
             .collect(),

@@ -71,6 +71,15 @@ pub enum PlannedOperation {
         /// For a tree op this is the per-op aggregate.
         disposition: Disposition,
     },
+    /// Back up and remove the entry at `target`: a target the latest committed
+    /// apply recorded that the current manifests no longer manage.
+    ///
+    /// Every `Remove` follows the materializing operations, in the order
+    /// [`execute`](crate::execute_plan) performs them.
+    Remove {
+        /// Absolute target path of the entry to remove.
+        target: String,
+    },
 }
 
 impl PlannedOperation {
@@ -116,13 +125,22 @@ impl PlannedOperation {
         }
     }
 
-    /// How this operation relates to the live filesystem. For a
-    /// tree op this is the per-op aggregate disposition.
-    pub fn disposition(&self) -> Disposition {
+    /// Construct a [`PlannedOperation::Remove`] for `target`.
+    pub fn remove(target: impl Into<String>) -> Self {
+        Self::Remove {
+            target: target.into(),
+        }
+    }
+
+    /// How this operation relates to the live filesystem, or `None` for a
+    /// [`Remove`](Self::Remove). For a tree op this is the per-op aggregate
+    /// disposition.
+    pub fn disposition(&self) -> Option<Disposition> {
         match self {
             Self::Symlink { disposition, .. }
             | Self::Render { disposition, .. }
-            | Self::Copy { disposition, .. } => *disposition,
+            | Self::Copy { disposition, .. } => Some(*disposition),
+            Self::Remove { .. } => None,
         }
     }
 }
@@ -215,6 +233,7 @@ mod tests {
             PlannedOperation::symlink("a", "/x/a", Disposition::Create),
             PlannedOperation::render("b.j2", "/x/b", Disposition::Update),
             PlannedOperation::copy("c", "/x/c", Disposition::Unchanged),
+            PlannedOperation::remove("/x/d"),
         ])
     }
 
@@ -234,7 +253,7 @@ mod tests {
         // equality, catches a field dropped from the wire.
         let plan = sample();
         let decoded = Plan::decode(&plan.encode().expect("encode")).expect("decode");
-        let got: Vec<Disposition> = decoded
+        let got: Vec<Option<Disposition>> = decoded
             .operations()
             .iter()
             .map(PlannedOperation::disposition)
@@ -242,9 +261,10 @@ mod tests {
         assert_eq!(
             got,
             vec![
-                Disposition::Create,
-                Disposition::Update,
-                Disposition::Unchanged
+                Some(Disposition::Create),
+                Some(Disposition::Update),
+                Some(Disposition::Unchanged),
+                None
             ]
         );
     }
