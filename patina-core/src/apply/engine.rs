@@ -32,6 +32,7 @@
 use crate::apply::CompletionRecord;
 use crate::apply::ForceDeploy;
 use crate::apply::HookOutcome;
+use crate::apply::HookStdout;
 use crate::apply::LeafWrite;
 use crate::apply::Materialization;
 use crate::apply::ResolvedHook;
@@ -105,6 +106,8 @@ const MANIFEST_FILENAME: &str = "patina.toml";
 pub struct ApplyRequest {
     /// `--force-deploy`: override every hook to `must_succeed = false`.
     pub force_deploy: ForceDeploy,
+    /// Where each hook writes its stdout. `--json` sends it to stderr.
+    pub hook_stdout: HookStdout,
     /// `-v key=value` CLI variable overrides, in declaration order.
     pub cli_overrides: Vec<(String, String)>,
     /// Whether [`plan`] schedules the removal of targets the current manifests
@@ -116,6 +119,7 @@ impl Default for ApplyRequest {
     fn default() -> Self {
         Self {
             force_deploy: ForceDeploy::No,
+            hook_stdout: HookStdout::Inherit,
             cli_overrides: Vec::new(),
             reap: Reap::Orphans,
         }
@@ -1453,7 +1457,14 @@ fn classify_entry(
     let rendered = if matches!(mode, FileMode::TemplateRender) {
         let body = fs_err::read_to_string(source)
             .map_err(|err| EngineError::Journal(crate::journal::JournalError::Filesystem(err)))?;
-        Some(engine.render(&body, resolver)?)
+        Some(
+            engine
+                .render(&body, resolver)
+                .map_err(|err| EngineError::TemplateRender {
+                    path: source.to_path_buf(),
+                    source: err,
+                })?,
+        )
     } else {
         None
     };
@@ -1607,7 +1618,7 @@ fn classify_target(
 /// mutation. Path canonicalization failures surface as [`EngineError::Path`].
 /// A classification read or template render failure surfaces as
 /// [`EngineError::Classify`], [`EngineError::Journal`], or
-/// [`EngineError::Template`].
+/// [`EngineError::TemplateRender`].
 #[expect(
     clippy::too_many_arguments,
     reason = "resolution needs the entry, origin, module name, and \
@@ -2024,7 +2035,7 @@ pub fn execute(
         HookEvent::PreApply,
         &template_engine,
         resolved,
-        request.force_deploy,
+        request,
     )? {
         return Ok(ApplyResult::Aborted {
             failed_hook: failed,
@@ -2100,7 +2111,7 @@ pub fn execute(
         HookEvent::PostApply,
         &template_engine,
         resolved,
-        request.force_deploy,
+        request,
         &mut warnings,
     )?;
 
@@ -2657,10 +2668,10 @@ fn run_hook_phase(
     event: HookEvent,
     engine: &Engine,
     resolved: &ResolvedPlan,
-    force_deploy: ForceDeploy,
+    request: &ApplyRequest,
 ) -> Result<Option<String>, EngineError> {
     let mut sink = Vec::new();
-    run_hook_phase_collecting(hooks, event, engine, resolved, force_deploy, &mut sink)
+    run_hook_phase_collecting(hooks, event, engine, resolved, request, &mut sink)
 }
 
 /// Run every hook whose event matches `event`, pushing a human-readable
@@ -2671,7 +2682,7 @@ fn run_hook_phase_collecting(
     event: HookEvent,
     engine: &Engine,
     resolved: &ResolvedPlan,
-    force_deploy: ForceDeploy,
+    request: &ApplyRequest,
     warnings: &mut Vec<String>,
 ) -> Result<Option<String>, EngineError> {
     for hook in hooks {
@@ -2681,7 +2692,7 @@ fn run_hook_phase_collecting(
         if !hooks::should_run(hook, engine, resolved.module_resolver(hook.module))? {
             continue;
         }
-        match hooks::run_hook(hook, force_deploy)? {
+        match hooks::run_hook(hook, request.force_deploy, request.hook_stdout)? {
             HookOutcome::Succeeded => {}
             HookOutcome::Warned => {
                 warnings.push(format!(

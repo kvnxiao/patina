@@ -131,18 +131,7 @@ pub fn ensure_checkout(
     // would otherwise mix its files into this checkout.
     remove_any(&staging)?;
     git::checkout_commit(&git_dir, rev, &staging)?;
-    if let Err(source) = fs_err::rename(staging.as_std_path(), final_dir.as_std_path()) {
-        if final_dir.is_dir() {
-            remove_any(&staging)?;
-            return Ok(final_dir);
-        }
-        return Err(RemoteRepr::Cache {
-            action: "renaming the staged checkout into",
-            path: final_dir.clone(),
-            source,
-        }
-        .into());
-    }
+    publish_checkout(&staging, &final_dir)?;
     Ok(final_dir)
 }
 
@@ -376,6 +365,31 @@ fn read_dir_entries(dir: &Utf8Path) -> Result<Vec<Utf8PathBuf>, RemoteError> {
     Ok(paths)
 }
 
+/// Rename the staged checkout `staging` onto `final_dir`.
+///
+/// A rename that fails while `final_dir` exists means another process already
+/// published the same commit, so the staged copy is removed instead. This
+/// function calls `std::fs::rename`, not `fs_err::rename`, so the retry sees
+/// the raw OS error code.
+fn publish_checkout(staging: &Utf8Path, final_dir: &Utf8Path) -> Result<(), RemoteError> {
+    let published_by_peer = crate::apply::with_staged_rename_retry(|| {
+        match std::fs::rename(staging.as_std_path(), final_dir.as_std_path()) {
+            Ok(()) => Ok(false),
+            Err(_) if final_dir.is_dir() => Ok(true),
+            Err(err) => Err(err),
+        }
+    })
+    .map_err(|source| RemoteRepr::Cache {
+        action: "renaming the staged checkout into",
+        path: final_dir.to_path_buf(),
+        source,
+    })?;
+    if published_by_peer {
+        remove_any(staging)?;
+    }
+    Ok(())
+}
+
 /// Remove a file, symlink, or directory tree, tolerating absence.
 pub(super) fn remove_any(path: &Utf8Path) -> Result<(), RemoteError> {
     crate::fsx::remove_entry(path).map_err(|source| {
@@ -394,6 +408,60 @@ mod tests {
     use tempfile::TempDir;
 
     const SHA: &str = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0";
+
+    fn staged_checkout(dir: &Utf8Path) -> (Utf8PathBuf, Utf8PathBuf) {
+        let final_dir = dir.join(SHA);
+        let staging = crate::fsx::partial_sibling(&final_dir);
+        fs_err::create_dir_all(&staging).expect("mkdir staging");
+        fs_err::write(staging.join("SKILL.md"), b"staged").expect("write staged leaf");
+        (staging, final_dir)
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_staged_checkout_is_published_once_a_held_handle_closes() {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        let temp = TempDir::new().expect("tempdir");
+        let dir = Utf8Path::from_path(temp.path()).expect("utf8 temp path");
+        let (staging, final_dir) = staged_checkout(dir);
+        let held = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(staging.join("SKILL.md"))
+            .expect("hold the staged leaf open without sharing");
+        let release = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(200));
+            drop(held);
+        });
+
+        let published = publish_checkout(&staging, &final_dir);
+        release.join().expect("the release thread");
+
+        published.expect("the rename succeeds once the handle closes");
+        assert_eq!(
+            fs_err::read(final_dir.join("SKILL.md")).expect("read published leaf"),
+            b"staged"
+        );
+        assert!(!staging.exists(), "the staging directory was renamed away");
+    }
+
+    #[test]
+    fn a_checkout_a_peer_already_published_discards_the_staged_copy() {
+        let temp = TempDir::new().expect("tempdir");
+        let dir = Utf8Path::from_path(temp.path()).expect("utf8 temp path");
+        let (staging, final_dir) = staged_checkout(dir);
+        fs_err::create_dir_all(&final_dir).expect("mkdir the peer's checkout");
+        fs_err::write(final_dir.join("SKILL.md"), b"peer").expect("write the peer's leaf");
+
+        publish_checkout(&staging, &final_dir).expect("a peer's checkout is accepted");
+
+        assert_eq!(
+            fs_err::read(final_dir.join("SKILL.md")).expect("read the peer's leaf"),
+            b"peer"
+        );
+        assert!(!staging.exists(), "the staged copy is removed");
+    }
 
     #[test]
     fn the_scratch_sweep_spares_a_live_peers_staging_tree() {

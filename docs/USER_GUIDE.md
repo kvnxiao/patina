@@ -291,6 +291,10 @@ The optional `shell` field replaces the platform default: `bash` on macOS and
 Linux, or `pwsh` on Windows. Patina passes `command` to the selected shell
 verbatim; it does not render the command as a template.
 
+A hook's stdout goes to Patina's stdout, and its stderr to Patina's stderr.
+Under `patina apply --json`, Patina sends each hook's stdout to Patina's stderr
+instead, so stdout contains only the JSON document.
+
 ### Changing an entry's mode
 
 Editing an entry's `mode` from `symlink` to `copy`, or a `[[directory]]`

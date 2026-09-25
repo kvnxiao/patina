@@ -1,11 +1,11 @@
 //! Top-level engine error type returned from every public entry point in
 //! [`crate`].
 //!
-//! [`EngineError`] aggregates one variant per failure domain (repository
-//! discovery, module discovery, config parse, state directory, variables,
-//! profile, template, path, journal, backup, lock, executor, hook,
-//! rollback). Each wraps its subsystem's typed error via `#[from]`, so `?`
-//! propagates a subsystem failure to the public entry points.
+//! [`EngineError`] wraps each subsystem's typed error in a `#[from]`
+//! variant, so `?` propagates a subsystem failure to the public entry points.
+//! The other variants add context that the subsystem error lacks, such as the
+//! `.tmpl` source of a render failure, or report a refusal that the engine
+//! raises itself.
 
 use camino::Utf8PathBuf;
 use thiserror::Error;
@@ -69,6 +69,16 @@ pub enum EngineError {
     /// strict-undefined semantics.
     #[error(transparent)]
     Template(#[from] crate::template::TemplateError),
+
+    /// Rendering a `.tmpl` source during planning failed.
+    #[error("failed to render template {path}")]
+    TemplateRender {
+        /// The `.tmpl` source that failed to render.
+        path: Utf8PathBuf,
+        /// The underlying template-evaluation error.
+        #[source]
+        source: crate::template::TemplateError,
+    },
 
     /// Path canonicalization failed.
     #[error(transparent)]

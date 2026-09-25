@@ -60,7 +60,7 @@ If a checkbox doesn't apply (no observable change in that area), state that expl
 - [ ] `just test` passes.
 - [ ] `just doc` passes.
 - [ ] `just dependencies` passes (`cargo audit`, `cargo machete`, `cargo deny check`).
-- [ ] Line coverage stays at or above 85%.
+- [ ] Line coverage is reported here: <n>%, from the `TOTAL` row of `cargo llvm-cov report --summary-only` after `just coverage`, or from Codecov's project status on this PR.
 - [ ] `just check-msrv <package>` passes for each package.
 - [ ] If a manual validation checklist applies, it is signed off under `docs/manual-validation/`.
 

@@ -249,6 +249,30 @@ fn promote_json_emits_document() {
     );
 }
 
+#[test]
+fn an_unreadable_target_names_its_path_once() {
+    let fx = applied_copy_fixture();
+    let gitconfig = fx.home.join(".gitconfig");
+    let recorded = commit_record(&fx)
+        .targets
+        .first()
+        .expect("the copy entry recorded its target")
+        .target()
+        .to_owned();
+    fs_err::remove_file(gitconfig.as_std_path()).expect("remove the target");
+    fs_err::create_dir(gitconfig.as_std_path()).expect("replace the target with a directory");
+
+    let out = fx.run(&["promote", "~/.gitconfig", "--yes"], &[]);
+
+    let stderr = stderr(&out);
+    assert_eq!(
+        code(&out),
+        1,
+        "a directory cannot be promoted; stderr: {stderr}"
+    );
+    assert_eq!(stderr.matches(recorded.as_str()).count(), 1, "{stderr}");
+}
+
 fn commit_record(fx: &Fixture) -> ApplyRecord {
     let journal_dir =
         patina_core::state_dir::resolve_with_env(HostOs::current(), |name| match name {

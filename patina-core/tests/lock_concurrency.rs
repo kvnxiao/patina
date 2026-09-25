@@ -10,7 +10,6 @@ use std::process::Child;
 use std::process::Command;
 use std::process::Stdio;
 use std::sync::Once;
-use std::time::Duration;
 use tempfile::TempDir;
 
 static BUILD: Once = Once::new();
@@ -250,8 +249,8 @@ fn shared_holder_does_not_block_another_shared_acquirer() {
     let helper = helper_path();
     let state = State::new();
 
-    let first = spawn(&helper, &state.dir, "shared", 800, 5_000, false);
-    std::thread::sleep(Duration::from_millis(150));
+    let mut first = spawn(&helper, &state.dir, "shared", 800, 5_000, false);
+    wait_for_acquired(&mut first);
     let second = spawn(&helper, &state.dir, "shared", 0, 300, false);
 
     let second_out = second.wait_with_output().expect("wait second shared");

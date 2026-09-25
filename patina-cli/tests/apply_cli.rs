@@ -120,6 +120,61 @@ fn hook_output_reaches_the_apply_stdout_and_stderr() {
 }
 
 #[test]
+fn a_template_that_fails_to_render_at_plan_time_names_its_source() {
+    let f = Fixture::new();
+    let module = f.module(
+        "shell",
+        "[[file]]\nsource = \"rc.tmpl\"\ntarget = \"~/.rc\"\n",
+    );
+    fs_err::write(module.join("rc.tmpl"), "email = {{ undefined_email }}\n")
+        .expect("write template");
+
+    let out = f.apply(&["--yes"]);
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(code(&out), 1, "stderr: {stderr}");
+    assert!(stderr.contains("rc.tmpl"), "{stderr}");
+    assert!(
+        fs_err::symlink_metadata(f.home.join(".rc")).is_err(),
+        "a plan that failed to render must not write the target"
+    );
+}
+
+#[test]
+fn json_apply_sends_hook_stdout_to_stderr_and_prints_one_json_document() {
+    let f = Fixture::new();
+    let command = if cfg!(windows) {
+        "Write-Output ('hook-out-' + (1 + 1))"
+    } else {
+        "echo hook-out-$((1 + 1))"
+    };
+    let module = f.module(
+        "shell",
+        &format!(
+            "[[file]]\nsource = \"rc\"\ntarget = \"~/.rc\"\nmode = \"copy\"\n\n\
+             [[hook]]\nevent = \"pre_apply\"\ncommand = \"{command}\"\n"
+        ),
+    );
+    fs_err::write(module.join("rc"), "payload\n").expect("write source");
+
+    let out = f.apply(&["--json", "--yes"]);
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(code(&out), 0, "the hook exits zero; stderr: {stderr}");
+    let doc: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|err| panic!("stdout must be one JSON document ({err}): {stdout}"));
+    assert_eq!(
+        doc.get("result").and_then(serde_json::Value::as_str),
+        Some("applied")
+    );
+    assert!(
+        stderr.contains("hook-out-2"),
+        "the hook's stdout must reach the apply's stderr, got: {stderr}"
+    );
+}
+
+#[test]
 fn json_without_yes_previews_and_does_not_mutate() {
     let f = Fixture::new();
     let module = f.module(

@@ -18,8 +18,8 @@
 //! # Strict-undefined contract
 //!
 //! A reference to a variable that is unset at every resolution layer
-//! produces an [`EngineError::Template`](crate::EngineError) whose
-//! `Display` names the missing variable, rather than `MiniJinja`'s
+//! produces a [`TemplateError::UndefinedVariable`] whose `Display` names
+//! the missing variable, rather than `MiniJinja`'s
 //! silent empty-string substitution. The Jinja2-inherited carve-out
 //! holds. An undefined value reached only through the unevaluated branch
 //! of an `{% if %}`/`{% else %}` block does not fire, so
@@ -85,6 +85,11 @@ pub enum TemplateError {
         /// Comma-separated list of the undefined variable names, sorted
         /// for deterministic output.
         names: String,
+        /// The `MiniJinja` error that reported the undefined value; its
+        /// message names the template line. `None` when a `when` expression
+        /// evaluated to an undefined value without raising an error.
+        #[source]
+        source: Option<minijinja::Error>,
     },
 
     /// The template body or `when` expression failed to compile or
@@ -194,6 +199,7 @@ fn coerce_when_result(
         if !names.is_empty() {
             return Err(TemplateError::UndefinedVariable {
                 names: names.join(", "),
+                source: None,
             });
         }
         // Undefined with no recorded name should not happen (every miss
@@ -208,8 +214,8 @@ fn coerce_when_result(
 ///
 /// An [`ErrorKind::UndefinedError`] is reported as
 /// [`TemplateError::UndefinedVariable`] naming the variables the context
-/// recorded as missing during this evaluation. Any other error falls
-/// through to [`TemplateError::Render`].
+/// recorded as missing during this evaluation, with `err` as its source. Any
+/// other error falls through to [`TemplateError::Render`].
 fn classify(
     err: minijinja::Error,
     tracker: &std::sync::Mutex<strict::UndefinedTracker>,
@@ -219,6 +225,7 @@ fn classify(
         if !names.is_empty() {
             return TemplateError::UndefinedVariable {
                 names: names.join(", "),
+                source: Some(err),
             };
         }
     }
@@ -253,7 +260,7 @@ mod tests {
             .render("email = {{ user_email }}", &resolver())
             .expect_err("strict undefined must fail");
         assert!(
-            matches!(&err, TemplateError::UndefinedVariable { names } if names.contains("user_email")),
+            matches!(&err, TemplateError::UndefinedVariable { names, .. } if names.contains("user_email")),
             "expected UndefinedVariable naming user_email, got {err:?}"
         );
     }
@@ -266,6 +273,23 @@ mod tests {
         assert_eq!(
             source_as::<minijinja::Error>(&err).kind(),
             ErrorKind::SyntaxError
+        );
+        assert_source_rendered_once(&err);
+        let rendered = crate::error::chain_message(&err);
+        assert!(
+            rendered.contains(&format!("{TEMPLATE_NAME}:2")),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn render_undefined_variable_keeps_its_minijinja_source_and_line() {
+        let err = Engine::new()
+            .render("line one\n{{ user_email }}", &resolver())
+            .expect_err("strict undefined must fail");
+        assert_eq!(
+            source_as::<minijinja::Error>(&err).kind(),
+            ErrorKind::UndefinedError
         );
         assert_source_rendered_once(&err);
         let rendered = crate::error::chain_message(&err);
@@ -308,7 +332,7 @@ mod tests {
             .eval_when(&expr, &resolver)
             .expect_err("strict undefined must fail");
         assert!(
-            matches!(&err, TemplateError::UndefinedVariable { names } if names.contains("missing_var")),
+            matches!(&err, TemplateError::UndefinedVariable { names, .. } if names.contains("missing_var")),
             "expected UndefinedVariable naming missing_var, got {err:?}"
         );
     }

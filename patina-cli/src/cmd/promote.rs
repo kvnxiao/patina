@@ -123,8 +123,7 @@ pub(crate) fn run(
         return Ok(ExitCode::Generic.code());
     }
     let source_path = Utf8PathBuf::from(expected.source());
-    let bytes = fs_err::read(target_path.as_std_path())
-        .with_context(|| format!("failed to read the target {target_path}"))?;
+    let bytes = fs_err::read(target_path.as_std_path()).context("failed to read the target")?;
     fs_err::write(source_path.as_std_path(), &bytes)
         .with_context(|| format!("failed to write the repository source {source_path}"))?;
 

@@ -1,6 +1,6 @@
-#![allow(
+#![expect(
     dead_code,
-    reason = "this shared fixture module is included by several integration-test crates via `mod common;`; each crate uses a subset of the helpers, so methods unused by one crate would be flagged dead there but are live in another. `allow` (not `expect`) because the set of used helpers differs per including crate, so no single expectation is fulfilled everywhere."
+    reason = "each integration-test crate that includes this module via `mod common;` uses a subset of its helpers and leaves at least one unused"
 )]
 
 use camino::Utf8Path;

@@ -496,9 +496,8 @@ const FETCH_BATCH: usize = 8;
 /// and the `--json` rows.
 ///
 /// A worker that dies without returning a result yields an error string, and
-/// the run continues. The default hook has already written its panic message to
-/// stderr, and one dead worker must not abort a run that an unreachable server
-/// would not.
+/// the run continues: one dead worker must not abort a run that an unreachable
+/// server would not. The string includes a `&str` or `String` panic payload.
 fn propose_all(
     views: &[&RemoteView],
     propose: impl Fn(&RemoteView) -> Result<Proposal, String> + Sync,
@@ -514,12 +513,23 @@ fn propose_all(
                 proposals.push(
                     handle
                         .join()
-                        .unwrap_or_else(|_| Err("the fetch ended unexpectedly".to_owned())),
+                        .unwrap_or_else(|payload| Err(fetch_panic_message(payload.as_ref()))),
                 );
             }
         });
     }
     proposals
+}
+
+fn fetch_panic_message(payload: &(dyn std::any::Any + Send)) -> String {
+    let detail = payload
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| payload.downcast_ref::<String>().map(String::as_str));
+    match detail {
+        Some(detail) => format!("the fetch ended unexpectedly: {detail}"),
+        None => "the fetch ended unexpectedly".to_owned(),
+    }
 }
 
 /// Render one aligned row per remote the run touched. A row reports where the
@@ -970,6 +980,29 @@ mod tests {
             vec!["humanizer", "prompts", "diagrams"],
             "results must come back in declaration order"
         );
+    }
+
+    #[test]
+    fn a_panicked_fetch_keeps_a_string_panic_message() {
+        let mut inv = inventory(None);
+        let mut second = inv.remotes.first().expect("the seeded remote").clone();
+        second.spec.name = remote_name("prompts");
+        inv.remotes.push(second);
+        let views: Vec<&RemoteView> = inv.remotes.iter().collect();
+
+        let errors: Vec<String> = propose_all(&views, |view| match view.name().as_str() {
+            "humanizer" => std::panic::panic_any("a static payload"),
+            name => std::panic::panic_any(format!("an owned payload for {name}")),
+        })
+        .into_iter()
+        .map(|result| result.expect_err("every worker panicked"))
+        .collect();
+
+        let payloads = ["a static payload", "an owned payload for prompts"];
+        assert_eq!(errors.len(), payloads.len(), "{errors:?}");
+        for (error, payload) in errors.iter().zip(payloads) {
+            assert!(error.contains(payload), "{error}");
+        }
     }
 
     fn proposal(outcome: GateOutcome, current: Option<&str>) -> Proposal {

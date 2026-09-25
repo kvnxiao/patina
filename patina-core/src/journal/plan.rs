@@ -24,9 +24,12 @@ use crate::version_envelope;
 use serde::Deserialize;
 use serde::Serialize;
 
-/// Current on-disk plan format major version. Bump when the serialized
-/// [`Plan`] layout changes incompatibly; older binaries then refuse the
-/// newer file via the version envelope.
+/// Current on-disk major version of the plan and the committed apply record.
+///
+/// Held at `1` until v1.0: before then, a breaking layout change does not
+/// bump this value, and older files are not migrated. Bump it once, at the
+/// v1.0 boundary, where it becomes a compatibility contract. A binary refuses
+/// a file whose major exceeds this value.
 pub const FILE_MAJOR_VERSION: u16 = 1;
 
 /// Store one planned filesystem operation, the minimal record the

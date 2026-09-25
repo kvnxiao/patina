@@ -220,8 +220,7 @@ fn render_leaf(
             render_content_block(out, "copy", target, mode_change, &new, styles);
         }
         FileMode::TemplateRender => {
-            let body = fs_err::read_to_string(source)
-                .with_context(|| format!("failed to read template {source}"))?;
+            let body = fs_err::read_to_string(source).context("failed to read template")?;
             let rendered = engine
                 .render(&body, vars)
                 .with_context(|| format!("failed to render template {source}"))?;
@@ -668,7 +667,7 @@ mod tests {
     }
 
     #[test]
-    fn unreadable_template_source_keeps_the_io_error_in_the_chain() {
+    fn unreadable_template_source_keeps_the_io_error_and_names_its_path_once() {
         let (_td, dir) = tempdir();
         let source = dir.join("missing.tmpl");
 
@@ -680,7 +679,8 @@ mod tests {
                 .any(|io| io.kind() == std::io::ErrorKind::NotFound),
             "{err:#}"
         );
-        assert!(err.to_string().contains(source.as_str()), "{err:#}");
+        let rendered = format!("{err:#}");
+        assert_eq!(rendered.matches(source.as_str()).count(), 1, "{rendered}");
     }
 
     #[test]

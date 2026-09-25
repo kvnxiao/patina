@@ -79,6 +79,16 @@ impl ForceDeploy {
     }
 }
 
+/// Where a hook command's standard output goes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HookStdout {
+    /// Inherit this process's stdout.
+    Inherit,
+    /// Write to this process's stderr, so stdout contains only a `--json`
+    /// document.
+    Stderr,
+}
+
 /// Failures from hook preparation and execution.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
@@ -216,8 +226,9 @@ pub fn should_run(
 ///
 /// Spawns the resolved shell against the hook command (`<shell> -c
 /// <command>` on Unix shells, `<shell> -Command <command>` on PowerShell)
-/// and waits for the child. The child inherits this process's stdin, stdout,
-/// and stderr. The exit status maps to a [`HookOutcome`]:
+/// and waits for the child. The child inherits this process's stdin and
+/// stderr, and writes its stdout where `stdout` directs. The exit status maps
+/// to a [`HookOutcome`]:
 /// zero is [`HookOutcome::Succeeded`]; non-zero is [`HookOutcome::Failed`]
 /// when `must_succeed` is effectively enforced and [`HookOutcome::Warned`]
 /// otherwise.
@@ -231,14 +242,17 @@ pub fn should_run(
 pub fn run_hook(
     hook: &ResolvedHook<'_>,
     force_deploy: ForceDeploy,
+    stdout: HookStdout,
 ) -> Result<HookOutcome, HookError> {
     let command = &hook.entry.command;
-    let status = build_command(&hook.shell, command)
-        .status()
-        .map_err(|source| HookError::Spawn {
-            command: command.clone(),
-            source,
-        })?;
+    let mut shell_command = build_command(&hook.shell, command);
+    if stdout == HookStdout::Stderr {
+        shell_command.stdout(std::io::stderr());
+    }
+    let status = shell_command.status().map_err(|source| HookError::Spawn {
+        command: command.clone(),
+        source,
+    })?;
 
     if status.success() {
         return Ok(HookOutcome::Succeeded);
@@ -497,6 +511,7 @@ mod tests {
         let outcome = run_hook(
             resolved.first().expect("one resolved hook"),
             ForceDeploy::No,
+            HookStdout::Inherit,
         )
         .expect("run");
         assert_eq!(outcome, HookOutcome::Succeeded);
@@ -512,6 +527,7 @@ mod tests {
         let outcome = run_hook(
             resolved.first().expect("one resolved hook"),
             ForceDeploy::No,
+            HookStdout::Inherit,
         )
         .expect("run");
         assert_eq!(outcome, HookOutcome::Failed);
@@ -527,6 +543,7 @@ mod tests {
         let outcome = run_hook(
             resolved.first().expect("one resolved hook"),
             ForceDeploy::No,
+            HookStdout::Inherit,
         )
         .expect("run");
         assert_eq!(outcome, HookOutcome::Warned);
@@ -542,6 +559,7 @@ mod tests {
         let outcome = run_hook(
             resolved.first().expect("one resolved hook"),
             ForceDeploy::Yes,
+            HookStdout::Inherit,
         )
         .expect("run");
         assert_eq!(outcome, HookOutcome::Warned);
