@@ -66,8 +66,10 @@ use crate::journal::orphan_plans;
 use crate::journal::prune_cycles;
 use crate::journal::recover_orphans;
 use crate::journal::timestamp_to_rfc3339;
+use crate::lock::LockError;
 use crate::lock::LockGuard;
 use crate::lock::LockKind;
+use crate::lock::SHARED_TIMEOUT;
 use crate::lock::acquire as acquire_lock;
 use crate::lock::exclusive_timeout;
 use crate::paths::canonicalize;
@@ -2210,6 +2212,55 @@ pub fn recover_interrupted(state_dir: &Utf8Path) -> Result<RecoveryReport, Engin
         state_dir.join("journal"),
         state_dir.join("backups"),
     )?)
+}
+
+/// What the journal shows about an apply that has not committed, for a
+/// command that reports on the files without recovering.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum PendingApply {
+    /// No plan lacks a terminal sentinel.
+    #[default]
+    None,
+    /// A plan lacks a terminal sentinel and the journal was read under the
+    /// lock: an apply was interrupted and awaits recovery.
+    Interrupted,
+    /// A plan lacks a terminal sentinel but the shared lock was not acquired,
+    /// so the plan can belong to an apply that is still running.
+    RunningOrInterrupted,
+}
+
+/// Report whether an apply under the per-machine state directory `state_dir`
+/// has not committed, without writing.
+///
+/// A plan without a terminal sentinel is re-read under the shared lock, waiting
+/// up to [`SHARED_TIMEOUT`], because an apply that is still running also has
+/// one. When no lock file exists, no process holds the lock, and the read
+/// proceeds without creating the file.
+///
+/// # Errors
+///
+/// Returns [`EngineError::Journal`] when the journal directory cannot be read,
+/// and [`EngineError::Lock`] when the lock fails for a reason other than a
+/// timeout.
+pub fn pending_apply(state_dir: &Utf8Path) -> Result<PendingApply, EngineError> {
+    let journal_dir = state_dir.join("journal");
+    if orphan_plans(&journal_dir)?.is_empty() {
+        return Ok(PendingApply::None);
+    }
+    let lock_path = state_dir.join("lock");
+    if !lock_path.exists() {
+        return Ok(PendingApply::Interrupted);
+    }
+    let _guard = match acquire_lock(&lock_path, LockKind::Shared, SHARED_TIMEOUT) {
+        Ok(guard) => guard,
+        Err(LockError::Timeout { .. }) => return Ok(PendingApply::RunningOrInterrupted),
+        Err(other) => return Err(other.into()),
+    };
+    Ok(if orphan_plans(&journal_dir)?.is_empty() {
+        PendingApply::None
+    } else {
+        PendingApply::Interrupted
+    })
 }
 
 #[cfg(debug_assertions)]

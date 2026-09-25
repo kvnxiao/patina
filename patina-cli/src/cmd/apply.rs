@@ -7,7 +7,8 @@
 //!
 //! An invocation that can write (`--yes`, or the interactive prompt) first
 //! reverts any interrupted apply, then plans. A preview does not recover, so it
-//! writes nothing.
+//! writes nothing; it warns instead that its diff describes the files as the
+//! interrupted apply left them.
 //!
 //! ## Exit codes
 //!
@@ -35,6 +36,7 @@ use patina_core::ForceDeploy;
 use patina_core::GateDecision;
 use patina_core::HostDevModeProbe;
 use patina_core::LockPolicy;
+use patina_core::PendingApply;
 use patina_core::Reap;
 use patina_core::RecoveryReport;
 use patina_core::ResolvedPlan;
@@ -42,6 +44,7 @@ use patina_core::chain_message;
 use patina_core::current_timestamp;
 use patina_core::decide_symlink_gate;
 use patina_core::execute_plan;
+use patina_core::pending_apply;
 use patina_core::plan_apply;
 use patina_core::plan_is_full_noop;
 use patina_core::recover_interrupted;
@@ -124,12 +127,19 @@ pub(crate) fn run(
             );
         }
     }
-    if may_execute(args, tty) {
+    let can_write = may_execute(args, tty);
+    if can_write {
         recover_before_planning(reporter)?;
     }
     let timestamp = current_timestamp();
     let resolved = plan_apply(&request, timestamp).context("failed to compute the apply plan")?;
     prune_stale_pins(&resolved, mutating, reporter)?;
+    let pending = if can_write {
+        PendingApply::None
+    } else {
+        pending_apply(&resolved.state_dir).context("failed to check for a pending apply")?
+    };
+    warn_pending_apply(pending, reporter);
 
     if args.json {
         return run_json(&resolved, &request, args.yes, reporter);
@@ -143,6 +153,12 @@ pub(crate) fn run(
     if !is_full_noop {
         let rendered = render_diff(&resolved)?;
         reporter.out_block(&rendered);
+    }
+    if pending != PendingApply::None {
+        if is_full_noop {
+            report_applied(true, reporter);
+        }
+        return Ok(ExitCode::Success.code());
     }
 
     let consent = Consent::from_yes_flag(args.yes);
@@ -188,6 +204,24 @@ pub(crate) fn report_recovery(report: &RecoveryReport, reporter: &mut impl Repor
         count => format!("reverted {count} interrupted applies to the state before they started"),
     };
     reporter.warn(&message);
+}
+
+/// Warn about an apply that has not committed, for a command that reports on
+/// the files without recovering it.
+pub(crate) fn warn_pending_apply(pending: PendingApply, reporter: &mut impl Reporter) {
+    let message = match pending {
+        PendingApply::None => return,
+        PendingApply::Interrupted => {
+            "an interrupted apply is pending: this output describes the files as it left them; \
+             an interactive `patina apply` or `patina apply --yes` reverts it first"
+        }
+        PendingApply::RunningOrInterrupted => {
+            "another apply is running or was interrupted: this output can describe files it has \
+             not finished changing; if none is running, an interactive `patina apply` or \
+             `patina apply --yes` reverts it first"
+        }
+    };
+    reporter.warn(message);
 }
 
 /// Whether this invocation may rewrite the working-tree `patina.lock`.
@@ -561,13 +595,7 @@ fn report_result(result: &ApplyResult, reporter: &mut impl Reporter) {
             for warning in warnings {
                 reporter.warn(warning);
             }
-            // Both lines are deterministic: no timestamp, PID, or state path.
-            let outcome = if *up_to_date {
-                "Already up to date. No changes to apply."
-            } else {
-                "Applied."
-            };
-            reporter.line(&paint(reporter.styles().success, outcome));
+            report_applied(*up_to_date, reporter);
         }
         ApplyResult::RolledBack { failed_hook } => {
             reporter.warn(&format!(
@@ -580,6 +608,16 @@ fn report_result(result: &ApplyResult, reporter: &mut impl Reporter) {
             ));
         }
     }
+}
+
+fn report_applied(up_to_date: bool, reporter: &mut impl Reporter) {
+    // Both lines are deterministic: no timestamp, PID, or state path.
+    let outcome = if up_to_date {
+        "Already up to date. No changes to apply."
+    } else {
+        "Applied."
+    };
+    reporter.line(&paint(reporter.styles().success, outcome));
 }
 
 fn exit_code_for(result: &ApplyResult) -> i32 {
