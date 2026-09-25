@@ -19,9 +19,9 @@ reports drift on demand.
 
 ### Runtime shape
 
-- The design assumes a synchronous core library. The background process
-  owns the only async runtime, a `current_thread` tokio runtime, and uses it
-  to wait for signals, event wakeups, and job completion.
+- The core library is synchronous. The background process owns the only
+  async runtime, a `current_thread` tokio runtime, and uses it to wait for
+  signals, event wakeups, and job completion.
 - Each job (rescan, re-apply, drift check) runs through `spawn_blocking`. At
   most one job is in flight: the loop keeps one `JoinHandle` slot and starts
   a new job only when the slot is empty.

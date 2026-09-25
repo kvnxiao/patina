@@ -64,11 +64,10 @@ pub(crate) fn acquire_state_and_lock() -> Result<(Utf8PathBuf, LockGuard)> {
 /// # Errors
 ///
 /// Returns an error when the re-plan or the re-apply fails.
-pub(crate) async fn rejournal(guard: LockGuard) -> Result<()> {
+pub(crate) fn rejournal(guard: LockGuard) -> Result<()> {
     let timestamp = current_timestamp();
     let resolved = plan_apply(&ApplyRequest::default(), &timestamp).context("failed to re-plan")?;
     execute_plan(&resolved, &ApplyRequest::default(), LockPolicy::Held(guard))
-        .await
         .context("re-apply failed")?;
     Ok(())
 }

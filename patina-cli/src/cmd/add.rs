@@ -215,11 +215,7 @@ impl AddMode {
 /// the module is missing in a non-TTY shell; the mode is missing in a
 /// non-TTY shell; the target path is already managed; the target file does
 /// not exist or cannot be copied; or the manifest read/write fails.
-#[expect(
-    clippy::unused_async,
-    reason = "the subcommand dispatch in main.rs awaits every command uniformly; add's work is synchronous filesystem and lock I/O but keeps the async signature for parity."
-)]
-pub(crate) async fn run(
+pub(crate) fn run(
     args: &AddArgs,
     tty: Tty,
     reader: &mut impl PromptReader,

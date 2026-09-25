@@ -25,16 +25,6 @@ postcard = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
-tokio = { workspace = true, features = [
-    "rt-multi-thread",
-    "fs",
-    "process",
-    "signal",
-    "sync",
-    "time",
-    "io-util",
-    "macros",
-] }
 toml = { workspace = true }
 toml_edit = { workspace = true }
 tracing = { workspace = true }

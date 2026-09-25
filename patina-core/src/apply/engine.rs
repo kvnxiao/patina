@@ -112,13 +112,11 @@ impl Default for ApplyRequest {
 /// The guard variant carries a non-`Clone` [`LockGuard`], so the policy is
 /// passed to [`execute`] as a distinct argument rather than living on the
 /// `Clone` [`ApplyRequest`].
-#[derive(Debug, Default)]
+#[derive(Debug)]
 #[non_exhaustive]
 pub enum LockPolicy {
     /// Acquire the exclusive lock, waiting up to [`exclusive_timeout`]; a
-    /// timeout maps to exit code 4. The default and the only policy the
-    /// CLI's `apply` / `rollback` paths use.
-    #[default]
+    /// timeout maps to exit code 4. `patina apply` uses this policy.
     Blocking,
     /// Use the caller's already-acquired exclusive guard for the run;
     /// acquire nothing. `remove` and `promote` re-journal under this policy
@@ -1890,20 +1888,24 @@ fn materialize_target(
 /// # Errors
 ///
 /// Returns an [`EngineError`] when recovery, locking, journal flushing,
-/// an executor, hook execution, backup, or retention GC fails. A hook
-/// that *fails* under `must_succeed` is not an error: it is reported via
-/// the returned [`ApplyResult`] so the CLI can map it to the right exit
-/// code.
+/// an executor, hook execution, backup, or retention GC fails. Returns
+/// [`EngineError::DevModeRequired`] when the plan contains a symbolic link
+/// operation, Developer Mode is disabled on Windows, and the process is not
+/// elevated. Returns [`EngineError::Hook`] wrapping
+/// [`HookError::ShellNotFound`](crate::apply::HookError::ShellNotFound) when a
+/// hook's explicit `shell` is not on `PATH`. A hook that *fails* under
+/// `must_succeed` is not an error: it is reported through the returned
+/// [`ApplyResult`], which the CLI maps to exit code 2 (`pre_apply`) or 3
+/// (`post_apply`).
 #[expect(
     clippy::too_many_lines,
     reason = "execute is the single linear apply orchestrator: lock, recover, \
               no-op short-circuit, hooks, flush, materialize, commit/rollback, \
               and GC, in the fixed order the crash-safety contract depends on. \
               Splitting a phase into a helper would hide that ordering behind a \
-              call without removing any step; the no-op gate is one such \
-              step and pushed it four lines past the lint's ceiling."
+              call without removing any step."
 )]
-pub async fn execute(
+pub fn execute(
     resolved: &ResolvedPlan,
     request: &ApplyRequest,
     policy: LockPolicy,
@@ -1978,9 +1980,7 @@ pub async fn execute(
         &template_engine,
         resolved,
         request.force_deploy,
-    )
-    .await?
-    {
+    )? {
         return Ok(ApplyResult::Aborted {
             failed_hook: failed,
         });
@@ -2057,8 +2057,7 @@ pub async fn execute(
         resolved,
         request.force_deploy,
         &mut warnings,
-    )
-    .await?;
+    )?;
 
     if let Some(failed) = post_failure {
         // Reverse the file operations to the pre-apply state, then mark
@@ -2371,9 +2370,9 @@ fn is_full_noop(resolved: &ResolvedPlan, reap: bool) -> Result<bool, EngineError
     Ok(true)
 }
 
-/// Whether a `patina apply` over `resolved` would be a full no-op under the
-/// CLI's default reaping (`Blocking`) policy: every target `Unchanged`, a
-/// prior commit present, and nothing to reap.
+/// Whether a `patina apply` over `resolved` would be a full no-op under
+/// [`LockPolicy::Blocking`]: every target `Unchanged`, a prior commit
+/// present, and nothing to reap.
 ///
 /// The CLI calls this *before* prompting so a fully-satisfied repo skips the
 /// diff-and-prompt confirmation and never reads stdin. The probe is read-only.
@@ -2566,7 +2565,7 @@ fn detect_orphans(
 /// the first hook that *fails* under `must_succeed` (so the orchestrator
 /// can abort or roll back). Hooks that warn are silently tolerated here;
 /// the post-apply collector path records their warnings instead.
-async fn run_hook_phase(
+fn run_hook_phase(
     hooks: &[ResolvedHook<'_>],
     event: HookEvent,
     engine: &Engine,
@@ -2574,13 +2573,13 @@ async fn run_hook_phase(
     force_deploy: ForceDeploy,
 ) -> Result<Option<String>, EngineError> {
     let mut sink = Vec::new();
-    run_hook_phase_collecting(hooks, event, engine, resolved, force_deploy, &mut sink).await
+    run_hook_phase_collecting(hooks, event, engine, resolved, force_deploy, &mut sink)
 }
 
 /// Run every hook whose event matches `event`, pushing a human-readable
 /// warning for each [`HookOutcome::Warned`] into `warnings` and returning
 /// the command of the first [`HookOutcome::Failed`] hook.
-async fn run_hook_phase_collecting(
+fn run_hook_phase_collecting(
     hooks: &[ResolvedHook<'_>],
     event: HookEvent,
     engine: &Engine,
@@ -2595,7 +2594,7 @@ async fn run_hook_phase_collecting(
         if !hooks::should_run(hook, engine, resolved.module_resolver(hook.module))? {
             continue;
         }
-        match hooks::run_hook(hook, force_deploy).await? {
+        match hooks::run_hook(hook, force_deploy)? {
             HookOutcome::Succeeded => {}
             HookOutcome::Warned => {
                 warnings.push(format!(
@@ -2985,11 +2984,8 @@ mod tests {
         }
     }
 
-    // Under the Held policy with the caller's own exclusive guard,
-    // the apply completes (it does not time out against its own lock) and a
-    // `<ts>.COMMIT` record is present.
-    #[tokio::test]
-    async fn held_policy_applies_with_callers_guard_and_commits() {
+    #[test]
+    fn held_policy_applies_with_callers_guard_and_commits() {
         let scene = Scene::new();
         let guard = acquire_lock(
             &scene.lock_path(),
@@ -3003,7 +2999,6 @@ mod tests {
             &ApplyRequest::default(),
             LockPolicy::Held(guard),
         )
-        .await
         .expect("apply under Held policy must not error against its own lock");
 
         assert!(

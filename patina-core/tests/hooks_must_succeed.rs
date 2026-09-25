@@ -46,15 +46,14 @@ fn is_clean_literal_char(c: char) -> bool {
     c != '\\' && c != '\''
 }
 
-#[tokio::test]
-async fn pre_apply_failure_with_must_succeed_classifies_failed() {
+#[test]
+fn pre_apply_failure_with_must_succeed_classifies_failed() {
     let hooks = planned(vec![hook_on_default_shell(HookEvent::PreApply, "exit 1")]);
     let resolved = resolve_shells(&hooks, HostOs::current()).expect("shells resolve");
     let outcome = run_hook(
         resolved.first().expect("one resolved hook"),
         ForceDeploy::No,
     )
-    .await
     .expect("hook runs");
     assert_eq!(outcome, HookOutcome::Failed);
     assert_eq!(
@@ -67,15 +66,14 @@ async fn pre_apply_failure_with_must_succeed_classifies_failed() {
     );
 }
 
-#[tokio::test]
-async fn post_apply_failure_with_must_succeed_classifies_failed() {
+#[test]
+fn post_apply_failure_with_must_succeed_classifies_failed() {
     let hooks = planned(vec![hook_on_default_shell(HookEvent::PostApply, "exit 1")]);
     let resolved = resolve_shells(&hooks, HostOs::current()).expect("shells resolve");
     let outcome = run_hook(
         resolved.first().expect("one resolved hook"),
         ForceDeploy::No,
     )
-    .await
     .expect("hook runs");
     assert_eq!(outcome, HookOutcome::Failed);
     assert_eq!(
@@ -84,21 +82,20 @@ async fn post_apply_failure_with_must_succeed_classifies_failed() {
     );
 }
 
-#[tokio::test]
-async fn zero_exit_classifies_succeeded() {
+#[test]
+fn zero_exit_classifies_succeeded() {
     let hooks = planned(vec![hook_on_default_shell(HookEvent::PreApply, "exit 0")]);
     let resolved = resolve_shells(&hooks, HostOs::current()).expect("shells resolve");
     let outcome = run_hook(
         resolved.first().expect("one resolved hook"),
         ForceDeploy::No,
     )
-    .await
     .expect("hook runs");
     assert_eq!(outcome, HookOutcome::Succeeded);
 }
 
-#[tokio::test]
-async fn non_must_succeed_failure_only_warns() {
+#[test]
+fn non_must_succeed_failure_only_warns() {
     let mut entry = hook_on_default_shell(HookEvent::PreApply, "exit 1");
     entry.must_succeed = false;
     let hooks = planned(vec![entry]);
@@ -107,7 +104,6 @@ async fn non_must_succeed_failure_only_warns() {
         resolved.first().expect("one resolved hook"),
         ForceDeploy::No,
     )
-    .await
     .expect("hook runs");
     assert_eq!(outcome, HookOutcome::Warned);
 }

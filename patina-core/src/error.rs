@@ -5,9 +5,7 @@
 //! discovery, module discovery, config parse, state directory, variables,
 //! profile, template, path, journal, backup, lock, executor, hook,
 //! rollback). Each wraps its subsystem's typed error via `#[from]`, so `?`
-//! threads a subsystem failure up to the async entry points without
-//! `todo!()` / `panic!()` (forbidden). The `non_exhaustive`
-//! attribute keeps downstream `match` arms forward compatible.
+//! propagates a subsystem failure to the public entry points.
 
 use camino::Utf8PathBuf;
 use thiserror::Error;
@@ -24,12 +22,9 @@ pub fn chain_message(error: &(dyn std::error::Error + 'static)) -> String {
     message
 }
 
-/// Errors returned from [`apply`](fn@crate::apply),
-/// [`status`](fn@crate::status), and [`rollback`](fn@crate::rollback).
-///
-/// Variants are added per task as their owning subsystems land. The
-/// `non_exhaustive` attribute keeps downstream `match` arms forward
-/// compatible.
+/// Errors returned from [`plan_apply`](crate::plan_apply),
+/// [`execute_plan`](crate::execute_plan), [`status`](fn@crate::status), and
+/// [`rollback`](fn@crate::rollback).
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum EngineError {

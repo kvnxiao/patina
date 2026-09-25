@@ -1,10 +1,11 @@
 //! Core library for the patina cross-platform dotfile manager.
 //!
-//! The three public async entry points, [`apply`](fn@crate::apply),
-//! [`status`](fn@crate::status), and [`rollback`](fn@crate::rollback),
-//! define the engine's outer contract. They return
-//! [`Result<_, EngineError>`](EngineError). The CLI wraps that into
-//! `anyhow::Result` at the call site; `anyhow` lives only in the binary.
+//! [`status`](fn@crate::status) and [`rollback`](fn@crate::rollback) are the
+//! synchronous library entry points. A caller applies the repository by
+//! passing the plan that [`plan_apply`] returns to [`execute_plan`]. Each of
+//! these functions returns [`Result<_, EngineError>`](EngineError), which the
+//! CLI wraps into `anyhow::Result` at the call site; only the CLI depends on
+//! `anyhow`.
 
 #![warn(missing_debug_implementations)]
 
@@ -147,7 +148,7 @@ pub use remote::RemoteError;
 pub use remote::git::GitError;
 pub use remote::git::git_available;
 pub use rollback::RollbackError;
-pub use rollback::run as run_rollback;
+pub use rollback::run as rollback;
 pub use state_dir::HostOs;
 pub use state_dir::StateDirError;
 pub use state_dir::resolve as resolve_state_dir;
@@ -208,22 +209,6 @@ pub use windows::is_unc_path;
 pub use windows::plan_has_symlink_op;
 pub use windows::windows_build_supports_dev_mode;
 
-/// Options accepted by [`apply`](fn@crate::apply). The TTY-driven prompt and
-/// the `--json` envelope live in the CLI, which drives the plan through
-/// [`plan_apply`] and [`execute_plan`], the two engine primitives. This
-/// convenience entry point unconditionally plans and executes, mirroring
-/// `patina apply --yes`.
-#[derive(Debug, Default, Clone)]
-#[non_exhaustive]
-pub struct ApplyOptions {
-    /// Invocation toggles forwarded to the engine (`--force-deploy`,
-    /// `-v` overrides).
-    pub request: ApplyRequest,
-    /// Timestamp keying this run's journal and backup files. The CLI
-    /// supplies a real UTC timestamp. Tests supply a fixed string.
-    pub timestamp: String,
-}
-
 /// Options accepted by [`status`](fn@crate::status).
 #[derive(Debug, Default, Clone)]
 #[non_exhaustive]
@@ -244,24 +229,6 @@ impl StatusOptions {
     }
 }
 
-/// Options accepted by [`rollback`](fn@crate::rollback).
-#[derive(Debug, Default, Clone)]
-#[non_exhaustive]
-pub struct RollbackOptions {}
-
-/// Compute and (depending on `options`) execute the apply plan for the
-/// resolved dotfiles repository.
-///
-/// # Errors
-///
-/// Returns an [`EngineError`] when planning or execution fails. A hook
-/// that fails under `must_succeed` is reported through the returned
-/// [`ApplyResult`], not as an error.
-pub async fn apply(options: ApplyOptions) -> Result<ApplyResult, EngineError> {
-    let resolved = plan_apply(&options.request, options.timestamp)?;
-    execute_plan(&resolved, &options.request, LockPolicy::default()).await
-}
-
 /// Report drift between the resolved dotfiles repository and the current
 /// filesystem state. Classify every managed target as CLEAN, DRIFTED,
 /// MISSING, or ORPHANED against the last committed apply.
@@ -272,32 +239,7 @@ pub async fn apply(options: ApplyOptions) -> Result<ApplyResult, EngineError> {
 /// resolution, the current-plan computation, or the journal read fails. A
 /// shared-lock timeout is downgraded to a warning in the returned
 /// [`StatusReport`], not an error.
-#[expect(
-    clippy::unused_async,
-    reason = "An async signature is required; the status read itself is synchronous."
-)]
-pub async fn status(options: StatusOptions) -> Result<StatusReport, EngineError> {
+pub fn status(options: &StatusOptions) -> Result<StatusReport, EngineError> {
     let managed = current_plan_targets(&options.cli_overrides)?;
     status_report(&managed)
-}
-
-/// Roll back the most recent committed apply to its pre-apply filesystem
-/// state using the journaled backups.
-///
-/// Delegates to [`run_rollback`]. It takes the exclusive lock, finds the
-/// most recent committed-and-not-rolled-back apply, reverts each `[[file]]`
-/// entry's inverse operations atomically, and marks the apply rolled back.
-///
-/// # Errors
-///
-/// Returns an [`EngineError`] when no prior apply remains
-/// ([`RollbackError::NoPriorApply`]), a multi-target entry cannot be
-/// reverted as a unit ([`RollbackError::RollbackPartial`]), or a
-/// filesystem / lock / record-decode operation fails.
-#[expect(
-    clippy::unused_async,
-    reason = "An async signature is required; the rollback itself is synchronous filesystem work."
-)]
-pub async fn rollback(_options: RollbackOptions) -> Result<(), EngineError> {
-    run_rollback()
 }
