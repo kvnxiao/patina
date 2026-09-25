@@ -69,8 +69,8 @@ use std::sync::Arc;
 use thiserror::Error;
 
 /// Synthetic template name used when rendering an in-memory `.tmpl`
-/// body. `MiniJinja` requires a name for `render_named_str`; the name is
-/// internal and never user-visible.
+/// body. `MiniJinja` requires a name for `render_named_str` and includes it in
+/// error messages, as in `(in <patina-template>:2)`.
 const TEMPLATE_NAME: &str = "<patina-template>";
 
 /// Failure modes returned by the template subsystem.
@@ -90,11 +90,17 @@ pub enum TemplateError {
     /// The template body or `when` expression failed to compile or
     /// evaluate for a reason other than an undefined variable (syntax
     /// error, type error in an operation, …).
-    #[error("template evaluation failed: {message}")]
+    #[error("template evaluation failed")]
     Render {
-        /// The underlying `MiniJinja` error rendered to a string.
-        message: String,
+        /// The underlying `MiniJinja` error.
+        #[source]
+        source: minijinja::Error,
     },
+
+    /// A `when` expression evaluated to an undefined value, but no variable
+    /// was recorded as missing.
+    #[error("`when` expression evaluated to an undefined value")]
+    UndefinedPredicate,
 }
 
 /// Wraps the single shared strict-undefined `MiniJinja` environment.
@@ -143,7 +149,7 @@ impl Engine {
         let (context, tracker) = strict::build_context(resolver);
         match self.env.render_named_str(TEMPLATE_NAME, body, context) {
             Ok(rendered) => Ok(rendered),
-            Err(err) => Err(classify(&err, &tracker)),
+            Err(err) => Err(classify(err, &tracker)),
         }
     }
 
@@ -155,16 +161,18 @@ impl Engine {
     /// Returns [`TemplateError::UndefinedVariable`] when the predicate
     /// references a variable undefined at every resolution layer,
     /// naming the offending variable. Returns [`TemplateError::Render`]
-    /// for syntax or evaluation errors unrelated to undefined variables.
+    /// for syntax or evaluation errors unrelated to undefined variables, and
+    /// [`TemplateError::UndefinedPredicate`] when the predicate evaluates to
+    /// undefined without a recorded variable name.
     pub fn eval_when(&self, expr: &str, resolver: &Resolver) -> Result<bool, TemplateError> {
         let (context, tracker) = strict::build_context(resolver);
         let compiled = self
             .env
             .compile_expression(expr)
-            .map_err(|err| classify(&err, &tracker))?;
+            .map_err(|err| classify(err, &tracker))?;
         match compiled.eval(context) {
             Ok(value) => coerce_when_result(&value, &tracker),
-            Err(err) => Err(classify(&err, &tracker)),
+            Err(err) => Err(classify(err, &tracker)),
         }
     }
 }
@@ -191,9 +199,7 @@ fn coerce_when_result(
         // Undefined with no recorded name should not happen (every miss
         // routes through the tracking context), but fail closed rather
         // than silently treating an undefined predicate as false.
-        return Err(TemplateError::Render {
-            message: "`when` expression evaluated to an undefined value".to_owned(),
-        });
+        return Err(TemplateError::UndefinedPredicate);
     }
     Ok(value.is_true())
 }
@@ -205,7 +211,7 @@ fn coerce_when_result(
 /// recorded as missing during this evaluation. Any other error falls
 /// through to [`TemplateError::Render`].
 fn classify(
-    err: &minijinja::Error,
+    err: minijinja::Error,
     tracker: &std::sync::Mutex<strict::UndefinedTracker>,
 ) -> TemplateError {
     if err.kind() == ErrorKind::UndefinedError {
@@ -216,14 +222,14 @@ fn classify(
             };
         }
     }
-    TemplateError::Render {
-        message: err.to_string(),
-    }
+    TemplateError::Render { source: err }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_util::assert_source_rendered_once;
+    use crate::test_util::source_as;
     use crate::variables::Builtins;
 
     fn resolver() -> Resolver {
@@ -250,6 +256,31 @@ mod tests {
             matches!(&err, TemplateError::UndefinedVariable { names } if names.contains("user_email")),
             "expected UndefinedVariable naming user_email, got {err:?}"
         );
+    }
+
+    #[test]
+    fn render_syntax_error_renders_its_minijinja_source_and_line_once() {
+        let err = Engine::new()
+            .render("line one\n{{ unclosed", &resolver())
+            .expect_err("an unterminated expression cannot compile");
+        assert_eq!(
+            source_as::<minijinja::Error>(&err).kind(),
+            ErrorKind::SyntaxError
+        );
+        assert_source_rendered_once(&err);
+        let rendered = crate::error::chain_message(&err);
+        assert!(
+            rendered.contains(&format!("{TEMPLATE_NAME}:2")),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn undefined_when_result_without_a_recorded_name_fails_closed() {
+        let tracker = std::sync::Mutex::new(strict::UndefinedTracker::default());
+        let err = coerce_when_result(&Value::UNDEFINED, &tracker)
+            .expect_err("an undefined predicate must not read as false");
+        assert!(matches!(err, TemplateError::UndefinedPredicate), "{err:?}");
     }
 
     #[test]

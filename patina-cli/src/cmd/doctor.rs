@@ -322,9 +322,8 @@ fn fix_default_repo(
     let cwd = std::env::current_dir().context("failed to read the current directory")?;
     let cwd = Utf8PathBuf::from_path_buf(cwd)
         .map_err(|p| anyhow::anyhow!("current directory `{}` is not valid UTF-8", p.display()))?;
-    let canonical = validate_repo_root(&cwd).map_err(|reason| {
-        anyhow::anyhow!("current directory {cwd} is not a valid Patina repository: {reason}")
-    })?;
+    let canonical = validate_repo_root(&cwd)
+        .with_context(|| format!("current directory {cwd} is not a valid Patina repository"))?;
     write_persisted_default(state, &canonical).map_err(EngineError::from)?;
 
     tracing::info!(
