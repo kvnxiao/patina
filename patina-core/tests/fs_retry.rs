@@ -3,7 +3,7 @@
 #![cfg(test)]
 #![cfg_attr(
     not(unix),
-    allow(
+    expect(
         unused_imports,
         dead_code,
         reason = "all tests in this file are #[cfg(unix)]; the imports and helpers are unused on other targets by design"
