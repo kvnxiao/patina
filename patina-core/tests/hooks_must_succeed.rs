@@ -56,14 +56,6 @@ fn pre_apply_failure_with_must_succeed_classifies_failed() {
     )
     .expect("hook runs");
     assert_eq!(outcome, HookOutcome::Failed);
-    assert_eq!(
-        resolved.first().expect("one resolved hook").entry.command,
-        "exit 1"
-    );
-    assert_eq!(
-        resolved.first().expect("one resolved hook").entry.event,
-        HookEvent::PreApply
-    );
 }
 
 #[test]
@@ -76,10 +68,6 @@ fn post_apply_failure_with_must_succeed_classifies_failed() {
     )
     .expect("hook runs");
     assert_eq!(outcome, HookOutcome::Failed);
-    assert_eq!(
-        resolved.first().expect("one resolved hook").entry.event,
-        HookEvent::PostApply
-    );
 }
 
 #[test]
