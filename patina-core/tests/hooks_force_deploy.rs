@@ -5,6 +5,7 @@
 use camino::Utf8PathBuf;
 use patina_core::ForceDeploy;
 use patina_core::HookOutcome;
+use patina_core::HookStdout;
 use patina_core::PlannedHook;
 use patina_core::config::HookEntry;
 use patina_core::config::HookEvent;
@@ -59,6 +60,7 @@ fn force_deploy_downgrades_post_apply_failure_to_warning() {
     let outcome = run_hook(
         resolved.first().expect("one resolved hook"),
         ForceDeploy::Yes,
+        HookStdout::Inherit,
     )
     .expect("hook runs");
 
@@ -86,6 +88,7 @@ fn same_hook_without_force_deploy_classifies_failed() {
     let outcome = run_hook(
         resolved.first().expect("one resolved hook"),
         ForceDeploy::No,
+        HookStdout::Inherit,
     )
     .expect("hook runs");
 
@@ -107,6 +110,7 @@ fn force_deploy_leaves_succeeding_hook_succeeded() {
     let outcome = run_hook(
         resolved.first().expect("one resolved hook"),
         ForceDeploy::Yes,
+        HookStdout::Inherit,
     )
     .expect("hook runs");
     assert_eq!(outcome, HookOutcome::Succeeded);

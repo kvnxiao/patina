@@ -40,6 +40,7 @@ pub use apply::ExecutorError;
 pub use apply::ForceDeploy;
 pub use apply::HookError;
 pub use apply::HookOutcome;
+pub use apply::HookStdout;
 pub use apply::Materialization;
 pub use apply::ResolvedHook;
 pub use apply::TargetClaim;

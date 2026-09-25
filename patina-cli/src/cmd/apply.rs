@@ -34,6 +34,7 @@ use patina_core::DEV_MODE_REGISTRY_PATH;
 use patina_core::EngineError;
 use patina_core::ForceDeploy;
 use patina_core::GateDecision;
+use patina_core::HookStdout;
 use patina_core::HostDevModeProbe;
 use patina_core::LockPolicy;
 use patina_core::PendingApply;
@@ -652,9 +653,15 @@ fn build_request(args: &ApplyArgs) -> Result<ApplyRequest> {
     } else {
         ForceDeploy::No
     };
+    let hook_stdout = if args.json {
+        HookStdout::Stderr
+    } else {
+        HookStdout::Inherit
+    };
     let cli_overrides = parse_overrides(&args.var)?;
     Ok(ApplyRequest {
         force_deploy,
+        hook_stdout,
         cli_overrides,
         reap: Reap::Orphans,
     })

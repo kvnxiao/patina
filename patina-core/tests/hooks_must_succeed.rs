@@ -3,6 +3,7 @@
 use patina_core::ForceDeploy;
 use patina_core::HookError;
 use patina_core::HookOutcome;
+use patina_core::HookStdout;
 use patina_core::PlannedHook;
 use patina_core::TemplateEngine;
 use patina_core::config::HookEntry;
@@ -53,6 +54,7 @@ fn pre_apply_failure_with_must_succeed_classifies_failed() {
     let outcome = run_hook(
         resolved.first().expect("one resolved hook"),
         ForceDeploy::No,
+        HookStdout::Inherit,
     )
     .expect("hook runs");
     assert_eq!(outcome, HookOutcome::Failed);
@@ -65,6 +67,7 @@ fn post_apply_failure_with_must_succeed_classifies_failed() {
     let outcome = run_hook(
         resolved.first().expect("one resolved hook"),
         ForceDeploy::No,
+        HookStdout::Inherit,
     )
     .expect("hook runs");
     assert_eq!(outcome, HookOutcome::Failed);
@@ -77,6 +80,7 @@ fn zero_exit_classifies_succeeded() {
     let outcome = run_hook(
         resolved.first().expect("one resolved hook"),
         ForceDeploy::No,
+        HookStdout::Inherit,
     )
     .expect("hook runs");
     assert_eq!(outcome, HookOutcome::Succeeded);
@@ -91,6 +95,7 @@ fn non_must_succeed_failure_only_warns() {
     let outcome = run_hook(
         resolved.first().expect("one resolved hook"),
         ForceDeploy::No,
+        HookStdout::Inherit,
     )
     .expect("hook runs");
     assert_eq!(outcome, HookOutcome::Warned);

@@ -56,6 +56,7 @@ pub use collisions::TargetClaim;
 pub use hooks::ForceDeploy;
 pub use hooks::HookError;
 pub use hooks::HookOutcome;
+pub use hooks::HookStdout;
 pub use hooks::ResolvedHook;
 pub use hooks::resolve_on_path;
 pub use hooks::resolve_shells;
