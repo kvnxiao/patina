@@ -2,8 +2,8 @@
 //!
 //! Patina keys its journal `<ts>.plan` / `<ts>.COMMIT` files and backup
 //! directories by a monotonic UTC timestamp formatted `YYYYMMDDTHHMMSSZ`.
-//! Both the CLI `apply` path and the watcher's re-apply need the exact same
-//! format string. The helper lives here as a single shared definition, not a
+//! Every CLI command that plans or journals an apply needs the same format
+//! string. The helper lives here as a single shared definition, not a
 //! copy at each call site.
 //!
 //! The timestamp keys filenames only. It never appears in user-facing
@@ -54,10 +54,6 @@ pub fn current_rfc3339() -> String {
 
 /// Render Unix seconds as an RFC 3339 UTC instant, falling back to the raw
 /// integer for a value outside the representable range.
-///
-/// The one spelling Patina renders an epoch in, so the cooldown message, the
-/// watch drift report, and the lockfile timestamps can never disagree on
-/// format.
 ///
 /// # Examples
 ///

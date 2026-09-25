@@ -1,14 +1,13 @@
 # Operating environment
 
 Patina stores per-machine state in the locations below. In v1.0, keep the
-state directory and repository off cloud-sync mounts, and use
-`systemd --user` lingering when the watcher must survive logout.
+state directory and repository off cloud-sync mounts.
 
 ---
 
 ## Where Patina stores state
 
-Patina writes its journal, backups, lock file, and drift cache to a
+Patina writes its journal, backups, and lock file to a
 **per-machine state directory**. Your dotfiles repository is never
 written to during `patina apply`.
 
@@ -24,12 +23,10 @@ Layout under the state directory:
 patina/
 ├── journal/             postcard-encoded plan + COMMIT/ROLLED_BACK sentinels
 ├── backups/<ts>/        last-applied byte content, last 10 cycles retained
-├── logs/                rotating watcher logs, created lazily by `patina watch`
 ├── remotes/             bare remote repositories and immutable checkouts
 ├── default_repo         persisted dotfiles repo pointer (UTF-8 text)
 ├── profile              persisted profile name (UTF-8 text)
-├── lock                 advisory file lock (fs2)
-└── drift.cache          postcard-encoded drift events written by `patina watch`
+└── lock                 advisory file lock (fs2)
 ```
 
 Each backup path mirrors an absolute target below `backups/<ts>/`. On Windows,
@@ -95,57 +92,3 @@ git clone <your repo> C:\Users\<you>\dotfiles
 
 The state directory is on local disk by default. Moving it to a cloud-sync
 mount requires overriding `XDG_STATE_HOME`.
-
----
-
-## Linux: surviving logout with `loginctl enable-linger`
-
-By default, `systemd --user` services (including the `patina watch`
-service installed by `patina watch install`) stop when your last
-login session ends. If you SSH into a server, run
-`patina watch install`, then SSH out, the watcher dies with your
-session.
-
-**Patina does not invoke `loginctl enable-linger` for you in v1.0.** The
-main `patina` process runs unprivileged and never prompts for sudo. Users
-who need the watcher to survive logout must enable lingering separately. A
-`--linger` flag is a v1.1 candidate.
-
-### When you need lingering
-
-Enable it on a machine you SSH into intermittently, or on one that should
-run the watcher across reboots without a console login. Skip it on a
-desktop or laptop where you stay logged in, and on any machine where you
-only ever run `patina apply` by hand.
-
-### How to enable it
-
-One shot, requires sudo:
-
-```sh
-sudo loginctl enable-linger $USER
-```
-
-Verify:
-
-```sh
-loginctl show-user $USER | grep Linger
-# Linger=yes
-```
-
-To disable later:
-
-```sh
-sudo loginctl disable-linger $USER
-```
-
-`patina watch uninstall` does **not** call `disable-linger`. Both
-commands need sudo, and Patina commands run unprivileged.
-
-### Without systemd
-
-`patina watch install` writes a `systemd --user` unit. A non-systemd
-Linux (Void, Devuan with sysvinit, Alpine without OpenRC-systemd parity)
-cannot run one. Run the watcher inline with `patina watch --foreground`
-under your own supervisor instead: runit, s6, or OpenRC. Templates for
-other init systems are a v1.1 candidate.

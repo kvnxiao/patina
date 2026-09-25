@@ -8,8 +8,7 @@ Your dotfiles, oxidized to perfection.
 repository drives macOS, Linux, and Windows. Most targets are symbolic
 links back into that repo; a `.tmpl` source renders through MiniJinja, and
 a byte copy covers what a link cannot. Profiles and per-OS variation pick
-what lands on this machine, and one source can fan out to many targets. A
-background watcher re-applies on change, installed as a per-OS service.
+what lands on this machine, and one source can fan out to many targets.
 Apply is transactional: a `kill -9` mid-run leaves either the pre-apply
 or the post-apply state.
 
@@ -37,7 +36,6 @@ patina init                 # scaffold a root patina.toml + persist the repo poi
 patina add ~/.zshrc         # bring an existing dotfile under management
 patina apply                # materialize managed files (diff-and-prompt by default)
 patina status               # report drift between the repo and your machine
-patina watch install        # auto-reapply on change via a per-OS background service
 ```
 
 ## Commands
@@ -53,9 +51,8 @@ patina watch install        # auto-reapply on change via a per-OS background ser
 | `rollback` | Reverse the most recent successful apply from the journal and backups. |
 | `doctor` | Inspect the environment for known problems; `--fix` interactively remediates fixable findings. |
 | `remote` | Manage third-party git sources: `list` the pins, `check` upstream tips, `update` a pin through the update gate, `prune` cached checkouts. |
-| `watch` | `--foreground` runs the watcher inline; `install` / `uninstall` / `start` / `stop` / `restart` / `status` manage the per-OS background service. |
 | `defender` | Windows only. `status` / `apply` / `clear` manage Microsoft Defender path exclusions for the repo and its targets. |
-| `debug journal` / `debug drift-cache` | Decode the binary journal / drift cache for post-mortem inspection. |
+| `debug journal` | Decode the binary journal for post-mortem inspection. |
 
 `add`, `remove`, and `promote` accept absolute paths, paths beginning with
 `~`, and paths relative to the current directory. For targets under `$HOME`,
@@ -73,12 +70,14 @@ values to both commands.
 ## Documentation
 
 - [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md) for users: install, declaring
-  dotfiles, the apply flow, the watch service, recovery, and troubleshooting.
+  dotfiles, the apply flow, recovery, and troubleshooting.
 - [`docs/OPERATING_ENVIRONMENT.md`](docs/OPERATING_ENVIRONMENT.md) for
-  operations: state-directory layout, the cloud-sync caveat, and Linux
-  `enable-linger`.
+  operations: state-directory layout and the cloud-sync caveat.
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for architecture: crate
   layout, journal format, apply phases, and recovery.
+- [`docs/FUTURE_FEATURES.md`](docs/FUTURE_FEATURES.md) for work that could
+  follow v1.0: design constraints for background re-apply and drift
+  notifications.
 - [`AGENTS.md`](AGENTS.md) for agents, also reachable as `CLAUDE.md`.
 
 ## Design

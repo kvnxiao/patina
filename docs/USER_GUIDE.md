@@ -342,9 +342,9 @@ color. `NO_COLOR` in the environment is honoured under `auto`.
 
 Every multi-row listing lines its columns up the same way, sized to the
 widest cell: `patina status`, `patina remote list`, `patina remote
-update`, `patina watch status`, `patina doctor`, and the Defender
-listing. Painted cells pad by printable width, so a piped run and a
-terminal run stay aligned identically.
+update`, `patina doctor`, and the Defender listing. Painted cells pad by
+printable width, so a piped run and a terminal run stay aligned
+identically.
 
 `patina status` prints one row per managed target, then a summary line of
 the counters:
@@ -562,86 +562,19 @@ On Windows 11, consider a [Dev Drive](https://learn.microsoft.com/windows/dev-dr
 (ReFS) in Defender *performance mode*. It scans asynchronously rather
 than skipping the scan, the lower-risk choice where it applies.
 
-## Watch service
+## Resolving drift
 
-`patina watch` runs a per-user background watcher. It re-applies your
-configuration when the source repository changes and reports drift when
-a managed target is edited outside Patina. Its default path needs neither
-admin nor sudo. The watcher reapplies the whole resolved plan without a
-prompt. A pending `mode` edit therefore converges on the next
-watched-source change or the next interactive `patina apply`, whichever
-comes first.
-
-The lifecycle subcommands manage a background service registered with
-your OS supervisor:
-
-| Command                  | Purpose                                                            |
-| ------------------------ | ------------------------------------------------------------------ |
-| `patina watch install`   | Register the watcher to launch at login. Exits 1 if already installed; run `uninstall` first to re-register. |
-| `patina watch uninstall` | Stop the running watcher and remove the service registration.      |
-| `patina watch start`     | Ask the supervisor to start the installed service.                 |
-| `patina watch stop`      | Ask the supervisor to stop the service without removing it.        |
-| `patina watch restart`   | Stop then start the installed service.                             |
-| `patina watch status`    | Report the service's installed / running state, last-exit code, and the watcher's subscription and re-apply counters. Read-only. |
-
-`patina watch --foreground` runs the watcher loop inline instead,
-attached to the current terminal, and shuts down cleanly on Ctrl-C
-(SIGINT) or SIGTERM. The installed background service runs that same
-loop under your supervisor.
-
-`install` writes a per-user service descriptor whose location depends on
-the OS:
-
-| OS      | Service descriptor                                      | Supervisor       |
-| ------- | ------------------------------------------------------- | ---------------- |
-| macOS   | `~/Library/LaunchAgents/com.patina.watcher.plist`       | `launchd`        |
-| Linux   | `~/.config/systemd/user/patina-watcher.service`         | `systemd --user` |
-| Windows | Scheduled Task named `Patina Watcher` (HKCU, logon trigger) | Task Scheduler |
-
-### Linux caveats
-
-A `systemd --user` service stops when you log out and starts again when
-you next log in. To keep the watcher running across logout, say on a
-server you SSH in and out of, enable lingering for your user once:
-
-```sh
-sudo loginctl enable-linger $USER
-```
-
-`patina watch install` writes a `systemd --user` unit. On Void, Devuan
-with a non-systemd init, or Alpine, run `patina watch --foreground` under
-runit, s6, or OpenRC instead.
-[`OPERATING_ENVIRONMENT.md`](OPERATING_ENVIRONMENT.md) covers both cases,
-including Patina's `enable-linger` limitation.
-
-### Drift notifications
-
-When a non-symlink managed target changes, the watcher hashes it and
-compares the result against the hash recorded at the last apply. Those
-targets are copy-mode files, copied directory trees, and rendered
-templates. On divergence it emits a desktop notification titled
-"Patina: drift detected" naming the target, and records the event in a
-drift cache at `<state>/patina/drift.cache`. Notifications are
-rate-limited to at most one per target per 60-second window. Editing a
-symlinked target is editing the source, which the source watcher already
-catches, so symlinks stay out of the drift hashing.
-
-Drift appears in two ways:
-
-- As the desktop notification above, **only while the watcher is
-  running**.
-- As `drifted` in `patina status`, **always**. `patina status` decides
-  drift by re-hashing the target live, independent of the watcher. A
-  file you edit and then revert to its recorded bytes therefore reports
-  `clean`, even though the watcher logged the intervening edit. The
-  drift cache is the watcher's own notification ledger, and
-  `patina status` never reads it.
+On every run, `patina status` compares each managed target with the last
+apply's journal record: a copied or rendered target must match the
+recorded content hash, and a symbolic link must point at its recorded link
+target. A file you edit and then revert to the bytes the last apply wrote
+therefore reports `clean`.
 
 Resolve a drifted target either way:
 
 - `patina apply` reverts the target to the source content.
-- `patina promote` updates the source from the target's current bytes,
-  then re-applies.
+- `patina promote` updates a copy-mode target's source from the target's
+  current bytes, then re-applies.
 
 ### Limits on promote and remove
 
@@ -711,7 +644,7 @@ multi-machine flow.
 
 ## State directory
 
-Patina writes its journal, backups, advisory lock, and drift cache to a
+Patina writes its journal, backups, and advisory lock to a
 **per-machine state directory** outside your dotfiles repository, at
 `~/.local/state/patina/` on Linux, `~/Library/Application
 Support/patina/` on macOS, and `%LOCALAPPDATA%\patina\` on Windows.
@@ -746,13 +679,9 @@ Two commands recover deliberately:
 
 For a post-mortem, `patina debug journal <path>` decodes the binary
 journal into human-readable form, showing what the interrupted or
-completed apply intended to do. `patina debug drift-cache <path>` does
-the same for the watcher's binary drift cache
-(`<state>/patina/drift.cache`): the version envelope, the journal
-timestamp the cache is bound to, and one block per recorded divergence,
-each naming the target path, the expected and actual hashes, and the
-detection time. Both refuse a file written by a newer Patina with a typed
-error naming the version mismatch, and both exit 1 on an invalid path.
+completed apply intended to do. It refuses a file written by a newer
+Patina with an error that reports both major versions, and exits 1 on that
+refusal or on a missing or unreadable path.
 
 ## Troubleshooting
 
@@ -767,22 +696,11 @@ error naming the version mismatch, and both exit 1 on an invalid path.
   modules, or in the active profile.
 - **Apply seems to hang.** Another `patina` process may hold the
   advisory lock. Patina waits up to a bounded timeout and then exits
-  with the lock-timeout exit code; check for a concurrent apply or a
-  running watcher.
+  with the lock-timeout exit code; check for a concurrent apply.
 - **Recovery behaves unexpectedly after a crash.** Confirm your state
   directory is on local disk and not a cloud-sync mount (see "State
   directory"). Use `patina debug journal` to inspect the journal that
   recovery read.
-- **The watcher stops when you log out of a Linux box.** A `systemd
-  --user` service ends with your session by default. Run `sudo loginctl
-  enable-linger $USER` once to keep it running across logout (see "Watch
-  service").
-- **`patina status` reports `drifted` but no desktop notification
-  appeared.** Notifications only fire while the watcher is running, and
-  are rate-limited to one per target per 60 seconds; `patina status`
-  reports drift from a live re-hash regardless. Resolve with `patina
-  apply` (revert to source) or `patina promote` (update source from
-  target).
 - **`patina status` reports `orphaned` after an apply with `-v`.** Pass the
   same variable overrides to `status`. Without them, the entry's `when`
   expression can evaluate differently. See [Variables](#variables).

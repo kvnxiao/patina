@@ -20,11 +20,6 @@
 //! their owning subsystems. The state-directory layer only creates the
 //! directory tree.
 //!
-//! `<state>/patina/logs/` is deliberately NOT created here. The watcher owns
-//! that directory and its rotating-log stack, creating it lazily on first
-//! start via [`crate::watch::logging`]. [`resolve`] creates only `journal/`
-//! and `backups/`.
-//!
 //! The dotfiles repository is never written to by this module.
 //!
 //! # Examples

@@ -11,12 +11,7 @@ use common::code;
 fn help_subcommand_is_rejected() {
     let f = Fixture::new();
 
-    for args in [
-        ["help"].as_slice(),
-        &["debug", "help"],
-        &["watch", "help"],
-        &["remote", "help"],
-    ] {
+    for args in [["help"].as_slice(), &["debug", "help"], &["remote", "help"]] {
         let out = f.run(args, &[]);
 
         assert_eq!(
@@ -46,7 +41,7 @@ fn help_flag_prints_usage_and_the_subcommand_list() {
         stdout.contains("Usage:"),
         "`patina --help` must print a usage line: {stdout}"
     );
-    for subcommand in ["init", "apply", "status", "remote", "watch"] {
+    for subcommand in ["init", "apply", "status", "remote"] {
         assert!(
             stdout.contains(subcommand),
             "`patina --help` must list the {subcommand} subcommand: {stdout}"
