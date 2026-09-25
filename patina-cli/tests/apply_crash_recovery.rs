@@ -144,7 +144,6 @@ fn kill_after_first_op_converges_to_pre_apply_on_recovery() {
 
     let state = fx.state_root();
     let journal = state.join("journal");
-    let backups = state.join("backups");
 
     assert_eq!(
         count_suffix(&journal, PLAN_SUFFIX),
@@ -157,7 +156,7 @@ fn kill_after_first_op_converges_to_pre_apply_on_recovery() {
         "a killed apply must not have written a COMMIT sentinel"
     );
 
-    let report = recover_orphans(&journal, &backups).expect("recovery");
+    let report = recover_orphans(&state).expect("recovery");
     assert!(report.recovered_any(), "the orphan plan must be recovered");
 
     assert_eq!(
@@ -194,7 +193,7 @@ fn kill_before_a_pre_existing_second_target_is_written_keeps_its_bytes_on_recove
     );
 
     let state = fx.state_root();
-    recover_orphans(state.join("journal"), state.join("backups")).expect("recovery");
+    recover_orphans(&state).expect("recovery");
 
     assert_eq!(
         fs_err::read_to_string(fx.home.join(".b")).ok(),
@@ -217,7 +216,6 @@ fn kill_after_all_ops_before_commit_converges_to_pre_apply_on_recovery() {
 
     let state = fx.state_root();
     let journal = state.join("journal");
-    let backups = state.join("backups");
 
     assert_eq!(
         count_suffix(&journal, COMMIT_SUFFIX),
@@ -233,7 +231,7 @@ fn kill_after_all_ops_before_commit_converges_to_pre_apply_on_recovery() {
         "NEW-B\n"
     );
 
-    recover_orphans(&journal, &backups).expect("recovery");
+    recover_orphans(&state).expect("recovery");
 
     assert_eq!(
         fs_err::read_to_string(fx.home.join(".a")).expect("read restored ~/.a"),
@@ -284,7 +282,7 @@ fn kill_after_a_reap_restores_the_reaped_target_on_recovery() {
         "the orphan plan must record the reap of ~/.b as a remove; got:\n{rendered}"
     );
 
-    recover_orphans(&journal, state.join("backups")).expect("recovery");
+    recover_orphans(&state).expect("recovery");
 
     assert_eq!(
         fs_err::read_to_string(fx.home.join(".b")).ok(),
@@ -598,5 +596,30 @@ fn a_post_apply_rollback_leaves_no_orphan_plan_and_status_no_pending_warning() {
             && !stderr(&status).contains("running or was interrupted"),
         "status must not report a pending apply; stderr: {}",
         stderr(&status)
+    );
+}
+
+#[test]
+fn the_next_apply_keeps_bytes_written_after_the_crash_and_names_their_copy() {
+    let fx = setup(".a", "OLD-A\n");
+    let killed = fx.apply_with_env(&["--yes"], &[("PATINA_TEST_ABORT_AFTER_OP", "1")]);
+    assert_eq!(code(&killed), 70, "stderr: {}", stderr(&killed));
+    fs_err::write(fx.home.join(".a"), "USER-A\n").expect("edit ~/.a after the crash");
+
+    let next = fx.apply(&["--yes"]);
+    assert_eq!(code(&next), 0, "stderr: {}", stderr(&next));
+
+    let err = stderr(&next);
+    let kept = err
+        .lines()
+        .find_map(|line| {
+            line.split_once(" from before the recovery at ")
+                .map(|(_, path)| path.trim())
+        })
+        .unwrap_or_else(|| panic!("the recovery must name the kept copy; stderr: {err}"));
+    assert_eq!(
+        fs_err::read_to_string(kept).expect("read the kept copy"),
+        "USER-A\n",
+        "the bytes written after the crash must survive the recovery"
     );
 }

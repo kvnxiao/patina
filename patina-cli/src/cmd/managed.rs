@@ -61,7 +61,7 @@ pub(crate) fn acquire_state_and_lock(
     let guard = acquire_lock(&lock_path, LockKind::Exclusive, exclusive_timeout())
         .map_err(EngineError::from)
         .context("failed to acquire the exclusive lock")?;
-    let report = recover_orphans(state.join("journal"), state.join("backups"))
+    let report = recover_orphans(&state)
         .map_err(EngineError::from)
         .context("failed to recover an interrupted apply")?;
     report_recovery(&report, reporter);

@@ -35,7 +35,15 @@
 //!    - no backup and `Remove`: the apply backs up a reaped target before it
 //!      removes it, so the removal never started. Leave the target in place.
 //!
-//!    Each outcome leaves the target in its pre-apply state.
+//!    Each outcome leaves the target in its pre-apply state. Before recovery
+//!    overwrites or removes an entry at a target, it copies that entry to
+//!    `<state>/recovered/<ts>.<n>/<op index>/<file name>`, so bytes written
+//!    after the crash survive. A retry of a recovery that failed partway finds
+//!    the copy an earlier pass made for the same `<ts>` and op index, and
+//!    reports that copy instead of copying again when the live entry still
+//!    matches it or the backup. Otherwise it copies into `<n>` one past the
+//!    highest existing number, so no pass overwrites an earlier copy, and
+//!    reports the earlier copy before the new one.
 //! 4. Deletes the orphan `<ts>.plan` and `<ts>.progress` files once every
 //!    operation has been reversed.
 //!
@@ -57,9 +65,7 @@
 //! use camino::Utf8Path;
 //! use patina_core::journal::recover_orphans;
 //!
-//! let journal_dir = Utf8Path::new("/state/patina/journal");
-//! let backups_dir = Utf8Path::new("/state/patina/backups");
-//! let report = recover_orphans(journal_dir, backups_dir)?;
+//! let report = recover_orphans(Utf8Path::new("/state/patina"))?;
 //! println!("recovered {} orphan plan(s)", report.recovered_timestamps().len());
 //! # Ok::<(), patina_core::journal::JournalError>(())
 //! ```
@@ -73,6 +79,11 @@ use super::PlannedOperation;
 use super::probe::mirror_backup_path;
 use super::probe::operation_target;
 use camino::Utf8Path;
+use camino::Utf8PathBuf;
+
+/// Directory under the state directory that holds the entries recovery copied
+/// aside before overwriting or removing them.
+pub const RECOVERED_DIR: &str = "recovered";
 
 /// Filename suffix for the rollback sentinel written by `patina rollback`.
 /// Recovery treats a `<ts>.ROLLED_BACK` plan as already closed,
@@ -81,10 +92,13 @@ pub const ROLLED_BACK_SUFFIX: &str = ".ROLLED_BACK";
 
 /// Summary of one [`recover_orphans`] pass: the timestamps of the orphan
 /// plans that were reversed and cleaned up, in lexical (chronological)
-/// order. An empty list means there was no partial apply to recover.
+/// order, and each target the pass restored or removed.
+/// [`recovered_timestamps`](Self::recovered_timestamps) is empty when no
+/// interrupted apply was pending.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct RecoveryReport {
     recovered: Vec<String>,
+    changed: Vec<RecoveredTarget>,
 }
 
 impl RecoveryReport {
@@ -97,11 +111,40 @@ impl RecoveryReport {
     pub fn recovered_any(&self) -> bool {
         !self.recovered.is_empty()
     }
+
+    /// Every target this pass restored from a backup or removed, in plan
+    /// order.
+    pub fn changed_targets(&self) -> &[RecoveredTarget] {
+        &self.changed
+    }
 }
 
-/// Recover every orphan plan in `journal_dir`, reversing each backward to
-/// the pre-apply filesystem state using backups under `backups_dir`, then
-/// deleting the orphan plan and progress files.
+/// One target a recovery pass restored from a backup or removed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecoveredTarget {
+    target: Utf8PathBuf,
+    kept: Vec<Utf8PathBuf>,
+}
+
+impl RecoveredTarget {
+    /// The target path as the orphan plan recorded it.
+    pub fn target(&self) -> &Utf8Path {
+        &self.target
+    }
+
+    /// Where recovery copied the entries it found at the target, earliest
+    /// first: the first copy any pass kept, then this pass's copy when the
+    /// entry differed from it. Empty when the target was absent before
+    /// recovery.
+    pub fn kept(&self) -> &[Utf8PathBuf] {
+        &self.kept
+    }
+}
+
+/// Recover every orphan plan under the per-machine state directory
+/// `state_dir`, reversing each backward to the pre-apply filesystem state using
+/// the backups under `<state_dir>/backups`, then deleting the orphan plan and
+/// progress files.
 ///
 /// Call this under the exclusive lock, before reading the filesystem to plan
 /// or roll back. Running it again with no intervening apply is a no-op
@@ -109,28 +152,26 @@ impl RecoveryReport {
 ///
 /// # Errors
 ///
-/// - [`JournalError::Filesystem`] if the journal directory cannot be read, or a
-///   backup restore / target delete / orphan cleanup fails.
+/// - [`JournalError::Filesystem`] if the journal directory cannot be read, or
+///   copying a live entry aside, a backup restore, a target delete, or orphan
+///   cleanup fails.
 /// - [`JournalError::VersionMismatch`] / [`JournalError::Decode`] /
 ///   [`JournalError::Truncated`] if an orphan plan cannot be decoded.
-pub fn recover_orphans(
-    journal_dir: impl AsRef<Utf8Path>,
-    backups_dir: impl AsRef<Utf8Path>,
-) -> Result<RecoveryReport, JournalError> {
-    let journal_dir = journal_dir.as_ref();
-    let backups_dir = backups_dir.as_ref();
+pub fn recover_orphans(state_dir: impl AsRef<Utf8Path>) -> Result<RecoveryReport, JournalError> {
+    let state_dir = state_dir.as_ref();
+    let journal_dir = state_dir.join("journal");
 
     // Reverse orphans in chronological order so the report is
     // deterministic and any later-apply backup wins a same-target race in
     // a (pathological) multi-orphan state.
-    let timestamps = orphan_plans(journal_dir)?;
+    let timestamps = orphan_plans(&journal_dir)?;
 
-    let mut recovered = Vec::with_capacity(timestamps.len());
+    let mut report = RecoveryReport::default();
     for timestamp in timestamps {
-        reverse_orphan(journal_dir, backups_dir, &timestamp)?;
-        recovered.push(timestamp);
+        reverse_orphan(state_dir, &timestamp, &mut report.changed)?;
+        report.recovered.push(timestamp);
     }
-    Ok(RecoveryReport { recovered })
+    Ok(report)
 }
 
 /// Return the `<ts>` of every orphan plan in `journal_dir`, sorted: a plan file
@@ -176,16 +217,21 @@ pub fn orphan_plans(journal_dir: impl AsRef<Utf8Path>) -> Result<Vec<String>, Jo
 
 /// Reverse one orphan plan and delete its plan + progress files.
 fn reverse_orphan(
-    journal_dir: &Utf8Path,
-    backups_dir: &Utf8Path,
+    state_dir: &Utf8Path,
     timestamp: &str,
+    changed: &mut Vec<RecoveredTarget>,
 ) -> Result<(), JournalError> {
+    let journal_dir = state_dir.join("journal");
     let plan_path = journal_dir.join(format!("{timestamp}{PLAN_SUFFIX}"));
     let bytes = fs_err::read(&plan_path)?;
     let plan = Plan::decode(&bytes)?;
 
-    for op in plan.operations() {
-        reverse_operation(backups_dir, timestamp, op)?;
+    let backups_dir = state_dir.join("backups");
+    let mut keeper = Keeper::new(state_dir.join(RECOVERED_DIR), timestamp)?;
+    for (index, op) in plan.operations().iter().enumerate() {
+        if let Some(recovered) = reverse_operation(&backups_dir, &mut keeper, index, op)? {
+            changed.push(recovered);
+        }
     }
 
     // The plan and progress files are removed only after every reversal
@@ -193,7 +239,7 @@ fn reverse_orphan(
     // next startup retries it. This retry is still idempotent: restoring
     // a backup rewrites the same bytes, and deleting an absent target is
     // a no-op.
-    super::remove_plan_and_progress(journal_dir, timestamp)
+    super::remove_plan_and_progress(&journal_dir, timestamp)
 }
 
 /// Reverse a single planned operation back to its pre-apply state.
@@ -211,35 +257,141 @@ fn reverse_orphan(
 /// staging is not at the mirror path, so it counts as missing; recovery removes
 /// the staged `.partial.<pid>` sibling.
 ///
-/// Both restore and delete go through the kind-preserving [`crate::fsx`]
-/// helpers. The original is therefore recreated as the same kind it was: a
-/// symlink as a symlink, a directory as a directory. Backup presence is
-/// probed with [`crate::fsx::entry_present`], so a backed-up symlink whose
-/// destination is gone is still seen. `exists` would follow the dead link and
-/// miss the backup.
+/// Before either restores over or removes a live entry, the entry is copied
+/// aside through `keeper`. Copy, restore, and delete go through the
+/// kind-preserving [`crate::fsx`] helpers. The original is therefore recreated
+/// as the same kind it was: a symlink as a symlink, a directory as a
+/// directory. Backup presence is probed with [`crate::fsx::entry_present`], so
+/// a backed-up symlink whose destination is gone is still seen. `exists` would
+/// follow the dead link and miss the backup.
 fn reverse_operation(
     backups_dir: &Utf8Path,
-    timestamp: &str,
+    keeper: &mut Keeper<'_>,
+    index: usize,
     op: &PlannedOperation,
-) -> Result<(), JournalError> {
+) -> Result<Option<RecoveredTarget>, JournalError> {
     let disposition = op.disposition();
     if disposition == Some(Disposition::Unchanged) {
-        return Ok(());
+        return Ok(None);
     }
 
     let target = Utf8Path::new(operation_target(op));
-    let backup = mirror_backup_path(backups_dir, timestamp, target);
+    let backup = mirror_backup_path(backups_dir, keeper.timestamp, target);
     crate::fsx::remove_partial_siblings(&backup).map_err(JournalError::Filesystem)?;
 
-    if crate::fsx::entry_present(&backup) {
-        return crate::fsx::clone_entry(&backup, target).map_err(JournalError::Filesystem);
+    let live = crate::fsx::entry_present(target);
+    let restore = crate::fsx::entry_present(&backup);
+    let remove = live && disposition == Some(Disposition::Create);
+    if !restore && !remove {
+        return Ok(keeper.earlier(index, target).map(|kept| RecoveredTarget {
+            target: target.to_path_buf(),
+            kept: vec![kept],
+        }));
     }
-    match disposition {
-        Some(Disposition::Create) => {
-            crate::fsx::remove_entry(target).map_err(JournalError::Filesystem)
+    let kept = if live {
+        keeper.keep(index, target, restore.then_some(backup.as_path()))?
+    } else {
+        keeper.earlier(index, target).into_iter().collect()
+    };
+    if restore {
+        crate::fsx::clone_entry(&backup, target)?;
+    } else {
+        crate::fsx::remove_entry(target)?;
+    }
+    Ok(Some(RecoveredTarget {
+        target: target.to_path_buf(),
+        kept,
+    }))
+}
+
+/// Copies live entries aside under `<root>/<timestamp>.<n>/`.
+struct Keeper<'a> {
+    root: Utf8PathBuf,
+    timestamp: &'a str,
+    /// The `<timestamp>.<n>` directories earlier passes made, by ascending
+    /// `<n>`.
+    earlier: Vec<Utf8PathBuf>,
+    next: u64,
+    dir: Option<Utf8PathBuf>,
+}
+
+impl<'a> Keeper<'a> {
+    fn new(root: Utf8PathBuf, timestamp: &'a str) -> Result<Self, JournalError> {
+        let numbers = copy_numbers(&root, timestamp)?;
+        let next = numbers.last().map_or(1, |last| last.saturating_add(1));
+        let earlier = numbers
+            .into_iter()
+            .map(|number| root.join(format!("{timestamp}.{number}")))
+            .collect();
+        Ok(Self {
+            root,
+            timestamp,
+            earlier,
+            next,
+            dir: None,
+        })
+    }
+
+    /// The first copy an earlier pass kept of `target` for op `index`.
+    fn earlier(&self, index: usize, target: &Utf8Path) -> Option<Utf8PathBuf> {
+        self.earlier
+            .iter()
+            .map(|dir| copy_path(dir, index, target))
+            .find(|kept| crate::fsx::entry_present(kept))
+    }
+
+    /// Copy the live entry at `target` aside unless it matches an earlier
+    /// pass's copy or `backup`, and return the earlier copy, if any, before
+    /// the new one.
+    fn keep(
+        &mut self,
+        index: usize,
+        target: &Utf8Path,
+        backup: Option<&Utf8Path>,
+    ) -> Result<Vec<Utf8PathBuf>, JournalError> {
+        let mut copies: Vec<Utf8PathBuf> = self.earlier(index, target).into_iter().collect();
+        if let Some(earlier) = copies.first() {
+            let unchanged = crate::fsx::same_entry(target, earlier)?
+                || match backup {
+                    Some(backup) => crate::fsx::same_entry(target, backup)?,
+                    None => false,
+                };
+            if unchanged {
+                return Ok(copies);
+            }
         }
-        Some(Disposition::Update | Disposition::Unchanged) | None => Ok(()),
+        let dir = self
+            .dir
+            .get_or_insert_with(|| self.root.join(format!("{}.{}", self.timestamp, self.next)));
+        let kept = copy_path(dir, index, target);
+        crate::fsx::clone_entry(target, &kept)?;
+        copies.push(kept);
+        Ok(copies)
     }
+}
+
+/// The `<n>` of every `<timestamp>.<n>` entry under `root`, ascending.
+fn copy_numbers(root: &Utf8Path, timestamp: &str) -> std::io::Result<Vec<u64>> {
+    if !crate::fsx::entry_present(root) {
+        return Ok(Vec::new());
+    }
+    let prefix = format!("{timestamp}.");
+    let mut numbers = Vec::new();
+    for entry in fs_err::read_dir(root)? {
+        let name = entry?.file_name();
+        let number = name
+            .to_str()
+            .and_then(|name| name.strip_prefix(&prefix))
+            .and_then(|number| number.parse::<u64>().ok());
+        numbers.extend(number);
+    }
+    numbers.sort_unstable();
+    Ok(numbers)
+}
+
+fn copy_path(dir: &Utf8Path, index: usize, target: &Utf8Path) -> Utf8PathBuf {
+    dir.join(index.to_string())
+        .join(target.file_name().unwrap_or("entry"))
 }
 
 #[cfg(test)]
@@ -250,19 +402,23 @@ mod tests {
 
     struct Dirs {
         _temp: TempDir,
+        root: Utf8PathBuf,
         journal: Utf8PathBuf,
         backups: Utf8PathBuf,
     }
 
     fn dirs() -> Dirs {
         let temp = TempDir::new().expect("tempdir");
-        let root = Utf8Path::from_path(temp.path()).expect("utf8 temp path");
+        let root = Utf8Path::from_path(temp.path())
+            .expect("utf8 temp path")
+            .to_owned();
         let journal = root.join("journal");
         let backups = root.join("backups");
         fs_err::create_dir_all(&journal).expect("create journal dir");
         fs_err::create_dir_all(&backups).expect("create backups dir");
         Dirs {
             _temp: temp,
+            root,
             journal,
             backups,
         }
@@ -277,8 +433,8 @@ mod tests {
     fn missing_journal_dir_is_a_clean_no_op() {
         let temp = TempDir::new().expect("tempdir");
         let root = Utf8Path::from_path(temp.path()).expect("utf8 temp path");
-        let report = recover_orphans(root.join("nope"), root.join("backups"))
-            .expect("recovery on a missing journal dir succeeds");
+        let report =
+            recover_orphans(root.join("nope")).expect("recovery on a missing journal dir succeeds");
         assert!(!report.recovered_any());
     }
 
@@ -289,7 +445,7 @@ mod tests {
         write_plan(&d.journal, ts, &Plan::new(vec![]));
         fs_err::write(d.journal.join(format!("{ts}{COMMIT_SUFFIX}")), []).expect("commit sentinel");
 
-        let report = recover_orphans(&d.journal, &d.backups).expect("recovery");
+        let report = recover_orphans(&d.root).expect("recovery");
         assert!(
             !report.recovered_any(),
             "a committed plan must be left alone"
@@ -306,7 +462,7 @@ mod tests {
         fs_err::write(d.journal.join(format!("{ts}{ROLLED_BACK_SUFFIX}")), [])
             .expect("rolled-back sentinel");
 
-        let report = recover_orphans(&d.journal, &d.backups).expect("recovery");
+        let report = recover_orphans(&d.root).expect("recovery");
         assert!(!report.recovered_any());
     }
 
@@ -340,7 +496,7 @@ mod tests {
             )]),
         );
 
-        let report = recover_orphans(&d.journal, &d.backups).expect("recover");
+        let report = recover_orphans(&d.root).expect("recover");
         assert!(
             report.recovered_any(),
             "the orphan plan is still consumed and cleaned up"
@@ -385,7 +541,7 @@ mod tests {
             )]),
         );
 
-        let report = recover_orphans(&d.journal, &d.backups).expect("recover");
+        let report = recover_orphans(&d.root).expect("recover");
         assert!(report.recovered_any(), "the orphan must be recovered");
         assert!(
             !target.exists(),
@@ -426,7 +582,7 @@ mod tests {
             )]),
         );
 
-        let report = recover_orphans(&d.journal, &d.backups).expect("recover");
+        let report = recover_orphans(&d.root).expect("recover");
         assert!(report.recovered_any(), "the orphan must be recovered");
 
         let meta = fs_err::symlink_metadata(&target).expect("stat restored target");

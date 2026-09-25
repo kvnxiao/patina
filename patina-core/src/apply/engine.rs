@@ -2149,6 +2149,10 @@ pub fn execute(
         // rolling back to it correctly deletes its fresh targets.
         let pruned = gc_retain(&backups_dir, crate::backups::RETENTION_COUNT)?;
         prune_cycles(&journal_dir, &pruned)?;
+        gc_retain(
+            resolved.state_dir.join(crate::journal::RECOVERED_DIR),
+            crate::backups::RETENTION_COUNT,
+        )?;
         // Journal records can point rollback at remote checkouts, so pruning
         // runs after the commit and journal retention. Uncommitted plans can
         // still reference pinned checkouts.
@@ -2202,10 +2206,7 @@ pub fn recover_interrupted(state_dir: &Utf8Path) -> Result<RecoveryReport, Engin
         LockKind::Exclusive,
         exclusive_timeout(),
     )?;
-    Ok(recover_orphans(
-        state_dir.join("journal"),
-        state_dir.join("backups"),
-    )?)
+    Ok(recover_orphans(state_dir)?)
 }
 
 /// What the journal shows about an apply that has not committed, for a
@@ -3145,6 +3146,45 @@ mod tests {
             fs_err::read(&unlisted).expect("read the unlisted target"),
             b"unlisted-bytes",
             "a target the plan does not list must survive even when no entry manages it"
+        );
+    }
+
+    #[test]
+    fn a_committed_apply_keeps_only_the_newest_recovered_copies() {
+        let scene = Scene::new();
+        let recovered = scene.resolved.state_dir.join(crate::journal::RECOVERED_DIR);
+        let names: Vec<String> = (0..crate::backups::RETENTION_COUNT + 2)
+            .map(|second| format!("20260530T1100{second:02}Z.1"))
+            .collect();
+        for name in &names {
+            fs_err::create_dir_all(recovered.join(name)).expect("seed a recovered copy");
+        }
+
+        execute(
+            &scene.resolved,
+            &ApplyRequest::default(),
+            LockPolicy::Blocking,
+        )
+        .expect("the first apply commits");
+
+        let mut left: Vec<String> = fs_err::read_dir(&recovered)
+            .expect("read the recovered copies")
+            .map(|entry| {
+                entry
+                    .expect("read a recovered copy")
+                    .file_name()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect();
+        left.sort();
+        let pruned = names.len() - crate::backups::RETENTION_COUNT;
+        assert_eq!(
+            left,
+            names
+                .get(pruned..)
+                .expect("the seeded names outnumber the retention count")
+                .to_vec()
         );
     }
 

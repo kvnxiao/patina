@@ -6,12 +6,14 @@ use camino::Utf8Path;
 
 /// Remove every backup subdirectory under `backups_dir` except the newest
 /// `keep`, returning the names of the directories that were removed in
-/// chronological (lexical) order.
+/// chronological order.
 ///
-/// Backup subdirectories are named by the apply timestamp, whose textual
-/// form sorts lexically into chronological order, so "newest `keep`" is
-/// the lexical tail of the sorted directory names. Only directories are
-/// considered; stray files directly under `backups_dir` are ignored.
+/// Each subdirectory is named `<ts>` or, as under `recovered/`, `<ts>.<n>`:
+/// `<ts>` is an apply timestamp whose text sorts lexically into chronological
+/// order, and `<n>` is a recovery pass number. Names sort by the timestamp and
+/// then by `<n>` as a number, so "newest `keep`" is the tail of that order.
+/// Only directories are considered; stray files directly under `backups_dir`
+/// are ignored.
 ///
 /// Call this *after* an apply's `COMMIT` sentinel is durable. A failed
 /// apply, one that never committed, simply does not call this, so its
@@ -59,9 +61,7 @@ pub fn gc_retain(
         }
     }
 
-    // Lex sort == chronological order for the timestamp directory names,
-    // so the trailing `keep` entries are the newest cycles to retain.
-    names.sort();
+    names.sort_by(|a, b| cycle_order(a).cmp(&cycle_order(b)));
 
     let cutoff = names.len().saturating_sub(keep);
     let mut removed = Vec::with_capacity(cutoff);
@@ -70,6 +70,14 @@ pub fn gc_retain(
         removed.push(name);
     }
     Ok(removed)
+}
+
+/// The chronological sort key of a directory named `<ts>` or `<ts>.<n>`.
+fn cycle_order(name: &str) -> (&str, Option<u64>, &str) {
+    match name.split_once('.') {
+        Some((timestamp, number)) => (timestamp, number.parse().ok(), name),
+        None => (name, None, name),
+    }
 }
 
 #[cfg(test)]
@@ -173,6 +181,20 @@ mod tests {
             f.backups.join("README").exists(),
             "a stray file must survive retention untouched"
         );
+    }
+
+    #[test]
+    fn retry_numbers_of_one_timestamp_are_pruned_in_numeric_order() {
+        let f = fixture();
+        let names: Vec<String> = (1..=12).map(|n| format!("20260528T120000Z.{n}")).collect();
+        for name in &names {
+            fs_err::create_dir_all(f.backups.join(name)).expect("mkdir recovered copy");
+        }
+
+        let removed = gc_retain(&f.backups, 10).expect("retain");
+
+        let (oldest, _) = names.split_at(names.len() - 10);
+        assert_eq!(removed, oldest);
     }
 
     #[test]

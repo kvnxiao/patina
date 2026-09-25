@@ -6,8 +6,8 @@
 //! this module is presentation and control flow.
 //!
 //! An invocation that can write (`--yes`, or the interactive prompt) first
-//! reverts any interrupted apply, then plans. A preview does not recover, so it
-//! writes nothing; it warns instead that its diff describes the files as the
+//! reverts any interrupted apply, then plans. A preview writes nothing, so it
+//! does not recover; it warns instead that its diff describes the files as the
 //! interrupted apply left them.
 //!
 //! ## Exit codes
@@ -178,13 +178,10 @@ pub(crate) fn run(
     Ok(exit_code_for(&result))
 }
 
-/// Whether this invocation can reach `execute`: `--yes`, or the human-format
-/// prompt on an interactive terminal.
 fn may_execute(args: &ApplyArgs, tty: Tty) -> bool {
     args.yes || (!args.json && tty == Tty::Interactive)
 }
 
-/// Revert every interrupted apply under the exclusive lock and report it.
 fn recover_before_planning(reporter: &mut impl Reporter) -> Result<()> {
     let state = resolve_state_dir().map_err(EngineError::from)?;
     let report = recover_interrupted(&state).context("failed to recover an interrupted apply")?;
@@ -193,10 +190,11 @@ fn recover_before_planning(reporter: &mut impl Reporter) -> Result<()> {
 }
 
 /// Warn that the interrupted applies in `report` were reverted, when there
-/// were any.
+/// were any, and name each copy recovery kept of an entry it replaced.
 ///
-/// The text carries only the count, so it is identical for every run that
-/// recovers the same number of applies.
+/// The messages contain no timestamp or pid. A kept copy's path contains the
+/// interrupted apply's timestamp, and only the run that recovers that apply
+/// prints it.
 pub(crate) fn report_recovery(report: &RecoveryReport, reporter: &mut impl Reporter) {
     let message = match report.recovered_timestamps().len() {
         0 => return,
@@ -204,6 +202,14 @@ pub(crate) fn report_recovery(report: &RecoveryReport, reporter: &mut impl Repor
         count => format!("reverted {count} interrupted applies to the state before they started"),
     };
     reporter.warn(&message);
+    for changed in report.changed_targets() {
+        for kept in changed.kept() {
+            reporter.warn(&format!(
+                "kept a copy of {} from before the recovery at {kept}",
+                changed.target()
+            ));
+        }
+    }
 }
 
 /// Warn about an apply that has not committed, for a command that reports on
@@ -502,7 +508,7 @@ fn run_json(
 /// [`reap`](patina_core::ResolvedPlan::reap) set, targets of a prior apply the
 /// current plan no longer manages. They are reported in their own array rather
 /// than as `plan` rows; the human diff renders the same set as `remove` blocks.
-/// Each row is an object carrying the `target` and the `reason` it is no longer
+/// Each row is an object with the `target` and the `reason` it is no longer
 /// managed ([`OrphanReason::label`](patina_core::OrphanReason::label)), so a
 /// consumer can tell a deletion caused by a new `ignore` pattern from one
 /// caused by a dropped entry. The plan sorts the set by target, so the array is

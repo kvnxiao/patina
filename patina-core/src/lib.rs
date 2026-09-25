@@ -121,6 +121,7 @@ pub use journal::LastApply;
 pub use journal::Plan;
 pub use journal::PlanRenderError;
 pub use journal::PlannedOperation;
+pub use journal::RecoveredTarget;
 pub use journal::RecoveryReport;
 pub use journal::content_hash;
 pub use journal::load_plan_file;

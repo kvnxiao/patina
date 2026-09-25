@@ -336,8 +336,16 @@ journal envelope and converges deterministically:
   `Remove` target is left in place: the executor backs up a pre-existing
   target immediately before it writes or removes it, so a missing backup
   means the operation never started. The decision reads the plan and the
-  backup directory rather than the progress cursor. The command then works
-  from the recovered filesystem.
+  backup directory rather than the progress cursor. Before it restores over or
+  deletes a live entry, recovery copies that entry to
+  `<state>/recovered/<ts>.<n>/<op index>/<file name>` and reports the copy.
+  The per-operation index keeps copies independent of each other. A retry
+  of a recovery that failed partway reports the copy an earlier pass made for
+  the same operation when the live entry still matches that copy or the
+  backup, and otherwise copies into `<n>` one past the highest existing number,
+  so no pass overwrites an earlier copy, and reports the earlier copy before
+  the new one.
+  The command then works from the recovered filesystem.
 - A backup is cloned into a `<mirror path>.partial.<pid>` sibling and renamed
   onto its mirror path, a directory as one unit, so an entry at the mirror
   path is always a complete backup. Recovery and rollback treat a staged
@@ -355,8 +363,9 @@ journal envelope and converges deterministically:
   was killed between this run's recovery and its execution.
 - Backups taken before an overwrite are retained for the last ten apply
   cycles; older cycles are pruned at the end of each successful apply,
-  right after its COMMIT. Backups live in the per-machine state
-  directory, outside the repository.
+  right after its COMMIT. The same step keeps the ten newest `recovered/`
+  directories. Both live in the per-machine state directory, outside the
+  repository.
 
 `patina rollback` reverses the last successful apply. It reads the
 journal and restores the recorded pre-apply bytes. Afterwards the

@@ -155,6 +155,58 @@ pub(crate) fn copy_tree(src: &Utf8Path, dst: &Utf8Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Whether the entries at `left` and `right` are the same kind with the same
+/// content: equal bytes for regular files, an equal link target and link
+/// flavour for symbolic links, and the same names holding matching entries for
+/// directories. Symbolic links are compared, never followed.
+///
+/// # Errors
+///
+/// Returns the underlying [`std::io::Error`] when either entry, a link target,
+/// or a directory listing cannot be read. A name that is not valid UTF-8 yields
+/// [`std::io::ErrorKind::InvalidData`].
+pub(crate) fn same_entry(left: &Utf8Path, right: &Utf8Path) -> std::io::Result<bool> {
+    let left_meta = fs_err::symlink_metadata(left)?;
+    let right_meta = fs_err::symlink_metadata(right)?;
+    let (left_type, right_type) = (left_meta.file_type(), right_meta.file_type());
+    if left_type.is_symlink() || right_type.is_symlink() {
+        return Ok(left_type.is_symlink()
+            && right_type.is_symlink()
+            && symlink_dir_flavor(left_type) == symlink_dir_flavor(right_type)
+            && read_link_utf8(left)? == read_link_utf8(right)?);
+    }
+    if left_type.is_dir() || right_type.is_dir() {
+        if !(left_type.is_dir() && right_type.is_dir()) {
+            return Ok(false);
+        }
+        let names = child_names(left)?;
+        if names != child_names(right)? {
+            return Ok(false);
+        }
+        for name in names {
+            if !same_entry(&left.join(&name), &right.join(&name))? {
+                return Ok(false);
+            }
+        }
+        return Ok(true);
+    }
+    Ok(left_meta.len() == right_meta.len() && fs_err::read(left)? == fs_err::read(right)?)
+}
+
+fn child_names(dir: &Utf8Path) -> std::io::Result<std::collections::BTreeSet<String>> {
+    let mut names = std::collections::BTreeSet::new();
+    for entry in fs_err::read_dir(dir)? {
+        let name = entry?.file_name().into_string().map_err(|bad| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("non-UTF-8 name under {dir}: {}", bad.display()),
+            )
+        })?;
+        names.insert(name);
+    }
+    Ok(names)
+}
+
 /// Read whether `file_type` marks a symlink as directory-flavoured.
 #[cfg(windows)]
 pub(crate) fn symlink_dir_flavor(file_type: std::fs::FileType) -> bool {
@@ -238,7 +290,7 @@ pub(crate) fn partial_sibling(path: &Utf8Path) -> Utf8PathBuf {
 ///
 /// Call this only under a lock that excludes every writer staging beside
 /// `path`; otherwise it can remove a live writer's staging entry. A parent that
-/// is absent, is not a directory, or is a symbolic link, is not searched.
+/// is absent, is not a directory, or is a symbolic link is not searched.
 ///
 /// # Errors
 ///
@@ -498,6 +550,31 @@ mod tests {
         assert!(
             meta.file_type().is_symlink_dir(),
             "a dangling directory link must be cloned dir-flavoured"
+        );
+    }
+
+    #[test]
+    fn same_entry_requires_the_same_kind_and_every_leaf_to_match() {
+        let (_temp, root) = utf8_tempdir();
+        let left = root.join("left");
+        let right = root.join("right");
+        for tree in [&left, &right] {
+            fs_err::create_dir_all(tree.join("nested")).expect("mkdir tree");
+            fs_err::write(tree.join("a.conf"), b"a").expect("write a");
+            fs_err::write(tree.join("nested").join("b.conf"), b"b").expect("write b");
+        }
+        assert!(same_entry(&left, &right).expect("compare equal trees"));
+
+        fs_err::write(right.join("nested").join("b.conf"), b"B").expect("edit b");
+        assert!(!same_entry(&left, &right).expect("compare a changed leaf"));
+
+        fs_err::write(right.join("nested").join("b.conf"), b"b").expect("restore b");
+        fs_err::write(right.join("extra"), b"b").expect("add a leaf");
+        assert!(!same_entry(&left, &right).expect("compare an added leaf"));
+
+        assert!(
+            !same_entry(&left.join("a.conf"), &left.join("nested"))
+                .expect("compare a file with a directory")
         );
     }
 

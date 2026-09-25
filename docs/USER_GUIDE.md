@@ -680,10 +680,15 @@ five-second shared-lock wait, the warning says instead that an apply is running
 or was interrupted. The exit code does not change.
 
 Recovery reverts only what the interrupted apply changed. A file that existed
-before the apply keeps its original bytes, restored from the backup Patina took
-before overwriting or removing it, or untouched if the apply never reached it.
-A file the apply created is deleted, including a file you create at the same
-path after the crash and before recovery runs.
+before the apply gets its original bytes back from the backup Patina took before
+overwriting or removing it, or stays untouched if the apply never reached it. A
+file the apply created is deleted. Before recovery overwrites or deletes a file,
+it copies what is there to the `recovered/` directory of the state directory
+and prints `kept a copy of <target> from before the recovery at <path>`, so a
+file you edited or created after the crash is not lost. A recovery retried
+after a failure that finds a target changed since its earlier copy prints the
+line for both copies, the earlier one first. See
+[`OPERATING_ENVIRONMENT.md`](OPERATING_ENVIRONMENT.md) for the layout.
 
 Two other commands inspect or undo an apply:
 

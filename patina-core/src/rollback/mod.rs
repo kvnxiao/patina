@@ -136,7 +136,7 @@ pub fn run(on_recovery: impl FnOnce(&RecoveryReport)) -> Result<(), EngineError>
 
     // Mutating subcommands take the exclusive lock for the whole rollback.
     let _guard = acquire_lock(&lock_path, LockKind::Exclusive, exclusive_timeout())?;
-    on_recovery(&recover_orphans(&journal_dir, &backups_dir)?);
+    on_recovery(&recover_orphans(&state_dir)?);
 
     // The shared "last apply" selection (also used by `patina status`) skips a
     // torn/unreadable newest `<ts>.COMMIT` and falls back to the previous
