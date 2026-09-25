@@ -23,7 +23,7 @@ Layout under the state directory:
 patina/
 ├── journal/             postcard-encoded plan + COMMIT/ROLLED_BACK sentinels
 ├── backups/<ts>/        last-applied byte content, last 10 cycles retained
-├── recovered/<ts>.<n>/  entries recovery replaced, last 10 recoveries retained
+├── recovered/<ts>.<n>/  entries recovery or rollback replaced, last 10 passes retained
 ├── remotes/             bare remote repositories and immutable checkouts
 ├── default_repo         persisted dotfiles repo pointer (UTF-8 text)
 ├── profile              persisted profile name (UTF-8 text)
@@ -43,7 +43,16 @@ used for that timestamp (starting at 1), `<index>` is the operation's position
 in the apply's plan, and `<name>` is the target's file name. A recovery retried
 after a failure reuses the earlier copy of an entry that has not changed since
 that copy, and reports both the earlier copy and a new one for an entry that
-has changed. The directory is separate from `backups/`, so no apply's backup
+has changed.
+
+Before `patina rollback` replaces or deletes an entry that differs from the
+rolled-back apply's record, it copies that entry into the same layout. `<ts>`
+is then the rolled-back apply's timestamp, and `<index>` is the target's
+position in the apply's record. For a target the apply removed, `<index>` is
+the number of targets the record lists plus the target's position in the
+record's list of removed targets.
+
+The directory is separate from `backups/`, so no apply's backup
 cycle can overwrite a kept copy. Each successful apply prunes all but the ten
 newest `recovered/` directories, ordered by timestamp and then by `<n>` as a
 number, as it does for `backups/`.

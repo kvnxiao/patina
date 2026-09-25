@@ -396,12 +396,23 @@ other skips a prompt.
 | `init`    | Scaffold a root `patina.toml` and persist the default-repository pointer.                     |
 | `add`     | Bring an existing dotfile under management: copy it into a module and write a `[[file]]` entry for a file source or a `[[directory]]` entry for a directory source.|
 | `remove`  | Drop a managed target and preserve its applied contents as a regular file. Individual tree-mode leaves cannot be removed with this command. |
-| `promote` | Copy a changed copy-mode target back to its repository source, then apply again. Remote-backed targets cannot be promoted. |
+| `promote` | Copy a changed copy-mode target back to its repository source and record its bytes as applied. Remote-backed targets cannot be promoted. |
 | `doctor`  | Inspect the environment for known problems (UNC repository paths, missing Windows Developer Mode, an outdated Windows build, a missing default repo, missing `git`, and targets stranded by a new `ignore` pattern). |
 | `remote`  | Manage remote git sources: `list` the pins, `check` upstream tips, `update` a pin through the update gate, `prune` cached checkouts. See [Remote sources](#remote-sources). |
 
 `patina remove --purge` deletes the target outright, where a bare
 `remove` leaves a regular file holding the last-applied content.
+
+`remove` and `promote` do not run an apply. `remove` replaces or deletes its
+target and edits the manifest that declares it, `promote` writes the target's
+repository source, and each adds a journal record derived from the latest one.
+Neither runs a hook, rewrites another drifted target, or creates a target for
+an entry added since the last apply. `patina status` still reports a drifted
+target, and the next `patina apply` shows that target and the new entry in its
+diff. If `remove` fails while replacing its target or writing the manifest, it
+deletes the record it added, so running `remove` again finds the target.
+`patina rollback` does not undo `remove` or `promote`: rolling back the record
+that either command wrote does not change a file.
 
 `patina doctor` is read-only by default and reports its findings as
 warnings. With `--fix`, it walks the findings it knows how to remediate,
@@ -578,7 +589,8 @@ Resolve a drifted target either way:
 
 - `patina apply` reverts the target to the source content.
 - `patina promote` updates a copy-mode target's source from the target's
-  current bytes, then re-applies.
+  current bytes and records those bytes as applied, so `status` reports the
+  target `clean`.
 
 ### Limits on promote and remove
 
@@ -669,6 +681,25 @@ v1.0.** See
 layout, the `XDG_STATE_HOME` override, and what each failure mode looks
 like.
 
+### Records from an earlier build
+
+Patina reads only the record layout it writes for each committed apply
+(`journal/<ts>.COMMIT`). A record that a pre-release build wrote in an earlier
+layout does not decode, and Patina skips it as if that apply had never
+committed:
+
+- `patina status` does not report its targets.
+- `patina rollback` does not reverse it.
+- `patina remove` and `patina promote` treat its targets as unmanaged.
+- `patina apply` does not remove a target that only an undecodable record
+  lists.
+
+Patina also does not remove unreferenced remote checkouts while an undecodable
+record remains. After upgrading from a pre-release build, delete the
+`journal/` directory of the state directory once on each machine. Deleting it
+discards the rollback history of earlier applies; the next `patina apply`
+records the managed targets again.
+
 ## Recovery
 
 An interrupted apply converges deterministically on the next command that
@@ -710,16 +741,24 @@ Two other commands inspect or undo an apply:
 - `patina status` reports drift between what your configuration
   declares and what is currently on disk.
 - `patina rollback` reverses the last successful apply by restoring the
-  pre-apply bytes recorded in the journal. Afterwards the filesystem
-  matches the pre-apply state in content and entry kind (file, symlink,
-  or directory), modulo mode/timestamp bits and files you edited outside
-  Patina.
+  pre-apply bytes recorded in the journal, including each file the apply
+  removed because your configuration no longer managed it. Afterwards the
+  filesystem matches the pre-apply state in content and entry kind (file,
+  symlink, or directory), modulo mode/timestamp bits. Rollback does not
+  touch a file the apply found already up to date, so an edit you made to
+  that file after the apply stays. Before rollback replaces or deletes a
+  file that changed since the apply, it copies that file to the
+  `recovered/` directory of the state directory and prints
+  `kept a copy of <target> from before the rollback at <path>`. A file that
+  you created where the apply had removed a file counts as changed.
 
-For a post-mortem, `patina debug journal <path>` decodes the binary
-journal into human-readable form, showing what the interrupted or
-completed apply intended to do. It refuses a file written by a newer
+For a post-mortem, `patina debug journal <path>` decodes a binary journal
+file into human-readable form. Given a path ending in `.COMMIT`, it lists
+each target the commit recorded and each target the apply removed. It
+decodes any other path as a plan, such as a `<ts>.plan` file, and shows what
+the interrupted apply intended to do. It refuses a file written by a newer
 Patina with an error that reports both major versions, and exits 1 on that
-refusal or on a missing or unreadable path.
+refusal, on a file it cannot decode, or on a missing or unreadable path.
 
 ## Troubleshooting
 

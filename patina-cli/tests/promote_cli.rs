@@ -47,7 +47,7 @@ fn applied_copy_fixture() -> Fixture {
 }
 
 #[test]
-fn promote_copy_target_rewrites_source_and_rejournals() {
+fn promote_copy_target_rewrites_source_and_records_its_hash() {
     let fx = applied_copy_fixture();
     let gitconfig = fx.home.join(".gitconfig");
     let source = fx.root.join("git").join("gitconfig");
@@ -73,7 +73,7 @@ fn promote_copy_target_rewrites_source_and_rejournals() {
     assert_eq!(
         content_hash_of(entry),
         content_hash(NEW_GITCONFIG.as_bytes()),
-        "the re-journaled expected hash must be the blake3 hash of the new bytes"
+        "the recorded expected hash must be the blake3 hash of the new bytes"
     );
 
     let status = fx.run(&["status", "--json"], &[]);

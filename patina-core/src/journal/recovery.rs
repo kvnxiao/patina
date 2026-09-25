@@ -142,15 +142,19 @@ pub struct RecoveredTarget {
 }
 
 impl RecoveredTarget {
-    /// The target path as the orphan plan recorded it.
+    pub(crate) fn new(target: Utf8PathBuf, kept: Vec<Utf8PathBuf>) -> Self {
+        Self { target, kept }
+    }
+
+    /// The target path as the orphan plan or the commit record recorded it.
     pub fn target(&self) -> &Utf8Path {
         &self.target
     }
 
-    /// Where recovery copied the entries it found at the target, earliest
-    /// first: the first copy any pass kept, then this pass's copy when the
-    /// entry differed from it. Empty when the target was absent before
-    /// recovery.
+    /// Where recovery or rollback copied the entries it found at the target,
+    /// earliest first: the first copy any pass kept, then this pass's copy
+    /// when the entry differed from it. Empty when the target was absent
+    /// before recovery.
     pub fn kept(&self) -> &[Utf8PathBuf] {
         &self.kept
     }
@@ -330,8 +334,12 @@ fn reverse_operation(
     }))
 }
 
-/// Copies live entries aside under `<root>/<timestamp>.<n>/`.
-struct Keeper<'a> {
+/// Copies live entries aside under
+/// `<root>/<timestamp>.<n>/<index>/<file name>`.
+///
+/// Recovery keys a copy by the orphan plan's op index, and rollback by the
+/// commit record's target index.
+pub(crate) struct Keeper<'a> {
     root: Utf8PathBuf,
     timestamp: &'a str,
     /// The `<timestamp>.<n>` directories earlier passes made, by ascending
@@ -342,7 +350,7 @@ struct Keeper<'a> {
 }
 
 impl<'a> Keeper<'a> {
-    fn new(root: Utf8PathBuf, timestamp: &'a str) -> Result<Self, JournalError> {
+    pub(crate) fn new(root: Utf8PathBuf, timestamp: &'a str) -> std::io::Result<Self> {
         let numbers = copy_numbers(&root, timestamp)?;
         let next = numbers.last().map_or(1, |last| last.saturating_add(1));
         let earlier = numbers
@@ -358,7 +366,7 @@ impl<'a> Keeper<'a> {
         })
     }
 
-    /// The first copy an earlier pass kept of `target` for op `index`.
+    /// The first copy an earlier pass kept of `target` for `index`.
     fn earlier(&self, index: usize, target: &Utf8Path) -> Option<Utf8PathBuf> {
         self.earlier
             .iter()
@@ -368,7 +376,11 @@ impl<'a> Keeper<'a> {
 
     /// Copy the live entry at `target` aside unless it matches an earlier
     /// pass's copy, and return the earlier copy, if any, before the new one.
-    fn keep(&mut self, index: usize, target: &Utf8Path) -> Result<Vec<Utf8PathBuf>, JournalError> {
+    pub(crate) fn keep(
+        &mut self,
+        index: usize,
+        target: &Utf8Path,
+    ) -> std::io::Result<Vec<Utf8PathBuf>> {
         let mut copies: Vec<Utf8PathBuf> = self.earlier(index, target).into_iter().collect();
         if let Some(earlier) = copies.first()
             && crate::fsx::same_entry(target, earlier)?

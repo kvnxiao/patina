@@ -108,8 +108,31 @@ flowchart LR
   `.partial.<pid>` sibling and renamed into place, so a present sentinel
   always contains a whole record.
 
-`patina debug journal <path>` decodes a journal back into
-human-readable form for post-mortem inspection.
+The commit record lists the expected state of each materialized target (a
+link target, or a content hash and its source) with the disposition the plan
+gave it, then the targets the reap removed, in removal order. `patina status`
+classifies the live filesystem against the latest record, and `patina rollback`
+reverses the apply that the latest record describes.
+
+`patina remove` and `patina promote` do not run an apply. Each writes a commit
+derived from the latest record: the `remove` commit omits the target that
+`remove` unmanages, and the `promote` commit records the promoted bytes' hash.
+Both commits record every target `Unchanged` and do not list a reaped target.
+The commit's `<ts>` is later than the newest `<ts>` in `journal/` and
+`backups/`. While the clock still reads that newest `<ts>`, the command waits
+up to about a second for the clock to reach the next second. When the clock
+reads an earlier time, the command uses one second past the newest `<ts>`. The
+commit is therefore the latest record and shares no backup cycle.
+
+`remove` writes its commit before it replaces its target and edits the
+manifest. When `remove` is killed after the commit, the latest record already
+omits the target, so the next apply does not reap it. When replacing the
+target or writing the manifest fails, `remove` deletes the commit, so the
+previous record is the latest again and a retry finds the target. `promote`
+writes the repository source first, then the commit.
+
+`patina debug journal <path>` decodes a plan file or a commit record back
+into human-readable form for post-mortem inspection.
 
 ## Remote cache
 
@@ -301,7 +324,7 @@ re-prompting on every apply.
 
 An ignored leaf never enters the `ApplyRecord`. Reap reasons are computed
 at plan time, by diffing that record against the current managed set, so
-the on-disk format is unchanged.
+the record does not store them.
 
 ### Managed targets within a plan
 
@@ -387,17 +410,36 @@ each journal envelope and converges deterministically:
   repository.
 
 `patina rollback` reverses the last successful apply. It reads the
-journal and restores the recorded pre-apply bytes. Afterwards the
+journal and restores the recorded pre-apply bytes. It first restores each
+target that the apply's reap removed, using the target's backup in the apply's
+backup cycle. Those restores form one atomic unit, which has its own error
+when it fails. A reaped target without a backup is left alone. Rollback then reverts
+each managed entry as an atomic unit, in reverse apply order. Afterwards the
 filesystem matches the pre-apply state in content and entry kind (file,
-symlink, or directory). Mode and timestamp bits are excluded, as are
-files the user touched outside Patina. A replaced tree root reverts as a
-unit: when a recorded leaf's backup mirror path passes through a
-symbolic link stashed in the cycle's backup tree (and the live
-counterpart is the materialized directory), rollback restores that
-ancestor link and never reverts a leaf through it, because a leaf path
-under the restored link would resolve into the repository. The
-in-process reversal after a failed `post_apply` hook applies the same
-fold. `patina status` reports drift
+symlink, or directory). Mode and timestamp bits are excluded. Rollback leaves
+a target the apply recorded `Unchanged` in place, so an edit made to it after
+the apply remains. Because the commit that `remove` or `promote` writes
+records every target `Unchanged`, rolling that commit back does not change a
+file. While it holds the exclusive lock, rollback also removes the staging
+directories that a killed rollback left under `backups/`.
+
+Before rollback replaces or deletes a live entry that differs from what the
+record expects, it copies that entry to
+`<state>/recovered/<ts>.<n>/<index>/<file name>` and reports the copy. The
+record expects a symlink to its recorded link target, a regular file with its
+recorded hash, or, for a reaped target, nothing. A live entry that already
+matches its backup is left in place.
+
+A replaced tree root reverts as a unit: when a recorded leaf's
+backup mirror path passes through a symbolic link stashed in the cycle's
+backup tree (and the live counterpart is the materialized directory), rollback
+restores that ancestor link and never reverts a leaf through it, because a
+leaf path under the restored link would resolve into the repository. The
+in-process reversal after a failed `post_apply` hook applies the same fold.
+Rollback keeps a copy of the replaced root unless every file and link in it is
+a recorded leaf that matches its record.
+
+`patina status` reports drift
 between the declared end-state and the live filesystem. The per-machine
 state directory for the journal, backups, and lock uses
 OS-appropriate locations and must not live on a cloud-sync mount. See

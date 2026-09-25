@@ -22,9 +22,49 @@
 /// assert!(ts.ends_with('Z'));
 /// ```
 pub fn current_timestamp() -> String {
-    jiff::Timestamp::now()
-        .strftime("%Y%m%dT%H%M%SZ")
-        .to_string()
+    jiff::Timestamp::now().strftime(COMPACT_FORMAT).to_string()
+}
+
+const COMPACT_FORMAT: &str = "%Y%m%dT%H%M%SZ";
+
+/// Whether `text` is a timestamp exactly as [`current_timestamp`] writes it.
+/// Timestamps in that form compare chronologically as strings.
+pub(crate) fn is_timestamp(text: &str) -> bool {
+    jiff::civil::DateTime::strptime(COMPACT_FORMAT, text)
+        .is_ok_and(|parsed| parsed.strftime(COMPACT_FORMAT).to_string() == text)
+}
+
+/// Return the timestamp one second after `timestamp`, or `None` when
+/// `timestamp` is not in the form [`current_timestamp`] writes or has no
+/// successor in that form.
+pub(crate) fn timestamp_after(timestamp: &str) -> Option<String> {
+    let parsed = jiff::civil::DateTime::strptime(COMPACT_FORMAT, timestamp).ok()?;
+    let next = parsed.checked_add(jiff::Span::new().seconds(1)).ok()?;
+    Some(next.strftime(COMPACT_FORMAT).to_string())
+}
+
+/// Return the current timestamp once it is later than `after`.
+///
+/// While the clock reads `after`, sleep until the next second, for at most
+/// about a second. When the clock reads a time before `after`, return the
+/// timestamp one second after `after` instead, which is ahead of the clock.
+/// Return `None` when `after` has no successor.
+pub(crate) fn timestamp_later_than(after: &str) -> Option<String> {
+    const POLL: std::time::Duration = std::time::Duration::from_millis(20);
+    const MAX_POLLS: u32 = 60;
+    let mut now = current_timestamp();
+    for _ in 0..MAX_POLLS {
+        if now.as_str() != after {
+            break;
+        }
+        std::thread::sleep(POLL);
+        now = current_timestamp();
+    }
+    if now.as_str() > after {
+        Some(now)
+    } else {
+        timestamp_after(after)
+    }
 }
 
 /// The current time as Unix seconds.
@@ -82,5 +122,53 @@ mod tests {
         assert_eq!(ts.len(), 16, "timestamp {ts} should be 16 chars");
         assert!(ts.ends_with('Z'));
         assert_eq!(ts.as_bytes().get(8), Some(&b'T'));
+    }
+
+    #[test]
+    fn timestamp_after_carries_into_the_next_day() {
+        assert_eq!(
+            timestamp_after("20261231T235959Z").as_deref(),
+            Some("20270101T000000Z")
+        );
+    }
+
+    #[test]
+    fn timestamp_after_has_no_successor_for_the_last_representable_second() {
+        assert_eq!(timestamp_after("99991231T235959Z"), None);
+    }
+
+    #[test]
+    fn is_timestamp_rejects_a_name_that_only_starts_like_one() {
+        assert!(is_timestamp("20260528T120000Z"));
+        assert!(!is_timestamp("20260528T120000"));
+        assert!(!is_timestamp(""));
+        assert!(!is_timestamp("rollback-stage-20260528T120000Z-0"));
+    }
+
+    #[test]
+    fn is_timestamp_rejects_an_unpadded_spelling() {
+        assert!(!is_timestamp("2026528T120000Z"));
+        assert!(!is_timestamp("20260528T12000Z"));
+    }
+
+    #[test]
+    fn timestamp_later_than_the_current_second_waits_for_the_clock() {
+        let now = current_timestamp();
+
+        let later = timestamp_later_than(&now).expect("a later timestamp");
+
+        assert!(later > now, "{later} must follow {now}");
+        assert!(
+            later <= current_timestamp(),
+            "{later} must not be ahead of the clock"
+        );
+    }
+
+    #[test]
+    fn timestamp_later_than_a_future_timestamp_is_one_second_after_it() {
+        assert_eq!(
+            timestamp_later_than("29990101T000000Z").as_deref(),
+            Some("29990101T000001Z")
+        );
     }
 }

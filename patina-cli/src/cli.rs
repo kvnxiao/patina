@@ -106,8 +106,8 @@ pub(crate) enum Command {
     Remove(RemoveArgs),
 
     /// Promote a drifted copy-mode target: copy its current bytes back into
-    /// its repository source, then re-apply so the journal records the new
-    /// content. Refuses on template-rendered and symbolic-link targets.
+    /// its repository source and record them as the applied content. Refuses
+    /// on template-rendered and symbolic-link targets.
     Promote(PromoteArgs),
 
     /// Materialize the declared configuration at its targets.
@@ -141,7 +141,7 @@ pub(crate) enum Command {
     Defender(DefenderArgs),
 
     /// Debugging utilities, hidden from the top-level help summary. `journal`
-    /// decodes a binary plan file post-mortem.
+    /// decodes a binary plan file or commit record post-mortem.
     #[command(hide = true, subcommand, disable_help_subcommand = true)]
     Debug(DebugCommand),
 }
@@ -209,14 +209,15 @@ pub(crate) enum RemoteCommand {
 /// Subcommands under the `patina debug` namespace.
 #[derive(Debug, Subcommand)]
 pub(crate) enum DebugCommand {
-    /// Decode a `<ts>.plan` journal file into a human-readable view.
+    /// Decode a `<ts>.plan` or `<ts>.COMMIT` journal file into a
+    /// human-readable view.
     Journal(DebugJournalArgs),
 }
 
 /// Flags for `patina debug journal`.
 #[derive(Debug, Args)]
 pub(crate) struct DebugJournalArgs {
-    /// Path to the `<ts>.plan` file to decode.
+    /// Path to the `<ts>.plan` or `<ts>.COMMIT` file to decode.
     #[arg(value_name = "path")]
     pub path: Utf8PathBuf,
 }

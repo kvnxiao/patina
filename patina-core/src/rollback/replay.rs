@@ -1,138 +1,298 @@
-//! Per-`[[file]]`-entry atomic inverse-operation replay.
+//! Atomic inverse-operation replay.
 //!
-//! [`replay_entry`] reverts every target of one `[[file]]` entry to its
-//! pre-apply state as an atomic unit. The inverse-operation rule has three
+//! [`Replay::entry`] reverts every target of one managed entry to its
+//! pre-apply state, and [`Replay::reaped`] restores every target the apply's
+//! reap removed. The inverse-operation rule for an entry target has three
 //! outcomes, in evaluation order. A target the apply recorded as `Unchanged`
 //! is left in place, and is filtered out of the snapshot/roll-forward set
 //! before either branch below is reached; the apply touched neither its bytes
 //! nor its backup. A target with a backup is restored from it, because the
 //! apply overwrote a pre-existing file. A target with no backup is deleted,
-//! because the apply created it fresh.
+//! because the apply created it fresh. A reaped target with a backup is
+//! restored from it, and a reaped target without a backup is left alone.
+//!
+//! Before either call replaces or deletes a live entry that differs from what
+//! the record expects, it copies that entry under `<state>/patina/recovered/`
+//! through the recovery [`Keeper`] and reports the copy. A live entry that
+//! already matches its backup is left in place, so a rollback that stopped
+//! partway does not copy or rewrite what it already restored.
 //!
 //! ## Atomicity mechanism
 //!
-//! Before mutating any target the entry first **snapshots** each target's
+//! Before mutating any target, each call first **snapshots** every target's
 //! current post-apply state into a temporary staging directory beside the
 //! backup root. It then reverts the targets in order. If any revert fails,
 //! every target reverted so far is rolled forward from its snapshot to the
-//! post-apply state it had on entry. The whole `[[file]]` entry is therefore
-//! left exactly as the last apply left it, with no partial restore. The
+//! post-apply state it had before the call. The call's targets are therefore
+//! left exactly as the last apply left them, with no partial restore. The
 //! staging directory is removed on both the success and failure paths.
 
 use super::RollbackError;
 use crate::journal::Disposition;
+use crate::journal::ExpectedTarget;
+use crate::journal::Keeper;
+use crate::journal::RECOVERED_DIR;
+use crate::journal::RecoveredTarget;
 use crate::journal::mirror_backup_path;
+use crate::status::classify::target_matches;
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
 
-/// One commit-recorded target to revert, pairing its canonical absolute
-/// path with the disposition the apply classified it as. The disposition
-/// decides whether the target is reverted at all. An
-/// [`Disposition::Unchanged`] target is left in place.
-#[derive(Debug, Clone, Copy)]
-pub struct RevertTarget<'a> {
-    /// Canonical absolute target path the entry materialized.
-    pub target: &'a str,
-    /// How the apply classified this target. `Unchanged` targets
-    /// were neither written nor backed up, so rollback leaves them alone.
-    pub disposition: Disposition,
+/// Prefix of the staging directory that a [`Replay::entry`] or
+/// [`Replay::reaped`] call creates under `<state>/patina/backups/`.
+pub(crate) const STAGE_PREFIX: &str = ".rollback-stage-";
+
+/// Reverts the reaped targets and managed entries of one committed apply.
+pub(crate) struct Replay<'r> {
+    backups_dir: Utf8PathBuf,
+    timestamp: &'r str,
+    keeper: Keeper<'r>,
+    on_kept: &'r mut dyn FnMut(&RecoveredTarget),
 }
 
-/// Revert every target in one `[[file]]` entry to its pre-apply state, as
-/// one atomic unit. Either all targets reach pre-apply state, or the entry
-/// is rolled forward to its post-apply state and
-/// [`RollbackError::RollbackPartial`] is returned.
-///
-/// `entry` is the entry's index (for the error message); `targets` are the
-/// canonical absolute target paths the entry materialized, in apply order,
-/// each paired with the disposition the apply classified it as.
-///
-/// A target the apply recorded as [`Disposition::Unchanged`] is left in
-/// place. The apply skipped both its write and its backup, so its live
-/// state already *is* the pre-apply state and there is nothing to reverse.
-/// Such a target is excluded from the snapshot/roll-forward set entirely, so
-/// the atomic region covers only the `Create`/`Update` targets that rollback
-/// actually mutates. For a tree leaf the `Update` restore reads the
-/// whole-tree backup at the leaf's mirror path.
-///
-/// When a leaf's backup mirror path passes through a symbolic link stashed in
-/// this cycle's backup tree, the apply replaced a whole-directory link with
-/// materialized leaves. Rollback restores the root as one unit: it removes
-/// the live directory and clones the stashed link back. It does not restore a
-/// leaf through the link because that path would resolve into the repository.
-///
-/// # Errors
-///
-/// - [`RollbackError::RollbackPartial`] when a target's revert fails; the entry
-///   is rolled forward to its post-apply state before returning.
-/// - [`RollbackError::Filesystem`] when removing a leftover staged backup
-///   (`<backup>.partial.<pid>`) or snapshotting fails, before any target has
-///   been mutated (nothing to undo).
-pub fn replay_entry(
-    entry: u32,
-    targets: &[RevertTarget<'_>],
-    backups_dir: &Utf8Path,
-    timestamp: &str,
-) -> Result<(), RollbackError> {
-    // Unchanged targets were neither written nor backed up, so they are
-    // left wholly out of the reversal, with no snapshot and no revert. Only
-    // Create/Update targets enter the atomic snapshot/roll-forward region.
-    // A leaf under a replaced root maps to that root unit; restoring it
-    // separately would traverse the stashed link.
-    let mut to_revert: Vec<Utf8PathBuf> = Vec::new();
-    for revert in targets
-        .iter()
-        .filter(|t| t.disposition != Disposition::Unchanged)
-    {
-        let target = Utf8PathBuf::from(revert.target);
-        let unit = replaced_root_ancestor(backups_dir, timestamp, &target).unwrap_or(target);
-        if !to_revert.contains(&unit) {
-            to_revert.push(unit);
+impl<'r> Replay<'r> {
+    /// Prepare to revert the apply committed at `timestamp` under the
+    /// per-machine state directory `state_dir`. `on_kept` receives each copy
+    /// that the replay keeps of a live entry, before the replay replaces or
+    /// deletes that entry.
+    pub(crate) fn new(
+        state_dir: &Utf8Path,
+        timestamp: &'r str,
+        on_kept: &'r mut dyn FnMut(&RecoveredTarget),
+    ) -> std::io::Result<Self> {
+        Ok(Self {
+            backups_dir: state_dir.join("backups"),
+            timestamp,
+            keeper: Keeper::new(state_dir.join(RECOVERED_DIR), timestamp)?,
+            on_kept,
+        })
+    }
+
+    /// Revert every target in one managed entry to its pre-apply state, as
+    /// one atomic set.
+    ///
+    /// `targets` are the entry's recorded targets, and `first_index` is the
+    /// position of the first of them in the record. A kept copy of a target is
+    /// stored under the target's position in the record. A target the apply
+    /// recorded as [`Disposition::Unchanged`] is left in place: the apply
+    /// skipped both its write and its backup. For a tree leaf the `Update`
+    /// restore reads the whole-tree backup at the leaf's mirror path.
+    ///
+    /// When a leaf's backup mirror path passes through a symbolic link stashed
+    /// in this cycle's backup tree, the apply replaced a whole-directory link
+    /// with materialized leaves. The replay restores the root as one unit: it
+    /// removes the live directory and clones the stashed link back. It does not
+    /// restore a leaf through the link because that path would resolve into the
+    /// repository. The replay keeps a copy of the live directory unless every
+    /// file and link in it is a recorded leaf of `targets` that matches its
+    /// record.
+    ///
+    /// # Errors
+    ///
+    /// - [`RollbackError::RollbackPartial`] when a target's revert fails; the
+    ///   entry is rolled forward to its post-apply state before returning.
+    /// - [`RollbackError::Filesystem`] when removing a leftover staged backup
+    ///   (`<backup>.partial.<pid>`) or snapshotting fails, before any target
+    ///   has been mutated.
+    pub(crate) fn entry(
+        &mut self,
+        targets: &[ExpectedTarget],
+        first_index: usize,
+    ) -> Result<(), RollbackError> {
+        let entry = targets.first().map_or(0, ExpectedTarget::entry);
+        let mut units: Vec<Unit<'_>> = Vec::new();
+        for (offset, expected) in targets.iter().enumerate() {
+            if expected.disposition() == Disposition::Unchanged {
+                continue;
+            }
+            let target = Utf8PathBuf::from(expected.target());
+            let root = replaced_root_ancestor(&self.backups_dir, self.timestamp, &target);
+            let is_tree = root.is_some();
+            let path = root.unwrap_or(target);
+            if units.iter().any(|unit| unit.path == path) {
+                continue;
+            }
+            let expected = if is_tree {
+                Expected::Tree(leaves_under(&path, targets))
+            } else {
+                Expected::Target(expected)
+            };
+            units.push(Unit {
+                path,
+                index: first_index.saturating_add(offset),
+                expected,
+            });
         }
-    }
-    if to_revert.is_empty() {
-        return Ok(());
-    }
-
-    for unit in &to_revert {
-        crate::fsx::remove_partial_siblings(&mirror_backup_path(backups_dir, timestamp, unit))
-            .map_err(RollbackError::Filesystem)?;
+        self.revert(&units, &entry.to_string(), |source| {
+            RollbackError::RollbackPartial { entry, source }
+        })
     }
 
-    // Stage each target's post-apply state so a mid-entry failure can be
-    // rolled forward. The stage lives beside the backup root and is removed
-    // on every exit path.
-    let stage = stage_dir(backups_dir, timestamp, entry);
-    fs_err::create_dir_all(&stage).map_err(RollbackError::Filesystem)?;
-
-    let snapshots = match snapshot_targets(&stage, &to_revert) {
-        Ok(snapshots) => snapshots,
-        Err(err) => {
-            remove_stage(&stage);
-            return Err(RollbackError::Filesystem(err));
+    /// Restore every target in `reaped` that has a backup in this cycle, as
+    /// one atomic set, and leave the others alone.
+    ///
+    /// A kept copy of the reaped target at position `i` in `reaped` is stored
+    /// under `first_index + i`. A target whose mirror path passes through a
+    /// symbolic link stashed in this cycle is left alone: restoring the target
+    /// at the link's path also restores it, and a restore through the link
+    /// would write into the link's destination.
+    ///
+    /// # Errors
+    ///
+    /// - [`RollbackError::ReapedPartial`] when a restore fails; every reaped
+    ///   target is rolled forward to its post-apply state before returning.
+    /// - [`RollbackError::Filesystem`] when removing a leftover staged backup
+    ///   or snapshotting fails, before any target has been mutated.
+    pub(crate) fn reaped(
+        &mut self,
+        reaped: &[String],
+        first_index: usize,
+    ) -> Result<(), RollbackError> {
+        let mut units: Vec<Unit<'_>> = Vec::new();
+        for (offset, target) in reaped.iter().enumerate().rev() {
+            let path = Utf8PathBuf::from(target);
+            let covered = stashed_link_ancestor(&self.backups_dir, self.timestamp, &path).is_some();
+            let backup = mirror_backup_path(&self.backups_dir, self.timestamp, &path);
+            if covered || !crate::fsx::entry_present(&backup) {
+                continue;
+            }
+            units.push(Unit {
+                path,
+                index: first_index.saturating_add(offset),
+                expected: Expected::Nothing,
+            });
         }
-    };
+        self.revert(&units, "reaped", |source| RollbackError::ReapedPartial {
+            source,
+        })
+    }
 
-    let mut reverted: Vec<&Snapshot> = Vec::with_capacity(snapshots.len());
-    for snapshot in &snapshots {
-        match revert_target(backups_dir, timestamp, &snapshot.target) {
-            Ok(()) => reverted.push(snapshot),
-            Err(source) => {
-                // Roll forward to the post-apply state so the entry is left
-                // atomically untouched. `revert_target` removes the in-flight
-                // target before restoring it, so a copy failure can leave
-                // that target deleted or partial. Include it in the
-                // roll-forward set alongside the already-reverted targets.
-                reverted.push(snapshot);
+    fn revert(
+        &mut self,
+        units: &[Unit<'_>],
+        stage_name: &str,
+        partial: impl FnOnce(std::io::Error) -> RollbackError,
+    ) -> Result<(), RollbackError> {
+        if units.is_empty() {
+            return Ok(());
+        }
+        for unit in units {
+            crate::fsx::remove_partial_siblings(&mirror_backup_path(
+                &self.backups_dir,
+                self.timestamp,
+                &unit.path,
+            ))?;
+        }
+
+        let stage = self
+            .backups_dir
+            .join(format!("{STAGE_PREFIX}{}-{stage_name}", self.timestamp));
+        fs_err::create_dir_all(&stage)?;
+        let paths: Vec<&Utf8Path> = units.iter().map(|unit| unit.path.as_path()).collect();
+        let snapshots = match snapshot_targets(&stage, &paths) {
+            Ok(snapshots) => snapshots,
+            Err(err) => {
+                remove_stage(&stage);
+                return Err(RollbackError::Filesystem(err));
+            }
+        };
+
+        let mut reverted: Vec<&Snapshot> = Vec::with_capacity(snapshots.len());
+        for (unit, snapshot) in units.iter().zip(&snapshots) {
+            // A failed revert can leave its target deleted or partial, so the
+            // roll-forward includes it.
+            reverted.push(snapshot);
+            if let Err(source) = self.revert_unit(unit) {
                 roll_forward(&reverted);
                 remove_stage(&stage);
-                return Err(RollbackError::RollbackPartial { entry, source });
+                return Err(partial(source));
             }
         }
+
+        remove_stage(&stage);
+        Ok(())
     }
 
-    remove_stage(&stage);
-    Ok(())
+    fn revert_unit(&mut self, unit: &Unit<'_>) -> std::io::Result<()> {
+        let backup = mirror_backup_path(&self.backups_dir, self.timestamp, &unit.path);
+        let restore = crate::fsx::entry_present(&backup);
+        if crate::fsx::entry_present(&unit.path) {
+            if restore && crate::fsx::same_entry(&unit.path, &backup)? {
+                return Ok(());
+            }
+            if !unit.expected.matches(&unit.path)? {
+                let kept = self.keeper.keep(unit.index, &unit.path)?;
+                (self.on_kept)(&RecoveredTarget::new(unit.path.clone(), kept));
+            }
+        }
+        // Presence is probed with `entry_present` rather than `exists`, so a
+        // backed-up symlink whose destination is gone is still restored.
+        if restore {
+            crate::fsx::clone_entry(&backup, &unit.path)
+        } else {
+            crate::fsx::remove_entry(&unit.path)
+        }
+    }
+}
+
+/// One filesystem entry that a replay reverts, with the state the record
+/// expects at it.
+struct Unit<'a> {
+    path: Utf8PathBuf,
+    /// Record position under which a kept copy of the entry is stored.
+    index: usize,
+    expected: Expected<'a>,
+}
+
+/// The live state a commit record expects at a [`Unit`].
+enum Expected<'a> {
+    /// The recorded target's link or content.
+    Target(&'a ExpectedTarget),
+    /// A real directory whose files and links are exactly these recorded
+    /// leaves, each matching its record.
+    Tree(Vec<&'a ExpectedTarget>),
+    /// No entry: the reap removed it.
+    Nothing,
+}
+
+impl Expected<'_> {
+    fn matches(&self, path: &Utf8Path) -> std::io::Result<bool> {
+        match self {
+            Self::Target(expected) => Ok(target_matches(expected)),
+            Self::Tree(leaves) => tree_matches(path, leaves),
+            Self::Nothing => Ok(!crate::fsx::entry_present(path)),
+        }
+    }
+}
+
+fn leaves_under<'a>(root: &Utf8Path, targets: &'a [ExpectedTarget]) -> Vec<&'a ExpectedTarget> {
+    targets
+        .iter()
+        .filter(|expected| Utf8Path::new(expected.target()).starts_with(root))
+        .collect()
+}
+
+/// Whether every file and link under the real directory `dir` is one of
+/// `leaves` and matches its record. Links are compared, never followed.
+fn tree_matches(dir: &Utf8Path, leaves: &[&ExpectedTarget]) -> std::io::Result<bool> {
+    let meta = fs_err::symlink_metadata(dir)?;
+    if !meta.is_dir() {
+        return Ok(leaves
+            .iter()
+            .any(|leaf| Utf8Path::new(leaf.target()) == dir && target_matches(leaf)));
+    }
+    for entry in fs_err::read_dir(dir)? {
+        let child = Utf8PathBuf::from_path_buf(entry?.path()).map_err(|bad| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("non-UTF-8 path under {dir}: {}", bad.display()),
+            )
+        })?;
+        if !tree_matches(&child, leaves)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 /// A target's staged post-apply state: either a regular file's bytes
@@ -201,7 +361,7 @@ pub(crate) fn stashed_link_ancestor(
 
 /// Snapshot every target's current on-disk state into `stage`, returning one
 /// [`Snapshot`] per target in order.
-fn snapshot_targets(stage: &Utf8Path, targets: &[Utf8PathBuf]) -> std::io::Result<Vec<Snapshot>> {
+fn snapshot_targets(stage: &Utf8Path, targets: &[&Utf8Path]) -> std::io::Result<Vec<Snapshot>> {
     let mut snapshots = Vec::with_capacity(targets.len());
     for (index, target) in targets.iter().enumerate() {
         let captured = match fs_err::symlink_metadata(target) {
@@ -236,8 +396,8 @@ fn snapshot_targets(stage: &Utf8Path, targets: &[Utf8PathBuf]) -> std::io::Resul
             // the target genuinely cannot exist, so there is nothing to
             // snapshot. Treating both alike lets the real restore failure,
             // `create_dir_all` over the non-directory parent in
-            // `revert_target`, drive the per-entry `RollbackPartial` path
-            // identically on every platform.
+            // `revert_unit`, drive the partial-revert path identically on
+            // every platform.
             Err(err)
                 if matches!(
                     err.kind(),
@@ -249,46 +409,22 @@ fn snapshot_targets(stage: &Utf8Path, targets: &[Utf8PathBuf]) -> std::io::Resul
             Err(err) => return Err(err),
         };
         snapshots.push(Snapshot {
-            target: target.clone(),
+            target: target.to_path_buf(),
             state: captured,
         });
     }
     Ok(snapshots)
 }
 
-/// Revert one target to its pre-apply state. Restore it from its backup if
-/// one exists (the overwrite case), otherwise delete it (the
-/// fresh-creation case).
-fn revert_target(
-    backups_dir: &Utf8Path,
-    timestamp: &str,
-    target: &Utf8Path,
-) -> std::io::Result<()> {
-    let backup = mirror_backup_path(backups_dir, timestamp, target);
-    if crate::fsx::entry_present(&backup) {
-        // Overwrite case: restore the original entry, preserving its kind.
-        // A symlink restores as a symlink, a directory as a directory, and a
-        // file as a file. Presence is probed with `entry_present` rather than
-        // `exists`, so a backed-up symlink whose destination is gone is
-        // still restored; `exists` would report it as absent and misroute
-        // to the "no backup, delete" path.
-        crate::fsx::clone_entry(&backup, target)
-    } else {
-        // Fresh-creation case: nothing was backed up, so reverting deletes
-        // whatever the apply created.
-        crate::fsx::remove_entry(target)
-    }
-}
-
 /// Intentionally discard an IO result on a best-effort recovery path. The
-/// entry is already being abandoned, and there is no better state to converge
+/// set is already being abandoned, and there is no better state to converge
 /// on than a best-effort restore. A secondary failure here is therefore
 /// deliberately swallowed. This also keeps the `must_use` lint satisfied
 /// without a bare `let _`.
 fn ignore_io<T>(_result: std::io::Result<T>) {}
 
 /// Roll already-reverted targets forward to the post-apply state captured in
-/// their snapshots, so a failed entry is left atomically untouched.
+/// their snapshots, so a failed set is left atomically untouched.
 fn roll_forward(reverted: &[&Snapshot]) {
     for snapshot in reverted.iter().rev() {
         ignore_io(restore_snapshot(snapshot));
@@ -319,13 +455,8 @@ fn restore_snapshot(snapshot: &Snapshot) -> std::io::Result<()> {
     }
 }
 
-/// The per-entry staging directory under the backup root.
-fn stage_dir(backups_dir: &Utf8Path, timestamp: &str, entry: u32) -> Utf8PathBuf {
-    backups_dir.join(format!(".rollback-stage-{timestamp}-{entry}"))
-}
-
-/// Remove the per-entry staging directory, swallowing errors. A leftover
-/// stage is harmless, and no other code path ever reads it.
+/// Remove a staging directory, swallowing errors. The next rollback removes a
+/// leftover stage before it stages anything.
 fn remove_stage(stage: &Utf8Path) {
     ignore_io(fs_err::remove_dir_all(stage));
 }
@@ -333,6 +464,7 @@ fn remove_stage(stage: &Utf8Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::journal::content_hash;
     use tempfile::TempDir;
 
     struct Env {
@@ -355,8 +487,27 @@ mod tests {
         }
     }
 
-    /// Write a backup for `target` under `<backups>/<ts>/` so revert treats
-    /// it as an overwrite to restore.
+    impl Env {
+        fn replay(
+            &self,
+            ts: &str,
+            revert: impl FnOnce(&mut Replay<'_>) -> Result<(), RollbackError>,
+        ) -> (Result<(), RollbackError>, Vec<RecoveredTarget>) {
+            let mut kept = Vec::new();
+            let mut on_kept = |copy: &RecoveredTarget| kept.push(copy.clone());
+            let mut replay = Replay::new(&self.root, ts, &mut on_kept).expect("prepare the replay");
+            let result = revert(&mut replay);
+            drop(replay);
+            (result, kept)
+        }
+
+        fn revert_entry(&self, ts: &str, targets: &[ExpectedTarget]) -> Vec<RecoveredTarget> {
+            let (result, kept) = self.replay(ts, |replay| replay.entry(targets, 0));
+            result.expect("revert the entry");
+            kept
+        }
+    }
+
     fn write_backup(backups: &Utf8Path, ts: &str, target: &Utf8Path, bytes: &[u8]) {
         let path = mirror_backup_path(backups, ts, target);
         if let Some(parent) = path.parent() {
@@ -365,31 +516,47 @@ mod tests {
         fs_err::write(&path, bytes).expect("write backup");
     }
 
-    /// A `Create` revert target for `path` (no backup → delete on revert).
-    fn create(path: &Utf8Path) -> RevertTarget<'_> {
-        RevertTarget {
-            target: path.as_str(),
-            disposition: Disposition::Create,
+    fn content(path: &Utf8Path, bytes: &[u8], disposition: Disposition) -> ExpectedTarget {
+        ExpectedTarget::Content {
+            target: path.as_str().to_owned(),
+            source: "/repo/source".to_owned(),
+            hash: content_hash(bytes),
+            entry: 0,
+            disposition,
         }
     }
 
-    /// An `Update` revert target for `path` (backup → restore on revert).
-    fn update(path: &Utf8Path) -> RevertTarget<'_> {
-        RevertTarget {
-            target: path.as_str(),
-            disposition: Disposition::Update,
-        }
+    fn create(path: &Utf8Path, bytes: &[u8]) -> ExpectedTarget {
+        content(path, bytes, Disposition::Create)
+    }
+
+    fn update(path: &Utf8Path, bytes: &[u8]) -> ExpectedTarget {
+        content(path, bytes, Disposition::Update)
+    }
+
+    fn kept_bytes(kept: &[RecoveredTarget]) -> Vec<(Utf8PathBuf, Vec<u8>)> {
+        kept.iter()
+            .flat_map(|copy| {
+                copy.kept().iter().map(|path| {
+                    (
+                        copy.target().to_path_buf(),
+                        fs_err::read(path).expect("read the kept copy"),
+                    )
+                })
+            })
+            .collect()
     }
 
     #[test]
     fn fresh_creation_is_deleted() {
         let e = env();
-        let ts = "TS";
         let target = e.root.join("created");
         fs_err::write(&target, b"new").expect("write target");
 
-        replay_entry(0, &[create(&target)], &e.backups, ts).expect("revert");
+        let kept = e.revert_entry("TS", &[create(&target, b"new")]);
+
         assert!(!target.exists(), "a fresh creation must be deleted");
+        assert!(kept.is_empty(), "an unedited target gets no copy: {kept:?}");
     }
 
     #[test]
@@ -400,11 +567,65 @@ mod tests {
         fs_err::write(&target, b"new").expect("write post-apply target");
         write_backup(&e.backups, ts, &target, b"original");
 
-        replay_entry(0, &[update(&target)], &e.backups, ts).expect("revert");
+        let kept = e.revert_entry(ts, &[update(&target, b"new")]);
+
+        assert_eq!(fs_err::read(&target).expect("read restored"), b"original");
+        assert!(kept.is_empty(), "an unedited target gets no copy: {kept:?}");
+    }
+
+    #[test]
+    fn an_edited_overwrite_is_kept_before_the_restore() {
+        let e = env();
+        let ts = "TS";
+        let target = e.root.join("over");
+        fs_err::write(&target, b"edited").expect("edit the target after the apply");
+        write_backup(&e.backups, ts, &target, b"original");
+
+        let kept = e.revert_entry(ts, &[update(&target, b"applied")]);
+
+        assert_eq!(fs_err::read(&target).expect("read restored"), b"original");
+        assert_eq!(kept_bytes(&kept), [(target, b"edited".to_vec())]);
+    }
+
+    #[test]
+    fn an_edited_creation_is_kept_before_the_delete() {
+        let e = env();
+        let target = e.root.join("created");
+        fs_err::write(&target, b"edited").expect("edit the target after the apply");
+
+        let kept = e.revert_entry("TS", &[create(&target, b"applied")]);
+
+        assert!(!target.exists(), "a fresh creation must be deleted");
+        assert_eq!(kept_bytes(&kept), [(target, b"edited".to_vec())]);
+    }
+
+    #[test]
+    fn a_target_that_already_matches_its_backup_is_neither_kept_nor_rewritten() {
+        let e = env();
+        let ts = "TS";
+        let target = e.root.join("over");
+        fs_err::write(&target, b"original").expect("restore the target by hand");
+        let before =
+            std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000_000);
+        fs_err::OpenOptions::new()
+            .write(true)
+            .open(&target)
+            .expect("open the target")
+            .file()
+            .set_modified(before)
+            .expect("backdate the target");
+        write_backup(&e.backups, ts, &target, b"original");
+
+        let kept = e.revert_entry(ts, &[update(&target, b"applied")]);
+
+        assert!(kept.is_empty(), "{kept:?}");
         assert_eq!(
-            fs_err::read(&target).expect("read restored"),
-            b"original",
-            "an overwrite must be restored from its backup"
+            fs_err::metadata(&target)
+                .expect("stat the target")
+                .modified()
+                .expect("read the mtime"),
+            before,
+            "the target must not be rewritten"
         );
     }
 
@@ -421,7 +642,7 @@ mod tests {
         ));
         fs_err::write(&staged, b"orig").expect("write a torn staged backup");
 
-        replay_entry(0, &[update(&target)], &e.backups, ts).expect("revert");
+        e.revert_entry(ts, &[update(&target, b"new")]);
 
         assert_eq!(fs_err::read(&target).expect("read restored"), b"original");
         assert!(
@@ -440,8 +661,7 @@ mod tests {
         fs_err::write(&fresh, b"new").expect("write t2");
         write_backup(&e.backups, ts, &pre_existing, b"original");
 
-        replay_entry(7, &[update(&pre_existing), create(&fresh)], &e.backups, ts)
-            .expect("revert entry");
+        e.revert_entry(ts, &[update(&pre_existing, b"new"), create(&fresh, b"new")]);
 
         assert_eq!(
             fs_err::read(&pre_existing).expect("read restored"),
@@ -451,21 +671,47 @@ mod tests {
     }
 
     #[test]
-    fn unchanged_target_is_left_in_place() {
-        // A commit-recorded Unchanged target took no backup, so its live
-        // bytes already are the pre-apply bytes. Rollback must leave it
-        // byte-for-byte untouched, not delete it as a fresh creation despite
-        // having no backup.
+    fn a_failed_second_target_rolls_the_first_forward_and_reports_partial() {
         let e = env();
         let ts = "TS";
+        let first = e.root.join("first");
+        fs_err::write(&first, b"post-apply-1").expect("write the first target");
+        write_backup(&e.backups, ts, &first, b"original-1");
+        let blocked_parent = e.root.join("blocked");
+        fs_err::write(&blocked_parent, b"a file, not a directory").expect("occupy the parent");
+        let second = blocked_parent.join("second");
+        write_backup(&e.backups, ts, &second, b"original-2");
+        let targets = [&first, &second].map(|target| ExpectedTarget::Content {
+            target: target.to_string(),
+            source: "/repo/source".to_owned(),
+            hash: content_hash(b"post-apply-1"),
+            entry: 3,
+            disposition: Disposition::Update,
+        });
+
+        let (result, _kept) = e.replay(ts, |replay| replay.entry(&targets, 0));
+
+        assert!(
+            matches!(result, Err(RollbackError::RollbackPartial { entry: 3, .. })),
+            "{result:?}"
+        );
+        assert_eq!(
+            fs_err::read(&first).expect("read the first target"),
+            b"post-apply-1",
+            "the first target must be rolled forward to its post-apply state"
+        );
+    }
+
+    #[test]
+    fn unchanged_target_is_left_in_place() {
+        let e = env();
         let target = e.root.join("unchanged");
         fs_err::write(&target, b"satisfied").expect("write target");
 
-        let revert = RevertTarget {
-            target: target.as_str(),
-            disposition: Disposition::Unchanged,
-        };
-        replay_entry(0, &[revert], &e.backups, ts).expect("revert");
+        e.revert_entry(
+            "TS",
+            &[content(&target, b"satisfied", Disposition::Unchanged)],
+        );
 
         assert_eq!(
             fs_err::read(&target).expect("read untouched"),
@@ -476,9 +722,6 @@ mod tests {
 
     #[test]
     fn mixed_entry_reverts_create_and_update_but_leaves_unchanged() {
-        // The Unchanged target has no backup, like the Create target, but
-        // the recorded disposition, not backup presence, decides whether
-        // it is deleted.
         let e = env();
         let ts = "TS";
         let created = e.root.join("created");
@@ -489,28 +732,86 @@ mod tests {
         fs_err::write(&unchanged, b"satisfied").expect("write unchanged");
         write_backup(&e.backups, ts, &updated, b"original");
 
-        let unchanged_revert = RevertTarget {
-            target: unchanged.as_str(),
-            disposition: Disposition::Unchanged,
-        };
-        replay_entry(
-            3,
-            &[create(&created), update(&updated), unchanged_revert],
-            &e.backups,
+        e.revert_entry(
             ts,
-        )
-        .expect("revert entry");
+            &[
+                create(&created, b"new"),
+                update(&updated, b"new"),
+                content(&unchanged, b"satisfied", Disposition::Unchanged),
+            ],
+        );
 
         assert!(!created.exists(), "the Create target must be deleted");
-        assert_eq!(
-            fs_err::read(&updated).expect("read restored"),
-            b"original",
-            "the Update target must be restored from its backup"
-        );
+        assert_eq!(fs_err::read(&updated).expect("read restored"), b"original");
         assert_eq!(
             fs_err::read(&unchanged).expect("read untouched"),
-            b"satisfied",
-            "the Unchanged target must be left in place"
+            b"satisfied"
+        );
+    }
+
+    #[test]
+    fn a_reaped_target_is_restored_from_its_backup_and_one_without_a_backup_is_left_alone() {
+        let e = env();
+        let ts = "TS";
+        let reaped = e.root.join("reaped");
+        write_backup(&e.backups, ts, &reaped, b"reaped-bytes");
+        let recreated = e.root.join("recreated");
+        fs_err::write(&recreated, b"user-bytes").expect("recreate a path without a backup");
+        let list = [reaped.to_string(), recreated.to_string()];
+
+        let (result, kept) = e.replay(ts, |replay| replay.reaped(&list, 0));
+
+        result.expect("restore the reaped set");
+        assert_eq!(
+            fs_err::read(&reaped).expect("read restored"),
+            b"reaped-bytes"
+        );
+        assert_eq!(
+            fs_err::read(&recreated).expect("read untouched"),
+            b"user-bytes"
+        );
+        assert!(kept.is_empty(), "{kept:?}");
+    }
+
+    #[test]
+    fn a_recreated_reaped_target_is_kept_before_the_restore() {
+        let e = env();
+        let ts = "TS";
+        let reaped = e.root.join("reaped");
+        write_backup(&e.backups, ts, &reaped, b"reaped-bytes");
+        fs_err::write(&reaped, b"user-bytes").expect("recreate the reaped path");
+
+        let (result, kept) = e.replay(ts, |replay| replay.reaped(&[reaped.to_string()], 5));
+
+        result.expect("restore the reaped set");
+        assert_eq!(
+            fs_err::read(&reaped).expect("read restored"),
+            b"reaped-bytes"
+        );
+        assert_eq!(kept_bytes(&kept), [(reaped, b"user-bytes".to_vec())]);
+    }
+
+    #[test]
+    fn a_failed_reaped_restore_rolls_the_set_forward_and_reports_reaped_partial() {
+        let e = env();
+        let ts = "TS";
+        let first = e.root.join("first");
+        write_backup(&e.backups, ts, &first, b"first-bytes");
+        let blocked_parent = e.root.join("blocked");
+        fs_err::write(&blocked_parent, b"a file, not a directory").expect("occupy the parent");
+        let second = blocked_parent.join("second");
+        write_backup(&e.backups, ts, &second, b"second-bytes");
+        let list = [second.to_string(), first.to_string()];
+
+        let (result, _kept) = e.replay(ts, |replay| replay.reaped(&list, 0));
+
+        assert!(
+            matches!(result, Err(RollbackError::ReapedPartial { .. })),
+            "{result:?}"
+        );
+        assert!(
+            !crate::fsx::entry_present(&first),
+            "the restored first target must be rolled forward to its reaped state"
         );
     }
 
@@ -533,8 +834,7 @@ mod tests {
             .expect("mkdir backup tree");
         symlink_dir(&repo_src, &root_backup);
 
-        let leaf = root.join("a.conf");
-        replay_entry(0, &[create(&leaf)], &e.backups, ts).expect("revert the entry");
+        let kept = e.revert_entry(ts, &[create(&root.join("a.conf"), b"repo bytes")]);
 
         let meta = fs_err::symlink_metadata(&root).expect("stat reverted root");
         assert!(
@@ -550,6 +850,34 @@ mod tests {
             fs_err::read(repo_src.join("a.conf")).expect("read repo leaf"),
             b"repo bytes",
             "the repository leaf survives byte-for-byte"
+        );
+        assert!(kept.is_empty(), "an unedited root gets no copy: {kept:?}");
+    }
+
+    #[test]
+    fn a_replaced_tree_root_holding_an_unrecorded_file_is_kept_before_the_restore() {
+        let e = env();
+        let ts = "TS";
+        let repo_src = e.root.join("srcdir");
+        fs_err::create_dir_all(&repo_src).expect("mkdir repo source");
+        let root = e.root.join("out");
+        fs_err::create_dir_all(&root).expect("mkdir live root");
+        fs_err::write(root.join("a.conf"), b"repo bytes").expect("write live leaf");
+        fs_err::write(root.join("notes"), b"user bytes").expect("add a user file");
+        let root_backup = mirror_backup_path(&e.backups, ts, &root);
+        fs_err::create_dir_all(root_backup.parent().expect("backup parent"))
+            .expect("mkdir backup tree");
+        symlink_dir(&repo_src, &root_backup);
+
+        let kept = e.revert_entry(ts, &[create(&root.join("a.conf"), b"repo bytes")]);
+
+        let copies: Vec<&Utf8PathBuf> = kept.iter().flat_map(RecoveredTarget::kept).collect();
+        let [copy] = copies.as_slice() else {
+            panic!("expected one kept copy of the root, got {kept:?}");
+        };
+        assert_eq!(
+            fs_err::read(copy.join("notes")).expect("read the kept user file"),
+            b"user bytes"
         );
     }
 
@@ -586,7 +914,7 @@ mod tests {
         let stage = e.root.join("stage");
         fs_err::create_dir_all(&stage).expect("mkdir stage");
 
-        let snapshots = snapshot_targets(&stage, std::slice::from_ref(&target)).expect("snapshot");
+        let snapshots = snapshot_targets(&stage, &[target.as_path()]).expect("snapshot");
         crate::fsx::remove_entry(&target).expect("clear the live link");
         restore_snapshot(snapshots.first().expect("one snapshot")).expect("restore");
 
@@ -599,22 +927,16 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn overwrite_of_a_pre_existing_symlink_is_restored_as_a_symlink() {
-        // C1 regression at the rollback layer: a target that was a symlink
-        // before the apply must revert to a symlink, not a regular file
-        // holding the destination's bytes. The backup is the original
-        // symlink (what `backup_before_overwrite` stashes), and its
-        // destination need not exist for the revert to recreate the link.
+    fn a_backed_up_symlink_whose_destination_is_gone_is_restored_as_a_symlink() {
         let e = env();
         let ts = "TS";
         let target = e.root.join("link-target");
-        // Post-apply state: a regular file the apply wrote over the link.
         fs_err::write(&target, b"new").expect("write post-apply target");
         let backup = mirror_backup_path(&e.backups, ts, &target);
         fs_err::create_dir_all(backup.parent().expect("backup parent")).expect("mkdir backup tree");
         fs_err::os::unix::fs::symlink("/original/dest", &backup).expect("stash original symlink");
 
-        replay_entry(0, &[update(&target)], &e.backups, ts).expect("revert");
+        e.revert_entry(ts, &[update(&target, b"new")]);
 
         let meta = fs_err::symlink_metadata(&target).expect("stat reverted target");
         assert!(

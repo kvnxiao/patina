@@ -1,11 +1,12 @@
-//! Human-readable rendering of a decoded plan journal.
+//! Human-readable rendering of a decoded plan journal or commit record.
 //!
 //! `patina debug journal <path>` decodes a `<ts>.plan` file (the binary,
-//! `postcard`-encoded [`Plan`](super::Plan) behind its version envelope)
-//! and prints it for a human reading a post-mortem. The output is a
-//! one-line summary per operation followed by indented detail. It is
-//! deliberately **not** a stable, machine-parsed format, and is the one
-//! user-facing path allowed to carry a wall-clock timestamp (the plan's
+//! `postcard`-encoded [`Plan`](super::Plan) behind its version envelope) or a
+//! `<ts>.COMMIT` sentinel (the [`ApplyRecord`] behind the same envelope) and
+//! prints it for a human reading a post-mortem. The output is a one-line
+//! summary per operation or recorded target followed by indented detail. It
+//! is deliberately **not** a stable, machine-parsed format, and is the one
+//! user-facing path allowed to carry a wall-clock timestamp (the file's
 //! recorded `<ts>`).
 //!
 //! The plan body records only the resolved file operations: symlink, render,
@@ -30,6 +31,8 @@
 //! assert!(text.contains("/home/u/.zshrc"));
 //! ```
 
+use super::ApplyRecord;
+use super::ExpectedTarget;
 use super::JournalError;
 use super::Plan;
 use super::PlannedOperation;
@@ -38,14 +41,15 @@ use camino::Utf8Path;
 use camino::Utf8PathBuf;
 use thiserror::Error;
 
-/// Errors raised while loading a plan file for the `debug journal` view.
+/// Errors raised while loading a plan file or commit sentinel for the
+/// `debug journal` view.
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum PlanRenderError {
-    /// The plan file at `path` could not be opened or read. The wrapped
-    /// error carries the underlying IO cause; `path` is surfaced so the
-    /// CLI can name it.
-    #[error("could not read plan file `{path}`")]
+    /// The file at `path` could not be opened or read. The wrapped error
+    /// carries the underlying IO cause; `path` is surfaced so the CLI can
+    /// name it.
+    #[error("could not read journal file `{path}`")]
     Read {
         /// The path that could not be read.
         path: Utf8PathBuf,
@@ -53,12 +57,12 @@ pub enum PlanRenderError {
         source: std::io::Error,
     },
 
-    /// The bytes at the path could not be decoded as a plan. This carries a
-    /// [`JournalError`], most notably
+    /// The bytes at the path could not be decoded as a plan or a commit
+    /// record. This carries a [`JournalError`], most notably
     /// [`JournalError::VersionMismatch`](super::JournalError::VersionMismatch)
-    /// for a plan from a newer binary, which the CLI surfaces naming both
+    /// for a file from a newer binary, which the CLI surfaces naming both
     /// versions.
-    #[error("could not decode plan file `{path}`")]
+    #[error("could not decode journal file `{path}`")]
     Decode {
         /// The path whose contents failed to decode.
         path: Utf8PathBuf,
@@ -81,22 +85,45 @@ pub enum PlanRenderError {
 ///   [`JournalError::VersionMismatch`](super::JournalError::VersionMismatch)
 ///   for a plan written by a newer binary.
 pub fn load_plan_file(path: &Utf8Path) -> Result<(Plan, String), PlanRenderError> {
-    let bytes = fs_err::read(path).map_err(|source| PlanRenderError::Read {
-        path: path.to_owned(),
-        source,
-    })?;
+    let bytes = read_journal_file(path)?;
     let plan = Plan::decode(&bytes).map_err(|source| PlanRenderError::Decode {
         path: path.to_owned(),
         source,
     })?;
-    Ok((plan, timestamp_from_plan_path(path)))
+    Ok((plan, timestamp_from_path(path, super::PLAN_SUFFIX)))
 }
 
-/// Recover the `<ts>` timestamp from a `<ts>.plan` path. Falls back to the
-/// full file stem (or the path string) when the name does not match.
-fn timestamp_from_plan_path(path: &Utf8Path) -> String {
+/// Read and decode the commit sentinel at `path`, returning the decoded
+/// [`ApplyRecord`] alongside the `<ts>` timestamp recovered from a
+/// `<ts>.COMMIT` filename, or the whole path when the name does not match.
+///
+/// # Errors
+///
+/// - [`PlanRenderError::Read`] if the file is missing or unreadable.
+/// - [`PlanRenderError::Decode`] if the bytes fail to decode, including a
+///   [`JournalError::VersionMismatch`](super::JournalError::VersionMismatch)
+///   for a record written by a newer binary.
+pub fn load_commit_file(path: &Utf8Path) -> Result<(ApplyRecord, String), PlanRenderError> {
+    let bytes = read_journal_file(path)?;
+    let record = ApplyRecord::decode(&bytes).map_err(|source| PlanRenderError::Decode {
+        path: path.to_owned(),
+        source,
+    })?;
+    Ok((record, timestamp_from_path(path, super::COMMIT_SUFFIX)))
+}
+
+fn read_journal_file(path: &Utf8Path) -> Result<Vec<u8>, PlanRenderError> {
+    fs_err::read(path).map_err(|source| PlanRenderError::Read {
+        path: path.to_owned(),
+        source,
+    })
+}
+
+/// Recover the `<ts>` timestamp from a `<ts><suffix>` path. Falls back to the
+/// path string when the name does not match.
+fn timestamp_from_path(path: &Utf8Path, suffix: &str) -> String {
     path.file_name()
-        .and_then(|name| name.strip_suffix(super::PLAN_SUFFIX))
+        .and_then(|name| name.strip_suffix(suffix))
         .map_or_else(|| path.as_str().to_owned(), str::to_owned)
 }
 
@@ -125,6 +152,47 @@ pub fn render_plan(plan: &Plan, timestamp: &str) -> String {
             ignore_fmt(writeln!(out, "    source: {source}"));
         }
         ignore_fmt(writeln!(out, "    target: {target}"));
+    }
+    out
+}
+
+/// Render a decoded [`ApplyRecord`] and its recorded `<ts>` to a
+/// human-readable string.
+pub fn render_record(record: &ApplyRecord, timestamp: &str) -> String {
+    use std::fmt::Write as _;
+
+    let mut out = String::new();
+    ignore_fmt(writeln!(
+        out,
+        "commit {timestamp} ({}), {} target(s), {} reaped",
+        timestamp_to_rfc3339(timestamp),
+        record.targets.len(),
+        record.reaped.len()
+    ));
+    ignore_fmt(writeln!(
+        out,
+        "applied by {} on {}",
+        record.last_apply.user, record.last_apply.host
+    ));
+    for (index, expected) in record.targets.iter().enumerate() {
+        let kind = match expected {
+            ExpectedTarget::Symlink { .. } => "symlink",
+            ExpectedTarget::Content { .. } => "content",
+        };
+        ignore_fmt(writeln!(
+            out,
+            "[{index}] {kind}, {}, entry {}",
+            expected.disposition().label(),
+            expected.entry()
+        ));
+        ignore_fmt(writeln!(out, "    source: {}", expected.source()));
+        ignore_fmt(writeln!(out, "    target: {}", expected.target()));
+    }
+    if !record.reaped.is_empty() {
+        ignore_fmt(writeln!(out, "reaped:"));
+        for target in &record.reaped {
+            ignore_fmt(writeln!(out, "    {target}"));
+        }
     }
     out
 }
@@ -191,6 +259,56 @@ mod tests {
         assert!(text.contains("20260528T120000Z"), "{text}");
         assert!(text.contains("2026-05-28T12:00:00Z"), "{text}");
         assert!(text.contains("3 operation(s)"), "{text}");
+    }
+
+    fn sample_record() -> ApplyRecord {
+        use crate::journal::Disposition;
+        ApplyRecord::new(
+            crate::journal::LastApply {
+                at: "2026-05-28T12:00:00Z".to_owned(),
+                user: "u".to_owned(),
+                host: "h".to_owned(),
+            },
+            vec![ExpectedTarget::Symlink {
+                target: "/home/u/.zshrc".to_owned(),
+                link_target: "/repo/zsh/zshrc".to_owned(),
+                entry: 2,
+                disposition: Disposition::Update,
+            }],
+            vec!["/home/u/.old".to_owned()],
+        )
+    }
+
+    #[test]
+    fn render_record_lists_each_target_and_then_the_reaped_targets() {
+        let text = render_record(&sample_record(), "20260528T120000Z");
+        assert_eq!(
+            text,
+            "commit 20260528T120000Z (2026-05-28T12:00:00Z), 1 target(s), 1 reaped\n\
+             applied by u on h\n\
+             [0] symlink, update, entry 2\n    source: /repo/zsh/zshrc\n    target: /home/u/.zshrc\n\
+             reaped:\n    /home/u/.old\n"
+        );
+    }
+
+    #[test]
+    fn render_record_omits_the_reaped_block_when_nothing_was_reaped() {
+        let mut record = sample_record();
+        record.reaped.clear();
+        let text = render_record(&record, "20260528T120000Z");
+        assert!(!text.contains("reaped:"), "{text}");
+    }
+
+    #[test]
+    fn load_commit_file_round_trips_and_recovers_timestamp() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = Utf8Path::from_path(dir.path()).expect("utf8 tempdir");
+        let path = dir.join("20260528T120000Z.COMMIT");
+        fs_err::write(&path, sample_record().encode().expect("encode")).expect("write commit");
+
+        let (record, ts) = load_commit_file(&path).expect("load");
+        assert_eq!(record, sample_record());
+        assert_eq!(ts, "20260528T120000Z");
     }
 
     #[test]

@@ -45,7 +45,7 @@ patina status               # report drift between the repo and your machine
 | `init` | Scaffold a root `patina.toml` and persist the default-repo pointer. |
 | `add` | Bring an existing dotfile under management: copy it into a module and write a `[[file]]` or `[[directory]]` entry by source kind. |
 | `remove` | Stop managing a target and preserve its applied contents as a regular file. With `--purge`, delete the target instead. Individual leaves of a tree-mode entry cannot be removed this way. |
-| `promote` | Copy a changed copy-mode target back to its repository source, then apply again. Remote-backed targets cannot be promoted. |
+| `promote` | Copy a changed copy-mode target back to its repository source and record its bytes as applied. Remote-backed targets cannot be promoted. |
 | `apply` | Materialize declarations as symlinks / rendered templates / byte copies. Diff-and-prompt by default; plan-only in a non-TTY. |
 | `status` | Classify each managed target: `clean` / `drifted` / `missing` / `orphaned`. |
 | `rollback` | Reverse the most recent successful apply from the journal and backups. |

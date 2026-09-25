@@ -1,13 +1,21 @@
 //! `patina remove <path>` command logic.
 //!
-//! `patina remove <path>` unmanages a target. It replaces the target on disk
-//! with a regular file containing the last-applied content, so an application
-//! reading the target still finds valid content. It then removes the target's
-//! `[[file]]` entry from
-//! its module's `patina.toml` and re-journals the new managed set. `patina
-//! status` therefore treats the path as deliberately unmanaged and leaves it
-//! out of the report, rather than reporting an ORPHANED leftover. With
-//! `--purge` the target is deleted from disk entirely instead of replaced.
+//! `patina remove <path>` unmanages a target. It writes a new `<ts>.COMMIT`
+//! that omits the target, then replaces the target on disk with a regular file
+//! containing the last-applied content, so an application reading the target
+//! still finds valid content. It then removes the target's `[[file]]` entry
+//! from its module's `patina.toml`. `patina status` therefore treats the path
+//! as deliberately unmanaged and leaves it out of the report, rather than
+//! reporting an ORPHANED leftover. With `--purge` the target is deleted from
+//! disk entirely instead of replaced.
+//!
+//! `remove` does not write another target or run a hook. The new commit is
+//! derived from the latest record, records every other target as `Unchanged`,
+//! and does not list a reaped target, so rolling back the commit does not
+//! change a file. When `remove` is killed after the commit, the latest record
+//! already omits the target, so the next apply does not reap it. When replacing
+//! the target or writing the manifest fails, `remove` deletes the commit, so
+//! the previous record lists the target again and a retry finds it.
 //!
 //! A tree-mode leaf is refused (exit 1). A `symlink-tree` or `copy`
 //! `[[directory]]` entry declares one directory and materializes a leaf per
@@ -21,8 +29,7 @@
 //! declines. After replacing the target, `remove` writes the manifest. If that
 //! write fails, the target is already replaced and its entry remains.
 //!
-//! `remove` holds one exclusive advisory lock for the whole command and
-//! re-journals under [`LockPolicy::Held`](patina_core::LockPolicy) through
+//! `remove` holds one exclusive advisory lock for the whole command through
 //! the shared helpers in [`crate::cmd::managed`].
 //!
 //! ## Reconstructing the last-applied content
@@ -39,17 +46,19 @@
 //!
 //! Planning, journaling, manifest editing, repo discovery, and template
 //! rendering live in `patina_core`; this module is presentation and control
-//! flow.
+//! flow. Planning here finds the owning manifest and module variables; `remove`
+//! does not execute the plan.
 
 use crate::cli::RemoveArgs;
 use crate::cmd::add::resolve_home;
 use crate::cmd::apply::PromptReader;
 use crate::cmd::apply::Tty;
+use crate::cmd::managed::Recorded;
 use crate::cmd::managed::TEMPLATE_SUFFIX;
 use crate::cmd::managed::acquire_state_and_lock;
+use crate::cmd::managed::discard_commit;
 use crate::cmd::managed::recover_held;
 use crate::cmd::managed::refused;
-use crate::cmd::managed::rejournal;
 use crate::exit_code::ExitCode;
 use crate::output::reporter::Reporter;
 use crate::output::style::paint;
@@ -73,7 +82,6 @@ use patina_core::contract_home;
 use patina_core::current_timestamp;
 use patina_core::manage_key;
 use patina_core::plan_apply;
-use patina_core::read_latest_commit;
 use patina_core::remove_file_entry;
 
 /// Run `patina remove`. Returns the process exit code.
@@ -92,8 +100,8 @@ use patina_core::remove_file_entry;
 /// cannot be computed; no candidate manifest declares a `[[file]]` entry for
 /// the target, or one cannot be read or edited; the journal directory cannot be
 /// read while refusing; recovering an interrupted apply fails; the journaled
-/// source cannot be read or re-rendered; the target replacement fails; the
-/// manifest write fails; or the re-apply fails.
+/// source cannot be read or re-rendered; the commit cannot be written; the
+/// target replacement fails; or the manifest write fails.
 pub(crate) fn run(
     args: &RemoveArgs,
     tty: Tty,
@@ -104,20 +112,13 @@ pub(crate) fn run(
     let target = anchor_input(&args.path, &home).map_err(EngineError::from)?;
     let target_key = manage_key(&target);
 
-    let (state, guard) = acquire_state_and_lock()?;
+    let (state, _guard) = acquire_state_and_lock()?;
 
-    let journal_dir = state.join("journal");
-    let record = read_latest_commit(&journal_dir).map_err(EngineError::from)?;
-    let expected = record.as_ref().and_then(|record| {
-        record
-            .targets
-            .iter()
-            .find(|expected| manage_key(Utf8Path::new(expected.target())) == target_key)
-    });
-    let Some(expected) = expected else {
+    let Some(recorded) = Recorded::find(&state, &target_key)? else {
         let code = report_unmanaged(args, reporter);
         return refused(&state, reporter, code);
     };
+    let expected = &recorded.expected;
 
     let timestamp = current_timestamp();
     let resolved =
@@ -152,13 +153,15 @@ pub(crate) fn run(
         Some(reconstruct_content(expected, vars)?)
     };
 
-    replace_target(&target_path, content.as_deref())?;
-    fs_err::write(edit.manifest.as_std_path(), &edit.edited)
-        .with_context(|| format!("failed to write {}", edit.manifest))?;
-
-    // The re-plan runs after the manifest edit, so the fresh <ts>.COMMIT
-    // omits the removed target and `patina status` stops listing it.
-    rejournal(guard)?;
+    let committed = recorded.commit_without(&state)?;
+    let unmanaged = replace_target(&target_path, content.as_deref()).and_then(|()| {
+        fs_err::write(edit.manifest.as_std_path(), &edit.edited)
+            .with_context(|| format!("failed to write {}", edit.manifest))
+    });
+    if let Err(error) = unmanaged {
+        discard_commit(&state, &committed).with_context(|| format!("{error:#}"))?;
+        return Err(error);
+    }
 
     report_success(args, &target_path, reporter);
     Ok(ExitCode::Success.code())

@@ -1,7 +1,8 @@
 //! `patina debug journal <path>` command logic.
 //!
 //! The `debug` group is a namespace for post-mortem tooling; `journal`
-//! decodes a binary `<ts>.plan` file. Both the version-envelope decode and the
+//! decodes a binary `<ts>.COMMIT` record when the path ends in `.COMMIT`, and
+//! a `<ts>.plan` file otherwise. Both the version-envelope decode and the
 //! formatting are engine concerns and live in `patina_core`; this module is
 //! control flow and exit-code mapping.
 //!
@@ -21,8 +22,11 @@ use crate::cli::DebugJournalArgs;
 use crate::exit_code::ExitCode;
 use crate::output::reporter::Reporter;
 use patina_core::chain_message;
+use patina_core::journal::COMMIT_SUFFIX;
+use patina_core::load_commit_file;
 use patina_core::load_plan_file;
 use patina_core::render_plan;
+use patina_core::render_record;
 
 /// Dispatch a `patina debug` subcommand, returning the process exit code.
 ///
@@ -36,11 +40,15 @@ pub(crate) fn run(command: &DebugCommand, reporter: &mut impl Reporter) -> i32 {
     }
 }
 
-/// Decode and render the plan file at `args.path`.
+/// Decode and render the commit record or plan file at `args.path`.
 fn run_journal(args: &DebugJournalArgs, reporter: &mut impl Reporter) -> i32 {
-    match load_plan_file(&args.path) {
-        Ok((plan, timestamp)) => {
-            let rendered = render_plan(&plan, &timestamp);
+    let rendered = if args.path.as_str().ends_with(COMMIT_SUFFIX) {
+        load_commit_file(&args.path).map(|(record, timestamp)| render_record(&record, &timestamp))
+    } else {
+        load_plan_file(&args.path).map(|(plan, timestamp)| render_plan(&plan, &timestamp))
+    };
+    match rendered {
+        Ok(rendered) => {
             reporter.out_block(&rendered);
             ExitCode::Success.code()
         }
@@ -86,6 +94,28 @@ mod tests {
         assert!(r.out.contains("symlink"), "{}", r.out);
         assert!(r.out.contains("/home/u/.zshrc"), "{}", r.out);
         assert!(r.err.is_empty(), "no warnings on success: {}", r.err);
+    }
+
+    #[test]
+    fn renders_a_commit_record_with_its_reaped_targets() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = Utf8Path::from_path(dir.path()).expect("utf8 tempdir");
+        let path = dir.join(format!("20260528T120000Z{COMMIT_SUFFIX}"));
+        let record = patina_core::ApplyRecord::new(
+            patina_core::LastApply {
+                at: "2026-05-28T12:00:00Z".to_owned(),
+                user: "u".to_owned(),
+                host: "h".to_owned(),
+            },
+            Vec::new(),
+            vec!["/home/u/.old".to_owned()],
+        );
+        fs_err::write(&path, record.encode().expect("encode")).expect("write commit");
+
+        let mut r = BufferReporter::new();
+        let code = run_journal(&args(path), &mut r);
+        assert_eq!(code, 0, "{}", r.err);
+        assert!(r.out.contains("reaped:\n    /home/u/.old\n"), "{}", r.out);
     }
 
     #[test]

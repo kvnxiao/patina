@@ -84,6 +84,7 @@ pub use record::LastApply;
 pub use record::content_hash;
 pub use record::read_symlink_target;
 pub use record::timestamp_to_rfc3339;
+pub(crate) use recovery::Keeper;
 pub use recovery::RECOVERED_DIR;
 pub use recovery::ROLLED_BACK_SUFFIX;
 pub use recovery::RecoveredTarget;
@@ -91,8 +92,10 @@ pub use recovery::RecoveryReport;
 pub use recovery::orphan_plans;
 pub use recovery::recover_orphans;
 pub use render::PlanRenderError;
+pub use render::load_commit_file;
 pub use render::load_plan_file;
 pub use render::render_plan;
+pub use render::render_record;
 pub use sync::OsSyncer;
 pub use sync::Syncer;
 use thiserror::Error;
@@ -146,6 +149,14 @@ pub enum JournalError {
         found: u16,
         /// Highest major version this binary can decode.
         supported: u16,
+    },
+
+    /// No timestamp in the `YYYYMMDDTHHMMSSZ` form follows the newest
+    /// timestamp in the journal and backups directories.
+    #[error("no journal timestamp follows {newest}")]
+    TimestampExhausted {
+        /// The newest timestamp in the journal or backups directory.
+        newest: String,
     },
 }
 
@@ -245,12 +256,7 @@ impl Journal {
     /// or [`JournalError::Filesystem`] if any write, `fsync`, or delete
     /// fails.
     pub fn commit(self, record: &ApplyRecord, syncer: &impl Syncer) -> Result<(), JournalError> {
-        let commit_path = self.dir.join(format!("{}{COMMIT_SUFFIX}", self.timestamp));
-        let staged = crate::fsx::partial_sibling(&commit_path);
-        fs_err::write(&staged, record.encode()?)?;
-        syncer.sync_file(&staged)?;
-        crate::apply::with_staged_rename_retry(|| fs_err::rename(&staged, &commit_path))?;
-        syncer.sync_dir(&self.dir)?;
+        write_commit_sentinel(&self.dir, &self.timestamp, record, syncer)?;
 
         // The plan and progress files are removed only after COMMIT is
         // durable. A crash between the two leaves a recoverable (plan,
@@ -289,6 +295,115 @@ impl Journal {
     pub fn timestamp(&self) -> &str {
         &self.timestamp
     }
+}
+
+/// Write `record` to `<dir>/<timestamp>.COMMIT` through a staged sibling:
+/// write and `fsync` the sibling, rename it onto the sentinel, then `fsync`
+/// `dir`. A process killed before the rename leaves only the sibling.
+fn write_commit_sentinel(
+    dir: &Utf8Path,
+    timestamp: &str,
+    record: &ApplyRecord,
+    syncer: &impl Syncer,
+) -> Result<(), JournalError> {
+    let commit_path = dir.join(format!("{timestamp}{COMMIT_SUFFIX}"));
+    let staged = crate::fsx::partial_sibling(&commit_path);
+    fs_err::write(&staged, record.encode()?)?;
+    syncer.sync_file(&staged)?;
+    crate::apply::with_staged_rename_retry(|| fs_err::rename(&staged, &commit_path))?;
+    syncer.sync_dir(dir)?;
+    Ok(())
+}
+
+/// Commit `targets` as the managed set under the per-machine state directory
+/// `state_dir`, without writing any target, and return the commit's `<ts>`.
+///
+/// Call this under the exclusive lock. The commit records every target as
+/// [`Disposition::Unchanged`] and does not list a reaped target, so rolling
+/// the commit back does not change a file. The `<ts>` follows the newest
+/// `<ts>` in the journal and backups directories. While the clock still reads
+/// that newest `<ts>`, the call waits up to about a second for the next
+/// second; when the clock reads an earlier time, the `<ts>` is one second past
+/// the newest. The commit is therefore the latest record, and no backup cycle
+/// shares its `<ts>`: retention deletes the commit that shares a pruned
+/// cycle's `<ts>`.
+///
+/// # Errors
+///
+/// Returns [`JournalError::Encode`] if the record cannot be encoded,
+/// [`JournalError::TimestampExhausted`] if no timestamp follows the newest
+/// `<ts>`, or [`JournalError::Filesystem`] if the journal or backups directory
+/// cannot be read, or a write, `fsync`, or rename fails.
+pub fn commit_record_only(
+    state_dir: impl AsRef<Utf8Path>,
+    targets: Vec<ExpectedTarget>,
+    syncer: &impl Syncer,
+) -> Result<String, JournalError> {
+    let state_dir = state_dir.as_ref();
+    let journal_dir = state_dir.join("journal");
+    let timestamp = unused_timestamp(&[&journal_dir, &state_dir.join("backups")])?;
+    let builtins = crate::variables::Builtins::current();
+    let record = ApplyRecord::new(
+        LastApply {
+            at: timestamp_to_rfc3339(&timestamp),
+            user: builtins.user,
+            host: builtins.hostname,
+        },
+        targets
+            .into_iter()
+            .map(|target| target.with_disposition(Disposition::Unchanged))
+            .collect(),
+        Vec::new(),
+    );
+    fs_err::create_dir_all(&journal_dir)?;
+    write_commit_sentinel(&journal_dir, &timestamp, &record, syncer)?;
+    Ok(timestamp)
+}
+
+fn unused_timestamp(dirs: &[&Utf8Path]) -> Result<String, JournalError> {
+    let mut newest: Option<String> = None;
+    for dir in dirs {
+        if !crate::fsx::entry_present(dir) {
+            continue;
+        }
+        for entry in fs_err::read_dir(dir)? {
+            let name = entry?.file_name();
+            let Some(name) = name.to_str() else {
+                continue;
+            };
+            let stem = name.split_once('.').map_or(name, |(stem, _)| stem);
+            if crate::clock::is_timestamp(stem) && newest.as_deref().is_none_or(|n| stem > n) {
+                newest = Some(stem.to_owned());
+            }
+        }
+    }
+    let Some(newest) = newest else {
+        return Ok(crate::clock::current_timestamp());
+    };
+    crate::clock::timestamp_later_than(&newest).ok_or(JournalError::TimestampExhausted { newest })
+}
+
+/// Delete the `<ts>.COMMIT` that [`commit_record_only`] wrote under the
+/// per-machine state directory `state_dir`, so the commit before it is the
+/// latest again.
+///
+/// Call this under the exclusive lock that covered the commit, and only with a
+/// `<ts>` that [`commit_record_only`] returned. Because that commit did not
+/// change a file, deleting it leaves nothing to reverse.
+///
+/// # Errors
+///
+/// Returns [`JournalError::Filesystem`] if the sentinel cannot be removed or
+/// the journal directory cannot be `fsync`ed.
+pub fn discard_record_only_commit(
+    state_dir: impl AsRef<Utf8Path>,
+    timestamp: &str,
+    syncer: &impl Syncer,
+) -> Result<(), JournalError> {
+    let journal_dir = state_dir.as_ref().join("journal");
+    remove_if_present(&journal_dir.join(format!("{timestamp}{COMMIT_SUFFIX}")))?;
+    syncer.sync_dir(&journal_dir)?;
+    Ok(())
 }
 
 /// Every committed-and-not-rolled-back `<ts>` in `dir`, sorted newest-first.
@@ -536,6 +651,7 @@ mod tests {
                 host: "h".to_owned(),
             },
             Vec::new(),
+            Vec::new(),
         )
     }
 
@@ -633,6 +749,92 @@ mod tests {
                 .expect("a torn sole sentinel reads as none, not an error")
                 .is_none()
         );
+    }
+
+    fn content(target: &str, disposition: Disposition) -> ExpectedTarget {
+        ExpectedTarget::Content {
+            target: target.to_owned(),
+            source: format!("/repo{target}"),
+            hash: content_hash(target.as_bytes()),
+            entry: 0,
+            disposition,
+        }
+    }
+
+    #[test]
+    fn a_record_only_commit_records_every_target_unchanged_and_nothing_reaped() {
+        let temp = TempDir::new().expect("tempdir");
+        let state = Utf8Path::from_path(temp.path()).expect("utf8 temp path");
+        let targets = vec![
+            content("/home/u/.a", Disposition::Create),
+            content("/home/u/.b", Disposition::Update),
+        ];
+
+        let ts = commit_record_only(state, targets, &OsSyncer).expect("commit");
+
+        let (latest, record) = read_latest_commit_with_ts(&state.join("journal"))
+            .expect("scan")
+            .expect("the record-only commit");
+        assert_eq!(latest, ts);
+        assert_eq!(
+            record.targets,
+            [
+                content("/home/u/.a", Disposition::Unchanged),
+                content("/home/u/.b", Disposition::Unchanged),
+            ]
+        );
+        assert!(record.reaped.is_empty());
+    }
+
+    #[test]
+    fn a_record_only_commit_after_the_last_representable_second_is_refused() {
+        let temp = TempDir::new().expect("tempdir");
+        let state = Utf8Path::from_path(temp.path()).expect("utf8 temp path");
+        fs_err::create_dir_all(state.join("backups").join("99991231T235959Z"))
+            .expect("mkdir a backup cycle");
+
+        let result = commit_record_only(state, Vec::new(), &OsSyncer);
+
+        assert!(
+            matches!(result, Err(JournalError::TimestampExhausted { .. })),
+            "{result:?}"
+        );
+    }
+
+    #[test]
+    fn discarding_a_record_only_commit_makes_the_previous_commit_the_latest() {
+        let temp = TempDir::new().expect("tempdir");
+        let state = Utf8Path::from_path(temp.path()).expect("utf8 temp path");
+        let journal = state.join("journal");
+        fs_err::create_dir_all(&journal).expect("mkdir journal");
+        write_commit(&journal, "20260101T000000Z");
+        let ts = commit_record_only(state, Vec::new(), &OsSyncer).expect("commit");
+
+        discard_record_only_commit(state, &ts, &OsSyncer).expect("discard");
+
+        let (latest, _record) = read_latest_commit_with_ts(&journal)
+            .expect("scan")
+            .expect("the previous commit");
+        assert_eq!(latest, "20260101T000000Z");
+    }
+
+    #[test]
+    fn a_record_only_commit_follows_a_journal_or_backup_timestamp_the_clock_has_not_passed() {
+        let temp = TempDir::new().expect("tempdir");
+        let state = Utf8Path::from_path(temp.path()).expect("utf8 temp path");
+        let journal = state.join("journal");
+        fs_err::create_dir_all(&journal).expect("mkdir journal");
+        write_commit(&journal, "29990101T000000Z");
+        fs_err::create_dir_all(state.join("backups").join("29990101T000005Z"))
+            .expect("mkdir a backup cycle");
+
+        let ts = commit_record_only(state, Vec::new(), &OsSyncer).expect("commit");
+
+        assert_eq!(ts, "29990101T000006Z");
+        let (latest, _record) = read_latest_commit_with_ts(&journal)
+            .expect("scan")
+            .expect("a commit");
+        assert_eq!(latest, ts, "the record-only commit is the latest");
     }
 
     #[test]

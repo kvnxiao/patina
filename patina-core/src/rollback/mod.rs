@@ -9,16 +9,21 @@
 //!
 //! ## Inverse-operation rule
 //!
-//! The commit-recorded per-target disposition is consulted first, then backup
-//! *presence* decides between restore and delete. The three outcomes, in
-//! evaluation order:
+//! Rollback first restores the targets the apply's reap removed, then reverts
+//! the materialized targets in reverse apply order. A reaped target with a
+//! backup under `<state>/patina/backups/<ts>/` is restored from it, and a
+//! reaped target without a backup is left alone.
+//!
+//! For a materialized target, the commit-recorded disposition is consulted
+//! first, then backup *presence* decides between restore and delete. The
+//! three outcomes, in evaluation order:
 //!
 //! - A target the apply recorded as `Unchanged` is *left in place*. The apply
 //!   skipped both its write and its backup, so its live state is already the
 //!   pre-apply state, and the backup is never consulted.
-//! - A target with a backup under `<state>/patina/backups/<ts>/` is an
-//!   *overwrite*. The apply replaced a pre-existing file, so rollback restores
-//!   the original bytes from the backup.
+//! - A target with a backup is an *overwrite*. The apply replaced a
+//!   pre-existing file, so rollback restores the original bytes from the
+//!   backup.
 //! - A target with no backup is a *fresh creation*. The apply created it from
 //!   nothing, so reversing it means deleting it.
 //!
@@ -32,23 +37,30 @@
 //! interrupted apply may never have reached the target, so recovery leaves it
 //! in place.
 //!
-//! ## Per-`[[file]]`-entry atomicity
+//! Before rollback replaces or deletes a live entry that differs from what the
+//! record expects, it copies that entry to
+//! `<state>/patina/recovered/<ts>.<n>/<index>/<file name>` and reports the
+//! copy. The record expects a symlink to its recorded link target, a regular
+//! file with its recorded hash, or, for a reaped target, nothing. `<index>` is
+//! the target's position in the record's targets, or, for a reaped target, the
+//! number of targets plus its position in the reaped list.
 //!
-//! A multi-target `[[file]]` entry reverts as an atomic unit. Either every
-//! target in the entry reaches its pre-apply state, or the entry fails and
-//! every target it already reverted is rolled forward to its post-apply
-//! state, leaving the entry untouched. This mirrors the all-or-nothing
-//! semantic the engine applies per-entry during apply and crash recovery.
-//! The atomicity is implemented in `replay` by snapshotting each target's
-//! post-apply state before mutating, then rolling the snapshot back in on
-//! any failure.
+//! ## Atomicity
+//!
+//! The reaped targets revert as one atomic unit, and so does each managed
+//! entry. Either every target in the unit reaches its pre-apply state, or the
+//! unit fails and every target it already reverted is rolled forward to its
+//! post-apply state, leaving the unit untouched. The atomicity is implemented
+//! in `replay` by snapshotting each target's post-apply state before mutating,
+//! then rolling the snapshot back in on any failure.
 //!
 //! ## Locking
 //!
 //! Rollback is mutating, so it takes the **exclusive** advisory lock for
 //! its whole duration, exactly like apply. Under that lock it first reverts any
 //! interrupted apply, so no orphan plan is left to restore its backups over the
-//! rolled-back state later.
+//! rolled-back state later. It then removes the staging directories that a
+//! killed rollback left under `<state>/patina/backups/`.
 
 mod replay;
 
@@ -56,6 +68,7 @@ use crate::error::EngineError;
 use crate::journal::ApplyRecord;
 use crate::journal::OsSyncer;
 use crate::journal::ROLLED_BACK_SUFFIX;
+use crate::journal::RecoveredTarget;
 use crate::journal::RecoveryReport;
 use crate::journal::Syncer;
 use crate::journal::recover_orphans;
@@ -64,9 +77,8 @@ use crate::lock::acquire as acquire_lock;
 use crate::lock::exclusive_timeout;
 use crate::state_dir::resolve as resolve_state_dir;
 use camino::Utf8Path;
-pub use replay::RevertTarget;
+use replay::Replay;
 pub(crate) use replay::replaced_root_ancestor;
-pub use replay::replay_entry;
 pub(crate) use replay::stashed_link_ancestor;
 use thiserror::Error;
 
@@ -80,25 +92,39 @@ pub enum RollbackError {
     #[error("no prior apply found")]
     NoPriorApply,
 
-    /// A multi-target `[[file]]` entry could not be reverted as a unit. A
+    /// A multi-target managed entry could not be reverted as a unit. A
     /// target's restore or delete failed, and the entry's already-reverted
     /// targets were rolled forward to their post-apply state, so no partial
     /// restore is left behind. The CLI surfaces this as exit
     /// code 1.
     #[error(
-        "rollback of `[[file]]` entry {entry} failed and was reverted to its \
+        "rollback of managed entry {entry} failed and was reverted to its \
          post-apply state to preserve per-entry atomicity"
     )]
     RollbackPartial {
-        /// Index of the `[[file]]` entry whose rollback failed.
+        /// Index of the managed entry whose rollback failed.
         entry: u32,
         /// The underlying filesystem error that triggered the abort.
         #[source]
         source: std::io::Error,
     },
 
-    /// A filesystem operation outside the per-entry atomic region failed
-    /// (reading the journal directory, writing the rolled-back sentinel).
+    /// The targets the apply's reap removed could not be restored as a unit.
+    /// A restore failed, and the targets already restored were rolled forward
+    /// to their post-apply state. The CLI surfaces this as exit code 1.
+    #[error(
+        "restoring the targets the apply removed failed and was reverted, so \
+         none of them was restored"
+    )]
+    ReapedPartial {
+        /// The underlying filesystem error that triggered the abort.
+        #[source]
+        source: std::io::Error,
+    },
+
+    /// A filesystem operation outside an atomic region failed (reading the
+    /// journal directory, removing a leftover staging directory, writing the
+    /// rolled-back sentinel).
     #[error("rollback filesystem operation failed")]
     Filesystem(#[from] std::io::Error),
 
@@ -107,21 +133,38 @@ pub enum RollbackError {
     Journal(#[from] crate::journal::JournalError),
 }
 
+/// A step of [`run`] that the caller reports.
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum RollbackEvent<'a> {
+    /// Recovery of interrupted applies, which runs before the rollback, has
+    /// finished.
+    Recovered(&'a RecoveryReport),
+    /// The rollback copied the live entry at a target aside, and is about to
+    /// replace or delete it.
+    Kept(&'a RecoveredTarget),
+}
+
 /// Roll back the most recent committed apply to its pre-apply filesystem
 /// state, using the journaled backups under `<state>/patina/backups/<ts>/`.
 ///
 /// Resolves the state directory and takes the exclusive lock. Reverts every
-/// interrupted apply first and passes the report to `on_recovery`, which runs
-/// before the committed record is read, so it runs even when the rollback then
-/// fails. Finds the most recent committed-and-not-rolled-back apply, and
-/// replays each `[[file]]` entry's inverse operations, atomically per entry.
-/// Then writes and fsyncs a `<ts>.ROLLED_BACK` sentinel. The apply therefore
-/// drops out of status's last-apply computation, and recovery never re-reverses
-/// it.
+/// interrupted apply first and passes the report to `on_event` before reading
+/// the committed record, so `on_event` receives the report even when the
+/// rollback then fails. Removes leftover staging directories, then finds the
+/// most recent committed-and-not-rolled-back apply. Restores the targets that
+/// its reap removed as one atomic unit, then replays each managed entry's
+/// inverse operations, atomically per entry. Reports each copy it keeps of a
+/// live entry to `on_event` before replacing or deleting that entry, including
+/// a copy made before a later unit fails. Then writes and fsyncs a
+/// `<ts>.ROLLED_BACK` sentinel. The apply therefore drops out of status's
+/// last-apply computation, and recovery never re-reverses it.
 ///
 /// # Errors
 ///
 /// - [`RollbackError::NoPriorApply`] when no committed apply remains.
+/// - [`RollbackError::ReapedPartial`] when the reaped targets could not be
+///   restored as a unit.
 /// - [`RollbackError::RollbackPartial`] when a multi-target entry could not be
 ///   reverted as a unit.
 /// - [`RollbackError::Filesystem`] / [`RollbackError::Journal`] for IO or
@@ -129,15 +172,15 @@ pub enum RollbackError {
 /// - [`EngineError::Journal`] when an interrupted apply cannot be recovered.
 /// - An [`EngineError`] when state-directory resolution or lock acquisition
 ///   fails.
-pub fn run(on_recovery: impl FnOnce(&RecoveryReport)) -> Result<(), EngineError> {
+pub fn run(mut on_event: impl FnMut(RollbackEvent<'_>)) -> Result<(), EngineError> {
     let state_dir = resolve_state_dir()?;
     let journal_dir = state_dir.join("journal");
-    let backups_dir = state_dir.join("backups");
     let lock_path = state_dir.join("lock");
 
     // Mutating subcommands take the exclusive lock for the whole rollback.
     let _guard = acquire_lock(&lock_path, LockKind::Exclusive, exclusive_timeout())?;
-    on_recovery(&recover_orphans(&state_dir)?);
+    on_event(RollbackEvent::Recovered(&recover_orphans(&state_dir)?));
+    remove_stages(&state_dir.join("backups")).map_err(RollbackError::Filesystem)?;
 
     // The shared "last apply" selection (also used by `patina status`) skips a
     // torn/unreadable newest `<ts>.COMMIT` and falls back to the previous
@@ -150,54 +193,47 @@ pub fn run(on_recovery: impl FnOnce(&RecoveryReport)) -> Result<(), EngineError>
         return Err(RollbackError::NoPriorApply.into());
     };
 
-    reverse_record(&record, &backups_dir, &timestamp)?;
+    let mut on_kept = |kept: &RecoveredTarget| on_event(RollbackEvent::Kept(kept));
+    reverse_record(&record, &state_dir, &timestamp, &mut on_kept)?;
     mark_rolled_back(&journal_dir, &timestamp, &OsSyncer)?;
     Ok(())
 }
 
-/// Reverse every `[[file]]` entry recorded in `record`, one atomic entry at
-/// a time, in reverse apply order so later entries are undone first.
-fn reverse_record(
+/// Restore the targets that `record`'s reap removed, then reverse every
+/// managed entry recorded in `record`, one atomic entry at a time, in reverse
+/// apply order so later entries are undone first.
+pub(crate) fn reverse_record(
     record: &ApplyRecord,
-    backups_dir: &Utf8Path,
+    state_dir: &Utf8Path,
     timestamp: &str,
+    on_kept: &mut dyn FnMut(&RecoveredTarget),
 ) -> Result<(), RollbackError> {
-    for group in group_by_entry(record).into_iter().rev() {
-        replay_entry(group.entry, &group.targets, backups_dir, timestamp)?;
+    let mut replay = Replay::new(state_dir, timestamp, on_kept)?;
+    replay.reaped(&record.reaped, record.targets.len())?;
+    let mut first_index = record.targets.len();
+    for entry in record.targets.chunk_by(|a, b| a.entry() == b.entry()).rev() {
+        first_index = first_index.saturating_sub(entry.len());
+        replay.entry(entry, first_index)?;
     }
     Ok(())
 }
 
-/// One `[[file]]` entry's recorded targets, grouped for atomic rollback.
-/// Each target carries its commit-recorded disposition so [`replay_entry`]
-/// can leave `Unchanged` targets in place.
-struct EntryGroup<'a> {
-    entry: u32,
-    targets: Vec<RevertTarget<'a>>,
-}
-
-/// Group a record's targets by their `entry` index, preserving the order in
-/// which entries (and targets within an entry) were applied. Consecutive
-/// targets sharing an entry index belong to the same `[[file]]` entry and
-/// revert as one atomic unit. Each target carries its recorded
-/// disposition so an `Unchanged` target is left untouched on rollback.
-fn group_by_entry(record: &ApplyRecord) -> Vec<EntryGroup<'_>> {
-    let mut groups: Vec<EntryGroup<'_>> = Vec::new();
-    for expected in &record.targets {
-        let entry = expected.entry();
-        let target = RevertTarget {
-            target: expected.target(),
-            disposition: expected.disposition(),
-        };
-        match groups.last_mut() {
-            Some(last) if last.entry == entry => last.targets.push(target),
-            _ => groups.push(EntryGroup {
-                entry,
-                targets: vec![target],
-            }),
+/// Remove every staging directory that a rollback left under `backups_dir`. A
+/// later rollback of the same apply would otherwise stage into a leftover
+/// directory.
+fn remove_stages(backups_dir: &Utf8Path) -> std::io::Result<()> {
+    if !crate::fsx::entry_present(backups_dir) {
+        return Ok(());
+    }
+    for entry in fs_err::read_dir(backups_dir)? {
+        let name = entry?.file_name();
+        if let Some(name) = name.to_str()
+            && name.starts_with(replay::STAGE_PREFIX)
+        {
+            crate::fsx::remove_entry(&backups_dir.join(name))?;
         }
     }
-    groups
+    Ok(())
 }
 
 /// Write `<ts>.ROLLED_BACK`, fsync it and the journal directory so the
@@ -231,48 +267,50 @@ mod tests {
                 host: "h".to_owned(),
             },
             targets,
+            Vec::new(),
         )
     }
 
     #[test]
-    fn group_by_entry_keeps_multi_target_entries_together() {
-        let rec = record(vec![
-            ExpectedTarget::Content {
-                target: "/a".to_owned(),
-                source: "/repo/a".to_owned(),
-                hash: [0u8; 32],
-                entry: 0,
-                disposition: Disposition::Update,
-            },
-            ExpectedTarget::Content {
-                target: "/b1".to_owned(),
-                source: "/repo/b1".to_owned(),
-                hash: [0u8; 32],
-                entry: 1,
-                disposition: Disposition::Update,
-            },
-            ExpectedTarget::Content {
-                target: "/b2".to_owned(),
-                source: "/repo/b2".to_owned(),
-                hash: [0u8; 32],
-                entry: 1,
-                disposition: Disposition::Update,
-            },
-        ]);
-        let groups = group_by_entry(&rec);
-        let shape: Vec<(u32, Vec<&str>)> = groups
+    fn reverse_record_names_each_kept_copy_by_its_record_index() {
+        let temp = TempDir::new().expect("tempdir");
+        let state = Utf8Path::from_path(temp.path()).expect("utf8 temp path");
+        let ts = "20260101T000000Z";
+        let home = state.join("home");
+        fs_err::create_dir_all(&home).expect("mkdir home");
+        let targets: Vec<ExpectedTarget> = ["a", "b1", "b2"]
             .into_iter()
-            .map(|group| {
-                (
-                    group.entry,
-                    group.targets.iter().map(|t| t.target).collect::<Vec<_>>(),
-                )
+            .zip([0, 1, 1])
+            .map(|(name, entry)| {
+                let target = home.join(name);
+                fs_err::write(&target, b"edited").expect("edit a target after the apply");
+                ExpectedTarget::Content {
+                    target: target.to_string(),
+                    source: format!("/repo/{name}"),
+                    hash: crate::journal::content_hash(b"applied"),
+                    entry,
+                    disposition: Disposition::Create,
+                }
             })
             .collect();
+        let mut kept: Vec<camino::Utf8PathBuf> = Vec::new();
+
+        reverse_record(&record(targets), state, ts, &mut |copy| {
+            kept.extend(copy.kept().iter().cloned());
+        })
+        .expect("reverse the record");
+
+        let pass = state
+            .join(crate::journal::RECOVERED_DIR)
+            .join(format!("{ts}.1"));
+        kept.sort();
         assert_eq!(
-            shape,
-            vec![(0, vec!["/a"]), (1, vec!["/b1", "/b2"])],
-            "single-target entry 0 and two-target entry 1 group correctly"
+            kept,
+            [
+                pass.join("0").join("a"),
+                pass.join("1").join("b1"),
+                pass.join("2").join("b2"),
+            ]
         );
     }
 
@@ -284,6 +322,42 @@ mod tests {
         assert!(
             dir.join(format!("20260101T000000Z{ROLLED_BACK_SUFFIX}"))
                 .exists()
+        );
+    }
+
+    #[test]
+    fn remove_stages_removes_only_the_staging_directories() {
+        let temp = TempDir::new().expect("tempdir");
+        let backups = Utf8Path::from_path(temp.path()).expect("utf8 temp path");
+        let stage = backups.join(format!("{}20260101T000000Z-3", replay::STAGE_PREFIX));
+        fs_err::create_dir_all(&stage).expect("mkdir a leftover stage");
+        fs_err::write(stage.join("0.file"), b"stale").expect("stage a stale snapshot");
+        let cycle = backups.join("20260101T000000Z");
+        fs_err::create_dir_all(&cycle).expect("mkdir a backup cycle");
+
+        remove_stages(backups).expect("remove the stages");
+
+        assert!(!crate::fsx::entry_present(&stage));
+        assert!(crate::fsx::entry_present(&cycle), "a backup cycle survives");
+    }
+
+    #[test]
+    fn reverse_record_restores_a_reaped_target_from_its_backup() {
+        let temp = TempDir::new().expect("tempdir");
+        let state = Utf8Path::from_path(temp.path()).expect("utf8 temp path");
+        let ts = "20260101T000000Z";
+        let target = state.join("home").join(".rc");
+        let backup = crate::journal::mirror_backup_path(&state.join("backups"), ts, &target);
+        fs_err::create_dir_all(backup.parent().expect("backup parent")).expect("mkdir backup tree");
+        fs_err::write(&backup, b"reaped-bytes").expect("write the reap's backup");
+        let mut rec = record(Vec::new());
+        rec.reaped = vec![target.to_string()];
+
+        reverse_record(&rec, state, ts, &mut |_| {}).expect("reverse the record");
+
+        assert_eq!(
+            fs_err::read(&target).expect("read the restored target"),
+            b"reaped-bytes"
         );
     }
 }

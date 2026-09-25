@@ -7,6 +7,8 @@ mod common;
 use camino::Utf8Path;
 use common::Fixture;
 use common::code;
+use common::snapshot;
+use common::stderr;
 use common::wait_for_next_second;
 use patina_core::journal::COMMIT_SUFFIX;
 use patina_core::journal::PLAN_SUFFIX;
@@ -73,44 +75,6 @@ fn committed_then_interrupted() -> Fixture {
         "the killed apply must have rewritten ~/.a"
     );
     fx
-}
-
-#[derive(Debug, PartialEq, Eq)]
-enum Snapshot {
-    Dir(std::time::SystemTime),
-    File(Vec<u8>, std::time::SystemTime),
-    Symlink(std::path::PathBuf),
-}
-
-fn snapshot(roots: &[&Utf8Path]) -> std::collections::BTreeMap<camino::Utf8PathBuf, Snapshot> {
-    let mut entries = std::collections::BTreeMap::new();
-    let mut pending: Vec<camino::Utf8PathBuf> =
-        roots.iter().map(|root| root.to_path_buf()).collect();
-    while let Some(path) = pending.pop() {
-        let meta = fs_err::symlink_metadata(&path).expect("stat snapshot entry");
-        let entry = if meta.file_type().is_symlink() {
-            Snapshot::Symlink(fs_err::read_link(&path).expect("read snapshot link"))
-        } else if meta.is_dir() {
-            for child in fs_err::read_dir(&path).expect("read snapshot dir") {
-                let child = child.expect("read snapshot dir entry");
-                pending.push(
-                    camino::Utf8PathBuf::from_path_buf(child.path()).expect("utf8 snapshot path"),
-                );
-            }
-            Snapshot::Dir(meta.modified().expect("read snapshot mtime"))
-        } else {
-            Snapshot::File(
-                fs_err::read(&path).expect("read snapshot file"),
-                meta.modified().expect("read snapshot mtime"),
-            )
-        };
-        entries.insert(path, entry);
-    }
-    entries
-}
-
-fn stderr(out: &std::process::Output) -> String {
-    String::from_utf8_lossy(&out.stderr).into_owned()
 }
 
 fn plan_files(journal: &Utf8Path) -> Vec<camino::Utf8PathBuf> {
@@ -437,12 +401,13 @@ fn remove_with_a_pending_orphan_recovers_it_before_its_own_writes() {
         "remove must leave ~/.b as a regular file with its last-applied bytes"
     );
 
+    let before = snapshot(&[&fx.home]);
     let rollback = fx.run(&["rollback", "--yes"], &[]);
     assert_eq!(code(&rollback), 0, "stderr: {}", stderr(&rollback));
     assert_eq!(
-        fs_err::read_to_string(fx.home.join(".a")).ok(),
-        Some("NEW-A\n".to_owned()),
-        "the re-journal must have backed up ~/.a as recovery restored it"
+        snapshot(&[&fx.home]),
+        before,
+        "rolling back the commit that remove wrote must not change a file"
     );
 }
 

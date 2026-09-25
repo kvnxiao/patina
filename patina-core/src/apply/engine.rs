@@ -69,7 +69,6 @@ use crate::journal::prune_cycles;
 use crate::journal::recover_orphans;
 use crate::journal::timestamp_to_rfc3339;
 use crate::lock::LockError;
-use crate::lock::LockGuard;
 use crate::lock::LockKind;
 use crate::lock::SHARED_TIMEOUT;
 use crate::lock::acquire as acquire_lock;
@@ -110,9 +109,6 @@ pub struct ApplyRequest {
     pub hook_stdout: HookStdout,
     /// `-v key=value` CLI variable overrides, in declaration order.
     pub cli_overrides: Vec<(String, String)>,
-    /// Whether [`plan`] schedules the removal of targets the current manifests
-    /// no longer manage.
-    pub reap: Reap,
 }
 
 impl Default for ApplyRequest {
@@ -121,41 +117,8 @@ impl Default for ApplyRequest {
             force_deploy: ForceDeploy::No,
             hook_stdout: HookStdout::Inherit,
             cli_overrides: Vec::new(),
-            reap: Reap::Orphans,
         }
     }
-}
-
-/// Whether [`plan`] appends a [`PlannedOperation::Remove`] for each target the
-/// latest committed apply recorded that the current manifests no longer manage.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Reap {
-    /// Plan a `Remove` for every such target still on disk. `patina apply`
-    /// plans this way.
-    Orphans,
-    /// Do not plan any `Remove`. `patina remove` and `patina promote`
-    /// re-journal this way: `remove` has just replaced its target with an
-    /// owned regular file and dropped the target's entry, so a reap would
-    /// delete that file.
-    Nothing,
-}
-
-/// How [`execute`] obtains the exclusive advisory lock guarding the apply.
-///
-/// The guard variant carries a non-`Clone` [`LockGuard`], so the policy is
-/// passed to [`execute`] as a distinct argument rather than living on the
-/// `Clone` [`ApplyRequest`].
-#[derive(Debug)]
-#[non_exhaustive]
-pub enum LockPolicy {
-    /// Acquire the exclusive lock, waiting up to [`exclusive_timeout`]; a
-    /// timeout maps to exit code 4. `patina apply` uses this policy.
-    Blocking,
-    /// Use the caller's already-acquired exclusive guard for the run;
-    /// acquire nothing. `remove` and `promote` re-journal under this policy
-    /// while they hold the exclusive lock, which a second acquisition would
-    /// wait on until it timed out.
-    Held(LockGuard),
 }
 
 /// The plan-time classification of one declared target the source fans out
@@ -315,8 +278,7 @@ pub struct ResolvedPlan {
     /// [`plan`](Self::plan).
     pub operations: Vec<ResolvedOperation>,
     /// The targets this apply backs up and removes, sorted by path, each with
-    /// the reason the current manifests no longer manage it. Empty when the
-    /// request asked for [`Reap::Nothing`].
+    /// the reason the current manifests no longer manage it.
     pub reap: Vec<Orphan>,
     /// Every `[[hook]]` entry paired with its declaring module.
     pub hooks: Vec<PlannedHook>,
@@ -442,9 +404,9 @@ pub enum ApplyResult {
 /// cache fails planning rather than half-way through a diff. Everything it
 /// writes stays inside `<state>/remotes/`; no managed target is touched.
 ///
-/// Under [`Reap::Orphans`] the plan ends with one [`PlannedOperation::Remove`]
-/// per target the latest commit recorded that the current manifests no longer
-/// manage and that is still on disk as a non-directory, sorted by path.
+/// The plan ends with one [`PlannedOperation::Remove`] for each target that the
+/// latest commit recorded, that the current manifests no longer manage, and
+/// that is still on disk as a non-directory, sorted by path.
 ///
 /// # Errors
 ///
@@ -544,7 +506,7 @@ pub fn plan(
     crate::apply::collisions::validate_targets(&claims)?;
 
     let (operations, resolved_ops) = assemble_plan_operations(file_entries, directory_entries);
-    let (plan, reap) = with_reap(operations, request.reap, latest.as_ref(), &managed);
+    let (plan, reap) = with_reap(operations, latest.as_ref(), &managed);
     let remote_names: Vec<RemoteName> = remotes.iter().map(|spec| spec.name.clone()).collect();
     let remote_pins = registry.pins();
 
@@ -567,14 +529,10 @@ pub fn plan(
 
 fn with_reap(
     mut operations: Vec<PlannedOperation>,
-    reap: Reap,
     latest: Option<&ApplyRecord>,
     managed: &crate::status::ManagedTargets,
 ) -> (Plan, Vec<Orphan>) {
-    let orphans = match reap {
-        Reap::Orphans => detect_orphans(latest, managed),
-        Reap::Nothing => Vec::new(),
-    };
+    let orphans = detect_orphans(latest, managed);
     operations.extend(
         orphans
             .iter()
@@ -1967,30 +1925,20 @@ fn materialize_target(
 pub fn execute(
     resolved: &ResolvedPlan,
     request: &ApplyRequest,
-    policy: LockPolicy,
 ) -> Result<ApplyResult, EngineError> {
     let journal_dir = resolved.journal_dir();
     let backups_dir = resolved.backups_dir();
     let template_engine = Engine::new();
 
-    // The `Held` path re-journals one target for `patina remove` / `patina
-    // promote`, often one whose bytes already match its just-rewritten source,
-    // and must commit that fresh record, so it never takes the no-op
-    // short-circuit.
-    let rejournal = matches!(policy, LockPolicy::Held(_));
-
-    // Resolve the exclusive lock per policy BEFORE any filesystem
-    // mutation, so a lock timeout writes nothing (no plan, no COMMIT, no
-    // backup). Under the lock, a plan without a sentinel is an orphan rather
-    // than another apply still running.
-    let _guard = match policy {
-        LockPolicy::Blocking => acquire_lock(
-            &resolved.lock_path(),
-            LockKind::Exclusive,
-            exclusive_timeout(),
-        )?,
-        LockPolicy::Held(guard) => guard,
-    };
+    // Take the exclusive lock BEFORE any filesystem mutation, so `execute`
+    // writes nothing on a lock timeout (no plan, no COMMIT, no backup). Under
+    // the lock, a plan without a sentinel is an orphan rather than another
+    // apply still running.
+    let _guard = acquire_lock(
+        &resolved.lock_path(),
+        LockKind::Exclusive,
+        exclusive_timeout(),
+    )?;
 
     if !orphan_plans(&journal_dir)?.is_empty() {
         return Err(EngineError::InterruptedApplyPending);
@@ -2019,7 +1967,7 @@ pub fn execute(
 
     // Full no-op short-circuit: return before the plan flush so
     // nothing is written this run (see `plan_is_full_noop` for the condition).
-    if !rejournal && plan_is_full_noop(resolved)? {
+    if plan_is_full_noop(resolved)? {
         return Ok(ApplyResult::Applied {
             warnings: Vec::new(),
             up_to_date: true,
@@ -2124,17 +2072,20 @@ pub fn execute(
     } else {
         // Runs after the post_apply hooks succeed, so a hook failure rolls
         // back the materializations without having reaped.
+        let mut reaped = Vec::new();
         for op in resolved.plan.operations() {
             let PlannedOperation::Remove { target } = op else {
                 continue;
             };
-            reap_target(Utf8Path::new(target))?;
+            if reap_target(Utf8Path::new(target))? {
+                reaped.push(target.clone());
+            }
             journal.record_progress(op_index)?;
             op_index = op_index.saturating_add(1);
             #[cfg(debug_assertions)]
             exit_at_crash_seam(abort_after_op, op_index);
         }
-        let record = build_apply_record(resolved)?;
+        let record = build_apply_record(resolved, reaped)?;
         journal.commit(&record, &OsSyncer)?;
         // Retention prunes the oldest backup cycles, then the journal
         // sentinels for exactly those cycles are dropped in lockstep: a
@@ -2268,8 +2219,10 @@ fn exit_at_crash_seam(abort_after_op: Option<u32>, op_index: u32) {
 
 /// Build the [`ApplyRecord`] persisted in this run's COMMIT sentinel from
 /// the resolved plan's `last_apply` metadata and per-target/per-leaf
-/// dispositions. `patina status` decodes this to classify the live
-/// filesystem against the last committed apply.
+/// dispositions, and from the `reaped` targets that the reap removed.
+/// `patina status` decodes the record to classify the live filesystem against
+/// the last committed apply, and `patina rollback` decodes it to reverse that
+/// apply.
 ///
 /// Every managed target becomes one [`ExpectedTarget`], **including
 /// `Unchanged` targets** that the execute write-skip left untouched and that
@@ -2284,7 +2237,10 @@ fn exit_at_crash_seam(abort_after_op: Option<u32>, op_index: u32) {
 /// written (`Create` / `Update`) or already matched (`Unchanged`). Each target
 /// carries its real plan-time [`Disposition`] (per-leaf for a tree), the
 /// marker recovery and rollback read to leave an `Unchanged` target in place.
-fn build_apply_record(resolved: &ResolvedPlan) -> Result<ApplyRecord, EngineError> {
+fn build_apply_record(
+    resolved: &ResolvedPlan,
+    reaped: Vec<String>,
+) -> Result<ApplyRecord, EngineError> {
     let vars = &resolved.resolver;
     let last_apply = LastApply {
         at: timestamp_to_rfc3339(&resolved.timestamp),
@@ -2318,7 +2274,7 @@ fn build_apply_record(resolved: &ResolvedPlan) -> Result<ApplyRecord, EngineErro
             }
         }
     }
-    Ok(ApplyRecord::new(last_apply, targets))
+    Ok(ApplyRecord::new(last_apply, targets, reaped))
 }
 
 /// Append one [`ExpectedTarget`] per materialized leaf of a tree-mode target:
@@ -2407,7 +2363,7 @@ fn expected_target(
 }
 
 /// Remove one [`PlannedOperation::Remove`] target, which [`back_up_targets`]
-/// has already backed up.
+/// has already backed up, and return whether an entry was removed.
 ///
 /// An absent target is a no-op. A directory is never removed, including one
 /// that replaced the planned target after planning: Patina cannot prove it owns
@@ -2416,11 +2372,14 @@ fn expected_target(
 /// # Errors
 ///
 /// Returns an [`EngineError`] when the removal fails.
-fn reap_target(target: &Utf8Path) -> Result<(), EngineError> {
-    if is_real_dir(target) {
-        return Ok(());
+fn reap_target(target: &Utf8Path) -> Result<bool, EngineError> {
+    match fs_err::symlink_metadata(target) {
+        Ok(meta) if !meta.is_dir() => {
+            remove_target(target)?;
+            Ok(true)
+        }
+        _ => Ok(false),
     }
-    remove_target(target)
 }
 
 /// Back up every entry `resolved` will overwrite or remove, outermost first,
@@ -2480,8 +2439,8 @@ fn is_real_dir(path: &Utf8Path) -> bool {
     fs_err::symlink_metadata(path).is_ok_and(|meta| meta.is_dir())
 }
 
-/// Whether a `patina apply` over `resolved` would be a full no-op under
-/// [`LockPolicy::Blocking`]: every durable operation classifies `Unchanged`, so
+/// Whether a `patina apply` over `resolved` would be a full no-op: every
+/// durable operation classifies `Unchanged`, so
 /// the plan contains no [`PlannedOperation::Remove`], and a prior committed
 /// apply exists to stay authoritative.
 ///
@@ -2765,8 +2724,6 @@ pub fn is_content_materialization(materialization: &Materialization) -> bool {
 mod tests {
     use super::*;
     use crate::error::EngineError;
-    use crate::lock::acquire as acquire_lock;
-    use std::time::Duration;
     use tempfile::TempDir;
 
     const TS: &str = "20260530T120000Z";
@@ -3071,48 +3028,6 @@ mod tests {
                 resolved,
             }
         }
-
-        fn lock_path(&self) -> Utf8PathBuf {
-            self.resolved.lock_path()
-        }
-
-        fn journal_file_exists(&self, suffix: &str) -> bool {
-            self.resolved
-                .journal_dir()
-                .join(format!("{TS}{suffix}"))
-                .exists()
-        }
-    }
-
-    #[test]
-    fn held_policy_applies_with_callers_guard_and_commits() {
-        let scene = Scene::new();
-        let guard = acquire_lock(
-            &scene.lock_path(),
-            LockKind::Exclusive,
-            Duration::from_secs(5),
-        )
-        .expect("caller acquires the exclusive lock up front");
-
-        let result = execute(
-            &scene.resolved,
-            &ApplyRequest::default(),
-            LockPolicy::Held(guard),
-        )
-        .expect("apply under Held policy must not error against its own lock");
-
-        assert!(
-            matches!(result, ApplyResult::Applied { .. }),
-            "the Held-policy apply committed, got {result:?}"
-        );
-        assert!(
-            scene.journal_file_exists(crate::journal::COMMIT_SUFFIX),
-            "a committed apply leaves a `<ts>.COMMIT` record"
-        );
-        assert!(
-            !scene.journal_file_exists(crate::journal::PLAN_SUFFIX),
-            "the plan file is removed after COMMIT"
-        );
     }
 
     #[test]
@@ -3141,11 +3056,7 @@ mod tests {
         };
         let before = listing();
 
-        let result = execute(
-            &scene.resolved,
-            &ApplyRequest::default(),
-            LockPolicy::Blocking,
-        );
+        let result = execute(&scene.resolved, &ApplyRequest::default());
 
         assert!(
             matches!(result, Err(EngineError::InterruptedApplyPending)),
@@ -3182,12 +3093,7 @@ mod tests {
         write_commit(&scene.resolved.journal_dir(), "20260530T110000Z", &prior);
         scene.resolved.plan = Plan::new(vec![PlannedOperation::remove(listed.as_str())]);
 
-        execute(
-            &scene.resolved,
-            &ApplyRequest::default(),
-            LockPolicy::Blocking,
-        )
-        .expect("apply the removal");
+        execute(&scene.resolved, &ApplyRequest::default()).expect("apply the removal");
 
         assert!(!listed.exists(), "the listed target must be removed");
         assert_eq!(
@@ -3205,6 +3111,10 @@ mod tests {
             b"unlisted-bytes",
             "a target the plan does not list must survive even when no entry manages it"
         );
+        let record = crate::journal::read_latest_commit(scene.resolved.journal_dir())
+            .expect("read the commit")
+            .expect("the apply committed");
+        assert_eq!(record.reaped, [listed.to_string()]);
     }
 
     #[test]
@@ -3218,12 +3128,7 @@ mod tests {
             fs_err::create_dir_all(recovered.join(name)).expect("seed a recovered copy");
         }
 
-        execute(
-            &scene.resolved,
-            &ApplyRequest::default(),
-            LockPolicy::Blocking,
-        )
-        .expect("the first apply commits");
+        execute(&scene.resolved, &ApplyRequest::default()).expect("the first apply commits");
 
         let mut left: Vec<String> = fs_err::read_dir(&recovered)
             .expect("read the recovered copies")
@@ -3252,16 +3157,16 @@ mod tests {
         let absent = scene.resolved.state_dir.join("home").join("gone");
         scene.resolved.plan = Plan::new(vec![PlannedOperation::remove(absent.as_str())]);
 
-        execute(
-            &scene.resolved,
-            &ApplyRequest::default(),
-            LockPolicy::Blocking,
-        )
-        .expect("an absent removal target is a no-op");
+        execute(&scene.resolved, &ApplyRequest::default())
+            .expect("an absent removal target is a no-op");
 
+        let record = crate::journal::read_latest_commit(scene.resolved.journal_dir())
+            .expect("read the commit")
+            .expect("the apply commits");
         assert!(
-            scene.journal_file_exists(crate::journal::COMMIT_SUFFIX),
-            "the apply commits"
+            record.reaped.is_empty(),
+            "an absent target is not recorded as reaped: {:?}",
+            record.reaped
         );
     }
 
@@ -3320,7 +3225,6 @@ mod tests {
 
         let (plan, reap) = with_reap(
             scene.materializing.clone(),
-            Reap::Orphans,
             Some(&scene.latest),
             &scene.managed,
         );
@@ -3335,24 +3239,6 @@ mod tests {
         assert_eq!(plan.operations(), expected.as_slice());
         let reaped: Vec<&Utf8PathBuf> = reap.iter().map(|orphan| &orphan.target).collect();
         assert_eq!(reaped, scene.orphans.iter().collect::<Vec<_>>());
-    }
-
-    #[test]
-    fn reaping_nothing_plans_only_the_materializing_operations() {
-        let scene = reap_scene();
-
-        let (plan, reap) = with_reap(
-            scene.materializing.clone(),
-            Reap::Nothing,
-            Some(&scene.latest),
-            &scene.managed,
-        );
-
-        assert_eq!(plan.operations(), scene.materializing.as_slice());
-        assert!(
-            reap.is_empty(),
-            "Reap::Nothing must plan no removal: {reap:?}"
-        );
     }
 
     /// A `symlink-tree` entry expands to one managed key per *live* source
@@ -3812,6 +3698,7 @@ mod tests {
                 host: "h".to_owned(),
             },
             targets,
+            Vec::new(),
         )
     }
 
@@ -4306,12 +4193,8 @@ mod tests {
             },
             0,
         )];
-        let first = execute(
-            &scene.resolved,
-            &ApplyRequest::default(),
-            LockPolicy::Blocking,
-        )
-        .expect("the first apply runs");
+        let first =
+            execute(&scene.resolved, &ApplyRequest::default()).expect("the first apply runs");
         assert!(
             matches!(first, ApplyResult::RolledBack { .. }),
             "the failing post_apply hook rolls the first apply back, got {first:?}"
@@ -4320,23 +4203,14 @@ mod tests {
         fs_err::remove_file(&target).expect("delete the target before the retry");
         plan_one_copy(&mut scene.resolved, &source, &target, Disposition::Create);
         scene.resolved.hooks = Vec::new();
-        execute(
-            &scene.resolved,
-            &ApplyRequest::default(),
-            LockPolicy::Blocking,
-        )
-        .expect("the retry in the same second commits");
+        execute(&scene.resolved, &ApplyRequest::default())
+            .expect("the retry in the same second commits");
 
-        crate::rollback::replay_entry(
-            0,
-            &[crate::rollback::RevertTarget {
-                target: target.as_str(),
-                disposition: Disposition::Create,
-            }],
-            &scene.resolved.backups_dir(),
-            TS,
-        )
-        .expect("roll the retry back");
+        let record = crate::journal::read_latest_commit(scene.resolved.journal_dir())
+            .expect("read the commit")
+            .expect("the retry committed");
+        crate::rollback::reverse_record(&record, &scene.resolved.state_dir, TS, &mut |_| {})
+            .expect("roll the retry back");
         assert!(
             !crate::fsx::entry_present(&target),
             "rolling back the retry must delete the target it created, not restore \
