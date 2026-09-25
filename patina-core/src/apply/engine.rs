@@ -4217,6 +4217,7 @@ mod tests {
             &record,
             &scene.resolved.state_dir,
             &operation_id,
+            &[],
             &mut |_| {},
         )
         .expect("roll the retry back");

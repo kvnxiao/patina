@@ -46,6 +46,7 @@ pub(crate) const STAGE_PREFIX: &str = ".rollback-stage-";
 pub(crate) struct Replay<'r> {
     backups_dir: Utf8PathBuf,
     timestamp: &'r str,
+    protected: &'r [String],
     keeper: Keeper<'r>,
     on_kept: &'r mut dyn FnMut(&RecoveredTarget),
 }
@@ -58,11 +59,13 @@ impl<'r> Replay<'r> {
     pub(crate) fn new(
         state_dir: &Utf8Path,
         timestamp: &'r str,
+        protected: &'r [String],
         on_kept: &'r mut dyn FnMut(&RecoveredTarget),
     ) -> std::io::Result<Self> {
         Ok(Self {
             backups_dir: state_dir.join("backups"),
             timestamp,
+            protected,
             keeper: Keeper::new(state_dir.join(RECOVERED_DIR), timestamp)?,
             on_kept,
         })
@@ -109,6 +112,13 @@ impl<'r> Replay<'r> {
             let root = stashed_link_ancestor(&self.backups_dir, self.timestamp, &target);
             let is_tree = root.is_some();
             let path = root.unwrap_or(target);
+            if self
+                .protected
+                .iter()
+                .any(|target| crate::journal::paths_overlap(path.as_str(), target))
+            {
+                continue;
+            }
             if units.iter().any(|unit| unit.path == path) {
                 continue;
             }
@@ -153,7 +163,13 @@ impl<'r> Replay<'r> {
             let path = Utf8PathBuf::from(target);
             let covered = stashed_link_ancestor(&self.backups_dir, self.timestamp, &path).is_some();
             let backup = mirror_backup_path(&self.backups_dir, self.timestamp, &path);
-            if covered || !crate::fsx::entry_present(&backup) {
+            if covered
+                || !crate::fsx::entry_present(&backup)
+                || self
+                    .protected
+                    .iter()
+                    .any(|target| crate::journal::paths_overlap(path.as_str(), target))
+            {
                 continue;
             }
             units.push(Unit {
@@ -495,7 +511,8 @@ mod tests {
         ) -> (Result<(), RollbackError>, Vec<RecoveredTarget>) {
             let mut kept = Vec::new();
             let mut on_kept = |copy: &RecoveredTarget| kept.push(copy.clone());
-            let mut replay = Replay::new(&self.root, ts, &mut on_kept).expect("prepare the replay");
+            let mut replay =
+                Replay::new(&self.root, ts, &[], &mut on_kept).expect("prepare the replay");
             let result = revert(&mut replay);
             drop(replay);
             (result, kept)
@@ -816,6 +833,57 @@ mod tests {
     }
 
     use crate::test_util::symlink_dir;
+
+    #[test]
+    fn protected_leaf_prevents_restoring_its_ancestor_link() {
+        let e = env();
+        let source = e.root.join("source");
+        fs_err::create_dir_all(&source).expect("create source");
+        fs_err::write(source.join("a"), "SOURCE").expect("write source");
+        let root = e.root.join("out");
+        fs_err::create_dir_all(&root).expect("create materialized tree");
+        fs_err::write(root.join("a"), "PROMOTED").expect("write protected leaf");
+        fs_err::write(root.join("b"), "SIBLING").expect("write sibling");
+        let backup = mirror_backup_path(&e.backups, "TS", &root);
+        fs_err::create_dir_all(backup.parent().expect("backup parent")).expect("mkdir");
+        symlink_dir(&source, &backup);
+        let protected = vec![root.join("a").to_string()];
+        let mut on_kept = |_: &RecoveredTarget| {};
+        let mut replay = Replay::new(&e.root, "TS", &protected, &mut on_kept).expect("prepare");
+        replay
+            .entry(&[create(&root.join("b"), b"SIBLING")], 0)
+            .expect("revert sibling entry");
+        assert!(fs_err::symlink_metadata(&root).expect("stat root").is_dir());
+        assert_eq!(
+            fs_err::read_to_string(root.join("a")).expect("read a"),
+            "PROMOTED"
+        );
+        assert_eq!(
+            fs_err::read_to_string(source.join("a")).expect("read source"),
+            "SOURCE"
+        );
+    }
+
+    #[test]
+    fn reaped_protected_target_is_not_restored_but_other_targets_are() {
+        let e = env();
+        let a = e.root.join("a");
+        let b = e.root.join("b");
+        for path in [&a, &b] {
+            let backup = mirror_backup_path(&e.backups, "TS", path);
+            fs_err::create_dir_all(backup.parent().expect("backup parent")).expect("mkdir");
+            fs_err::write(backup, "OLD").expect("write backup");
+        }
+        fs_err::write(&a, "KEPT").expect("write unmanaged target");
+        let protected = vec![a.to_string()];
+        let mut on_kept = |_: &RecoveredTarget| {};
+        let mut replay = Replay::new(&e.root, "TS", &protected, &mut on_kept).expect("prepare");
+        replay
+            .reaped(&[a.to_string(), b.to_string()], 0)
+            .expect("revert reap");
+        assert_eq!(fs_err::read_to_string(a).expect("read a"), "KEPT");
+        assert_eq!(fs_err::read_to_string(b).expect("read b"), "OLD");
+    }
 
     #[test]
     fn retry_restores_a_missing_tree_root_as_the_backed_up_link() {

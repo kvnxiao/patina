@@ -2,11 +2,12 @@
 //!
 //! Preserve a target as a regular file, or delete it with `--purge`, and
 //! remove its manifest declaration. Journal and back up both paths before
-//! writing either, then publish a checkpoint that omits the target.
+//! writing either, then publish a record that omits the target.
 //!
 //! `remove` does not write another target or run a hook. The new commit is
-//! derived from the latest record. Rollback stops at this checkpoint and
-//! keeps its managed set current. An uncommitted removal recovers both paths
+//! derived from the latest record. Rollback passes this record without changing
+//! files and preserves the target's unmanaged state through earlier rollbacks.
+//! An uncommitted removal recovers both paths
 //! before a retry, including when its manifest declaration is already gone.
 //! An ordinary write failure invokes the same recovery.
 //!

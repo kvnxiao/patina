@@ -26,7 +26,7 @@ pub struct Removal<'a> {
 }
 
 impl Removal<'_> {
-    /// Journal both writes before mutating and publish the checkpoint last.
+    /// Journal both writes before mutating and publish the record last.
     ///
     /// # Errors
     ///
@@ -34,7 +34,7 @@ impl Removal<'_> {
     /// - The plan cannot be journaled.
     /// - A backup fails.
     /// - A target or manifest write fails.
-    /// - Publishing the checkpoint fails.
+    /// - Publishing the record fails.
     ///
     /// An uncommitted plan remains recoverable through `recover_orphans`.
     pub fn execute(self) -> Result<(), EngineError> {
@@ -70,7 +70,10 @@ impl Removal<'_> {
         crate::fsx::write_atomic(self.manifest, self.edited_manifest)
             .map_err(super::JournalError::from)?;
         crash_after(2);
-        journal.commit(&super::checkpoint_record(self.remaining), &OsSyncer)?;
+        journal.commit(
+            &super::record_only(self.remaining, self.target.as_str()),
+            &OsSyncer,
+        )?;
         crash_after(3);
         super::retain_history(self.state);
         Ok(())

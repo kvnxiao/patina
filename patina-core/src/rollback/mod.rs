@@ -143,8 +143,8 @@ pub enum RollbackEvent<'a> {
     /// The rollback copied the live entry at a target aside, and is about to
     /// replace or delete it.
     Kept(&'a RecoveredTarget),
-    /// Rollback reached the managed state saved by remove or promote.
-    Checkpoint,
+    /// A remove or promote record was passed without changing files.
+    RecordOnly,
 }
 
 /// Roll back the most recent committed apply to its pre-apply filesystem
@@ -161,8 +161,9 @@ pub enum RollbackEvent<'a> {
 /// a copy made before a later unit fails. Then writes and fsyncs a
 /// `<ts>.ROLLED_BACK` sentinel. The apply therefore drops out of status's
 /// last-apply computation, and recovery never re-reverses it.
-/// If the latest record is a checkpoint, emit [`RollbackEvent::Checkpoint`]
-/// without reversing targets or writing a rolled-back sentinel.
+/// For a remove or promote record, write the sentinel and emit
+/// [`RollbackEvent::RecordOnly`] without changing targets. A later call can
+/// reverse an earlier apply while protecting targets edited by those commands.
 ///
 /// # Errors
 ///
@@ -186,24 +187,25 @@ pub fn run(mut on_event: impl FnMut(RollbackEvent<'_>)) -> Result<(), EngineErro
     on_event(RollbackEvent::Recovered(&recover_orphans(&state_dir)?));
     remove_stages(&state_dir.join("backups")).map_err(RollbackError::Filesystem)?;
 
-    // The shared "last apply" selection (also used by `patina status`) skips a
-    // torn/unreadable newest `<ts>.COMMIT` and falls back to the previous
-    // decodable commit, so a damaged sentinel does not block rollback.
-    // A newer-format sentinel still propagates (surfaced as
-    // [`RollbackError::Journal`]) rather than being silently skipped.
-    let Some((timestamp, record)) =
-        crate::journal::read_latest_commit_with_ts(&journal_dir).map_err(RollbackError::Journal)?
+    let Some(state) =
+        crate::journal::read_commit_state(&journal_dir).map_err(RollbackError::Journal)?
     else {
         return Err(RollbackError::NoPriorApply.into());
     };
 
-    if record.checkpoint {
-        on_event(RollbackEvent::Checkpoint);
+    let Some(timestamp) = state.timestamp else {
+        return Err(RollbackError::NoPriorApply.into());
+    };
+    let record = state.record;
+    if record.edited_target.is_some() {
+        mark_rolled_back(&journal_dir, &timestamp, &OsSyncer)?;
+        on_event(RollbackEvent::RecordOnly);
         return Ok(());
     }
 
+    let protected: Vec<_> = state.edits.into_iter().map(|edit| edit.target).collect();
     let mut on_kept = |kept: &RecoveredTarget| on_event(RollbackEvent::Kept(kept));
-    reverse_record(&record, &state_dir, &timestamp, &mut on_kept)?;
+    reverse_record(&record, &state_dir, &timestamp, &protected, &mut on_kept)?;
     mark_rolled_back(&journal_dir, &timestamp, &OsSyncer)?;
     Ok(())
 }
@@ -215,9 +217,10 @@ pub(crate) fn reverse_record(
     record: &ApplyRecord,
     state_dir: &Utf8Path,
     timestamp: &str,
+    protected: &[String],
     on_kept: &mut dyn FnMut(&RecoveredTarget),
 ) -> Result<(), RollbackError> {
-    let mut replay = Replay::new(state_dir, timestamp, on_kept)?;
+    let mut replay = Replay::new(state_dir, timestamp, protected, on_kept)?;
     replay.reaped(&record.reaped, record.targets.len())?;
     let mut first_index = record.targets.len();
     for entry in record.targets.chunk_by(|a, b| a.entry() == b.entry()).rev() {
@@ -304,7 +307,7 @@ mod tests {
             .collect();
         let mut kept: Vec<camino::Utf8PathBuf> = Vec::new();
 
-        reverse_record(&record(targets), state, ts, &mut |copy| {
+        reverse_record(&record(targets), state, ts, &[], &mut |copy| {
             kept.extend(copy.kept().iter().cloned());
         })
         .expect("reverse the record");
@@ -362,7 +365,7 @@ mod tests {
         let mut rec = record(Vec::new());
         rec.reaped = vec![target.to_string()];
 
-        reverse_record(&rec, state, ts, &mut |_| {}).expect("reverse the record");
+        reverse_record(&rec, state, ts, &[], &mut |_| {}).expect("reverse the record");
 
         assert_eq!(
             fs_err::read(&target).expect("read the restored target"),

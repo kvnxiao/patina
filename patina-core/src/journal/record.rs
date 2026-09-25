@@ -169,8 +169,17 @@ pub struct ApplyRecord {
     /// Canonical absolute paths of the entries the reap removed, in removal
     /// order. A removed target is not also in [`targets`](Self::targets).
     pub reaped: Vec<String>,
-    /// Keep this managed set authoritative when rollback reaches it.
-    pub checkpoint: bool,
+    /// Preserve this target's recorded ownership and expectation across older
+    /// rollbacks.
+    pub edited_target: Option<String>,
+    pub(crate) edits: Vec<RecordEdit>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct RecordEdit {
+    pub(crate) id: String,
+    pub(crate) target: String,
+    pub(crate) expected: Option<ExpectedTarget>,
 }
 
 impl ApplyRecord {
@@ -181,7 +190,8 @@ impl ApplyRecord {
             last_apply,
             targets,
             reaped,
-            checkpoint: false,
+            edited_target: None,
+            edits: Vec::new(),
         }
     }
 

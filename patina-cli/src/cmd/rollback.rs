@@ -69,24 +69,24 @@ pub(crate) fn run(
         return Ok(ExitCode::UserDeclined.code());
     }
 
-    let mut at_checkpoint = false;
+    let mut record_only = false;
     let outcome = patina_core::rollback(|event| match event {
         RollbackEvent::Recovered(report) => report_recovery(report, reporter),
         RollbackEvent::Kept(kept) => report_kept(kept, "rollback", reporter),
-        RollbackEvent::Checkpoint => at_checkpoint = true,
+        RollbackEvent::RecordOnly => record_only = true,
         _ => {}
     });
     match outcome {
         Ok(()) => {
             if args.json {
-                reporter.json(&json_envelope(if at_checkpoint {
-                    "checkpoint"
+                reporter.json(&json_envelope(if record_only {
+                    "record_only"
                 } else {
                     "rolled_back"
                 }));
-            } else if at_checkpoint {
+            } else if record_only {
                 reporter
-                    .line("Nothing to roll back: reached the state saved by remove or promote.");
+                    .line("Passed a remove or promote record; no files changed. Run rollback again to continue through earlier history.");
             } else {
                 reporter.line("Rolled back the most recent apply.");
             }

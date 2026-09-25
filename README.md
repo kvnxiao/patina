@@ -48,7 +48,7 @@ patina status               # report drift between the repo and your machine
 | `promote` | Copy a changed copy-mode target back to its repository source and record its bytes as applied. Remote-backed targets cannot be promoted. |
 | `apply` | Materialize declarations as symlinks / rendered templates / byte copies. Diff-and-prompt by default; plan-only in a non-TTY. |
 | `status` | Classify each managed target: `clean` / `drifted` / `missing` / `orphaned`. |
-| `rollback` | Reverse the most recent successful apply from the journal and backups, stopping at the latest checkpoint from `remove` or `promote`. |
+| `rollback` | Reverse the most recent successful apply from the journal and backups. Pass a `remove` or `promote` record without changing files; run again to continue through earlier history. |
 | `doctor` | Inspect the environment for known problems; `--fix` interactively remediates fixable findings. |
 | `remote` | Manage third-party git sources: `list` the pins, `check` upstream tips, `update` a pin through the update gate, `prune` cached checkouts. |
 | `defender` | Windows only. `status` / `apply` / `clear` manage Microsoft Defender path exclusions for the repo and its targets. |

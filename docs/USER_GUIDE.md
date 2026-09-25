@@ -410,16 +410,27 @@ other skips a prompt.
 - Neither runs hooks, rewrites other drifted targets, or creates targets for
   new entries. Those changes remain in the next apply's diff.
 
-Both commands record a checkpoint without waiting for the clock to advance.
+Both commands save a record without waiting for the clock to advance.
 If `remove` fails before committing, recovery restores its target and manifest.
 After process termination, the next command that recovers restores them first;
 running `remove` again can recover and retry even if the declaration was deleted.
 
-`patina rollback` stops at the latest checkpoint from `remove` or `promote`.
-It can reverse later applies but cannot undo those commands or earlier applies.
-At the checkpoint, it leaves the managed state current and prints
-`Nothing to roll back: reached the state saved by remove or promote.`
-With `--json`, the result is `checkpoint`.
+When `patina rollback` reaches a `remove` or `promote` record, it marks that
+record as passed without changing files. It prints
+`Passed a remove or promote record; no files changed. Run rollback again to continue through earlier history.`
+With `--json`, the result is `record_only`.
+
+Run rollback again to continue through earlier records. Each invocation passes
+another remove or promote record or reverses an apply. Earlier rollbacks keep
+the removed target unmanaged and do not change the promoted target's current
+bytes, including any later user edits. Status still compares a promoted target
+against its recorded promoted bytes. Rollback reverses unrelated targets.
+Applies made after the command can be
+rolled back normally, including their changes to that target.
+
+If restoring an older directory or directory symlink would also replace a
+protected target inside it, rollback skips that entire restore. Files in that
+directory therefore may not return to their pre-apply state.
 
 `patina doctor` is read-only by default and reports its findings as
 warnings. With `--fix`, it walks the findings it knows how to remediate,
@@ -764,10 +775,13 @@ Two other commands inspect or undo an apply:
   `kept a copy of <target> from before the rollback at <path>`. A file that
   you created where the apply had removed a file counts as changed.
 
-Rollback stops at a checkpoint from `remove` or `promote`, as described above.
-Patina retains the ten newest committed operations, including checkpoints and
+Rollback can continue past records from `remove` or `promote`, as described above.
+Patina retains the ten newest committed operations, including those records and
 applies that only create files, together with their backups. Pending operations
-remain available for recovery.
+remain available for recovery. Removal and promotion metadata survives pruning,
+so later rollbacks still preserve those commands' ownership changes. After all
+retained records have been passed or reversed, another rollback reports that
+there is no prior apply.
 
 For a post-mortem, `patina debug journal <path>` decodes a binary journal
 file into human-readable form. Given a path ending in `.COMMIT`, it lists

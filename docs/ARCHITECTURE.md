@@ -123,21 +123,34 @@ The record stores wall-clock time separately, so clock changes do not affect
 operation ordering. Journal and backup paths use this ID, written as `<id>`
 below.
 
-`patina remove` and `patina promote` save a rollback boundary without running
-an apply. Each derives a checkpoint from the latest managed-target record:
+`patina remove` and `patina promote` update one target's recorded state without
+running an apply. Each derives a record from the latest managed-target record:
 `remove` omits its target, and `promote` records the promoted bytes' hash.
 Both record every remaining target `Unchanged` and list no reaped targets.
-Rollback stops at a checkpoint and keeps its managed-target set authoritative.
-Later applies can be rolled back to that checkpoint, but rollback cannot
-restore ownership from a record before it.
+Rollback marks this record as passed without changing files. Subsequent
+rollbacks can reverse earlier applies without changing the named target's
+current bytes or ownership. Status retains the recorded promoted bytes as its
+expectation, even if the user later edits the target. Applies after the command remain reversible,
+including their changes to that target.
+
+Each new commit copies the cumulative removal and promotion metadata. Each
+edit records its operation ID, target, and expected state; a removal has no
+expected state. Status and rollback apply edits newer than the active record.
+This metadata survives history pruning. When every retained record has been
+closed, promoted targets remain managed and removed targets remain unmanaged.
+Rollback then reports that no prior apply remains.
+
+The scanner reads metadata from the newest decodable record. A corrupt active
+record allows fallback to an earlier record. A corrupt closed record instead
+fails the read, because skipping it could lose ownership edits.
 
 `remove` journals a plan for its target and manifest, then backs up both
 before writing either. It replaces or deletes the target, atomically writes
-the edited manifest, and publishes its checkpoint last. An uncommitted removal
+the edited manifest, and publishes its record last. An uncommitted removal
 recovers both paths before a retry. The plan identifies the removed target,
 so a retry can recover its missing declaration without bypassing the checks
 for an unrelated target. An ordinary write failure invokes the same recovery.
-`promote` writes the repository source first, then its checkpoint.
+`promote` writes the repository source first, then its record.
 
 `patina debug journal <path>` decodes a plan file or a commit record back
 into human-readable form for post-mortem inspection.
@@ -178,7 +191,7 @@ requires neither a read nor a fetch. The subsystem lives under
 
 The sweep reads every journal commit sentinel on disk and keeps each
 checkout named by at least one sentinel. Rollback can step through older
-records until it reaches a checkpoint. When the sweep cannot decode a sentinel, it
+records, including records before a removal or promotion. When the sweep cannot decode a sentinel, it
 suspends instead of stranding a rollback.
 
 `docs/REMOTE_SOURCES.md` is the normative behavioural spec.
@@ -413,7 +426,7 @@ each journal envelope and converges deterministically:
   recovery and its execution.
 - Each newly committed apply, removal, or promotion retains the ten newest
   committed operations and their backups. This includes applies that only
-  create files and checkpoints. Pending operations and their backups remain
+  create files and records from remove or promote. Pending operations and their backups remain
   recoverable. Pruning deletes a plan before its terminal sentinels, then
   deletes its backups, so interruption cannot make an old committed plan look
   pending. A pruning failure warns without undoing the committed command.
@@ -429,10 +442,16 @@ each managed entry as an atomic unit, in reverse apply order. Afterwards the
 filesystem matches the pre-apply state in content and entry kind (file,
 symlink, or directory). Mode and timestamp bits are excluded. Rollback leaves
 a target the apply recorded `Unchanged` in place, so an edit made to it after
-the apply remains. At a checkpoint from `remove` or `promote`, rollback
-does not reverse its targets and keeps the checkpoint current. While it holds the
+the apply remains. At a record from `remove` or `promote`, rollback marks the
+record as passed without reversing its targets. While it holds the
 exclusive lock, rollback also removes the staging
 directories that a killed rollback left under `backups/`.
+
+When reversing earlier applies, rollback skips any restore unit that overlaps
+a target protected by a later removal or promotion. This includes an ancestor
+directory or backed-up symlink whose restoration would replace the protected
+target. The entire unit remains unchanged, even if it also includes unrelated
+files. Recovery-copy indices retain their positions in the original record.
 
 Before rollback replaces or deletes a live entry that differs from what the
 record expects, it copies that entry to

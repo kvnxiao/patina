@@ -133,12 +133,12 @@ fn a_rollback_right_after_remove_or_promote_changes_no_file() {
             "{command}: stderr: {}",
             stderr(&out)
         );
-        assert!(String::from_utf8_lossy(&out.stdout).contains("Nothing to roll back"));
+        assert!(String::from_utf8_lossy(&out.stdout).contains("no files changed"));
         let json = fx.run_ok(&["rollback", "--yes", "--json"]);
         let doc: serde_json::Value = serde_json::from_slice(&json.stdout).expect("rollback JSON");
         assert_eq!(
             doc.get("result").and_then(serde_json::Value::as_str),
-            Some("checkpoint")
+            Some("rolled_back")
         );
     }
 }
@@ -336,4 +336,177 @@ fn record_only_history_is_bounded() {
         .filter(|path| path.extension().is_some_and(|ext| ext == "COMMIT"))
         .count();
     assert_eq!(commits, patina_core::backups::RETENTION_COUNT);
+}
+
+#[test]
+fn rollback_crosses_remove_and_promote_without_reverting_their_target() {
+    for command in ["remove", "promote"] {
+        let fx = applied("");
+        fs_err::write(fx.root.join("shell/b"), "B2\n").expect("update unrelated source");
+        fx.run_ok(&["apply", "--yes"]);
+        if command == "promote" {
+            fs_err::write(fx.home.join(".a"), "PROMOTED\n").expect("edit target");
+        }
+        fx.run_ok(&[command, "~/.a", "--yes"]);
+        fx.run_ok(&["rollback", "--yes"]);
+        fx.run_ok(&["rollback", "--yes"]);
+        assert_eq!(
+            fs_err::read_to_string(fx.home.join(".b")).expect("read b"),
+            "B\n"
+        );
+        fx.run_ok(&["rollback", "--yes"]);
+        assert!(!fx.home.join(".b").exists());
+        assert_eq!(
+            fs_err::read_to_string(fx.home.join(".a")).expect("read a"),
+            if command == "remove" {
+                "A\n"
+            } else {
+                "PROMOTED\n"
+            }
+        );
+        assert_eq!(
+            status_state(&fx, ".a").as_deref(),
+            if command == "remove" {
+                None
+            } else {
+                Some("clean")
+            }
+        );
+        let exhausted = fx.run(&["rollback", "--yes"], &[]);
+        assert_eq!(code(&exhausted), 1, "{}", stderr(&exhausted));
+        fx.run_ok(&["apply", "--yes"]);
+        assert_eq!(
+            fs_err::read_to_string(fx.home.join(".a")).expect("read preserved a"),
+            if command == "remove" {
+                "A\n"
+            } else {
+                "PROMOTED\n"
+            }
+        );
+    }
+}
+
+#[test]
+fn readded_target_can_be_rolled_back_before_crossing_its_removal() {
+    let fx = applied("");
+    fx.run_ok(&["remove", "~/.a", "--yes"]);
+    fx.module("shell", BOTH);
+    fs_err::write(fx.root.join("shell/a"), "NEW\n").expect("change readded source");
+    fx.run_ok(&["apply", "--yes"]);
+    fx.run_ok(&["rollback", "--yes"]);
+    assert_eq!(
+        fs_err::read_to_string(fx.home.join(".a")).expect("read restored a"),
+        "A\n"
+    );
+    fx.run_ok(&["rollback", "--yes"]);
+    fx.run_ok(&["rollback", "--yes"]);
+    assert!(!fx.home.join(".b").exists());
+    assert_eq!(
+        fs_err::read_to_string(fx.home.join(".a")).expect("read unmanaged a"),
+        "A\n"
+    );
+}
+
+#[test]
+fn consecutive_promotions_keep_the_latest_bytes_across_older_applies() {
+    let fx = applied("");
+    for bytes in ["FIRST\n", "LATEST\n"] {
+        fs_err::write(fx.home.join(".a"), bytes).expect("edit a");
+        fx.run_ok(&["promote", "~/.a", "--yes"]);
+    }
+    for _ in 0..2 {
+        let out = fx.run_ok(&["rollback", "--yes", "--json"]);
+        let doc: serde_json::Value = serde_json::from_slice(&out.stdout).expect("rollback JSON");
+        assert_eq!(
+            doc.get("result").and_then(serde_json::Value::as_str),
+            Some("record_only")
+        );
+        assert_eq!(status_state(&fx, ".a").as_deref(), Some("clean"));
+    }
+    fx.run_ok(&["rollback", "--yes"]);
+    assert!(!fx.home.join(".b").exists());
+    assert_eq!(
+        fs_err::read_to_string(fx.home.join(".a")).expect("read a"),
+        "LATEST\n"
+    );
+    assert_eq!(
+        fs_err::read_to_string(fx.root.join("shell/a")).expect("read source"),
+        "LATEST\n"
+    );
+    assert_eq!(status_state(&fx, ".a").as_deref(), Some("clean"));
+}
+
+#[test]
+fn later_apply_to_promoted_target_can_be_reversed() {
+    let fx = applied("");
+    fs_err::write(fx.home.join(".a"), "PROMOTED\n").expect("edit a");
+    fx.run_ok(&["promote", "~/.a", "--yes"]);
+    fs_err::write(fx.root.join("shell/a"), "NEW\n").expect("change source");
+    fx.run_ok(&["apply", "--yes"]);
+    fx.run_ok(&["rollback", "--yes"]);
+    assert_eq!(
+        fs_err::read_to_string(fx.home.join(".a")).expect("read a"),
+        "PROMOTED\n"
+    );
+    fx.run_ok(&["rollback", "--yes"]);
+    fx.run_ok(&["rollback", "--yes"]);
+    assert!(!fx.home.join(".b").exists());
+    assert_eq!(
+        fs_err::read_to_string(fx.home.join(".a")).expect("read preserved a"),
+        "PROMOTED\n"
+    );
+}
+
+#[test]
+fn purge_remains_absent_when_rollback_crosses_earlier_applies() {
+    let fx = applied("");
+    fx.run_ok(&["remove", "~/.a", "--purge", "--yes"]);
+    fx.run_ok(&["rollback", "--yes"]);
+    fx.run_ok(&["rollback", "--yes"]);
+    assert!(!fx.home.join(".a").exists());
+    assert!(!fx.home.join(".b").exists());
+    assert_eq!(status_state(&fx, ".a"), None);
+}
+
+#[test]
+fn pruning_a_promotion_does_not_forget_its_target_after_rollback() {
+    let fx = applied("");
+    fs_err::write(fx.home.join(".a"), "PROMOTED-A\n").expect("edit a");
+    fx.run_ok(&["promote", "~/.a", "--yes"]);
+    for i in 0..patina_core::backups::RETENTION_COUNT {
+        fs_err::write(fx.home.join(".b"), format!("PROMOTED-B-{i}\n")).expect("edit b");
+        fx.run_ok(&["promote", "~/.b", "--yes"]);
+    }
+    for _ in 0..patina_core::backups::RETENTION_COUNT {
+        fx.run_ok(&["rollback", "--yes"]);
+    }
+    assert_eq!(status_state(&fx, ".a").as_deref(), Some("clean"));
+    assert_eq!(status_state(&fx, ".b").as_deref(), Some("clean"));
+    assert_eq!(
+        fs_err::read_to_string(fx.home.join(".a")).expect("read a"),
+        "PROMOTED-A\n"
+    );
+}
+
+#[test]
+fn applies_carry_promoted_ownership_past_history_retention() {
+    let fx = applied("");
+    fs_err::write(fx.home.join(".a"), "PROMOTED-A\n").expect("edit a");
+    fx.run_ok(&["promote", "~/.a", "--yes"]);
+    for i in 0..patina_core::backups::RETENTION_COUNT {
+        fs_err::write(fx.root.join("shell/b"), format!("NEW-B-{i}\n")).expect("edit source b");
+        fx.run_ok(&["apply", "--yes"]);
+    }
+    for _ in 0..patina_core::backups::RETENTION_COUNT {
+        fx.run_ok(&["rollback", "--yes"]);
+    }
+    assert_eq!(status_state(&fx, ".a").as_deref(), Some("clean"));
+    assert_eq!(
+        fs_err::read_to_string(fx.home.join(".a")).expect("read a"),
+        "PROMOTED-A\n"
+    );
+    assert_eq!(
+        fs_err::read_to_string(fx.home.join(".b")).expect("read b"),
+        "B\n"
+    );
 }

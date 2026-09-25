@@ -31,7 +31,12 @@ V1.0 is complete when a user can:
 - **Crash safety.** Single-fsync postcard journal + per-operation progress cursor; `kill -9` mid-apply converges deterministically on the next command that recovers: `patina apply` with `--yes` or at an interactive prompt, `patina rollback` with `--yes` or once confirmed, or `patina remove` / `patina promote` once confirmed and past its target checks. A preview, a declined `rollback`, and a declined or refused `remove` / `promote` do not recover. Scope: process termination, where the page cache survives; power-loss / kernel-panic durability is out of scope for v1.0 (see Known unknowns).
 - **Idempotency.** Re-applying against unchanged source is a no-op: same plan, no writes, byte-identical stdout.
 - **Never overwrite without consent.** Patina never touches a file it doesn't own until the user approves the change. Every overwrite is backed up first, so `patina rollback` can restore it.
-- **Rollback fidelity.** After `patina rollback` reverses an apply, the filesystem matches pre-apply state in content and entry kind (file / symlink / directory). Mode and timestamp bits are excluded, as is an edit made after the apply to a target the apply left unchanged. Before rollback replaces or deletes any other entry that changed since the apply, it keeps a copy under `<state>/recovered/`. Rollback stops at a checkpoint from `remove` or `promote` and preserves its managed-target set.
+- **Rollback fidelity.** After `patina rollback` reverses an apply, the filesystem matches pre-apply state in content and entry kind (file / symlink / directory), subject to these exceptions:
+  - Mode and timestamp bits are excluded.
+  - An edit made after the apply to a target the apply left unchanged remains.
+  - Earlier rollbacks preserve targets affected by a later `remove` or `promote`. They skip an entire directory or symlink restore when it would also replace such a target.
+
+  Before rollback replaces or deletes any other entry that changed since the apply, it keeps a copy under `<state>/recovered/`. Rollback passes a `remove` or `promote` record without changing files; the next invocation can continue through earlier history.
 - **Deterministic stdout.** Two consecutive `apply`s against unchanged source produce byte-identical output. No timestamps, PIDs, or random IDs (`--json` included).
 - **Cross-platform parity.** macOS, Linux, Windows are first-class. Two-of-three is not done.
 - **Third-party content is never trusted.** A remote checkout supplies bytes only: its `patina.toml` is never read, its `.tmpl` files are never rendered, and every byte still passes the consent diff. Pin bumps are gated (`docs/REMOTE_SOURCES.md` "The update gate"), with an honest statement of what the gate cannot stop.

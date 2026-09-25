@@ -8,9 +8,9 @@
 //! returns through [`refused`], which warns about a pending interrupted apply
 //! and writes nothing. Otherwise the command reverts any interrupted apply with
 //! [`recover_held`] before its first write, does its own filesystem work, and
-//! writes a checkpoint derived from the latest record. The command does not
-//! write another target or run a hook. Rollback stops at the checkpoint and
-//! keeps its managed set current.
+//! writes a record derived from the latest expectations. The command does not
+//! write another target or run a hook. Rollback passes the record without
+//! changing files and protects its target when reversing earlier applies.
 //! `promote` can still refuse after [`recover_held`] has written, when the
 //! recovery changed its target.
 
@@ -160,13 +160,9 @@ impl Recorded {
             bail!("the promoted target is not a content target");
         };
         *recorded = hash;
-        commit_targets(state, targets).map(|_timestamp| ())
+        commit_record_only(state, targets, self.expected.target(), &OsSyncer)
+            .map_err(EngineError::from)
+            .context("failed to write the commit record")?;
+        Ok(())
     }
-}
-
-fn commit_targets(state: &Utf8Path, targets: Vec<ExpectedTarget>) -> Result<String> {
-    let timestamp = commit_record_only(state, targets, &OsSyncer)
-        .map_err(EngineError::from)
-        .context("failed to write the commit record")?;
-    Ok(timestamp)
 }
