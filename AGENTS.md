@@ -61,7 +61,6 @@ If the user asks for one of these, the answer is "not in v1.0". Surface it as a 
 
 - **`postcard` wire-format stability.** Mitigated by the journal version envelope.
 - **`fs2` advisory lock semantics.** Patina handles the POSIX `flock(2)` and Windows `LockFileEx` differences for coordination between CLI processes.
-- **`tokio` file I/O remains `spawn_blocking`-backed** in v1.0.
 - **MiniJinja strict-undefined** (including the Jinja2 `{% else %}` empty-string rule) is acceptable.
 - **Power-loss / kernel-panic durability.** Backups are not fsync'd before an overwrite. Process termination (`kill -9`, page cache intact) therefore converges on the next run; a power cut can leave the overwrite durable and its backup not. Full never-intermediate durability under power loss (atomic temp+rename target writes plus fsync of backups and parent dirs) is a post-1.0 hardening item.
 - **Per-machine state directory must not live on cloud-sync paths** (iCloud / OneDrive / Dropbox / Box / Google Drive / Syncthing). Patina does not detect cloud-sync paths in v1.0; the constraint is documented only.

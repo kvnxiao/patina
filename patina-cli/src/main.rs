@@ -30,36 +30,35 @@ fn detect_tty() -> Tty {
     }
 }
 
-#[tokio::main]
-async fn main() -> std::process::ExitCode {
+fn main() -> std::process::ExitCode {
     let cli = Cli::parse();
     let mut reporter = StreamReporter::new(cli.color.choice());
     let outcome = match cli.command {
-        Command::Init(args) => cmd::init::run(&args, &mut reporter).await,
+        Command::Init(args) => cmd::init::run(&args, &mut reporter),
         Command::Add(args) => {
             let mut reader = StdinReader;
-            cmd::add::run(&args, detect_tty(), &mut reader, &mut reporter).await
+            cmd::add::run(&args, detect_tty(), &mut reader, &mut reporter)
         }
         Command::Remove(args) => {
             let mut reader = StdinReader;
-            cmd::remove::run(&args, detect_tty(), &mut reader, &mut reporter).await
+            cmd::remove::run(&args, detect_tty(), &mut reader, &mut reporter)
         }
         Command::Promote(args) => {
             let mut reader = StdinReader;
-            cmd::promote::run(&args, detect_tty(), &mut reader, &mut reporter).await
+            cmd::promote::run(&args, detect_tty(), &mut reader, &mut reporter)
         }
         Command::Apply(args) => {
             let mut reader = StdinReader;
-            cmd::apply::run(&args, detect_tty(), &mut reader, &mut reporter).await
+            cmd::apply::run(&args, detect_tty(), &mut reader, &mut reporter)
         }
-        Command::Status(args) => cmd::status::run(&args, &mut reporter).await,
+        Command::Status(args) => cmd::status::run(&args, &mut reporter),
         Command::Doctor(args) => {
             let mut reader = StdinReader;
             cmd::doctor::run(&args, detect_tty(), &mut reader, &mut reporter)
         }
         Command::Rollback(args) => {
             let mut reader = StdinReader;
-            cmd::rollback::run(&args, detect_tty(), &mut reader, &mut reporter).await
+            cmd::rollback::run(&args, detect_tty(), &mut reader, &mut reporter)
         }
         Command::Remote(args) => {
             let mut reader = StdinReader;

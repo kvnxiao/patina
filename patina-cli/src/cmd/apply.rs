@@ -94,7 +94,7 @@ impl PromptReader for StdinReader {
 /// (a real IO / discovery / parse failure). A failed `must_succeed` hook or a
 /// declined prompt is not an error. Either maps to a non-zero exit code through
 /// the returned `i32`.
-pub(crate) async fn run(
+pub(crate) fn run(
     args: &ApplyArgs,
     tty: Tty,
     reader: &mut impl PromptReader,
@@ -122,7 +122,7 @@ pub(crate) async fn run(
     prune_stale_pins(&resolved, mutating, reporter)?;
 
     if args.json {
-        return run_json(&resolved, &request, args.yes, reporter).await;
+        return run_json(&resolved, &request, args.yes, reporter);
     }
 
     // The engine re-checks plan state under the held lock. This probe decides
@@ -151,7 +151,6 @@ pub(crate) async fn run(
     }
 
     let result = execute_plan(&resolved, &request, LockPolicy::Blocking)
-        .await
         .context("apply execution failed")?;
     report_result(&result, reporter);
     Ok(exit_code_for(&result))
@@ -393,7 +392,7 @@ fn drive_elevation(_reporter: &mut impl Reporter) -> Result<Option<i32>> {
 }
 
 /// JSON path: build the envelope and (when `--yes`) mutate.
-async fn run_json(
+fn run_json(
     resolved: &ResolvedPlan,
     request: &ApplyRequest,
     yes: bool,
@@ -414,9 +413,8 @@ async fn run_json(
         return Ok(exit);
     }
 
-    let result = execute_plan(resolved, request, LockPolicy::Blocking)
-        .await
-        .context("apply execution failed")?;
+    let result =
+        execute_plan(resolved, request, LockPolicy::Blocking).context("apply execution failed")?;
     let result_field = match &result {
         ApplyResult::Applied { .. } => "applied",
         ApplyResult::RolledBack { .. } => "rolled_back",

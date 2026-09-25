@@ -26,7 +26,6 @@ use crate::output::reporter::Reporter;
 use anyhow::Result;
 use patina_core::EngineError;
 use patina_core::RollbackError;
-use patina_core::RollbackOptions;
 use patina_core::chain_message;
 
 /// Run `patina rollback`. Returns the process exit code.
@@ -37,7 +36,7 @@ use patina_core::chain_message;
 /// than `NoPriorApply` or `RollbackPartial`. Either of those is printed as a
 /// stderr warning and exits 1 instead of returning `Err`. A declined prompt
 /// maps to exit code 5.
-pub(crate) async fn run(
+pub(crate) fn run(
     args: &RollbackArgs,
     tty: Tty,
     reader: &mut impl PromptReader,
@@ -65,7 +64,7 @@ pub(crate) async fn run(
         return Ok(ExitCode::UserDeclined.code());
     }
 
-    match patina_core::rollback(RollbackOptions::default()).await {
+    match patina_core::rollback() {
         Ok(()) => {
             if args.json {
                 reporter.json(&json_envelope("rolled_back"));
@@ -105,27 +104,25 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn non_tty_without_yes_previews_and_exits_zero() {
+    #[test]
+    fn non_tty_without_yes_previews_and_exits_zero() {
         let args = RollbackArgs::default();
         let mut reader = ScriptedReader { answer: None };
         let mut reporter = BufferReporter::new();
         let code = run(&args, Tty::NonInteractive, &mut reader, &mut reporter)
-            .await
             .expect("preview path never errors");
         assert_eq!(code, 0);
         assert!(reporter.out.contains("Would roll back"));
     }
 
-    #[tokio::test]
-    async fn declined_prompt_exits_five() {
+    #[test]
+    fn declined_prompt_exits_five() {
         let args = RollbackArgs::default();
         let mut reader = ScriptedReader {
             answer: Some("n\n".to_owned()),
         };
         let mut reporter = BufferReporter::new();
         let code = run(&args, Tty::Interactive, &mut reader, &mut reporter)
-            .await
             .expect("declined prompt is not an error");
         assert_eq!(code, 5);
     }

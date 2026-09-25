@@ -32,11 +32,9 @@ use patina_core::TargetState;
 /// Returns an error when the engine-level status read fails (repository
 /// discovery, manifest parse, state-directory resolution, or a journal
 /// read error).
-pub(crate) async fn run(args: &StatusArgs, reporter: &mut impl Reporter) -> Result<i32> {
+pub(crate) fn run(args: &StatusArgs, reporter: &mut impl Reporter) -> Result<i32> {
     let options = StatusOptions::default().with_cli_overrides(parse_overrides(&args.var)?);
-    let report = patina_core::status(options)
-        .await
-        .context("failed to compute status")?;
+    let report = patina_core::status(&options).context("failed to compute status")?;
 
     // Every warning, lock timeout included, is printed to stderr in both output
     // formats, so stdout stays a single parseable JSON document.
