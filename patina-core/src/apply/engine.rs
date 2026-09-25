@@ -2120,14 +2120,8 @@ pub fn execute(
     )?;
 
     if let Some(failed) = post_failure {
-        // Reverse the file operations to the pre-apply state, then mark
-        // the journal rolled back rather than committed. The journal
-        // handle is consumed by commit; for a rollback we drop it after
-        // the reversal so recovery treats it as an orphan that has
-        // already been reversed on disk. Re-running recovery is
-        // idempotent.
         reverse_completed(&completed, &backups_dir, &resolved.timestamp)?;
-        drop(journal);
+        journal.discard(&backups_dir)?;
         Ok(ApplyResult::RolledBack {
             failed_hook: failed,
         })
@@ -4179,5 +4173,90 @@ mod tests {
             .first()
             .expect("one disposition per target");
         assert_eq!(target_disposition.aggregate, Disposition::Unchanged);
+    }
+
+    fn plan_one_copy(
+        resolved: &mut ResolvedPlan,
+        source: &Utf8Path,
+        target: &Utf8Path,
+        disposition: Disposition,
+    ) {
+        resolved.plan = Plan::new(vec![PlannedOperation::copy(
+            source.as_str(),
+            target.as_str(),
+            disposition,
+        )]);
+        resolved.operations = vec![ResolvedOperation {
+            mode: FileMode::Copy,
+            source: source.to_path_buf(),
+            targets: vec![target.to_path_buf()],
+            dispositions: vec![TargetDisposition {
+                aggregate: disposition,
+                leaves: Vec::new(),
+                replace_root: false,
+                mode_change: false,
+            }],
+            entry_index: 0,
+            module: 0,
+            ignore_rules: crate::ignore_rules::none(),
+        }];
+    }
+
+    #[test]
+    fn a_same_second_apply_after_a_post_apply_rollback_keeps_no_backup_of_an_absent_target() {
+        let mut scene = Scene::new();
+        let source = scene.resolved.state_dir.join("rc");
+        fs_err::write(&source, b"payload").expect("write the source");
+        let home = scene.resolved.state_dir.join("home");
+        fs_err::create_dir_all(&home).expect("mkdir home");
+        let target = home.join(".rc");
+        fs_err::write(&target, b"original").expect("seed the target");
+        plan_one_copy(&mut scene.resolved, &source, &target, Disposition::Update);
+        scene.resolved.hooks = vec![PlannedHook::new(
+            HookEntry {
+                event: HookEvent::PostApply,
+                command: "exit 1".to_owned(),
+                shell: None,
+                when: None,
+                must_succeed: true,
+            },
+            0,
+        )];
+        let first = execute(
+            &scene.resolved,
+            &ApplyRequest::default(),
+            LockPolicy::Blocking,
+        )
+        .expect("the first apply runs");
+        assert!(
+            matches!(first, ApplyResult::RolledBack { .. }),
+            "the failing post_apply hook rolls the first apply back, got {first:?}"
+        );
+
+        fs_err::remove_file(&target).expect("delete the target before the retry");
+        plan_one_copy(&mut scene.resolved, &source, &target, Disposition::Create);
+        scene.resolved.hooks = Vec::new();
+        execute(
+            &scene.resolved,
+            &ApplyRequest::default(),
+            LockPolicy::Blocking,
+        )
+        .expect("the retry in the same second commits");
+
+        crate::rollback::replay_entry(
+            0,
+            &[crate::rollback::RevertTarget {
+                target: target.as_str(),
+                disposition: Disposition::Create,
+            }],
+            &scene.resolved.backups_dir(),
+            TS,
+        )
+        .expect("roll the retry back");
+        assert!(
+            !crate::fsx::entry_present(&target),
+            "rolling back the retry must delete the target it created, not restore \
+             the rolled-back apply's backup"
+        );
     }
 }

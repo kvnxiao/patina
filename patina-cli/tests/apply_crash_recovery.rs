@@ -572,3 +572,31 @@ fn a_preview_and_status_while_the_lock_is_held_say_the_apply_may_still_be_runnin
         );
     }
 }
+
+#[test]
+fn a_post_apply_rollback_leaves_no_orphan_plan_and_status_no_pending_warning() {
+    let fx = Fixture::new();
+    let module = fx.module(
+        "shell",
+        "[[file]]\nsource = \"rc\"\ntarget = \"~/.rc\"\nmode = \"copy\"\n\n\
+         [[hook]]\nevent = \"post_apply\"\ncommand = \"exit 1\"\n",
+    );
+    fs_err::write(module.join("rc"), "payload\n").expect("write source");
+
+    let out = fx.apply(&["--yes"]);
+    assert_eq!(code(&out), 3, "stderr: {}", stderr(&out));
+
+    assert_eq!(
+        count_suffix(&fx.state_root().join("journal"), PLAN_SUFFIX),
+        0,
+        "a rollback that reverted every operation must not leave an orphan plan"
+    );
+    let status = fx.run(&["status"], &[]);
+    assert_eq!(code(&status), 0, "stderr: {}", stderr(&status));
+    assert!(
+        !stderr(&status).contains("apply is pending")
+            && !stderr(&status).contains("running or was interrupted"),
+        "status must not report a pending apply; stderr: {}",
+        stderr(&status)
+    );
+}

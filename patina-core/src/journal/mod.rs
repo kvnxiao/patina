@@ -245,13 +245,28 @@ impl Journal {
         // The plan and progress files are removed only after COMMIT is
         // durable. A crash between the two leaves a recoverable (plan,
         // no-commit) pair, rather than an orphan commit.
-        let plan_path = self.dir.join(format!("{}{PLAN_SUFFIX}", self.timestamp));
-        let progress_path = self
-            .dir
-            .join(format!("{}{PROGRESS_SUFFIX}", self.timestamp));
-        remove_if_present(&plan_path)?;
-        remove_if_present(&progress_path)?;
-        Ok(())
+        remove_plan_and_progress(&self.dir, &self.timestamp)
+    }
+
+    /// Delete this run's backup cycle under `backups_dir`, then its plan and
+    /// progress files, after the caller reverted every operation the run
+    /// performed, leaving the journal as recovery leaves it.
+    ///
+    /// The cycle is kept when a committed apply shares this run's timestamp,
+    /// because that apply's rollback reads it. A process killed before the plan
+    /// is deleted leaves an orphan, which recovery reverts again; restoring a
+    /// reverted target is idempotent, and a target without a backup is left in
+    /// place.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`JournalError::Filesystem`] if a delete fails.
+    pub fn discard(self, backups_dir: &Utf8Path) -> Result<(), JournalError> {
+        let committed = self.dir.join(format!("{}{COMMIT_SUFFIX}", self.timestamp));
+        if !crate::fsx::entry_present(&committed) {
+            crate::fsx::remove_entry(&backups_dir.join(&self.timestamp))?;
+        }
+        remove_plan_and_progress(&self.dir, &self.timestamp)
     }
 
     /// The journal directory this handle writes into.
@@ -418,16 +433,22 @@ pub fn prune_cycles(
         remove_if_present(&journal_dir.join(format!("{ts}{ROLLED_BACK_SUFFIX}")))?;
         // The plan and progress files are normally deleted at commit;
         // remove them defensively so a pruned cycle leaves nothing behind.
-        remove_if_present(&journal_dir.join(format!("{ts}{PLAN_SUFFIX}")))?;
-        remove_if_present(&journal_dir.join(format!("{ts}{PROGRESS_SUFFIX}")))?;
+        remove_plan_and_progress(journal_dir, ts)?;
     }
     Ok(())
 }
 
-/// Remove a file, treating an already-absent file as success. The commit path
-/// uses it, because a prior partial run may have removed one of the pair
-/// already. The `recovery` sibling uses it when cleaning up orphan plan and
-/// progress files.
+/// Remove the `<timestamp>` plan file in `dir`, then its progress file,
+/// treating an absent file as removed.
+pub(super) fn remove_plan_and_progress(
+    dir: &Utf8Path,
+    timestamp: &str,
+) -> Result<(), JournalError> {
+    remove_if_present(&dir.join(format!("{timestamp}{PLAN_SUFFIX}")))?;
+    remove_if_present(&dir.join(format!("{timestamp}{PROGRESS_SUFFIX}")))
+}
+
+/// Remove a file, treating an already-absent file as success.
 pub(super) fn remove_if_present(path: &Utf8Path) -> Result<(), JournalError> {
     match fs_err::remove_file(path) {
         Ok(()) => Ok(()),
@@ -463,6 +484,30 @@ mod tests {
             dir.join(format!("NEW{COMMIT_SUFFIX}")).exists(),
             "a retained cycle's sentinel must survive"
         );
+    }
+
+    #[test]
+    fn discard_keeps_a_backup_cycle_a_committed_apply_shares() {
+        let temp = TempDir::new().expect("tempdir");
+        let root = Utf8Path::from_path(temp.path()).expect("utf8 temp path");
+        let journal_dir = root.join("journal");
+        let backups_dir = root.join("backups");
+        let ts = "20260528T120000Z";
+        let shared = backups_dir.join(ts).join("home").join(".rc");
+        fs_err::create_dir_all(shared.parent().expect("backup parent")).expect("mkdir cycle");
+        fs_err::write(&shared, b"committed-backup").expect("seed the committed backup");
+        let journal =
+            Journal::flush_plan_and_fsync(&journal_dir, ts, &Plan::new(vec![]), &OsSyncer)
+                .expect("flush the plan");
+        write_commit(&journal_dir, ts);
+
+        journal.discard(&backups_dir).expect("discard");
+
+        assert_eq!(
+            fs_err::read(&shared).expect("read the committed backup"),
+            b"committed-backup"
+        );
+        assert!(!journal_dir.join(format!("{ts}{PLAN_SUFFIX}")).exists());
     }
 
     #[test]

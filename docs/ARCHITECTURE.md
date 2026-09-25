@@ -202,8 +202,9 @@ sequenceDiagram
    materializes its targets, runs `post_apply` hooks, and then backs up and
    removes each `Remove` target. A successful run writes the terminal sentinel
    and prunes old backups; a required `post_apply` hook failure rolls back the
-   target operations before any removal. The CLI maps the result to the
-   documented exit code.
+   target operations before any removal, deletes the run's backup cycle unless
+   a committed apply shares its timestamp, and then deletes the plan. The CLI
+   maps the result to the documented exit code.
 
 ### Target kind and mode edits
 

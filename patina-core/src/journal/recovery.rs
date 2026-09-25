@@ -68,7 +68,6 @@ use super::COMMIT_SUFFIX;
 use super::Disposition;
 use super::JournalError;
 use super::PLAN_SUFFIX;
-use super::PROGRESS_SUFFIX;
 use super::Plan;
 use super::PlannedOperation;
 use super::probe::mirror_backup_path;
@@ -194,9 +193,7 @@ fn reverse_orphan(
     // next startup retries it. This retry is still idempotent: restoring
     // a backup rewrites the same bytes, and deleting an absent target is
     // a no-op.
-    super::remove_if_present(&plan_path)?;
-    super::remove_if_present(&journal_dir.join(format!("{timestamp}{PROGRESS_SUFFIX}")))?;
-    Ok(())
+    super::remove_plan_and_progress(journal_dir, timestamp)
 }
 
 /// Reverse a single planned operation back to its pre-apply state.
