@@ -88,6 +88,38 @@ fn force_deploy_downgrades_hook_failure_and_exits_0() {
 }
 
 #[test]
+fn hook_output_reaches_the_apply_stdout_and_stderr() {
+    let f = Fixture::new();
+    let command = if cfg!(windows) {
+        "Write-Output ('hook-out-' + (1 + 1)); [Console]::Error.WriteLine('hook-err-' + (1 + 1))"
+    } else {
+        "echo hook-out-$((1 + 1)); echo hook-err-$((1 + 1)) >&2"
+    };
+    let module = f.module(
+        "shell",
+        &format!(
+            "[[file]]\nsource = \"rc\"\ntarget = \"~/.rc\"\nmode = \"copy\"\n\n\
+             [[hook]]\nevent = \"pre_apply\"\ncommand = \"{command}\"\n"
+        ),
+    );
+    fs_err::write(module.join("rc"), "payload\n").expect("write source");
+
+    let out = f.apply(&["--yes"]);
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(code(&out), 0, "the hook exits zero; stderr: {stderr}");
+    assert!(
+        stdout.contains("hook-out-2"),
+        "the hook's stdout must reach the apply's stdout, got: {stdout}"
+    );
+    assert!(
+        stderr.contains("hook-err-2"),
+        "the hook's stderr must reach the apply's stderr, got: {stderr}"
+    );
+}
+
+#[test]
 fn json_without_yes_previews_and_does_not_mutate() {
     let f = Fixture::new();
     let module = f.module(
