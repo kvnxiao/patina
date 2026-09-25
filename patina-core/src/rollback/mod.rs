@@ -143,6 +143,8 @@ pub enum RollbackEvent<'a> {
     /// The rollback copied the live entry at a target aside, and is about to
     /// replace or delete it.
     Kept(&'a RecoveredTarget),
+    /// Rollback reached the managed state saved by remove or promote.
+    Checkpoint,
 }
 
 /// Roll back the most recent committed apply to its pre-apply filesystem
@@ -159,6 +161,8 @@ pub enum RollbackEvent<'a> {
 /// a copy made before a later unit fails. Then writes and fsyncs a
 /// `<ts>.ROLLED_BACK` sentinel. The apply therefore drops out of status's
 /// last-apply computation, and recovery never re-reverses it.
+/// If the latest record is a checkpoint, emit [`RollbackEvent::Checkpoint`]
+/// without reversing targets or writing a rolled-back sentinel.
 ///
 /// # Errors
 ///
@@ -192,6 +196,11 @@ pub fn run(mut on_event: impl FnMut(RollbackEvent<'_>)) -> Result<(), EngineErro
     else {
         return Err(RollbackError::NoPriorApply.into());
     };
+
+    if record.checkpoint {
+        on_event(RollbackEvent::Checkpoint);
+        return Ok(());
+    }
 
     let mut on_kept = |kept: &RecoveredTarget| on_event(RollbackEvent::Kept(kept));
     reverse_record(&record, &state_dir, &timestamp, &mut on_kept)?;

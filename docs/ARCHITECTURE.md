@@ -98,7 +98,8 @@ flowchart LR
 - The **encoded plan** is the full set of operations, written and
   fsynced upfront in a single durable write: one symlink, copy, or render
   operation per materialized target, then one `remove` operation per
-  target the apply reaps.
+  target the apply reaps. A removal plan instead records its target and
+  manifest writes, together with the target whose declaration it removes.
 - The **progress cursor** records per-operation completion as the apply
   proceeds. The cursor is written without a per-operation `fsync`: the
   upfront plan fsync plus the filesystem-probing recovery makes per-op
@@ -114,22 +115,29 @@ gave it, then the targets the reap removed, in removal order. `patina status`
 classifies the live filesystem against the latest record, and `patina rollback`
 reverses the apply that the latest record describes.
 
-`patina remove` and `patina promote` do not run an apply. Each writes a commit
-derived from the latest record: the `remove` commit omits the target that
-`remove` unmanages, and the `promote` commit records the promoted bytes' hash.
-Both commits record every target `Unchanged` and do not list a reaped target.
-The commit's `<ts>` is later than the newest `<ts>` in `journal/` and
-`backups/`. While the clock still reads that newest `<ts>`, the command waits
-up to about a second for the clock to reach the next second. When the clock
-reads an earlier time, the command uses one second past the newest `<ts>`. The
-commit is therefore the latest record and shares no backup cycle.
+Every operation gets a unique, ordered ID under the exclusive state lock.
+The ID has a UTC timestamp prefix and a 20-digit sequence suffix. Allocation
+checks `journal/`, `backups/`, and `recovered/`. If the clock has not advanced
+past the newest prefix, the allocator increments its sequence without waiting.
+The record stores wall-clock time separately, so clock changes do not affect
+operation ordering. Journal and backup paths use this ID, written as `<id>`
+below.
 
-`remove` writes its commit before it replaces its target and edits the
-manifest. When `remove` is killed after the commit, the latest record already
-omits the target, so the next apply does not reap it. When replacing the
-target or writing the manifest fails, `remove` deletes the commit, so the
-previous record is the latest again and a retry finds the target. `promote`
-writes the repository source first, then the commit.
+`patina remove` and `patina promote` save a rollback boundary without running
+an apply. Each derives a checkpoint from the latest managed-target record:
+`remove` omits its target, and `promote` records the promoted bytes' hash.
+Both record every remaining target `Unchanged` and list no reaped targets.
+Rollback stops at a checkpoint and keeps its managed-target set authoritative.
+Later applies can be rolled back to that checkpoint, but rollback cannot
+restore ownership from a record before it.
+
+`remove` journals a plan for its target and manifest, then backs up both
+before writing either. It replaces or deletes the target, atomically writes
+the edited manifest, and publishes its checkpoint last. An uncommitted removal
+recovers both paths before a retry. The plan identifies the removed target,
+so a retry can recover its missing declaration without bypassing the checks
+for an unrelated target. An ordinary write failure invokes the same recovery.
+`promote` writes the repository source first, then its checkpoint.
 
 `patina debug journal <path>` decodes a plan file or a commit record back
 into human-readable form for post-mortem inspection.
@@ -169,8 +177,8 @@ requires neither a read nor a fetch. The subsystem lives under
   without a clock, a network, or a repository.
 
 The sweep reads every journal commit sentinel on disk and keeps each
-checkout named by at least one sentinel, because rollback walks back
-through older records. When the sweep cannot decode a sentinel, it
+checkout named by at least one sentinel. Rollback can step through older
+records until it reaches a checkpoint. When the sweep cannot decode a sentinel, it
 suspends instead of stranding a rollback.
 
 `docs/REMOTE_SOURCES.md` is the normative behavioural spec.
@@ -220,7 +228,7 @@ sequenceDiagram
    Re-applying against unchanged source is a no-op with byte-identical
    stdout.
 3. **Mutate.** After acquiring the advisory lock, `execute` checks the journal
-   and, when it holds an orphan plan, refuses with `InterruptedApplyPending`
+   and, when it has an orphan plan, refuses with `InterruptedApplyPending`
    (exit 1) before writing anything. It then checks for work. A plan with only
    `Unchanged` targets, no `Remove`, and an earlier commit returns without
    running hooks or writing files. Any other plan resolves hook shells and runs
@@ -230,9 +238,9 @@ sequenceDiagram
    no backup is written inside another. Only then does `execute` materialize
    its targets and run `post_apply` hooks, so every backup is a copy of the
    pre-apply state. When those hooks succeed, it removes each `Remove`
-   target, writes the terminal sentinel, and prunes old backups. A required
+   target, writes the terminal sentinel, and prunes old history. A required
    `post_apply` hook failure instead rolls back the target operations, deletes
-   the run's backup cycle unless a committed apply shares its timestamp, and
+   the run's backup cycle, and
    then deletes the plan. The CLI maps the result to the documented exit code.
 
 ### Target kind and mode edits
@@ -364,9 +372,9 @@ apply as a preview does and write nothing. After its recovery has written,
 `patina promote` refuses a target that the recovery changed. Recovery reads
 each journal envelope and converges deterministically:
 
-- A plan with no terminal sentinel is an orphan: an apply killed after
-  the journal became durable but before it committed. Recovery reverses
-  it to the pre-apply state, deciding per operation from the
+- A plan with no terminal sentinel is an orphan: an apply or removal killed
+  after the journal became durable but before it committed. Recovery reverses
+  it to the state before the command, deciding per operation from the
   recorded disposition and whether a backup exists. An `Unchanged`
   target is left alone. A target whose live entry matches its backup (same
   kind, bytes, link target, or tree) was never written and is left alone; a
@@ -380,7 +388,7 @@ each journal envelope and converges deterministically:
   link or the live one. The decision reads the plan and the backup directory
   rather than the progress cursor. Before it restores over or deletes a live
   entry, recovery copies that entry to
-  `<state>/recovered/<ts>.<n>/<op index>/<file name>` and reports the copy.
+  `<state>/recovered/<id>.<n>/<op index>/<file name>` and reports the copy.
   The per-operation index separates the copies of different operations. A
   retry of a recovery that failed partway reports the copy an earlier pass
   made for the same operation when the live entry still matches that copy or
@@ -403,11 +411,14 @@ each journal envelope and converges deterministically:
   `InterruptedApplyPending` when it finds an orphan plan under its lock; in the
   CLI that happens only when another apply was killed between this run's
   recovery and its execution.
-- Backups taken before an overwrite are retained for the last ten apply
-  cycles; older cycles are pruned at the end of each successful apply,
-  right after its COMMIT. The same step keeps the ten newest `recovered/`
-  directories. Both live in the per-machine state directory, outside the
-  repository.
+- Each newly committed apply, removal, or promotion retains the ten newest
+  committed operations and their backups. This includes applies that only
+  create files and checkpoints. Pending operations and their backups remain
+  recoverable. Pruning deletes a plan before its terminal sentinels, then
+  deletes its backups, so interruption cannot make an old committed plan look
+  pending. A pruning failure warns without undoing the committed command.
+  Each newly committed apply separately keeps the ten newest `recovered/`
+  directories. All of these files live in the per-machine state directory.
 
 `patina rollback` reverses the last successful apply. It reads the
 journal and restores the recorded pre-apply bytes. It first restores each
@@ -418,24 +429,27 @@ each managed entry as an atomic unit, in reverse apply order. Afterwards the
 filesystem matches the pre-apply state in content and entry kind (file,
 symlink, or directory). Mode and timestamp bits are excluded. Rollback leaves
 a target the apply recorded `Unchanged` in place, so an edit made to it after
-the apply remains. Because the commit that `remove` or `promote` writes
-records every target `Unchanged`, rolling that commit back does not change a
-file. While it holds the exclusive lock, rollback also removes the staging
+the apply remains. At a checkpoint from `remove` or `promote`, rollback
+does not reverse its targets and keeps the checkpoint current. While it holds the
+exclusive lock, rollback also removes the staging
 directories that a killed rollback left under `backups/`.
 
 Before rollback replaces or deletes a live entry that differs from what the
 record expects, it copies that entry to
-`<state>/recovered/<ts>.<n>/<index>/<file name>` and reports the copy. The
+`<state>/recovered/<id>.<n>/<index>/<file name>` and reports the copy. The
 record expects a symlink to its recorded link target, a regular file with its
 recorded hash, or, for a reaped target, nothing. A live entry that already
 matches its backup is left in place.
 
 A replaced tree root reverts as a unit: when a recorded leaf's
 backup mirror path passes through a symbolic link stashed in the cycle's
-backup tree (and the live counterpart is the materialized directory), rollback
+backup tree, rollback
 restores that ancestor link and never reverts a leaf through it, because a
-leaf path under the restored link would resolve into the repository. The
-in-process reversal after a failed `post_apply` hook applies the same fold.
+leaf path under the restored link would resolve into the repository. This
+also applies when an interrupted rollback deleted the live root or another
+entry replaced it before the retry. Crash recovery uses the same rule.
+In-process reversal after a failed `post_apply` hook also restores the ancestor
+link as a unit, but only when its live counterpart is still a directory.
 Rollback keeps a copy of the replaced root unless every file and link in it is
 a recorded leaf that matches its record.
 

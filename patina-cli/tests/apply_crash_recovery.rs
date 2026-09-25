@@ -9,7 +9,6 @@ use common::Fixture;
 use common::code;
 use common::snapshot;
 use common::stderr;
-use common::wait_for_next_second;
 use patina_core::journal::COMMIT_SUFFIX;
 use patina_core::journal::PLAN_SUFFIX;
 use patina_core::recover_orphans;
@@ -44,7 +43,6 @@ fn commit_first_apply(fx: &Fixture) {
         "the first apply must commit; stderr: {}",
         stderr(&first)
     );
-    wait_for_next_second();
 }
 
 /// Apply both entries of a fresh fixture, then drop `~/.b`'s entry, so the next
@@ -401,11 +399,11 @@ fn remove_with_a_pending_orphan_recovers_it_before_its_own_writes() {
         "remove must leave ~/.b as a regular file with its last-applied bytes"
     );
 
-    let before = snapshot(&[&fx.home]);
+    let before = fx.deployment_snapshot();
     let rollback = fx.run(&["rollback", "--yes"], &[]);
     assert_eq!(code(&rollback), 0, "stderr: {}", stderr(&rollback));
     assert_eq!(
-        snapshot(&[&fx.home]),
+        fx.deployment_snapshot(),
         before,
         "rolling back the commit that remove wrote must not change a file"
     );

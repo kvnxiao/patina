@@ -124,7 +124,6 @@ pub use journal::RecoveredTarget;
 pub use journal::RecoveryReport;
 pub use journal::commit_record_only;
 pub use journal::content_hash;
-pub use journal::discard_record_only_commit;
 pub use journal::load_commit_file;
 pub use journal::load_plan_file;
 pub use journal::orphan_plans;

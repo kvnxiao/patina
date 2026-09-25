@@ -9,7 +9,6 @@ use camino::Utf8Path;
 use camino::Utf8PathBuf;
 use common::Fixture;
 use common::stderr;
-use common::wait_for_next_second;
 use patina_core::journal::COMMIT_SUFFIX;
 
 const BOTH: &str = "[[file]]\nsource = \"a\"\ntarget = \"~/.a\"\nmode = \"copy\"\n\n\
@@ -39,7 +38,6 @@ fn reaped_b(b_source: &str) -> Fixture {
     fs_err::write(module.join("a"), "A\n").expect("write source a");
     fs_err::write(module.join("b"), b_source).expect("write source b");
     fx.run_ok(&["apply", "--yes"]);
-    wait_for_next_second();
     fx.module("shell", ONLY_A);
     fx.run_ok(&["apply", "--yes"]);
     assert!(
@@ -78,7 +76,6 @@ fn rollback_restores_a_reaped_symlink_as_the_same_link() {
     fx.run_ok(&["apply", "--yes"]);
     let zshrc = fx.home.join(".zshrc");
     let applied_link = fs_err::read_link(&zshrc).expect("read the applied link");
-    wait_for_next_second();
     fx.module("zsh", "");
     fx.run_ok(&["apply", "--yes"]);
     assert!(

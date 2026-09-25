@@ -106,7 +106,7 @@ impl<'r> Replay<'r> {
                 continue;
             }
             let target = Utf8PathBuf::from(expected.target());
-            let root = replaced_root_ancestor(&self.backups_dir, self.timestamp, &target);
+            let root = stashed_link_ancestor(&self.backups_dir, self.timestamp, &target);
             let is_tree = root.is_some();
             let path = root.unwrap_or(target);
             if units.iter().any(|unit| unit.path == path) {
@@ -816,6 +816,31 @@ mod tests {
     }
 
     use crate::test_util::symlink_dir;
+
+    #[test]
+    fn retry_restores_a_missing_tree_root_as_the_backed_up_link() {
+        let e = env();
+        let ts = "TS";
+        let source = e.root.join("source");
+        fs_err::create_dir_all(&source).expect("create source");
+        fs_err::write(source.join("a"), b"source bytes").expect("write source");
+        let root = e.root.join("out");
+        let backup = mirror_backup_path(&e.backups, ts, &root);
+        fs_err::create_dir_all(backup.parent().expect("backup parent"))
+            .expect("create backup parent");
+        symlink_dir(&source, &backup);
+
+        e.revert_entry(ts, &[create(&root.join("a"), b"source bytes")]);
+
+        assert_eq!(
+            fs_err::read_link(&root).expect("restored root is a link"),
+            source.as_std_path()
+        );
+        assert_eq!(
+            fs_err::read(source.join("a")).expect("read source"),
+            b"source bytes"
+        );
+    }
 
     #[test]
     fn replaced_tree_root_reverts_as_the_link_and_leaves_the_repo_untouched() {

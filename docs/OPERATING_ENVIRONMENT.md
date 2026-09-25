@@ -22,40 +22,50 @@ Layout under the state directory:
 ```
 patina/
 ├── journal/             postcard-encoded plan + COMMIT/ROLLED_BACK sentinels
-├── backups/<ts>/        last-applied byte content, last 10 cycles retained
-├── recovered/<ts>.<n>/  entries recovery or rollback replaced, last 10 passes retained
+├── backups/<id>/        pre-command entries for the last 10 committed operations
+├── recovered/<id>.<n>/  entries recovery or rollback replaced, last 10 passes retained
 ├── remotes/             bare remote repositories and immutable checkouts
 ├── default_repo         persisted dotfiles repo pointer (UTF-8 text)
 ├── profile              persisted profile name (UTF-8 text)
 └── lock                 advisory file lock (fs2)
 ```
 
-Each backup path mirrors an absolute target below `backups/<ts>/`. On Windows,
+Each operation ID (`<id>`) has a UTC timestamp prefix and a 20-digit sequence
+suffix. Patina assigns IDs under the exclusive lock without waiting for the
+clock, so rapid commands and backward clock changes keep distinct, ordered
+records. Commit records store wall-clock time separately.
+
+Each backup path mirrors an absolute target below `backups/<id>/`. On Windows,
 a drive prefix becomes its drive letter: `C:\Users\u\.gitconfig` maps to
 `C/Users/u/.gitconfig`. A UNC prefix becomes
 `__unc__/<host>/<share>`, which preserves both UNC boundaries in the backup
 tree.
 
 Before recovery overwrites or removes an entry at a target of an interrupted
-apply, it copies that entry to `recovered/<ts>.<n>/<index>/<name>`. `<ts>` is
-the interrupted apply's timestamp, `<n>` is one past the highest number already
-used for that timestamp (starting at 1), `<index>` is the operation's position
-in the apply's plan, and `<name>` is the target's file name. A recovery retried
-after a failure reuses the earlier copy of an entry that has not changed since
+apply or removal, it copies that entry to `recovered/<id>.<n>/<index>/<name>`:
+
+- `<id>` identifies the interrupted command.
+- `<n>` is one past the highest number already used for that ID, starting at 1.
+- `<index>` is the operation's position in the command's plan.
+- `<name>` is the target's file name.
+
+A recovery retried after a failure reuses the earlier copy of an entry that has not changed since
 that copy, and reports both the earlier copy and a new one for an entry that
 has changed.
 
 Before `patina rollback` replaces or deletes an entry that differs from the
-rolled-back apply's record, it copies that entry into the same layout. `<ts>`
-is then the rolled-back apply's timestamp, and `<index>` is the target's
+rolled-back apply's record, it copies that entry into the same layout. `<id>`
+then identifies the rolled-back apply, and `<index>` is the target's
 position in the apply's record. For a target the apply removed, `<index>` is
 the number of targets the record lists plus the target's position in the
 record's list of removed targets.
 
 The directory is separate from `backups/`, so no apply's backup
-cycle can overwrite a kept copy. Each successful apply prunes all but the ten
-newest `recovered/` directories, ordered by timestamp and then by `<n>` as a
-number, as it does for `backups/`.
+cycle can overwrite a kept copy. Each newly committed apply prunes all but the ten
+newest `recovered/` directories, ordered by operation ID and then by `<n>` as a
+number. After each newly committed apply, removal, or promotion, Patina retains the
+ten newest committed operations and their backups. Pending operations and
+their backups remain available for recovery.
 
 ---
 

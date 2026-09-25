@@ -6,8 +6,8 @@
 //! prints it for a human reading a post-mortem. The output is a one-line
 //! summary per operation or recorded target followed by indented detail. It
 //! is deliberately **not** a stable, machine-parsed format, and is the one
-//! user-facing path allowed to carry a wall-clock timestamp (the file's
-//! recorded `<ts>`).
+//! user-facing path allowed to print operation IDs and recorded wall-clock
+//! time.
 //!
 //! The plan body records only the resolved file operations: symlink, render,
 //! and copy, each with a repo-relative `source` and an absolute `target`, and
@@ -72,11 +72,10 @@ pub enum PlanRenderError {
 }
 
 /// Read and decode the plan file at `path`, returning the decoded
-/// [`Plan`] alongside the `<ts>` timestamp recovered from the filename.
+/// [`Plan`] alongside the operation ID recovered from the filename.
 ///
-/// The timestamp is the `<ts>` prefix of a `<ts>.plan` filename; if the
-/// filename does not match that shape the whole file stem is returned so
-/// the caller still has something to print.
+/// Return the prefix of a `<id>.plan` filename, or the whole path when the
+/// filename does not match.
 ///
 /// # Errors
 ///
@@ -94,8 +93,8 @@ pub fn load_plan_file(path: &Utf8Path) -> Result<(Plan, String), PlanRenderError
 }
 
 /// Read and decode the commit sentinel at `path`, returning the decoded
-/// [`ApplyRecord`] alongside the `<ts>` timestamp recovered from a
-/// `<ts>.COMMIT` filename, or the whole path when the name does not match.
+/// [`ApplyRecord`] alongside the operation ID recovered from a
+/// `<id>.COMMIT` filename, or the whole path when the name does not match.
 ///
 /// # Errors
 ///
@@ -119,19 +118,13 @@ fn read_journal_file(path: &Utf8Path) -> Result<Vec<u8>, PlanRenderError> {
     })
 }
 
-/// Recover the `<ts>` timestamp from a `<ts><suffix>` path. Falls back to the
-/// path string when the name does not match.
 fn timestamp_from_path(path: &Utf8Path, suffix: &str) -> String {
     path.file_name()
         .and_then(|name| name.strip_suffix(suffix))
         .map_or_else(|| path.as_str().to_owned(), str::to_owned)
 }
 
-/// Render a decoded [`Plan`] and its recorded `<ts>` to a human-readable
-/// string. A header line carries the plan timestamp and the operation
-/// count. The timestamp appears in both the compact journal form and its
-/// RFC 3339 rendering. One block per operation follows, naming its mode,
-/// source, and target; a `remove` block has no source.
+/// Render a decoded [`Plan`] with its operation ID and operation count.
 pub fn render_plan(plan: &Plan, timestamp: &str) -> String {
     use std::fmt::Write as _;
 
@@ -156,8 +149,7 @@ pub fn render_plan(plan: &Plan, timestamp: &str) -> String {
     out
 }
 
-/// Render a decoded [`ApplyRecord`] and its recorded `<ts>` to a
-/// human-readable string.
+/// Render a commit with its operation ID and separately recorded wall time.
 pub fn render_record(record: &ApplyRecord, timestamp: &str) -> String {
     use std::fmt::Write as _;
 
@@ -165,7 +157,7 @@ pub fn render_record(record: &ApplyRecord, timestamp: &str) -> String {
     ignore_fmt(writeln!(
         out,
         "commit {timestamp} ({}), {} target(s), {} reaped",
-        timestamp_to_rfc3339(timestamp),
+        record.last_apply.at,
         record.targets.len(),
         record.reaped.len()
     ));
@@ -297,6 +289,17 @@ mod tests {
         record.reaped.clear();
         let text = render_record(&record, "20260528T120000Z");
         assert!(!text.contains("reaped:"), "{text}");
+    }
+
+    #[test]
+    fn render_record_uses_wall_time_separately_from_the_operation_id() {
+        let record = sample_record();
+        let id = "29990101T000000Z-00000000000000000001";
+        let text = render_record(&record, id);
+        assert!(
+            text.starts_with(&format!("commit {id} (2026-05-28T12:00:00Z),")),
+            "{text}"
+        );
     }
 
     #[test]

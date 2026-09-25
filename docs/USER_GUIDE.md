@@ -401,18 +401,25 @@ other skips a prompt.
 | `remote`  | Manage remote git sources: `list` the pins, `check` upstream tips, `update` a pin through the update gate, `prune` cached checkouts. See [Remote sources](#remote-sources). |
 
 `patina remove --purge` deletes the target outright, where a bare
-`remove` leaves a regular file holding the last-applied content.
+`remove` leaves a regular file with the last-applied content.
 
-`remove` and `promote` do not run an apply. `remove` replaces or deletes its
-target and edits the manifest that declares it, `promote` writes the target's
-repository source, and each adds a journal record derived from the latest one.
-Neither runs a hook, rewrites another drifted target, or creates a target for
-an entry added since the last apply. `patina status` still reports a drifted
-target, and the next `patina apply` shows that target and the new entry in its
-diff. If `remove` fails while replacing its target or writing the manifest, it
-deletes the record it added, so running `remove` again finds the target.
-`patina rollback` does not undo `remove` or `promote`: rolling back the record
-that either command wrote does not change a file.
+`remove` and `promote` save the current managed state without running an apply:
+
+- `remove` replaces or deletes its target and edits the manifest that declares it.
+- `promote` writes the target's repository source.
+- Neither runs hooks, rewrites other drifted targets, or creates targets for
+  new entries. Those changes remain in the next apply's diff.
+
+Both commands record a checkpoint without waiting for the clock to advance.
+If `remove` fails before committing, recovery restores its target and manifest.
+After process termination, the next command that recovers restores them first;
+running `remove` again can recover and retry even if the declaration was deleted.
+
+`patina rollback` stops at the latest checkpoint from `remove` or `promote`.
+It can reverse later applies but cannot undo those commands or earlier applies.
+At the checkpoint, it leaves the managed state current and prints
+`Nothing to roll back: reached the state saved by remove or promote.`
+With `--json`, the result is `checkpoint`.
 
 `patina doctor` is read-only by default and reports its findings as
 warnings. With `--fix`, it walks the findings it knows how to remediate,
@@ -606,7 +613,7 @@ leaf, add an `ignore` pattern or edit the directory entry.
 
 When an interrupted apply is pending, `promote` reverts it before copying the
 target. If that recovery changed the target, `promote` exits `1` without
-writing the source: the target no longer holds the bytes you asked to promote.
+writing the source: the target no longer has the bytes you asked to promote.
 When the target existed before the recovery, the recovery's warning names the
 copy it kept of the target's earlier contents.
 Review the target, then run `promote` again.
@@ -683,9 +690,9 @@ like.
 
 ### Records from an earlier build
 
-Patina reads only the record layout it writes for each committed apply
-(`journal/<ts>.COMMIT`). A record that a pre-release build wrote in an earlier
-layout does not decode, and Patina skips it as if that apply had never
+Patina reads only its current plan and commit-record layouts. These layouts
+can change before v1.0 without a migration. A record that a pre-release build
+wrote in an earlier layout does not decode, and Patina skips it as if that apply had never
 committed:
 
 - `patina status` does not report its targets.
@@ -695,14 +702,19 @@ committed:
   lists.
 
 Patina also does not remove unreferenced remote checkouts while an undecodable
-record remains. After upgrading from a pre-release build, delete the
-`journal/` directory of the state directory once on each machine. Deleting it
-discards the rollback history of earlier applies; the next `patina apply`
-records the managed targets again.
+record remains. An earlier plan layout may also prevent recovery. Before
+upgrading across a layout change, do the following on each machine:
+
+1. Use the old binary to recover any interrupted operation, for example with
+   `patina apply --yes`. Resolve recovery errors before continuing.
+2. Stop all Patina processes.
+3. Delete the `journal/` directory inside the state directory. This discards
+   earlier rollback history.
+4. Upgrade and run `patina apply --yes` to record the managed targets again.
 
 ## Recovery
 
-An interrupted apply converges deterministically on the next command that
+An interrupted apply or removal converges deterministically on the next command that
 recovers. Kill `patina apply` mid-write and the next `patina apply --yes`,
 interactive `patina apply`, `patina rollback`, `patina remove`, or
 `patina promote` first reverts the interrupted apply to its pre-apply state,
@@ -752,10 +764,15 @@ Two other commands inspect or undo an apply:
   `kept a copy of <target> from before the rollback at <path>`. A file that
   you created where the apply had removed a file counts as changed.
 
+Rollback stops at a checkpoint from `remove` or `promote`, as described above.
+Patina retains the ten newest committed operations, including checkpoints and
+applies that only create files, together with their backups. Pending operations
+remain available for recovery.
+
 For a post-mortem, `patina debug journal <path>` decodes a binary journal
 file into human-readable form. Given a path ending in `.COMMIT`, it lists
 each target the commit recorded and each target the apply removed. It
-decodes any other path as a plan, such as a `<ts>.plan` file, and shows what
+decodes any other path as a plan, such as a `<id>.plan` file, and shows what
 the interrupted apply intended to do. It refuses a file written by a newer
 Patina with an error that reports both major versions, and exits 1 on that
 refusal, on a file it cannot decode, or on a missing or unreadable path.

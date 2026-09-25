@@ -8,10 +8,9 @@
 //! returns through [`refused`], which warns about a pending interrupted apply
 //! and writes nothing. Otherwise the command reverts any interrupted apply with
 //! [`recover_held`] before its first write, does its own filesystem work, and
-//! writes a new `<ts>.COMMIT` derived from the latest record through
-//! [`Recorded`]. The command does not write another target or run a hook.
-//! Because the new commit records every target as `Unchanged` and does not
-//! list a reaped target, rolling back the commit does not change a file.
+//! writes a checkpoint derived from the latest record. The command does not
+//! write another target or run a hook. Rollback stops at the checkpoint and
+//! keeps its managed set current.
 //! `promote` can still refuse after [`recover_held`] has written, when the
 //! recovery changed its target.
 
@@ -31,7 +30,6 @@ use patina_core::PendingApply;
 use patina_core::RecoveryReport;
 use patina_core::acquire_lock;
 use patina_core::commit_record_only;
-use patina_core::discard_record_only_commit;
 use patina_core::exclusive_timeout;
 use patina_core::journal::OsSyncer;
 use patina_core::manage_key;
@@ -138,22 +136,14 @@ impl Recorded {
         }))
     }
 
-    /// Commit the latest record without the edited target, and return the
-    /// commit's `<ts>` for [`discard_commit`].
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the commit cannot be written.
-    pub(crate) fn commit_without(self, state: &Utf8Path) -> Result<String> {
+    pub(crate) fn without_target(self) -> Vec<ExpectedTarget> {
         let index = self.index;
-        let targets = self
-            .targets
+        self.targets
             .into_iter()
             .enumerate()
             .filter(|(position, _)| *position != index)
             .map(|(_, expected)| expected)
-            .collect();
-        commit_targets(state, targets)
+            .collect()
     }
 
     /// Commit the latest record with the edited content target's hash
@@ -179,16 +169,4 @@ fn commit_targets(state: &Utf8Path, targets: Vec<ExpectedTarget>) -> Result<Stri
         .map_err(EngineError::from)
         .context("failed to write the commit record")?;
     Ok(timestamp)
-}
-
-/// Delete the commit that [`Recorded::commit_without`] wrote at `timestamp`,
-/// so the record before it is the latest again.
-///
-/// # Errors
-///
-/// Returns an error when the commit cannot be deleted.
-pub(crate) fn discard_commit(state: &Utf8Path, timestamp: &str) -> Result<()> {
-    discard_record_only_commit(state, timestamp, &OsSyncer)
-        .map_err(EngineError::from)
-        .context("failed to discard the commit record")
 }

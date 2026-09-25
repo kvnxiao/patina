@@ -17,7 +17,7 @@
 //! ## What is recorded
 //!
 //! - `last_apply` metadata: the apply timestamp (`at`, an RFC 3339 string
-//!   derived from the journal `<ts>`), the `user`, and the `host`.
+//!   independent of the operation ID), the `user`, and the `host`.
 //! - One [`ExpectedTarget`] per materialized object, in apply order. Each
 //!   records the canonical absolute target path, the canonical source the
 //!   target was materialized from, and, for content targets, the content hash
@@ -149,7 +149,7 @@ pub fn content_hash(bytes: &[u8]) -> [u8; 32] {
 /// The `last_apply` metadata block surfaced by `patina status --json`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LastApply {
-    /// RFC 3339 timestamp of the apply, derived from the journal `<ts>`.
+    /// RFC 3339 wall-clock time, independent of the operation ID.
     pub at: String,
     /// User who ran the apply (`patina.user`).
     pub user: String,
@@ -169,6 +169,8 @@ pub struct ApplyRecord {
     /// Canonical absolute paths of the entries the reap removed, in removal
     /// order. A removed target is not also in [`targets`](Self::targets).
     pub reaped: Vec<String>,
+    /// Keep this managed set authoritative when rollback reaches it.
+    pub checkpoint: bool,
 }
 
 impl ApplyRecord {
@@ -179,6 +181,7 @@ impl ApplyRecord {
             last_apply,
             targets,
             reaped,
+            checkpoint: false,
         }
     }
 

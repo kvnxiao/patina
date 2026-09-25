@@ -8,7 +8,6 @@ mod common;
 use camino::Utf8Path;
 use common::Fixture;
 use common::code;
-use common::snapshot;
 use common::stderr;
 
 const BOTH: &str = "[[file]]\nsource = \"a\"\ntarget = \"~/.a\"\nmode = \"copy\"\n\n\
@@ -120,12 +119,12 @@ fn a_rollback_right_after_remove_or_promote_changes_no_file() {
         }
         fs_err::write(fx.home.join(".b"), "DRIFTED-B\n").expect("edit ~/.b outside patina");
         fx.run_ok(&[command, "~/.a", "--yes"]);
-        let before = snapshot(&[&fx.home, &fx.root]);
+        let before = fx.deployment_snapshot();
 
         let out = fx.run_ok(&["rollback", "--yes"]);
 
         assert_eq!(
-            snapshot(&[&fx.home, &fx.root]),
+            fx.deployment_snapshot(),
             before,
             "{command}: rolling back its commit must not write under the home or repository"
         );
@@ -133,6 +132,13 @@ fn a_rollback_right_after_remove_or_promote_changes_no_file() {
             !stderr(&out).contains("kept a copy"),
             "{command}: stderr: {}",
             stderr(&out)
+        );
+        assert!(String::from_utf8_lossy(&out.stdout).contains("Nothing to roll back"));
+        let json = fx.run_ok(&["rollback", "--yes", "--json"]);
+        let doc: serde_json::Value = serde_json::from_slice(&json.stdout).expect("rollback JSON");
+        assert_eq!(
+            doc.get("result").and_then(serde_json::Value::as_str),
+            Some("checkpoint")
         );
     }
 }
@@ -148,7 +154,7 @@ fn a_remove_that_fails_after_its_commit_can_be_retried() {
 
     assert_eq!(code(&failed), 1, "stderr: {}", stderr(&failed));
     assert!(
-        stderr(&failed).contains("failed to remove the existing target"),
+        stderr(&failed).contains("failed to remove file"),
         "the remove must fail while replacing the target; stderr: {}",
         stderr(&failed)
     );
@@ -160,4 +166,174 @@ fn a_remove_that_fails_after_its_commit_can_be_retried() {
     fx.run_ok(&["remove", "~/.a", "--yes"]);
     assert_eq!(fs_err::read_to_string(&a).expect("read ~/.a"), "A\n");
     assert_eq!(status_state(&fx, ".a"), None, "the retry unmanages ~/.a");
+}
+
+#[test]
+fn remove_rollback_apply_keeps_the_unmanaged_file() {
+    let fx = applied("");
+    fx.run_ok(&["remove", "~/.a", "--yes"]);
+    fx.run_ok(&["rollback", "--yes"]);
+    assert_eq!(status_state(&fx, ".a"), None);
+    fx.run_ok(&["apply", "--yes"]);
+    assert_eq!(
+        fs_err::read_to_string(fx.home.join(".a")).expect("read unmanaged file"),
+        "A\n"
+    );
+}
+
+#[test]
+fn a_future_record_does_not_hide_the_next_apply() {
+    let fx = applied("");
+    let journal = fx.state_root().join("journal");
+    let original = fs_err::read_dir(&journal)
+        .expect("read journal")
+        .map(|entry| entry.expect("read entry").path())
+        .find(|path| path.extension().is_some_and(|ext| ext == "COMMIT"))
+        .expect("find commit");
+    fs_err::rename(original, journal.join("29990101T000000Z.COMMIT"))
+        .expect("move commit into future");
+    fs_err::write(fx.root.join("shell/a"), "NEXT\n").expect("edit source");
+    let interrupted = fx.run(&["apply", "--yes"], &[("PATINA_TEST_ABORT_AFTER_OP", "1")]);
+    assert_eq!(code(&interrupted), 70, "{}", stderr(&interrupted));
+    assert_eq!(
+        patina_core::orphan_plans(&journal)
+            .expect("find interrupted apply")
+            .len(),
+        1
+    );
+    fx.run_ok(&["apply", "--yes"]);
+    assert_eq!(status_state(&fx, ".a").as_deref(), Some("clean"));
+}
+
+#[test]
+fn interrupted_remove_restores_its_manifest_and_can_be_retried() {
+    for step in ["0", "1", "2"] {
+        for purge in [false, true] {
+            let fx = applied("");
+            let args = if purge {
+                vec!["remove", "~/.a", "--yes", "--purge"]
+            } else {
+                vec!["remove", "~/.a", "--yes"]
+            };
+            let interrupted = fx.run(&args, &[("PATINA_TEST_ABORT_REMOVE_AFTER", step)]);
+            assert_eq!(
+                code(&interrupted),
+                99,
+                "step {step}: {}",
+                stderr(&interrupted)
+            );
+            assert_eq!(
+                patina_core::orphan_plans(fx.state_root().join("journal"))
+                    .expect("read pending")
+                    .len(),
+                1
+            );
+            fx.run_ok(&args);
+            assert_eq!(status_state(&fx, ".a"), None);
+            if purge {
+                assert!(!fx.home.join(".a").exists());
+            } else {
+                assert_eq!(
+                    fs_err::read_to_string(fx.home.join(".a")).expect("read preserved file"),
+                    "A\n"
+                );
+            }
+            fx.run_ok(&["rollback", "--yes"]);
+            fx.run_ok(&["apply", "--yes"]);
+            assert_eq!(status_state(&fx, ".a"), None);
+        }
+    }
+}
+
+#[test]
+fn committed_remove_survives_interruption_before_returning() {
+    let fx = applied("");
+    let interrupted = fx.run(
+        &["remove", "~/.a", "--yes"],
+        &[("PATINA_TEST_ABORT_REMOVE_AFTER", "3")],
+    );
+    assert_eq!(code(&interrupted), 99, "{}", stderr(&interrupted));
+    assert!(
+        patina_core::orphan_plans(fx.state_root().join("journal"))
+            .expect("read pending")
+            .is_empty()
+    );
+    fx.run_ok(&["rollback", "--yes"]);
+    fx.run_ok(&["apply", "--yes"]);
+    assert_eq!(
+        fs_err::read_to_string(fx.home.join(".a")).expect("read unmanaged file"),
+        "A\n"
+    );
+    assert_eq!(status_state(&fx, ".a"), None);
+}
+
+#[test]
+fn interrupted_remove_restores_the_symlink_and_original_manifest() {
+    let fx = Fixture::new();
+    let manifest = "[[file]]\nsource = \"a\"\ntarget = \"~/.a\"\nmode = \"symlink\"\n";
+    let module = fx.module("shell", manifest);
+    fs_err::write(module.join("a"), "A\n").expect("write source");
+    fx.run_ok(&["apply", "--yes"]);
+    let link = fs_err::read_link(fx.home.join(".a")).expect("read applied link");
+    let interrupted = fx.run(
+        &["remove", "~/.a", "--yes"],
+        &[("PATINA_TEST_ABORT_REMOVE_AFTER", "2")],
+    );
+    assert_eq!(code(&interrupted), 99, "{}", stderr(&interrupted));
+
+    patina_core::recover_interrupted(&fx.state_root()).expect("recover interrupted removal");
+
+    assert_eq!(
+        fs_err::read_link(fx.home.join(".a")).expect("read restored link"),
+        link
+    );
+    assert_eq!(
+        fs_err::read_to_string(module.join("patina.toml")).expect("read restored manifest"),
+        manifest
+    );
+    fx.run_ok(&["remove", "~/.a", "--yes"]);
+    assert!(
+        fs_err::symlink_metadata(fx.home.join(".a"))
+            .expect("stat unmanaged file")
+            .is_file()
+    );
+}
+
+#[test]
+fn remove_without_a_declaration_does_not_recover_an_unrelated_apply() {
+    let fx = applied("");
+    fx.module(
+        "shell",
+        "[[file]]\nsource = \"b\"\ntarget = \"~/.b\"\nmode = \"copy\"\n",
+    );
+    fs_err::write(fx.root.join("shell/b"), "NEXT\n").expect("change remaining source");
+    let interrupted = fx.run(&["apply", "--yes"], &[("PATINA_TEST_ABORT_AFTER_OP", "1")]);
+    assert_eq!(code(&interrupted), 70, "{}", stderr(&interrupted));
+    let before = common::snapshot(&[&fx.home, &fx.root, &fx.state]);
+
+    let refused = fx.run(&["remove", "~/.a", "--yes"], &[]);
+
+    assert_eq!(code(&refused), 1, "{}", stderr(&refused));
+    assert_eq!(common::snapshot(&[&fx.home, &fx.root, &fx.state]), before);
+    assert_eq!(
+        patina_core::orphan_plans(fx.state_root().join("journal"))
+            .expect("read pending plan")
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn record_only_history_is_bounded() {
+    let fx = applied("");
+    for i in 0..12 {
+        fs_err::write(fx.home.join(".a"), format!("edit {i}\n")).expect("edit target");
+        fx.run_ok(&["promote", "~/.a", "--yes"]);
+    }
+    let commits = fs_err::read_dir(fx.state_root().join("journal"))
+        .expect("read journal")
+        .map(|entry| entry.expect("read entry").path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "COMMIT"))
+        .count();
+    assert_eq!(commits, patina_core::backups::RETENTION_COUNT);
 }

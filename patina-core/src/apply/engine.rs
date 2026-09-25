@@ -64,9 +64,10 @@ use crate::journal::Plan;
 use crate::journal::PlannedOperation;
 use crate::journal::RecoveryReport;
 use crate::journal::content_hash;
+use crate::journal::next_operation_id;
 use crate::journal::orphan_plans;
-use crate::journal::prune_cycles;
 use crate::journal::recover_orphans;
+use crate::journal::retain_history;
 use crate::journal::timestamp_to_rfc3339;
 use crate::lock::LockError;
 use crate::lock::LockKind;
@@ -288,7 +289,7 @@ pub struct ResolvedPlan {
     pub state_dir: Utf8PathBuf,
     /// Resolved host OS family (drives hook shell defaults).
     pub host_os: HostOs,
-    /// Timestamp keying this run's journal and backup files.
+    /// Wall-clock time recorded in the commit, independent of its operation ID.
     pub timestamp: String,
     /// Repository-wide variable resolver without module-local variables.
     pub resolver: Resolver,
@@ -1993,11 +1994,12 @@ pub fn execute(
     // Flush the plan journal: the durability point before mutation.
     let mut journal = Journal::flush_plan_and_fsync(
         &journal_dir,
-        &resolved.timestamp,
+        next_operation_id(&resolved.state_dir)?,
         &resolved.plan,
         &OsSyncer,
     )?;
-    back_up_targets(resolved, &backups_dir)?;
+    let operation_id = journal.timestamp().to_owned();
+    back_up_targets(resolved, &backups_dir, &operation_id)?;
 
     // Materialize every operation except a target classified `Unchanged` at
     // plan time, which is neither backed up nor (re)written so its
@@ -2064,7 +2066,7 @@ pub fn execute(
     )?;
 
     if let Some(failed) = post_failure {
-        reverse_completed(&completed, &backups_dir, &resolved.timestamp)?;
+        reverse_completed(&completed, &backups_dir, &operation_id)?;
         journal.discard(&backups_dir)?;
         Ok(ApplyResult::RolledBack {
             failed_hook: failed,
@@ -2087,15 +2089,7 @@ pub fn execute(
         }
         let record = build_apply_record(resolved, reaped)?;
         journal.commit(&record, &OsSyncer)?;
-        // Retention prunes the oldest backup cycles, then the journal
-        // sentinels for exactly those cycles are dropped in lockstep: a
-        // commit whose backups are gone can no longer be faithfully reversed
-        // (its overwrite-restores are gone), so it must not remain
-        // rollback- or status-eligible. An all-fresh
-        // apply writes no backup directory and so is never pruned here, and
-        // rolling back to it correctly deletes its fresh targets.
-        let pruned = gc_retain(&backups_dir, crate::backups::RETENTION_COUNT)?;
-        prune_cycles(&journal_dir, &pruned)?;
+        retain_history(&resolved.state_dir);
         gc_retain(
             resolved.state_dir.join(crate::journal::RECOVERED_DIR),
             crate::backups::RETENTION_COUNT,
@@ -2399,7 +2393,11 @@ fn reap_target(target: &Utf8Path) -> Result<bool, EngineError> {
 /// # Errors
 ///
 /// Returns an [`EngineError`] when a backup fails.
-fn back_up_targets(resolved: &ResolvedPlan, backups_dir: &Utf8Path) -> Result<(), EngineError> {
+fn back_up_targets(
+    resolved: &ResolvedPlan,
+    backups_dir: &Utf8Path,
+    operation_id: &str,
+) -> Result<(), EngineError> {
     let written = resolved.operations.iter().flat_map(|op| {
         op.targets
             .iter()
@@ -2427,7 +2425,7 @@ fn back_up_targets(resolved: &ResolvedPlan, backups_dir: &Utf8Path) -> Result<()
         {
             continue;
         }
-        if backup_before_overwrite(backups_dir, &resolved.timestamp, target)? {
+        if backup_before_overwrite(backups_dir, operation_id, target)? {
             backed_up.push(target);
         }
     }
@@ -3095,11 +3093,16 @@ mod tests {
 
         execute(&scene.resolved, &ApplyRequest::default()).expect("apply the removal");
 
+        let (operation_id, _) =
+            crate::journal::read_latest_commit_with_ts(&scene.resolved.journal_dir())
+                .expect("read journal")
+                .expect("removal committed");
+
         assert!(!listed.exists(), "the listed target must be removed");
         assert_eq!(
             fs_err::read(crate::journal::mirror_backup_path(
                 &scene.resolved.backups_dir(),
-                TS,
+                &operation_id,
                 &listed
             ))
             .expect("read the removal's backup"),
@@ -4206,11 +4209,17 @@ mod tests {
         execute(&scene.resolved, &ApplyRequest::default())
             .expect("the retry in the same second commits");
 
-        let record = crate::journal::read_latest_commit(scene.resolved.journal_dir())
-            .expect("read the commit")
-            .expect("the retry committed");
-        crate::rollback::reverse_record(&record, &scene.resolved.state_dir, TS, &mut |_| {})
-            .expect("roll the retry back");
+        let (operation_id, record) =
+            crate::journal::read_latest_commit_with_ts(&scene.resolved.journal_dir())
+                .expect("read the commit")
+                .expect("the retry committed");
+        crate::rollback::reverse_record(
+            &record,
+            &scene.resolved.state_dir,
+            &operation_id,
+            &mut |_| {},
+        )
+        .expect("roll the retry back");
         assert!(
             !crate::fsx::entry_present(&target),
             "rolling back the retry must delete the target it created, not restore \
@@ -4238,7 +4247,7 @@ mod tests {
             PlannedOperation::remove(app.join("z.conf").as_str()),
         ]);
 
-        back_up_targets(&scene.resolved, &scene.resolved.backups_dir()).expect("back up");
+        back_up_targets(&scene.resolved, &scene.resolved.backups_dir(), TS).expect("back up");
 
         let stashed = crate::journal::mirror_backup_path(&scene.resolved.backups_dir(), TS, &app);
         assert!(

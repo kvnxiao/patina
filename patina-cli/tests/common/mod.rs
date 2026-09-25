@@ -124,6 +124,13 @@ impl Fixture {
         assert_eq!(code(&out), 0, "{args:?} stderr: {}", stderr(&out));
         out
     }
+
+    pub(crate) fn deployment_snapshot(&self) -> std::collections::BTreeMap<Utf8PathBuf, Snapshot> {
+        let state = self.state_root();
+        let mut entries = snapshot(&[&self.home, &self.root]);
+        entries.retain(|path, _| !path.starts_with(&state) && !state.starts_with(path));
+        entries
+    }
 }
 
 /// Return the process exit code.
@@ -165,20 +172,6 @@ pub(crate) fn snapshot(roots: &[&Utf8Path]) -> std::collections::BTreeMap<Utf8Pa
         entries.insert(path, entry);
     }
     entries
-}
-
-/// Journal and backup files are keyed by a one-second timestamp, so two
-/// applies inside one second share their `<ts>` files.
-pub(crate) fn wait_for_next_second() {
-    let now = || {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |elapsed| elapsed.as_secs())
-    };
-    let start = now();
-    while now() == start {
-        std::thread::sleep(std::time::Duration::from_millis(20));
-    }
 }
 
 #[cfg(unix)]
