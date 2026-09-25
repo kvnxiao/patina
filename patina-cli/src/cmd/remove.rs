@@ -83,7 +83,7 @@ use patina_core::remove_file_entry;
 /// resolved; the path is not currently managed; the journaled source cannot
 /// be read or re-rendered; the target replacement fails; the manifest edit
 /// fails; or the re-apply fails.
-pub(crate) async fn run(
+pub(crate) fn run(
     args: &RemoveArgs,
     tty: Tty,
     reader: &mut impl PromptReader,
@@ -144,7 +144,7 @@ pub(crate) async fn run(
 
     // The re-plan runs after the manifest edit, so the fresh <ts>.COMMIT
     // omits the removed target and `patina status` stops listing it.
-    rejournal(guard).await?;
+    rejournal(guard)?;
 
     report_success(args, &target_path, reporter);
     Ok(ExitCode::Success.code())

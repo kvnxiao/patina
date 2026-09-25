@@ -5,9 +5,7 @@
 //! discovery, module discovery, config parse, state directory, variables,
 //! profile, template, path, journal, backup, lock, executor, hook,
 //! rollback). Each wraps its subsystem's typed error via `#[from]`, so `?`
-//! threads a subsystem failure up to the async entry points without
-//! `todo!()` / `panic!()` (forbidden). The `non_exhaustive`
-//! attribute keeps downstream `match` arms forward compatible.
+//! propagates a subsystem failure to the public entry points.
 
 use camino::Utf8PathBuf;
 use thiserror::Error;

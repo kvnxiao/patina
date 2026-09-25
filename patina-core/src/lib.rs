@@ -1,10 +1,11 @@
 //! Core library for the patina cross-platform dotfile manager.
 //!
 //! [`status`](fn@crate::status) and [`rollback`](fn@crate::rollback) are the
-//! async library entry points, and applying goes through [`plan_apply`] and
-//! [`execute_plan`]. Each returns [`Result<_, EngineError>`](EngineError). The
-//! CLI wraps that into `anyhow::Result` at the call site; `anyhow` lives only
-//! in the binary.
+//! synchronous library entry points. A caller applies the repository by
+//! passing the plan that [`plan_apply`] returns to [`execute_plan`]. Each of
+//! these functions returns [`Result<_, EngineError>`](EngineError), which the
+//! CLI wraps into `anyhow::Result` at the call site; only the CLI depends on
+//! `anyhow`.
 
 #![warn(missing_debug_implementations)]
 
@@ -147,7 +148,7 @@ pub use remote::RemoteError;
 pub use remote::git::GitError;
 pub use remote::git::git_available;
 pub use rollback::RollbackError;
-pub use rollback::run as run_rollback;
+pub use rollback::run as rollback;
 pub use state_dir::HostOs;
 pub use state_dir::StateDirError;
 pub use state_dir::resolve as resolve_state_dir;
@@ -228,11 +229,6 @@ impl StatusOptions {
     }
 }
 
-/// Options accepted by [`rollback`](fn@crate::rollback).
-#[derive(Debug, Default, Clone)]
-#[non_exhaustive]
-pub struct RollbackOptions {}
-
 /// Report drift between the resolved dotfiles repository and the current
 /// filesystem state. Classify every managed target as CLEAN, DRIFTED,
 /// MISSING, or ORPHANED against the last committed apply.
@@ -243,32 +239,7 @@ pub struct RollbackOptions {}
 /// resolution, the current-plan computation, or the journal read fails. A
 /// shared-lock timeout is downgraded to a warning in the returned
 /// [`StatusReport`], not an error.
-#[expect(
-    clippy::unused_async,
-    reason = "An async signature is required; the status read itself is synchronous."
-)]
-pub async fn status(options: StatusOptions) -> Result<StatusReport, EngineError> {
+pub fn status(options: &StatusOptions) -> Result<StatusReport, EngineError> {
     let managed = current_plan_targets(&options.cli_overrides)?;
     status_report(&managed)
-}
-
-/// Roll back the most recent committed apply to its pre-apply filesystem
-/// state using the journaled backups.
-///
-/// Delegates to [`run_rollback`]. It takes the exclusive lock, finds the
-/// most recent committed-and-not-rolled-back apply, reverts each `[[file]]`
-/// entry's inverse operations atomically, and marks the apply rolled back.
-///
-/// # Errors
-///
-/// Returns an [`EngineError`] when no prior apply remains
-/// ([`RollbackError::NoPriorApply`]), a multi-target entry cannot be
-/// reverted as a unit ([`RollbackError::RollbackPartial`]), or a
-/// filesystem / lock / record-decode operation fails.
-#[expect(
-    clippy::unused_async,
-    reason = "An async signature is required; the rollback itself is synchronous filesystem work."
-)]
-pub async fn rollback(_options: RollbackOptions) -> Result<(), EngineError> {
-    run_rollback()
 }

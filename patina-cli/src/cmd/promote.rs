@@ -65,7 +65,7 @@ use patina_core::remote::cache::remotes_root;
 /// source cannot be written, or the re-apply fails. An unmanaged target and
 /// each refused shape (symbolic-link, template-rendered, remote-backed) return
 /// their exit code through the `Ok` value instead.
-pub(crate) async fn run(
+pub(crate) fn run(
     args: &PromoteArgs,
     tty: Tty,
     reader: &mut impl PromptReader,
@@ -104,7 +104,7 @@ pub(crate) async fn run(
     fs_err::write(source_path.as_std_path(), &bytes)
         .with_context(|| format!("failed to write the repository source {source_path}"))?;
 
-    rejournal(guard).await?;
+    rejournal(guard)?;
 
     report_success(args, &target_path, &source_path, reporter);
     Ok(ExitCode::Success.code())

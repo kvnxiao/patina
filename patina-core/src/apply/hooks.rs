@@ -18,7 +18,7 @@
 //!    context. A hook whose predicate is `false` is filtered out before
 //!    execution; a hook with no predicate always runs.
 //! 3. **Run and classify.** [`run_hook`] spawns the resolved shell with the
-//!    hook command, awaits its exit status, and maps the status to a
+//!    hook command, waits for its exit status, and maps the status to a
 //!    [`HookOutcome`] under the hook's `must_succeed` flag and the
 //!    invocation-wide [`ForceDeploy`] override.
 //!
@@ -50,7 +50,7 @@ use crate::template::TemplateError;
 use crate::variables::Resolver;
 use camino::Utf8PathBuf;
 use std::path::Path;
-use tokio::process::Command;
+use std::process::Command;
 
 /// Invocation-wide `--force-deploy` toggle.
 ///
@@ -102,9 +102,8 @@ pub enum HookError {
         source: TemplateError,
     },
 
-    /// Spawning or awaiting the hook's shell process failed at the OS
-    /// level (the binary resolved but could not be executed, or the child
-    /// could not be waited on).
+    /// Spawning the hook's shell process, or waiting on it, failed at the OS
+    /// level, for example because the default shell is not on `PATH`.
     #[error("hook command `{command}` failed to execute")]
     Spawn {
         /// The hook command that could not be run.
@@ -217,7 +216,8 @@ pub fn should_run(
 ///
 /// Spawns the resolved shell against the hook command (`<shell> -c
 /// <command>` on Unix shells, `<shell> -Command <command>` on PowerShell)
-/// and awaits the child. The exit status maps to a [`HookOutcome`]:
+/// and waits for the child. The child inherits this process's stdin, stdout,
+/// and stderr. The exit status maps to a [`HookOutcome`]:
 /// zero is [`HookOutcome::Succeeded`]; non-zero is [`HookOutcome::Failed`]
 /// when `must_succeed` is effectively enforced and [`HookOutcome::Warned`]
 /// otherwise.
@@ -228,14 +228,13 @@ pub fn should_run(
 /// on at the OS level. A non-zero *exit code* is not an error; it is a
 /// successful classification into [`HookOutcome::Warned`] /
 /// [`HookOutcome::Failed`] so the orchestrator can act on it.
-pub async fn run_hook(
+pub fn run_hook(
     hook: &ResolvedHook<'_>,
     force_deploy: ForceDeploy,
 ) -> Result<HookOutcome, HookError> {
     let command = &hook.entry.command;
     let status = build_command(&hook.shell, command)
         .status()
-        .await
         .map_err(|source| HookError::Spawn {
             command: command.clone(),
             source,
@@ -489,8 +488,8 @@ mod tests {
         assert!(matches!(err, HookError::When { .. }));
     }
 
-    #[tokio::test]
-    async fn zero_exit_succeeds() {
+    #[test]
+    fn zero_exit_succeeds() {
         let mut entry = hook(HookEvent::PreApply, "exit 0");
         entry.shell = Some(host_default_shell().to_owned());
         let hooks = planned(vec![entry]);
@@ -499,13 +498,12 @@ mod tests {
             resolved.first().expect("one resolved hook"),
             ForceDeploy::No,
         )
-        .await
         .expect("run");
         assert_eq!(outcome, HookOutcome::Succeeded);
     }
 
-    #[tokio::test]
-    async fn nonzero_exit_with_must_succeed_fails() {
+    #[test]
+    fn nonzero_exit_with_must_succeed_fails() {
         let mut entry = hook(HookEvent::PreApply, "exit 1");
         entry.shell = Some(host_default_shell().to_owned());
         entry.must_succeed = true;
@@ -515,13 +513,12 @@ mod tests {
             resolved.first().expect("one resolved hook"),
             ForceDeploy::No,
         )
-        .await
         .expect("run");
         assert_eq!(outcome, HookOutcome::Failed);
     }
 
-    #[tokio::test]
-    async fn nonzero_exit_without_must_succeed_warns() {
+    #[test]
+    fn nonzero_exit_without_must_succeed_warns() {
         let mut entry = hook(HookEvent::PreApply, "exit 1");
         entry.shell = Some(host_default_shell().to_owned());
         entry.must_succeed = false;
@@ -531,13 +528,12 @@ mod tests {
             resolved.first().expect("one resolved hook"),
             ForceDeploy::No,
         )
-        .await
         .expect("run");
         assert_eq!(outcome, HookOutcome::Warned);
     }
 
-    #[tokio::test]
-    async fn force_deploy_downgrades_must_succeed_failure_to_warning() {
+    #[test]
+    fn force_deploy_downgrades_must_succeed_failure_to_warning() {
         let mut entry = hook(HookEvent::PostApply, "exit 1");
         entry.shell = Some(host_default_shell().to_owned());
         entry.must_succeed = true;
@@ -547,7 +543,6 @@ mod tests {
             resolved.first().expect("one resolved hook"),
             ForceDeploy::Yes,
         )
-        .await
         .expect("run");
         assert_eq!(outcome, HookOutcome::Warned);
     }

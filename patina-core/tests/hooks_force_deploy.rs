@@ -42,8 +42,8 @@ fn touch_then_fail(marker: &Utf8PathBuf) -> String {
     }
 }
 
-#[tokio::test]
-async fn force_deploy_downgrades_post_apply_failure_to_warning() {
+#[test]
+fn force_deploy_downgrades_post_apply_failure_to_warning() {
     let (_td, dir) = utf8_tempdir();
     let marker = dir.join("hook-ran.marker");
     let entry = HookEntry {
@@ -60,7 +60,6 @@ async fn force_deploy_downgrades_post_apply_failure_to_warning() {
         resolved.first().expect("one resolved hook"),
         ForceDeploy::Yes,
     )
-    .await
     .expect("hook runs");
 
     assert_eq!(outcome, HookOutcome::Warned);
@@ -70,8 +69,8 @@ async fn force_deploy_downgrades_post_apply_failure_to_warning() {
     );
 }
 
-#[tokio::test]
-async fn same_hook_without_force_deploy_classifies_failed() {
+#[test]
+fn same_hook_without_force_deploy_classifies_failed() {
     let (_td, dir) = utf8_tempdir();
     let marker = dir.join("hook-ran.marker");
     let entry = HookEntry {
@@ -88,15 +87,14 @@ async fn same_hook_without_force_deploy_classifies_failed() {
         resolved.first().expect("one resolved hook"),
         ForceDeploy::No,
     )
-    .await
     .expect("hook runs");
 
     assert_eq!(outcome, HookOutcome::Failed);
     assert!(marker.exists(), "the hook ran before reporting its failure");
 }
 
-#[tokio::test]
-async fn force_deploy_leaves_succeeding_hook_succeeded() {
+#[test]
+fn force_deploy_leaves_succeeding_hook_succeeded() {
     let entry = HookEntry {
         event: HookEvent::PreApply,
         command: "exit 0".to_owned(),
@@ -110,7 +108,6 @@ async fn force_deploy_leaves_succeeding_hook_succeeded() {
         resolved.first().expect("one resolved hook"),
         ForceDeploy::Yes,
     )
-    .await
     .expect("hook runs");
     assert_eq!(outcome, HookOutcome::Succeeded);
 }
