@@ -8,7 +8,6 @@ use camino::Utf8PathBuf;
 use common::Fixture;
 use common::Origin;
 use common::code;
-use common::wait_for_next_second;
 
 const EPOCH: i64 = 1_700_000_000;
 
@@ -622,8 +621,6 @@ fn bumping_the_pin_re_points_the_link_and_rollback_restores_the_prior_checkout()
     );
     write_lock(&f, "moving", &origin, &first_rev);
     assert_eq!(code(&f.apply(&["--yes"])), 0, "apply the first pin");
-
-    wait_for_next_second();
 
     let second_rev = origin.commit_files(&[("a.md", "second\n")], EPOCH);
     write_lock(&f, "moving", &origin, &second_rev);

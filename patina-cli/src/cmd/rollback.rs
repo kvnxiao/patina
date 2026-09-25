@@ -2,32 +2,35 @@
 //!
 //! Reverses the most recent committed apply to its pre-apply filesystem
 //! state, after reverting any interrupted apply. The lock, the recovery, the
-//! journal scan, the per-entry atomic inverse replay, and the rolled-back
-//! sentinel live in `patina_core::rollback`. The command owns the TTY-prompt /
-//! `--yes` / `--json` decision tree and maps the engine outcome onto the
-//! process exit code.
+//! journal scan, the atomic inverse replay, and the rolled-back sentinel live
+//! in `patina_core::rollback`. The command owns the TTY-prompt / `--yes` /
+//! `--json` decision tree, prints a stderr warning with the path of each copy
+//! that rollback keeps of a replaced or deleted entry, and maps the engine
+//! outcome onto the process exit code.
 //!
 //! ## Exit codes
 //!
 //! | Outcome                                         | Code |
 //! |-------------------------------------------------|------|
 //! | Rolled back, previewed, or user-confirmed       | 0    |
-//! | No prior apply / per-entry atomic abort         | 1    |
+//! | No prior apply / atomic abort                   | 1    |
 //! | User declined the prompt                        | 5    |
 //!
-//! A `NoPriorApply` or `RollbackPartial` is a typed engine error that
-//! exits 1 with the message on stderr; every other engine error
+//! On a `NoPriorApply`, `RollbackPartial`, or `ReapedPartial` engine error, the
+//! command prints the message on stderr and exits 1; every other engine error
 //! (lock timeout, IO) propagates as an `anyhow` error from `run`.
 
 use crate::cli::RollbackArgs;
 use crate::cmd::apply::PromptReader;
 use crate::cmd::apply::Tty;
+use crate::cmd::apply::report_kept;
 use crate::cmd::apply::report_recovery;
 use crate::exit_code::ExitCode;
 use crate::output::reporter::Reporter;
 use anyhow::Result;
 use patina_core::EngineError;
 use patina_core::RollbackError;
+use patina_core::RollbackEvent;
 use patina_core::chain_message;
 
 /// Run `patina rollback`. Returns the process exit code.
@@ -35,9 +38,9 @@ use patina_core::chain_message;
 /// # Errors
 ///
 /// Returns an error when the engine-level rollback fails for a reason other
-/// than `NoPriorApply` or `RollbackPartial`. Either of those is printed as a
-/// stderr warning and exits 1 instead of returning `Err`. A declined prompt
-/// maps to exit code 5.
+/// than `NoPriorApply`, `RollbackPartial`, or `ReapedPartial`. On one of those
+/// three errors, `run` prints a stderr warning and returns exit code 1 instead
+/// of `Err`. A declined prompt maps to exit code 5.
 pub(crate) fn run(
     args: &RollbackArgs,
     tty: Tty,
@@ -66,17 +69,33 @@ pub(crate) fn run(
         return Ok(ExitCode::UserDeclined.code());
     }
 
-    match patina_core::rollback(|recovered| report_recovery(recovered, reporter)) {
+    let mut record_only = false;
+    let outcome = patina_core::rollback(|event| match event {
+        RollbackEvent::Recovered(report) => report_recovery(report, reporter),
+        RollbackEvent::Kept(kept) => report_kept(kept, "rollback", reporter),
+        RollbackEvent::RecordOnly => record_only = true,
+        _ => {}
+    });
+    match outcome {
         Ok(()) => {
             if args.json {
-                reporter.json(&json_envelope("rolled_back"));
+                reporter.json(&json_envelope(if record_only {
+                    "record_only"
+                } else {
+                    "rolled_back"
+                }));
+            } else if record_only {
+                reporter
+                    .line("Passed a remove or promote record; no files changed. Run rollback again to continue through earlier history.");
             } else {
                 reporter.line("Rolled back the most recent apply.");
             }
             Ok(ExitCode::Success.code())
         }
         Err(EngineError::Rollback(
-            err @ (RollbackError::NoPriorApply | RollbackError::RollbackPartial { .. }),
+            err @ (RollbackError::NoPriorApply
+            | RollbackError::RollbackPartial { .. }
+            | RollbackError::ReapedPartial { .. }),
         )) => {
             reporter.warn(&chain_message(&err));
             Ok(ExitCode::Generic.code())

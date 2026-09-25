@@ -84,6 +84,7 @@ fn sample_record() -> ApplyRecord {
             host: "h".to_owned(),
         },
         Vec::new(),
+        Vec::new(),
     )
 }
 

@@ -1,43 +1,40 @@
 //! Shared helpers for the commands that edit a single managed target under
-//! one held exclusive lock and re-journal by re-applying.
+//! one held exclusive lock and record the edit in a new commit.
 //!
 //! `remove` and `promote` follow the same shape. Each takes one exclusive
 //! advisory lock for the whole command, then locates the journaled
-//! [`ExpectedTarget`](patina_core::ExpectedTarget) for an input path in the
-//! latest commit. A command that refuses or is declined before recovering
+//! [`ExpectedTarget`] for an input path in the latest commit with
+//! [`Recorded::find`]. A command that refuses or is declined before recovering
 //! returns through [`refused`], which warns about a pending interrupted apply
 //! and writes nothing. Otherwise the command reverts any interrupted apply with
 //! [`recover_held`] before its first write, does its own filesystem work, and
-//! re-journals by driving the engine re-apply under [`LockPolicy::Held`]. The
-//! fresh `<ts>.COMMIT` records the new managed state. `promote` can still
-//! refuse after [`recover_held`] has written, when the recovery changed its
-//! target.
-//!
-//! The lock acquisition and the re-apply live here. Neither command repeats
-//! the lock path, the engine-error mapping, or the re-plan / re-execute
-//! sequence.
+//! writes a record derived from the latest expectations. The command does not
+//! write another target or run a hook. Rollback passes the record without
+//! changing files and protects its target when reversing earlier applies.
+//! `promote` can still refuse after [`recover_held`] has written, when the
+//! recovery changed its target.
 
 use crate::cmd::apply::report_recovery;
 use crate::cmd::apply::warn_pending_apply;
 use crate::output::reporter::Reporter;
 use anyhow::Context;
 use anyhow::Result;
+use anyhow::bail;
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
-use patina_core::ApplyRequest;
 use patina_core::EngineError;
+use patina_core::ExpectedTarget;
 use patina_core::LockGuard;
 use patina_core::LockKind;
-use patina_core::LockPolicy;
 use patina_core::PendingApply;
-use patina_core::Reap;
 use patina_core::RecoveryReport;
 use patina_core::acquire_lock;
-use patina_core::current_timestamp;
+use patina_core::commit_record_only;
 use patina_core::exclusive_timeout;
-use patina_core::execute_plan;
+use patina_core::journal::OsSyncer;
+use patina_core::manage_key;
 use patina_core::orphan_plans;
-use patina_core::plan_apply;
+use patina_core::read_latest_commit;
 use patina_core::recover_orphans;
 use patina_core::resolve_state_dir;
 
@@ -50,9 +47,7 @@ pub(crate) const TEMPLATE_SUFFIX: &str = ".tmpl";
 /// Resolve the per-machine state directory and acquire the engine's
 /// exclusive advisory lock at `<state>/lock`.
 ///
-/// The returned guard is held by the caller for the whole command and reused
-/// by [`rejournal`] via [`LockPolicy::Held`], so the re-apply does not block on
-/// the command's own lock.
+/// The caller holds the returned guard for the whole command.
 ///
 /// # Errors
 ///
@@ -105,25 +100,69 @@ pub(crate) fn refused(state: &Utf8Path, reporter: &mut impl Reporter, code: i32)
     Ok(code)
 }
 
-/// Re-journal the current managed set by re-applying under the already-held
-/// lock `guard`.
-///
-/// The plan is computed against the manifests as they stand, so an edit the
-/// caller just made is included. It is planned under [`Reap::Nothing`], so the
-/// re-apply does not remove any target, including the one `remove` just
-/// replaced and unmanaged. Execution runs under [`LockPolicy::Held`] and
-/// writes a fresh `<ts>.COMMIT` recording the new expected state.
-///
-/// # Errors
-///
-/// Returns an error when the re-plan or the re-apply fails.
-pub(crate) fn rejournal(guard: LockGuard) -> Result<()> {
-    let request = ApplyRequest {
-        reap: Reap::Nothing,
-        ..ApplyRequest::default()
-    };
-    let timestamp = current_timestamp();
-    let resolved = plan_apply(&request, &timestamp).context("failed to re-plan")?;
-    execute_plan(&resolved, &request, LockPolicy::Held(guard)).context("re-apply failed")?;
-    Ok(())
+/// The latest commit's targets and the target among them that a command edits.
+#[derive(Debug)]
+pub(crate) struct Recorded {
+    /// The recorded expectation of the edited target.
+    pub(crate) expected: ExpectedTarget,
+    targets: Vec<ExpectedTarget>,
+    index: usize,
+}
+
+impl Recorded {
+    /// Read the latest commit under `state` and find the target whose
+    /// [`manage_key`] is `target_key`. Return `None` when there is no latest
+    /// commit or it does not record that target.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the journal cannot be read or its newest record
+    /// is from a newer binary.
+    pub(crate) fn find(state: &Utf8Path, target_key: &Utf8Path) -> Result<Option<Self>> {
+        let Some(record) = read_latest_commit(state.join("journal")).map_err(EngineError::from)?
+        else {
+            return Ok(None);
+        };
+        let found = record
+            .targets
+            .iter()
+            .enumerate()
+            .find(|(_, expected)| manage_key(Utf8Path::new(expected.target())) == target_key)
+            .map(|(index, expected)| (index, expected.clone()));
+        Ok(found.map(|(index, expected)| Self {
+            expected,
+            targets: record.targets,
+            index,
+        }))
+    }
+
+    pub(crate) fn without_target(self) -> Vec<ExpectedTarget> {
+        let index = self.index;
+        self.targets
+            .into_iter()
+            .enumerate()
+            .filter(|(position, _)| *position != index)
+            .map(|(_, expected)| expected)
+            .collect()
+    }
+
+    /// Commit the latest record with the edited content target's hash
+    /// replaced by `hash`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the edited target is not a content target or the
+    /// commit cannot be written.
+    pub(crate) fn commit_with_hash(self, state: &Utf8Path, hash: [u8; 32]) -> Result<()> {
+        let mut targets = self.targets;
+        let Some(ExpectedTarget::Content { hash: recorded, .. }) = targets.get_mut(self.index)
+        else {
+            bail!("the promoted target is not a content target");
+        };
+        *recorded = hash;
+        commit_record_only(state, targets, self.expected.target(), &OsSyncer)
+            .map_err(EngineError::from)
+            .context("failed to write the commit record")?;
+        Ok(())
+    }
 }

@@ -1,13 +1,15 @@
 //! `patina remove <path>` command logic.
 //!
-//! `patina remove <path>` unmanages a target. It replaces the target on disk
-//! with a regular file containing the last-applied content, so an application
-//! reading the target still finds valid content. It then removes the target's
-//! `[[file]]` entry from
-//! its module's `patina.toml` and re-journals the new managed set. `patina
-//! status` therefore treats the path as deliberately unmanaged and leaves it
-//! out of the report, rather than reporting an ORPHANED leftover. With
-//! `--purge` the target is deleted from disk entirely instead of replaced.
+//! Preserve a target as a regular file, or delete it with `--purge`, and
+//! remove its manifest declaration. Journal and back up both paths before
+//! writing either, then publish a record that omits the target.
+//!
+//! `remove` does not write another target or run a hook. The new commit is
+//! derived from the latest record. Rollback passes this record without changing
+//! files and preserves the target's unmanaged state through earlier rollbacks.
+//! An uncommitted removal recovers both paths
+//! before a retry, including when its manifest declaration is already gone.
+//! An ordinary write failure invokes the same recovery.
 //!
 //! A tree-mode leaf is refused (exit 1). A `symlink-tree` or `copy`
 //! `[[directory]]` entry declares one directory and materializes a leaf per
@@ -18,11 +20,9 @@
 //! Before prompting, `remove` selects the manifest edit and leaves refused
 //! targets and manifests unchanged. Selecting the edit requires planning,
 //! which can fill `<state>/remotes/` for a remote-backed entry before the user
-//! declines. After replacing the target, `remove` writes the manifest. If that
-//! write fails, the target is already replaced and its entry remains.
+//! declines.
 //!
-//! `remove` holds one exclusive advisory lock for the whole command and
-//! re-journals under [`LockPolicy::Held`](patina_core::LockPolicy) through
+//! `remove` holds one exclusive advisory lock for the whole command through
 //! the shared helpers in [`crate::cmd::managed`].
 //!
 //! ## Reconstructing the last-applied content
@@ -39,17 +39,18 @@
 //!
 //! Planning, journaling, manifest editing, repo discovery, and template
 //! rendering live in `patina_core`; this module is presentation and control
-//! flow.
+//! flow. Planning here finds the owning manifest and module variables; `remove`
+//! does not execute the plan.
 
 use crate::cli::RemoveArgs;
 use crate::cmd::add::resolve_home;
 use crate::cmd::apply::PromptReader;
 use crate::cmd::apply::Tty;
+use crate::cmd::managed::Recorded;
 use crate::cmd::managed::TEMPLATE_SUFFIX;
 use crate::cmd::managed::acquire_state_and_lock;
 use crate::cmd::managed::recover_held;
 use crate::cmd::managed::refused;
-use crate::cmd::managed::rejournal;
 use crate::exit_code::ExitCode;
 use crate::output::reporter::Reporter;
 use crate::output::style::paint;
@@ -73,7 +74,6 @@ use patina_core::contract_home;
 use patina_core::current_timestamp;
 use patina_core::manage_key;
 use patina_core::plan_apply;
-use patina_core::read_latest_commit;
 use patina_core::remove_file_entry;
 
 /// Run `patina remove`. Returns the process exit code.
@@ -92,8 +92,8 @@ use patina_core::remove_file_entry;
 /// cannot be computed; no candidate manifest declares a `[[file]]` entry for
 /// the target, or one cannot be read or edited; the journal directory cannot be
 /// read while refusing; recovering an interrupted apply fails; the journaled
-/// source cannot be read or re-rendered; the target replacement fails; the
-/// manifest write fails; or the re-apply fails.
+/// source cannot be read or re-rendered; the commit cannot be written; the
+/// target replacement fails; or the manifest write fails.
 pub(crate) fn run(
     args: &RemoveArgs,
     tty: Tty,
@@ -104,23 +104,16 @@ pub(crate) fn run(
     let target = anchor_input(&args.path, &home).map_err(EngineError::from)?;
     let target_key = manage_key(&target);
 
-    let (state, guard) = acquire_state_and_lock()?;
+    let (state, _guard) = acquire_state_and_lock()?;
 
-    let journal_dir = state.join("journal");
-    let record = read_latest_commit(&journal_dir).map_err(EngineError::from)?;
-    let expected = record.as_ref().and_then(|record| {
-        record
-            .targets
-            .iter()
-            .find(|expected| manage_key(Utf8Path::new(expected.target())) == target_key)
-    });
-    let Some(expected) = expected else {
+    let Some(recorded) = Recorded::find(&state, &target_key)? else {
         let code = report_unmanaged(args, reporter);
         return refused(&state, reporter, code);
     };
+    let expected = &recorded.expected;
 
     let timestamp = current_timestamp();
-    let resolved =
+    let mut resolved =
         plan_apply(&ApplyRequest::default(), &timestamp).context("failed to compute the plan")?;
 
     let target_path = Utf8PathBuf::from(expected.target());
@@ -135,15 +128,30 @@ pub(crate) fn run(
 
     let portable = contract_home(&target, &home);
     let source = Utf8PathBuf::from(expected.source());
-    let edit = plan_manifest_edit(
+    let preflight = plan_manifest_edit(
         candidate_manifests(&resolved, &source, owner),
         &[portable.as_str(), args.path.as_str(), target_path.as_str()],
-    )?;
+    );
+    if let Err(error) = preflight
+        && !patina_core::journal::pending_removal(&state, &target_path)
+            .map_err(EngineError::from)?
+    {
+        return Err(error);
+    }
 
     if !confirm(args, tty, reader, reporter) {
         return refused(&state, reporter, ExitCode::UserDeclined.code());
     }
-    recover_held(&state, reporter)?;
+    let recovery = recover_held(&state, reporter)?;
+    if !recovery.recovered_timestamps().is_empty() {
+        resolved = plan_apply(&ApplyRequest::default(), current_timestamp())
+            .context("failed to compute the recovered plan")?;
+    }
+    let owner = resolved.owner_of(&target_path);
+    let edit = plan_manifest_edit(
+        candidate_manifests(&resolved, &source, owner),
+        &[portable.as_str(), args.path.as_str(), target_path.as_str()],
+    )?;
 
     let content = if args.purge {
         None
@@ -152,13 +160,18 @@ pub(crate) fn run(
         Some(reconstruct_content(expected, vars)?)
     };
 
-    replace_target(&target_path, content.as_deref())?;
-    fs_err::write(edit.manifest.as_std_path(), &edit.edited)
-        .with_context(|| format!("failed to write {}", edit.manifest))?;
-
-    // The re-plan runs after the manifest edit, so the fresh <ts>.COMMIT
-    // omits the removed target and `patina status` stops listing it.
-    rejournal(guard)?;
+    let removal = patina_core::journal::Removal {
+        state: &state,
+        target: &target_path,
+        content: content.as_deref(),
+        manifest: &edit.manifest,
+        edited_manifest: edit.edited.as_bytes(),
+        remaining: recorded.without_target(),
+    };
+    if let Err(error) = removal.execute() {
+        recover_held(&state, reporter).context("failed to recover the removal")?;
+        return Err(error.into());
+    }
 
     report_success(args, &target_path, reporter);
     Ok(ExitCode::Success.code())
@@ -182,40 +195,6 @@ fn reconstruct_content(expected: &ExpectedTarget, vars: &Resolver) -> Result<Vec
         Ok(rendered.into_bytes())
     } else {
         fs_err::read(source.as_std_path()).context("failed to read source")
-    }
-}
-
-/// Replace the target on disk. With `content`, remove the existing
-/// symlink/file and write a regular file holding the reconstructed bytes;
-/// without it (`--purge`), delete the target entirely.
-///
-/// The existing target is removed first so a symlink is replaced by a real
-/// file (writing through a symlink would overwrite the repository source).
-fn replace_target(target: &Utf8Path, content: Option<&[u8]>) -> Result<()> {
-    remove_if_present(target)?;
-    if let Some(bytes) = content {
-        if let Some(parent) = target.parent() {
-            fs_err::create_dir_all(parent.as_std_path())
-                .with_context(|| format!("failed to create parent directory of {target}"))?;
-        }
-        fs_err::write(target.as_std_path(), bytes)
-            .with_context(|| format!("failed to write the replacement file at {target}"))?;
-    }
-    Ok(())
-}
-
-/// Remove the file or symlink at `path` if it exists, treating an absent
-/// target as success. Uses `symlink_metadata` so a symlink is removed as the
-/// link (not followed to its destination).
-fn remove_if_present(path: &Utf8Path) -> Result<()> {
-    match fs_err::symlink_metadata(path.as_std_path()) {
-        Ok(_) => fs_err::remove_file(path.as_std_path())
-            .with_context(|| format!("failed to remove the existing target at {path}")),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => {
-            Err(anyhow::Error::new(error)
-                .context(format!("failed to inspect the target at {path}")))
-        }
     }
 }
 
@@ -461,46 +440,6 @@ mod tests {
             &mut reader,
             &mut reporter
         ));
-    }
-
-    #[test]
-    fn remove_if_present_tolerates_absent_target() {
-        let td = TempDir::new().expect("tempdir");
-        let dir = Utf8Path::from_path(td.path()).expect("utf8 tempdir path");
-        let absent = dir.join("not-here");
-        remove_if_present(&absent).expect("absent target is a no-op");
-    }
-
-    #[test]
-    fn remove_if_present_removes_a_regular_file() {
-        let td = TempDir::new().expect("tempdir");
-        let dir = Utf8Path::from_path(td.path()).expect("utf8 tempdir path");
-        let file = dir.join("present");
-        fs_err::write(file.as_std_path(), b"x").expect("seed file");
-        remove_if_present(&file).expect("remove present file");
-        assert!(!file.exists(), "the file must be gone");
-    }
-
-    #[test]
-    fn replace_target_writes_a_regular_file() {
-        let td = TempDir::new().expect("tempdir");
-        let dir = Utf8Path::from_path(td.path()).expect("utf8 tempdir path");
-        let target = dir.join("out");
-        replace_target(&target, Some(b"shell-config")).expect("replace");
-        assert_eq!(
-            fs_err::read(target.as_std_path()).expect("read replacement"),
-            b"shell-config"
-        );
-    }
-
-    #[test]
-    fn replace_target_purge_deletes() {
-        let td = TempDir::new().expect("tempdir");
-        let dir = Utf8Path::from_path(td.path()).expect("utf8 tempdir path");
-        let target = dir.join("out");
-        fs_err::write(target.as_std_path(), b"x").expect("seed file");
-        replace_target(&target, None).expect("purge");
-        assert!(!target.exists(), "purge must delete the target");
     }
 
     #[test]

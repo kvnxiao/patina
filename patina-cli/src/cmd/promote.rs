@@ -2,9 +2,15 @@
 //!
 //! `patina promote <target>` reconciles a copy-mode target that the user
 //! edited outside Patina. It copies the target's current bytes back into the
-//! repository source the target was materialized from, then re-applies. The
-//! fresh `<ts>.COMMIT` therefore records the new content's hash as the
-//! expected hash, and `patina status` classifies the target CLEAN again.
+//! repository source the target was materialized from, then writes a new
+//! `<ts>.COMMIT` that records the new content's hash as the expected hash.
+//! `patina status` therefore classifies the target CLEAN again.
+//!
+//! `promote` does not write another target or run a hook. Another target that
+//! drifted, or that a manifest declares but no apply has written, stays as it
+//! is until the next apply. The new commit is derived from the latest record,
+//! records every target as `Unchanged`, and does not list a reaped target, so
+//! rolling back the commit does not change a file.
 //!
 //! These target shapes are refused (exit 1):
 //!
@@ -32,9 +38,7 @@
 //! source is rewritten.
 //!
 //! Like `remove`, `promote` holds one exclusive advisory lock for the whole
-//! command and re-journals under
-//! [`LockPolicy::Held`](patina_core::LockPolicy) through the shared helpers in
-//! [`crate::cmd::managed`].
+//! command through the shared helpers in [`crate::cmd::managed`].
 //!
 //! Planning, journaling, and repo discovery live in `patina_core`; this
 //! module is presentation and control flow.
@@ -43,11 +47,11 @@ use crate::cli::PromoteArgs;
 use crate::cmd::add::resolve_home;
 use crate::cmd::apply::PromptReader;
 use crate::cmd::apply::Tty;
+use crate::cmd::managed::Recorded;
 use crate::cmd::managed::TEMPLATE_SUFFIX;
 use crate::cmd::managed::acquire_state_and_lock;
 use crate::cmd::managed::recover_held;
 use crate::cmd::managed::refused;
-use crate::cmd::managed::rejournal;
 use crate::exit_code::ExitCode;
 use crate::output::reporter::Reporter;
 use crate::output::style::paint;
@@ -61,8 +65,8 @@ use patina_core::RecoveredTarget;
 use patina_core::RecoveryReport;
 use patina_core::anchor_input;
 use patina_core::canonicalize_path;
+use patina_core::content_hash;
 use patina_core::manage_key;
-use patina_core::read_latest_commit;
 use patina_core::remote::cache::remotes_root;
 
 /// Run `patina promote`. Returns the process exit code.
@@ -82,7 +86,7 @@ use patina_core::remote::cache::remotes_root;
 /// the lock cannot be acquired; the committed apply record cannot be read; the
 /// journal directory cannot be read while refusing; recovering an interrupted
 /// apply fails; the target's bytes cannot be read; the repository source cannot
-/// be written; or the re-apply fails.
+/// be written; or the commit cannot be written.
 pub(crate) fn run(
     args: &PromoteArgs,
     tty: Tty,
@@ -93,20 +97,13 @@ pub(crate) fn run(
     let target = anchor_input(&args.target, &home).map_err(EngineError::from)?;
     let target_key = manage_key(&target);
 
-    let (state, guard) = acquire_state_and_lock()?;
+    let (state, _guard) = acquire_state_and_lock()?;
 
-    let journal_dir = state.join("journal");
-    let record = read_latest_commit(&journal_dir).map_err(EngineError::from)?;
-    let expected = record.as_ref().and_then(|record| {
-        record
-            .targets
-            .iter()
-            .find(|expected| manage_key(Utf8Path::new(expected.target())) == target_key)
-    });
-    let Some(expected) = expected else {
+    let Some(recorded) = Recorded::find(&state, &target_key)? else {
         let code = report_unmanaged(args, reporter);
         return refused(&state, reporter, code);
     };
+    let expected = &recorded.expected;
 
     if let Some(code) = refuse_unpromotable(args, expected, &state, reporter) {
         return refused(&state, reporter, code);
@@ -126,8 +123,7 @@ pub(crate) fn run(
     let bytes = fs_err::read(target_path.as_std_path()).context("failed to read the target")?;
     fs_err::write(source_path.as_std_path(), &bytes)
         .with_context(|| format!("failed to write the repository source {source_path}"))?;
-
-    rejournal(guard)?;
+    recorded.commit_with_hash(&state, content_hash(&bytes))?;
 
     report_success(args, &target_path, &source_path, reporter);
     Ok(ExitCode::Success.code())
@@ -315,7 +311,7 @@ fn report_success(
     } else {
         let path = paint(reporter.styles().path, args.target.as_str());
         reporter.line(&format!(
-            "Promoted {path}: copied its current bytes into {source} and re-applied."
+            "Promoted {path}: copied its current bytes into {source}."
         ));
     }
 }

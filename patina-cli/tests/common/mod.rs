@@ -118,6 +118,19 @@ impl Fixture {
     pub(crate) fn apply(&self, args: &[&str]) -> Output {
         self.apply_with_env(args, &[])
     }
+
+    pub(crate) fn run_ok(&self, args: &[&str]) -> Output {
+        let out = self.run(args, &[]);
+        assert_eq!(code(&out), 0, "{args:?} stderr: {}", stderr(&out));
+        out
+    }
+
+    pub(crate) fn deployment_snapshot(&self) -> std::collections::BTreeMap<Utf8PathBuf, Snapshot> {
+        let state = self.state_root();
+        let mut entries = snapshot(&[&self.home, &self.root]);
+        entries.retain(|path, _| !path.starts_with(&state) && !state.starts_with(path));
+        entries
+    }
 }
 
 /// Return the process exit code.
@@ -125,18 +138,40 @@ pub(crate) fn code(output: &Output) -> i32 {
     output.status.code().expect("process exited with a code")
 }
 
-/// Journal and backup files are keyed by a one-second timestamp, so two
-/// applies inside one second share their `<ts>` files.
-pub(crate) fn wait_for_next_second() {
-    let now = || {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |elapsed| elapsed.as_secs())
-    };
-    let start = now();
-    while now() == start {
-        std::thread::sleep(std::time::Duration::from_millis(20));
+pub(crate) fn stderr(output: &Output) -> String {
+    String::from_utf8_lossy(&output.stderr).into_owned()
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Snapshot {
+    Dir(std::time::SystemTime),
+    File(Vec<u8>, std::time::SystemTime),
+    Symlink(std::path::PathBuf),
+}
+
+/// Map every entry under `roots` to its kind, content, and modification time.
+pub(crate) fn snapshot(roots: &[&Utf8Path]) -> std::collections::BTreeMap<Utf8PathBuf, Snapshot> {
+    let mut entries = std::collections::BTreeMap::new();
+    let mut pending: Vec<Utf8PathBuf> = roots.iter().map(|root| root.to_path_buf()).collect();
+    while let Some(path) = pending.pop() {
+        let meta = fs_err::symlink_metadata(&path).expect("stat snapshot entry");
+        let entry = if meta.file_type().is_symlink() {
+            Snapshot::Symlink(fs_err::read_link(&path).expect("read snapshot link"))
+        } else if meta.is_dir() {
+            for child in fs_err::read_dir(&path).expect("read snapshot dir") {
+                let child = child.expect("read snapshot dir entry");
+                pending.push(Utf8PathBuf::from_path_buf(child.path()).expect("utf8 snapshot path"));
+            }
+            Snapshot::Dir(meta.modified().expect("read snapshot mtime"))
+        } else {
+            Snapshot::File(
+                fs_err::read(&path).expect("read snapshot file"),
+                meta.modified().expect("read snapshot mtime"),
+            )
+        };
+        entries.insert(path, entry);
     }
+    entries
 }
 
 #[cfg(unix)]

@@ -17,7 +17,7 @@
 //! ## What is recorded
 //!
 //! - `last_apply` metadata: the apply timestamp (`at`, an RFC 3339 string
-//!   derived from the journal `<ts>`), the `user`, and the `host`.
+//!   independent of the operation ID), the `user`, and the `host`.
 //! - One [`ExpectedTarget`] per materialized object, in apply order. Each
 //!   records the canonical absolute target path, the canonical source the
 //!   target was materialized from, and, for content targets, the content hash
@@ -28,6 +28,9 @@
 //!     bytes were copied or rendered from, plus a 32-byte `blake3` hash of the
 //!     bytes written. An external edit therefore changes the hash, and surfaces
 //!     as drift.
+//! - The canonical targets that the apply's reap removed, in removal order.
+//!   `patina rollback` restores each of them that has a backup in the apply's
+//!   backup cycle.
 //!
 //! The record shares the journal's
 //! [`FILE_MAJOR_VERSION`](super::FILE_MAJOR_VERSION). Per the pre-release
@@ -120,6 +123,20 @@ impl ExpectedTarget {
             Self::Symlink { disposition, .. } | Self::Content { disposition, .. } => *disposition,
         }
     }
+
+    pub(crate) fn with_disposition(mut self, disposition: Disposition) -> Self {
+        match &mut self {
+            Self::Symlink {
+                disposition: recorded,
+                ..
+            }
+            | Self::Content {
+                disposition: recorded,
+                ..
+            } => *recorded = disposition,
+        }
+        self
+    }
 }
 
 /// Compute the 32-byte `blake3` content hash of a byte slice. Used both
@@ -132,7 +149,7 @@ pub fn content_hash(bytes: &[u8]) -> [u8; 32] {
 /// The `last_apply` metadata block surfaced by `patina status --json`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LastApply {
-    /// RFC 3339 timestamp of the apply, derived from the journal `<ts>`.
+    /// RFC 3339 wall-clock time, independent of the operation ID.
     pub at: String,
     /// User who ran the apply (`patina.user`).
     pub user: String,
@@ -141,22 +158,40 @@ pub struct LastApply {
 }
 
 /// The full record persisted in a committed apply's `<ts>.COMMIT`
-/// sentinel: the `last_apply` metadata plus one [`ExpectedTarget`] per
-/// materialized object, in apply order.
+/// sentinel: the `last_apply` metadata, one [`ExpectedTarget`] per
+/// materialized object in apply order, and the targets the reap removed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ApplyRecord {
     /// Metadata about who applied, when, and where.
     pub last_apply: LastApply,
     /// Per-target expected state, in apply order.
     pub targets: Vec<ExpectedTarget>,
+    /// Canonical absolute paths of the entries the reap removed, in removal
+    /// order. A removed target is not also in [`targets`](Self::targets).
+    pub reaped: Vec<String>,
+    /// Preserve this target's recorded ownership and expectation across older
+    /// rollbacks.
+    pub edited_target: Option<String>,
+    pub(crate) edits: Vec<RecordEdit>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct RecordEdit {
+    pub(crate) id: String,
+    pub(crate) target: String,
+    pub(crate) expected: Option<ExpectedTarget>,
 }
 
 impl ApplyRecord {
-    /// Build a record from its metadata and per-target expectations.
-    pub fn new(last_apply: LastApply, targets: Vec<ExpectedTarget>) -> Self {
+    /// Build a record from its metadata, per-target expectations, and reaped
+    /// targets.
+    pub fn new(last_apply: LastApply, targets: Vec<ExpectedTarget>, reaped: Vec<String>) -> Self {
         Self {
             last_apply,
             targets,
+            reaped,
+            edited_target: None,
+            edits: Vec::new(),
         }
     }
 
@@ -254,6 +289,7 @@ mod tests {
                     disposition: Disposition::Unchanged,
                 },
             ],
+            vec!["/home/u/.b".to_owned(), "/home/u/.a".to_owned()],
         )
     }
 
@@ -291,6 +327,63 @@ mod tests {
                 Disposition::Update,
                 Disposition::Unchanged
             ]
+        );
+    }
+
+    #[test]
+    fn a_record_without_the_reaped_list_does_not_decode() {
+        #[derive(Serialize)]
+        struct TargetsOnly {
+            last_apply: LastApply,
+            targets: Vec<ExpectedTarget>,
+        }
+        let r = record();
+        let body = postcard::to_stdvec(&TargetsOnly {
+            last_apply: r.last_apply,
+            targets: r.targets,
+        })
+        .expect("encode the targets-only layout");
+        let bytes = version_envelope::encode_with_envelope(FILE_MAJOR_VERSION, &body);
+        assert!(matches!(
+            ApplyRecord::decode(&bytes),
+            Err(JournalError::Decode(_))
+        ));
+    }
+
+    #[test]
+    fn with_disposition_replaces_only_the_disposition() {
+        let symlink = ExpectedTarget::Symlink {
+            target: "/home/u/.zshrc".to_owned(),
+            link_target: "/repo/zsh/zshrc".to_owned(),
+            entry: 0,
+            disposition: Disposition::Create,
+        };
+        let content = ExpectedTarget::Content {
+            target: "/home/u/.gitconfig".to_owned(),
+            source: "/repo/git/gitconfig".to_owned(),
+            hash: content_hash(b"payload"),
+            entry: 1,
+            disposition: Disposition::Update,
+        };
+
+        assert_eq!(
+            symlink.with_disposition(Disposition::Unchanged),
+            ExpectedTarget::Symlink {
+                target: "/home/u/.zshrc".to_owned(),
+                link_target: "/repo/zsh/zshrc".to_owned(),
+                entry: 0,
+                disposition: Disposition::Unchanged,
+            }
+        );
+        assert_eq!(
+            content.with_disposition(Disposition::Unchanged),
+            ExpectedTarget::Content {
+                target: "/home/u/.gitconfig".to_owned(),
+                source: "/repo/git/gitconfig".to_owned(),
+                hash: content_hash(b"payload"),
+                entry: 1,
+                disposition: Disposition::Unchanged,
+            }
         );
     }
 

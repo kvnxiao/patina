@@ -56,7 +56,7 @@ reports drift on demand.
 ### Drift correctness
 
 - Before judging a target, the drift check compares the newest COMMIT
-  timestamp with the watch set's. If the COMMIT is newer, it rescans first.
+  operation ID with the watch set's. If the COMMIT is newer, it rescans first.
 - The drift check tries the shared lock without waiting. While another
   process holds the exclusive lock, the drift paths stay pending without
   waking the loop; the apply's journal events wake it later.

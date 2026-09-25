@@ -36,9 +36,8 @@ use patina_core::ForceDeploy;
 use patina_core::GateDecision;
 use patina_core::HookStdout;
 use patina_core::HostDevModeProbe;
-use patina_core::LockPolicy;
 use patina_core::PendingApply;
-use patina_core::Reap;
+use patina_core::RecoveredTarget;
 use patina_core::RecoveryReport;
 use patina_core::ResolvedPlan;
 use patina_core::chain_message;
@@ -173,8 +172,7 @@ pub(crate) fn run(
         return Ok(exit);
     }
 
-    let result = execute_plan(&resolved, &request, LockPolicy::Blocking)
-        .context("apply execution failed")?;
+    let result = execute_plan(&resolved, &request).context("apply execution failed")?;
     report_result(&result, reporter);
     Ok(exit_code_for(&result))
 }
@@ -204,12 +202,18 @@ pub(crate) fn report_recovery(report: &RecoveryReport, reporter: &mut impl Repor
     };
     reporter.warn(&message);
     for changed in report.changed_targets() {
-        for kept in changed.kept() {
-            reporter.warn(&format!(
-                "kept a copy of {} from before the recovery at {kept}",
-                changed.target()
-            ));
-        }
+        report_kept(changed, "recovery", reporter);
+    }
+}
+
+/// Warn once for each kept copy of the entry at a target, naming the copy and
+/// the `pass` that kept it.
+pub(crate) fn report_kept(changed: &RecoveredTarget, pass: &str, reporter: &mut impl Reporter) {
+    for kept in changed.kept() {
+        reporter.warn(&format!(
+            "kept a copy of {} from before the {pass} at {kept}",
+            changed.target()
+        ));
     }
 }
 
@@ -494,8 +498,7 @@ fn run_json(
         return Ok(exit);
     }
 
-    let result =
-        execute_plan(resolved, request, LockPolicy::Blocking).context("apply execution failed")?;
+    let result = execute_plan(resolved, request).context("apply execution failed")?;
     let result_field = match &result {
         ApplyResult::Applied { .. } => "applied",
         ApplyResult::RolledBack { .. } => "rolled_back",
@@ -663,7 +666,6 @@ fn build_request(args: &ApplyArgs) -> Result<ApplyRequest> {
         force_deploy,
         hook_stdout,
         cli_overrides,
-        reap: Reap::Orphans,
     })
 }
 
