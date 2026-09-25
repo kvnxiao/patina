@@ -56,6 +56,7 @@ pub use collisions::TargetClaim;
 pub use hooks::ForceDeploy;
 pub use hooks::HookError;
 pub use hooks::HookOutcome;
+pub use hooks::HookStdout;
 pub use hooks::ResolvedHook;
 pub use hooks::resolve_on_path;
 pub use hooks::resolve_shells;
@@ -236,8 +237,14 @@ pub enum ExecutorError {
 
     /// Rendering a `.tmpl` source through `MiniJinja` failed (an undefined
     /// variable under strict-undefined, or a syntax/evaluation error).
-    #[error(transparent)]
-    Template(#[from] TemplateError),
+    #[error("failed to render template {path}")]
+    Template {
+        /// The `.tmpl` source that failed to render.
+        path: Utf8PathBuf,
+        /// The underlying template-evaluation error.
+        #[source]
+        source: TemplateError,
+    },
 }
 
 /// Materialize a single resolved `[[file]]` entry at every target path.

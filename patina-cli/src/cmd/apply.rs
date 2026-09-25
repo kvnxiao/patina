@@ -34,6 +34,7 @@ use patina_core::DEV_MODE_REGISTRY_PATH;
 use patina_core::EngineError;
 use patina_core::ForceDeploy;
 use patina_core::GateDecision;
+use patina_core::HookStdout;
 use patina_core::HostDevModeProbe;
 use patina_core::LockPolicy;
 use patina_core::PendingApply;
@@ -352,11 +353,11 @@ fn run_remote_updates(tty: Tty, reader: &mut impl PromptReader, reporter: &mut i
     }
 }
 
-/// The confirmation decision for the human apply path.
+/// The confirmation decision for a human path that previews before it mutates.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Confirmation {
-    /// Mutate: `--yes`, an interactive `y`, or a full no-op. A full no-op does
-    /// not write either way.
+pub(crate) enum Confirmation {
+    /// Mutate: `--yes`, an interactive `y`, or, for `apply`, a full no-op. A
+    /// full no-op does not write either way.
     Proceed,
     /// Non-TTY without `--yes`: the diff was previewed; exit 0 with no writes.
     PreviewOnly,
@@ -379,11 +380,22 @@ fn confirm_apply(
         // A no-op does not write, so the answer could not change the outcome.
         return Confirmation::Proceed;
     }
+    confirm(consent, tty, "Apply?", reader, reporter)
+}
+
+/// Ask `question` only on an interactive terminal without `--yes`.
+pub(crate) fn confirm(
+    consent: Consent,
+    tty: Tty,
+    question: &str,
+    reader: &mut impl PromptReader,
+    reporter: &mut impl Reporter,
+) -> Confirmation {
     match (consent, tty) {
         (Consent::Preapproved, _) => Confirmation::Proceed,
         (Consent::Prompt, Tty::NonInteractive) => Confirmation::PreviewOnly,
         (Consent::Prompt, Tty::Interactive) => {
-            reporter.confirm("Apply?");
+            reporter.confirm(question);
             let answer = reader.read_line().unwrap_or_default();
             if matches!(answer.trim(), "y" | "Y") {
                 Confirmation::Proceed
@@ -641,9 +653,15 @@ fn build_request(args: &ApplyArgs) -> Result<ApplyRequest> {
     } else {
         ForceDeploy::No
     };
+    let hook_stdout = if args.json {
+        HookStdout::Stderr
+    } else {
+        HookStdout::Inherit
+    };
     let cli_overrides = parse_overrides(&args.var)?;
     Ok(ApplyRequest {
         force_deploy,
+        hook_stdout,
         cli_overrides,
         reap: Reap::Orphans,
     })

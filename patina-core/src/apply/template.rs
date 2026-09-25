@@ -48,7 +48,12 @@ pub(super) fn render(
         source: err,
     })?;
     // Render exactly once; reuse the bytes for every target.
-    let rendered = engine.render(&body, resolver)?;
+    let rendered = engine
+        .render(&body, resolver)
+        .map_err(|err| ExecutorError::Template {
+            path: source.to_path_buf(),
+            source: err,
+        })?;
 
     let mut records = Vec::with_capacity(targets.len());
     for target in targets {
@@ -246,7 +251,7 @@ mod tests {
     }
 
     #[test]
-    fn undefined_variable_surfaces_template_error() {
+    fn undefined_variable_error_names_the_template_source() {
         let (_td, dir) = utf8_tempdir();
         let source = dir.join("gitconfig.tmpl");
         fs_err::write(&source, b"email = {{ patina.profile_email }}").expect("write template");
@@ -258,7 +263,15 @@ mod tests {
             &Resolver::new(Builtins::for_tests()),
         )
         .expect_err("undefined variable must fail render");
-        assert!(matches!(err, ExecutorError::Template(_)));
+        assert!(
+            matches!(
+                crate::test_util::source_as::<crate::template::TemplateError>(&err),
+                crate::template::TemplateError::UndefinedVariable { .. }
+            ),
+            "{err:?}"
+        );
+        let rendered = crate::error::chain_message(&err);
+        assert!(rendered.contains(source.as_str()), "{rendered}");
     }
 
     #[test]

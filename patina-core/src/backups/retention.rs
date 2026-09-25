@@ -4,22 +4,23 @@
 use super::BackupError;
 use camino::Utf8Path;
 
-/// Remove every backup subdirectory under `backups_dir` except the newest
+/// Remove every backup cycle directory under `backups_dir` except the newest
 /// `keep`, returning the names of the directories that were removed in
 /// chronological order.
 ///
-/// Each subdirectory is named `<ts>` or, as under `recovered/`, `<ts>.<n>`:
+/// Each cycle is named `<ts>` or, as under `recovered/`, `<ts>.<n>`:
 /// `<ts>` is an apply timestamp whose text sorts lexically into chronological
 /// order, and `<n>` is a recovery pass number. Names sort by the timestamp and
 /// then by `<n>` as a number, so "newest `keep`" is the tail of that order.
-/// Only directories are considered; stray files directly under `backups_dir`
-/// are ignored.
+/// Only a directory whose name starts with a digit, as a timestamp does, is a
+/// cycle. Stray files and other directories directly under `backups_dir`, such
+/// as a `.rollback-stage-*` directory, are neither counted nor removed.
 ///
 /// Call this *after* an apply's `COMMIT` sentinel is durable. A failed
 /// apply, one that never committed, simply does not call this, so its
 /// historical backups are left intact.
 ///
-/// A missing `backups_dir`, or one holding `keep` or fewer subdirectories,
+/// A missing `backups_dir`, or one that contains `keep` or fewer cycles,
 /// removes nothing and returns an empty list.
 ///
 /// # Errors
@@ -53,10 +54,11 @@ pub fn gc_retain(
     for entry in fs_err::read_dir(backups_dir)? {
         let entry = entry?;
         if !entry.file_type()?.is_dir() {
-            // Only timestamped cycle directories are retention candidates.
             continue;
         }
-        if let Ok(name) = entry.file_name().into_string() {
+        if let Ok(name) = entry.file_name().into_string()
+            && name.starts_with(|c: char| c.is_ascii_digit())
+        {
             names.push(name);
         }
     }
@@ -181,6 +183,20 @@ mod tests {
             f.backups.join("README").exists(),
             "a stray file must survive retention untouched"
         );
+    }
+
+    #[test]
+    fn a_rollback_stage_directory_is_not_a_retention_candidate() {
+        let f = fixture();
+        let names = seed(&f.backups, 11);
+        let stage = f.backups.join(".rollback-stage-20260528T120000Z-3");
+        fs_err::create_dir_all(&stage).expect("mkdir rollback stage");
+
+        let removed = gc_retain(&f.backups, 10).expect("retain");
+
+        let (oldest, _) = names.split_at(1);
+        assert_eq!(removed, oldest);
+        assert!(stage.is_dir(), "retention must leave the stage directory");
     }
 
     #[test]

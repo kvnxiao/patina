@@ -48,8 +48,9 @@ pub enum RepoDiscoveryError {
     },
 
     /// The `PATINA_REPO` value pointed at a path that did not exist, was
-    /// not a directory, or whose manifest could not be loaded.
-    #[error("PATINA_REPO points at {path} but no valid root patina.toml was found there")]
+    /// not a directory, had a manifest that could not be loaded or was not a
+    /// root, or could not be canonicalized.
+    #[error("cannot use PATINA_REPO as the repository root")]
     EnvVarInvalid {
         /// The path read from `PATINA_REPO`.
         path: Utf8PathBuf,

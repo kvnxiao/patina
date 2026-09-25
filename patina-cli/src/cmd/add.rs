@@ -599,8 +599,7 @@ fn detect_source_kind(target: &Utf8Path) -> Result<SourceKind> {
 /// document, so a fresh module's manifest is created on first `add`.
 fn read_manifest_text(manifest_path: &Utf8Path) -> Result<String> {
     if manifest_path.exists() {
-        fs_err::read_to_string(manifest_path.as_std_path())
-            .with_context(|| format!("failed to read {manifest_path}"))
+        fs_err::read_to_string(manifest_path.as_std_path()).context("failed to read the manifest")
     } else {
         Ok(String::new())
     }
@@ -957,5 +956,18 @@ mod tests {
             doc.get("mode").and_then(serde_json::Value::as_str),
             Some("symlink")
         );
+    }
+
+    #[test]
+    fn an_unreadable_manifest_names_its_path_once() {
+        let td = tempfile::TempDir::new().expect("tempdir");
+        let dir = Utf8Path::from_path(td.path()).expect("utf8 tempdir path");
+        let manifest = dir.join(MANIFEST_FILENAME);
+        fs_err::create_dir(manifest.as_std_path()).expect("occupy the manifest path");
+
+        let err = read_manifest_text(&manifest).expect_err("a directory is not a manifest");
+
+        let rendered = format!("{err:#}");
+        assert_eq!(rendered.matches(manifest.as_str()).count(), 1, "{rendered}");
     }
 }
