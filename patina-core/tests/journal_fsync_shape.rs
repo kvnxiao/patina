@@ -42,6 +42,14 @@ impl RecordingSyncer {
             .filter(|(kind, path)| *kind == SyncKind::File && path.as_str().ends_with(suffix))
             .count()
     }
+
+    fn file_syncs_containing(&self, fragment: &str) -> usize {
+        self.calls
+            .borrow()
+            .iter()
+            .filter(|(kind, path)| *kind == SyncKind::File && path.as_str().contains(fragment))
+            .count()
+    }
 }
 
 impl Syncer for RecordingSyncer {
@@ -111,9 +119,9 @@ fn three_op_apply_fsyncs_plan_dir_commit_but_never_progress() {
         "exactly one fsync on the plan file"
     );
     assert_eq!(
-        syncer.file_syncs_with_suffix(COMMIT_SUFFIX),
+        syncer.file_syncs_containing(COMMIT_SUFFIX),
         1,
-        "exactly one fsync on the COMMIT sentinel"
+        "exactly one fsync on the COMMIT sentinel's staged body"
     );
     assert_eq!(
         syncer.file_syncs_with_suffix(PROGRESS_SUFFIX),
@@ -266,4 +274,65 @@ fn same_plan_encodes_to_identical_bytes() {
     let a = three_op_plan().encode().expect("encode a");
     let b = three_op_plan().encode().expect("encode b");
     assert_eq!(a, b, "identical plans encode to identical bytes");
+}
+
+/// Records, at each file sync, whether the final COMMIT sentinel already
+/// exists and how many bytes the synced file holds.
+struct CommitObserver {
+    commit: Utf8PathBuf,
+    seen: RefCell<Vec<(bool, u64)>>,
+}
+
+impl Syncer for CommitObserver {
+    fn sync_file(&self, path: &Utf8Path) -> Result<(), std::io::Error> {
+        if path.as_str().contains(COMMIT_SUFFIX) {
+            let len = fs_err::metadata(path)?.len();
+            self.seen.borrow_mut().push((self.commit.exists(), len));
+        }
+        Ok(())
+    }
+
+    fn sync_dir(&self, _path: &Utf8Path) -> Result<(), std::io::Error> {
+        Ok(())
+    }
+}
+
+#[test]
+fn the_commit_sentinel_appears_only_after_its_whole_body_is_synced() {
+    let temp = TempDir::new().expect("create tempdir");
+    let dir = journal_dir(&temp);
+    let ts = "20260528T160000Z";
+    let observer = CommitObserver {
+        commit: dir.join(format!("{ts}{COMMIT_SUFFIX}")),
+        seen: RefCell::new(Vec::new()),
+    };
+    let record = sample_record();
+    let body = record.encode().expect("encode the record");
+    let journal =
+        Journal::flush_plan_and_fsync(&dir, ts, &three_op_plan(), &observer).expect("flush plan");
+
+    journal.commit(&record, &observer).expect("commit");
+
+    let body_len = u64::try_from(body.len()).expect("record length fits in u64");
+    assert_eq!(
+        observer.seen.into_inner(),
+        vec![(false, body_len)],
+        "the COMMIT body is synced once, whole, before the sentinel exists"
+    );
+    assert_eq!(
+        fs_err::read(dir.join(format!("{ts}{COMMIT_SUFFIX}"))).expect("read the sentinel"),
+        body
+    );
+    let staged: Vec<String> = fs_err::read_dir(&dir)
+        .expect("read the journal dir")
+        .map(|entry| {
+            entry
+                .expect("read a journal entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .filter(|name| name.contains(".partial."))
+        .collect();
+    assert!(staged.is_empty(), "no staged sentinel remains: {staged:?}");
 }

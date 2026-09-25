@@ -104,7 +104,9 @@ flowchart LR
   upfront plan fsync plus the filesystem-probing recovery makes per-op
   durability unnecessary.
 - The **terminal sentinel** records whether the cycle committed or
-  rolled back.
+  rolled back. The commit sentinel is written and fsynced in a
+  `.partial.<pid>` sibling and renamed into place, so a present sentinel
+  always contains a whole record.
 
 `patina debug journal <path>` decodes a journal back into
 human-readable form for post-mortem inspection.
@@ -166,7 +168,7 @@ sequenceDiagram
     U->>P: patina apply
     P->>P: recover an interrupted apply (runs that can write)
     P->>P: resolve config and build plan
-    P->>D: pass operations and managed targets
+    P->>D: pass operations and the reap set
     D->>U: display diff
     U-->>D: confirm (TTY) / plan-only (non-TTY)
     D->>M: confirmed plan
@@ -189,26 +191,26 @@ sequenceDiagram
    the reap is part of the durable plan.
 2. **Diff.** Compare the planned end-state against the live filesystem
    and present the diff, including a `remove` block for each planned removal.
-   An interactive TTY prompts for confirmation; a
-   non-interactive shell falls through to plan-only and modifies no repository
-   file or target. Planning may already have filled the remote cache.
+   An interactive TTY prompts for confirmation; a non-interactive shell falls
+   through to plan-only and modifies no repository file or target. Planning
+   may already have filled the remote cache.
    Re-applying against unchanged source is a no-op with byte-identical
    stdout.
-3. **Mutate.** After acquiring the advisory lock, `execute` refuses with
-   `InterruptedApplyPending` (exit 1), before writing anything, when the journal
-   holds an orphan plan. It then checks for work. A plan with only `Unchanged`
-   targets, no `Remove`, and an earlier commit returns without running hooks or
-   writing files. Any other plan resolves hook shells and runs `pre_apply`
-   hooks. If those hooks succeed, it flushes the journal and then backs up
-   every target it will overwrite or remove in one pass, outermost first,
-   skipping a target inside a target the pass backed up. Only then does it
-   materialize its targets, run `post_apply` hooks, and remove each `Remove`
-   target. Every backup is therefore a copy of the pre-apply state, and no
-   backup is written inside another. A successful run writes the terminal
-   sentinel and prunes old backups; a required `post_apply` hook failure rolls
-   back the target operations before any removal, deletes the run's backup
-   cycle unless a committed apply shares its timestamp, and then deletes the
-   plan. The CLI maps the result to the documented exit code.
+3. **Mutate.** After acquiring the advisory lock, `execute` checks the journal
+   and, when it holds an orphan plan, refuses with `InterruptedApplyPending`
+   (exit 1) before writing anything. It then checks for work. A plan with only
+   `Unchanged` targets, no `Remove`, and an earlier commit returns without
+   running hooks or writing files. Any other plan resolves hook shells and runs
+   `pre_apply` hooks. If those hooks succeed, `execute` flushes the journal and
+   then backs up every target it will overwrite or remove in one pass,
+   outermost first, skipping a target inside a target the pass backed up, so
+   no backup is written inside another. Only then does `execute` materialize
+   its targets and run `post_apply` hooks, so every backup is a copy of the
+   pre-apply state. When those hooks succeed, it removes each `Remove`
+   target, writes the terminal sentinel, and prunes old backups. A required
+   `post_apply` hook failure instead rolls back the target operations, deletes
+   the run's backup cycle unless a committed apply shares its timestamp, and
+   then deletes the plan. The CLI maps the result to the documented exit code.
 
 ### Target kind and mode edits
 
@@ -250,9 +252,9 @@ the tree's `ignore` excludes that subtree. Ancestors above the declared
 root stay out of scope: a symlinked `~/.config` is the user's
 filesystem layout, and single-target writes resolve through it. The
 gate covers planning and leaf writes only. A tree root replaced by a link
-does not redirect the revert paths: planning reaps no recorded target under
-a current tree root that is not a real directory, the backup pass backs up
-nothing beneath a target it backed up, and recovery reverts an operation
+does not redirect the revert paths: planning does not reap a recorded target
+under a current tree root that is not a real directory, the backup pass skips
+every target beneath a target it backed up, and recovery reverts an operation
 beneath a stashed link as that link. Otherwise the orphan reap,
 `patina rollback`, and crash recovery revert recorded target paths
 without the gate, so a link planted after an apply can still redirect those
@@ -330,54 +332,54 @@ intermediate state. Full power-loss durability (atomic
 temp+rename target writes plus `fsync` of backups and parent
 directories) is a post-1.0 hardening item.
 
-`patina apply` with `--yes` or at an interactive prompt and `patina rollback`
-recover under the exclusive lock before they read the last commit or plan.
-`patina remove` and `patina promote` recover under the lock they hold after the
-user consents and before their first write; when they refuse or are declined
-before that point, they warn about a pending apply as a preview does and write
-nothing. `patina promote` refuses a target the recovery changed after the
-recovery has written. Recovery
-reads each journal envelope and converges deterministically:
+`patina apply` with `--yes` or at an interactive prompt, and `patina rollback`
+with `--yes` or once confirmed, recover under the exclusive lock before they
+read the last commit or plan. `patina remove` and `patina promote` recover
+under the lock they hold after the user consents and before their first write;
+when they refuse or are declined before that point, they warn about a pending
+apply as a preview does and write nothing. After its recovery has written,
+`patina promote` refuses a target that the recovery changed. Recovery reads
+each journal envelope and converges deterministically:
 
 - A plan with no terminal sentinel is an orphan: an apply killed after
   the journal became durable but before it committed. Recovery reverses
   it to the pre-apply state, deciding per operation from the
   recorded disposition and whether a backup exists. An `Unchanged`
   target is left alone. A target whose live entry matches its backup (same
-  kind, bytes, link target, or tree) was never written and is left alone
-  without a report. Any other target with a backup is restored from it.
-  Without a backup, a `Create` target is deleted, and an `Update` or
-  `Remove` target is left in place: the backup pass precedes every write,
-  so a target with no entry at its mirror path was never written, or lies
-  inside a backed-up directory whose restore covers it. An operation whose
-  mirror path passes through a link stashed in the cycle reverts that ancestor
-  link instead, so recovery never reads or writes through the stashed link or
-  the live one. The decision reads the
-  plan and the backup directory rather than the progress cursor. Before it restores over or
-  deletes a live entry, recovery copies that entry to
+  kind, bytes, link target, or tree) was never written and is left alone; a
+  first recovery pass does not report it. Any other target with a backup is
+  restored from it. Without a backup, a `Create` target is deleted, and an
+  `Update` or `Remove` target is left in place: the backup pass precedes every
+  write, so a target with no entry at its mirror path was never written, or
+  lies inside a backed-up directory whose restore covers it. An operation
+  whose mirror path passes through a link stashed in the cycle reverts that
+  ancestor link instead, so recovery never reads or writes through the stashed
+  link or the live one. The decision reads the plan and the backup directory
+  rather than the progress cursor. Before it restores over or deletes a live
+  entry, recovery copies that entry to
   `<state>/recovered/<ts>.<n>/<op index>/<file name>` and reports the copy.
-  The per-operation index keeps copies independent of each other. A retry
-  of a recovery that failed partway reports the copy an earlier pass made for
-  the same operation when the live entry still matches that copy or the
-  backup, and otherwise copies into `<n>` one past the highest existing number,
-  so no pass overwrites an earlier copy, and reports the earlier copy before
-  the new one.
-  The command then works from the recovered filesystem.
+  The per-operation index separates the copies of different operations. A
+  retry of a recovery that failed partway reports the copy an earlier pass
+  made for the same operation when the live entry still matches that copy or
+  the backup. Otherwise the retry reports any earlier copy and then a new one,
+  which it copies into `<n>` one past the highest existing number, so no pass
+  overwrites an earlier copy. The command then works from the recovered
+  filesystem.
 - A backup is cloned into a `<mirror path>.partial.<pid>` sibling and renamed
   onto its mirror path, a directory as one unit, so an entry at the mirror
   path is always a complete backup. Recovery and rollback treat a staged
   sibling as no backup and remove it. Retention prunes whole backup cycles,
-  and a staged sibling lives inside one.
+  including any staged sibling inside a pruned cycle.
 - A preview (`patina apply` in a non-interactive shell without `--yes`, or
   with `--json` and no `--yes`) and `patina status` do not recover. A plan
   without a sentinel is an orphan only when read under the lock, so each
-  re-reads the journal under the shared lock. With the lock, they warn on
+  re-reads the journal under the shared lock. Under the lock, they warn on
   stderr that an interrupted apply is pending and describe the files as it
   left them; when the shared lock times out, they warn that an apply is running
-  or was interrupted. A preview never reaches `execute` while an apply is
-  pending. `execute` refuses with `InterruptedApplyPending` when it finds an
-  orphan plan under its lock; in the CLI that happens only when another apply
-  was killed between this run's recovery and its execution.
+  or was interrupted. A preview does not call `execute`. `execute` refuses with
+  `InterruptedApplyPending` when it finds an orphan plan under its lock; in the
+  CLI that happens only when another apply was killed between this run's
+  recovery and its execution.
 - Backups taken before an overwrite are retained for the last ten apply
   cycles; older cycles are pruned at the end of each successful apply,
   right after its COMMIT. The same step keeps the ten newest `recovered/`

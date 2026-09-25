@@ -141,7 +141,7 @@ pub fn run(on_recovery: impl FnOnce(&RecoveryReport)) -> Result<(), EngineError>
 
     // The shared "last apply" selection (also used by `patina status`) skips a
     // torn/unreadable newest `<ts>.COMMIT` and falls back to the previous
-    // decodable commit, so a `kill -9`-torn sentinel does not strand rollback.
+    // decodable commit, so a damaged sentinel does not block rollback.
     // A newer-format sentinel still propagates (surfaced as
     // [`RollbackError::Journal`]) rather than being silently skipped.
     let Some((timestamp, record)) =

@@ -22,13 +22,14 @@
 //!    `.partial.<pid>` sibling and renames it into place. Recovery removes a
 //!    staged sibling left by a killed apply.
 //! 3. **Reverses backward**, never forward. The disposition the plan recorded
-//!    for the operation decides the outcome, evaluated in this order:
+//!    for the operation, its backup, and the live entry decide the outcome,
+//!    evaluated in this order:
 //!    - `Unchanged`: the apply neither backed up nor wrote this target, so the
 //!      live entry is already the pre-apply entry. Leave it in place and do
 //!      **not** consult the backup directory.
 //!    - a backup exists and the live entry matches it (same kind, bytes, link
 //!      target, or tree): the apply never wrote the target. Leave it in place
-//!      and do not report it.
+//!      and report it only through a copy an earlier pass kept.
 //!    - a backup exists: the apply overwrote, or was about to overwrite, a
 //!      pre-existing entry. Restore the original from the backup.
 //!    - no backup and `Create`: the target was absent before the apply. Remove
@@ -38,15 +39,15 @@
 //!    - no backup and `Remove`: the removal never started. Leave the target in
 //!      place.
 //!
-//!    The last two rest on the backup pass: the apply backs up every target it
-//!    will overwrite or remove before its first write, outermost first, and
-//!    skips a target inside a target the pass backed up. A target with no
-//!    entry at its mirror path was therefore never written, or lies inside a
-//!    backed-up directory whose restore covers it and did not exist before the
-//!    apply. A covered target that did exist is found at its mirror path
-//!    inside the directory's backup. A target whose mirror path passes through
-//!    a symbolic link stashed in the cycle is reversed as the ancestor that
-//!    link was backed up from.
+//!    The `Update` and `Remove` cases without a backup depend on the backup
+//!    pass: the apply backs up every target it will overwrite or remove before
+//!    its first write, outermost first, and skips a target inside a target the
+//!    pass backed up. A target with no entry at its mirror path was therefore
+//!    never written, or lies inside a backed-up directory whose restore covers
+//!    it and did not exist before the apply. A covered target that did exist
+//!    is found at its mirror path inside the directory's backup. A target
+//!    whose mirror path passes through a symbolic link stashed in the cycle is
+//!    reversed as the ancestor that link was backed up from.
 //!
 //!    Each outcome leaves the target in its pre-apply state. Before recovery
 //!    overwrites or removes an entry at a target, it copies that entry to
@@ -54,11 +55,12 @@
 //!    after the crash survive. A retry of a recovery that failed partway finds
 //!    the copy an earlier pass made for the same `<ts>` and op index, and
 //!    reports that copy instead of copying again when the live entry still
-//!    matches it or the backup. Otherwise it copies into `<n>` one past the
-//!    highest existing number, so no pass overwrites an earlier copy, and
-//!    reports the earlier copy before the new one.
-//! 4. Deletes the orphan `<ts>.plan` and `<ts>.progress` files once every
-//!    operation has been reversed.
+//!    matches it or the backup. Otherwise the retry reports any earlier copy
+//!    and then a new one, which it copies into `<n>` one past the highest
+//!    existing number, so no pass overwrites an earlier copy.
+//! 4. Removes a staged `<ts>.COMMIT.partial.<pid>` sentinel the apply was
+//!    killed before renaming, then deletes the orphan `<ts>.plan` and
+//!    `<ts>.progress` files once every operation has been reversed.
 //!
 //! Recovery is **idempotent**: the second run finds no orphan because the
 //! first run removed the plan file. The second run leaves the filesystem
@@ -247,6 +249,8 @@ fn reverse_orphan(
         }
     }
 
+    crate::fsx::remove_partial_siblings(&journal_dir.join(format!("{timestamp}{COMMIT_SUFFIX}")))
+        .map_err(JournalError::Filesystem)?;
     // The plan and progress files are removed only after every reversal
     // succeeds. A crash mid-recovery leaves the orphan in place, and the
     // next startup retries it. This retry is still idempotent: restoring
@@ -265,8 +269,8 @@ fn reverse_orphan(
 /// The backup pass precedes every write, so a missing backup separates a
 /// `Create` target, which recovery removes, from an `Update` or
 /// [`Remove`](PlannedOperation::Remove) target the apply never reached, which
-/// recovery leaves in place. A backup the apply was killed while
-/// staging is not at the mirror path, so it counts as missing; recovery removes
+/// recovery leaves in place. A backup the apply was still staging when it was
+/// killed is not at the mirror path, so it counts as missing; recovery removes
 /// the staged `.partial.<pid>` sibling. The pass also backs up targets the
 /// apply never reached, so a live entry that matches its backup is left in
 /// place and reported only through a copy an earlier pass kept.
@@ -276,13 +280,13 @@ fn reverse_orphan(
 /// link as the target instead, so it never reads or writes through either
 /// link.
 ///
-/// Before either restores over or removes a live entry, the entry is copied
+/// Before recovery restores over or removes a live entry, it copies the entry
 /// aside through `keeper`. Copy, restore, and delete go through the
 /// kind-preserving [`crate::fsx`] helpers. The original is therefore recreated
 /// as the same kind it was: a symlink as a symlink, a directory as a
-/// directory. Backup presence is probed with [`crate::fsx::entry_present`], so
-/// a backed-up symlink whose destination is gone is still seen. `exists` would
-/// follow the dead link and miss the backup.
+/// directory. Backup presence is probed with [`crate::fsx::entry_present`],
+/// which does not follow links, so a backed-up symlink whose destination is
+/// gone is still seen.
 fn reverse_operation(
     backups_dir: &Utf8Path,
     keeper: &mut Keeper<'_>,
@@ -381,7 +385,6 @@ impl<'a> Keeper<'a> {
     }
 }
 
-/// The `<n>` of every `<timestamp>.<n>` entry under `root`, ascending.
 fn copy_numbers(root: &Utf8Path, timestamp: &str) -> std::io::Result<Vec<u64>> {
     if !crate::fsx::entry_present(root) {
         return Ok(Vec::new());
@@ -463,6 +466,20 @@ mod tests {
         );
         // The committed plan file is untouched by recovery.
         assert!(d.journal.join(format!("{ts}{PLAN_SUFFIX}")).exists());
+    }
+
+    #[test]
+    fn a_staged_commit_sentinel_leaves_the_plan_an_orphan_and_is_removed() {
+        let d = dirs();
+        let ts = "20260528T100000Z";
+        write_plan(&d.journal, ts, &Plan::new(vec![]));
+        let staged = d.journal.join(format!("{ts}{COMMIT_SUFFIX}.partial.4242"));
+        fs_err::write(&staged, []).expect("stage a commit sentinel");
+
+        let report = recover_orphans(&d.root).expect("recovery");
+
+        assert_eq!(report.recovered_timestamps(), &[ts.to_owned()]);
+        assert!(!crate::fsx::entry_present(&staged));
     }
 
     #[test]
