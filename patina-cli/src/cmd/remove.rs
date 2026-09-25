@@ -174,15 +174,14 @@ fn reconstruct_content(expected: &ExpectedTarget, vars: &Resolver) -> Result<Vec
     let source = Utf8PathBuf::from(expected.source());
     if source.as_str().ends_with(TEMPLATE_SUFFIX) {
         let body = fs_err::read_to_string(source.as_std_path())
-            .with_context(|| format!("failed to read template source {source}"))?;
+            .context("failed to read template source")?;
         let rendered = TemplateEngine::new()
             .render(&body, vars)
             .map_err(EngineError::from)
             .with_context(|| format!("failed to re-render template source {source}"))?;
         Ok(rendered.into_bytes())
     } else {
-        fs_err::read(source.as_std_path())
-            .with_context(|| format!("failed to read source {source}"))
+        fs_err::read(source.as_std_path()).context("failed to read source")
     }
 }
 
@@ -603,5 +602,28 @@ mode = \"copy\"
             doc.get("purged").and_then(serde_json::Value::as_bool),
             Some(false)
         );
+    }
+
+    #[test]
+    fn reconstructing_from_an_unreadable_source_names_its_path_once() {
+        let td = TempDir::new().expect("tempdir");
+        let dir = Utf8Path::from_path(td.path()).expect("utf8 tempdir path");
+        let resolver = Resolver::new(patina_core::Builtins::current());
+        for name in ["missing", "missing.tmpl"] {
+            let source = dir.join(name);
+            let expected = ExpectedTarget::Content {
+                target: "/home/user/.rc".to_owned(),
+                source: source.to_string(),
+                hash: [0; 32],
+                entry: 0,
+                disposition: patina_core::Disposition::Create,
+            };
+
+            let err = reconstruct_content(&expected, &resolver)
+                .expect_err("a missing source cannot be read");
+
+            let rendered = format!("{err:#}");
+            assert_eq!(rendered.matches(source.as_str()).count(), 1, "{rendered}");
+        }
     }
 }
