@@ -137,5 +137,4 @@ When a test you wrote is flaky, investigate the flake. Do not retry it until gre
 
 ### Commit hygiene
 
-- AI-authored commits identify themselves via the `Co-Authored-By` trailer in the commit message footer, naming the model and a contact address.
 - Prefer narrow, well-scoped commits over sprawling ones. One logical change per commit makes review, revert, and bisect tractable.
