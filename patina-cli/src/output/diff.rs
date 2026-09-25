@@ -21,10 +21,10 @@
 //! Removals render as well. An apply reaps every target a prior apply
 //! materialized that the current plan no longer manages: an entry dropped from
 //! a `patina.toml`, a `when` flipped false, a leaf a new `ignore` pattern now
-//! excludes. Those orphan targets are not [`ResolvedPlan`] operations, so the
-//! CLI passes them to [`render`] separately. Each renders as a `remove
-//! <target>` block whose deleted body is the link it pointed at or its current
-//! content, so every reap appears in the consent diff.
+//! excludes. [`render`] reads those targets from the plan's
+//! [`reap`](ResolvedPlan::reap) set. Each renders as a `remove <target>` block
+//! whose deleted body is the link it pointed at or its current content, so
+//! every reap appears in the consent diff.
 
 use crate::output::style::Styles;
 use anstyle::Style;
@@ -42,11 +42,7 @@ use std::fmt::Write as _;
 
 /// Render the full plan diff to a deterministic string.
 ///
-/// `orphans` is the reap set the engine would delete this run
-/// ([`patina_core::plan_orphans`]): targets a prior apply materialized that
-/// the current plan no longer manages, each paired with the reason it is
-/// reaped. They are not
-/// [`ResolvedPlan`] operations, so the caller passes them in; each renders as a
+/// Each target in the plan's [`reap`](ResolvedPlan::reap) set renders as a
 /// `remove` block after the create/update blocks and before the unchanged
 /// summary.
 ///
@@ -55,9 +51,9 @@ use std::fmt::Write as _;
 /// Returns an error when a template source cannot be read, or cannot be
 /// rendered for preview (the same strict-undefined failure the apply would
 /// hit).
-pub(crate) fn render(resolved: &ResolvedPlan, orphans: &[Orphan]) -> anyhow::Result<String> {
+pub(crate) fn render(resolved: &ResolvedPlan) -> anyhow::Result<String> {
     let mut out = String::new();
-    if resolved.operations.is_empty() && orphans.is_empty() {
+    if resolved.operations.is_empty() && resolved.reap.is_empty() {
         out.push_str("No changes: the plan is empty.\n");
         return Ok(out);
     }
@@ -131,10 +127,9 @@ pub(crate) fn render(resolved: &ResolvedPlan, orphans: &[Orphan]) -> anyhow::Res
         }
     }
 
-    // Every orphan the engine would back up and remove renders as a `remove`
-    // block, so confirming never silently deletes one. `plan_orphans` sorted
-    // the orphans, so the block order is a stable function of the reap set.
-    for orphan in orphans {
+    // The plan sorted the set, so the block order is a stable function of
+    // the reap set.
+    for orphan in &resolved.reap {
         render_removal(&mut out, orphan, &styles);
     }
 

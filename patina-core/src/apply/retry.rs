@@ -1,4 +1,4 @@
-//! Windows `ERROR_SHARING_VIOLATION` retry-with-backoff wrapper.
+//! Windows retry-with-backoff wrappers for transient handle contention.
 //!
 //! On Windows, antivirus scans, cloud-sync uploads, and indexers
 //! transiently hold a file open with no sharing, so a write that would
@@ -10,9 +10,14 @@
 //! unchanged after the sixth failed retry so the normal apply
 //! failure/rollback path handles it.
 //!
+//! [`with_staged_rename_retry`] renames an entry Patina just staged onto its
+//! final path. A scanner holding the fresh entry open can fail that rename
+//! with `ERROR_ACCESS_DENIED` (5) instead of a sharing violation, so the
+//! wrapper retries both codes on the same schedule.
+//!
 //! On macOS and Linux there is no `FILE_SHARE_NONE` equivalent for ordinary
-//! writes, so the wrapper is a pure pass-through: it runs the operation
-//! exactly once and never emits a retry event.
+//! writes, so both wrappers are a pure pass-through: they run the operation
+//! exactly once and never emit a retry event.
 //!
 //! Each retry emits a `fs_write_retry` debug-level `tracing` event with
 //! `attempt`, `delay_ms`, and `error` fields, so the retry behaviour is
@@ -24,6 +29,11 @@
 /// `fs2`'s contended-lock error by its raw OS code.
 #[cfg(windows)]
 const ERROR_SHARING_VIOLATION: i32 = 32;
+
+/// `ERROR_ACCESS_DENIED`, the Win32 error code (5) a rename hits while another
+/// process holds the staged entry open.
+#[cfg(windows)]
+const ERROR_ACCESS_DENIED: i32 = 5;
 
 /// Fixed exponential backoff between retries, in milliseconds. Six
 /// entries means six retries after the initial attempt; the cumulative wait
@@ -52,40 +62,85 @@ const BACKOFF_SCHEDULE_MS: &[u64] = &[50, 100, 200, 400, 800, 1600];
 /// error on any platform, or, on Windows after the retry budget is
 /// exhausted, the final `ERROR_SHARING_VIOLATION` error.
 pub(crate) fn with_sharing_violation_retry<T>(
-    mut op: impl FnMut() -> std::io::Result<T>,
+    op: impl FnMut() -> std::io::Result<T>,
 ) -> std::io::Result<T> {
     #[cfg(windows)]
     {
-        for (index, &delay_ms) in BACKOFF_SCHEDULE_MS.iter().enumerate() {
-            let err = match op() {
-                Ok(value) => return Ok(value),
-                Err(err) if err.raw_os_error() != Some(ERROR_SHARING_VIOLATION) => {
-                    return Err(err);
-                }
-                Err(err) => err,
-            };
-            let attempt = index + 1;
-            tracing::debug!(
-                target: "patina_core",
-                attempt,
-                delay_ms,
-                error = %err,
-                "fs_write_retry"
-            );
-            std::thread::sleep(std::time::Duration::from_millis(delay_ms));
-        }
-        // Six-retry budget spent: make the final attempt and surface its
-        // result verbatim: the last `ERROR_SHARING_VIOLATION`, any other
-        // error, or a success if the contention just cleared.
-        op()
+        retry_while(op, |err| {
+            err.raw_os_error() == Some(ERROR_SHARING_VIOLATION)
+        })
     }
 
     #[cfg(not(windows))]
     {
-        // No `FILE_SHARE_NONE` equivalent for ordinary writes off Windows:
-        // run once and surface the result as-is (pass-through).
-        op()
+        pass_through(op)
     }
+}
+
+/// Rename a staged entry onto its final path, retrying on Windows while
+/// another process holds the entry open.
+///
+/// Retries `ERROR_SHARING_VIOLATION` and `ERROR_ACCESS_DENIED` on the
+/// [`with_sharing_violation_retry`] schedule. Call it only for a rename of an
+/// entry this process just created, where access denied means a transient
+/// handle rather than a missing permission.
+///
+/// # Errors
+///
+/// Returns the [`std::io::Error`] produced by `op`: the first other error, or,
+/// on Windows after the retry budget is exhausted, the final transient error.
+pub(crate) fn with_staged_rename_retry<T>(
+    op: impl FnMut() -> std::io::Result<T>,
+) -> std::io::Result<T> {
+    #[cfg(windows)]
+    {
+        retry_while(op, is_transient_rename_error)
+    }
+
+    #[cfg(not(windows))]
+    {
+        pass_through(op)
+    }
+}
+
+#[cfg(windows)]
+fn is_transient_rename_error(err: &std::io::Error) -> bool {
+    matches!(
+        err.raw_os_error(),
+        Some(ERROR_SHARING_VIOLATION | ERROR_ACCESS_DENIED)
+    )
+}
+
+#[cfg(windows)]
+fn retry_while<T>(
+    mut op: impl FnMut() -> std::io::Result<T>,
+    transient: impl Fn(&std::io::Error) -> bool,
+) -> std::io::Result<T> {
+    for (index, &delay_ms) in BACKOFF_SCHEDULE_MS.iter().enumerate() {
+        let err = match op() {
+            Ok(value) => return Ok(value),
+            Err(err) if !transient(&err) => return Err(err),
+            Err(err) => err,
+        };
+        let attempt = index + 1;
+        tracing::debug!(
+            target: "patina_core",
+            attempt,
+            delay_ms,
+            error = %err,
+            "fs_write_retry"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+    }
+    // Six-retry budget spent: make the final attempt and surface its
+    // result verbatim: the last transient error, any other error, or a
+    // success if the contention just cleared.
+    op()
+}
+
+#[cfg(not(windows))]
+fn pass_through<T>(mut op: impl FnMut() -> std::io::Result<T>) -> std::io::Result<T> {
+    op()
 }
 
 #[cfg(test)]
@@ -153,6 +208,52 @@ mod tests {
         });
         assert!(result.is_ok(), "should succeed once the violation clears");
         assert_eq!(calls.get(), 3, "two retries then success");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_staged_rename_retries_access_denied_and_sharing_violations_only() {
+        let transient = [ERROR_SHARING_VIOLATION, ERROR_ACCESS_DENIED];
+        for code in transient {
+            assert!(
+                is_transient_rename_error(&std::io::Error::from_raw_os_error(code)),
+                "a staged rename must retry OS error {code}"
+            );
+        }
+        let not_found = std::io::Error::from(std::io::ErrorKind::NotFound);
+        assert!(!is_transient_rename_error(&not_found));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_staged_rename_succeeds_once_access_denied_clears() {
+        let calls = Cell::new(0);
+        let result = with_staged_rename_retry(|| {
+            let n = calls.get() + 1;
+            calls.set(n);
+            if n < 3 {
+                Err(std::io::Error::from_raw_os_error(ERROR_ACCESS_DENIED))
+            } else {
+                Ok(())
+            }
+        });
+        assert!(
+            result.is_ok(),
+            "the rename must succeed once the handle closes"
+        );
+        assert_eq!(calls.get(), 3, "two retries then success");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_write_does_not_retry_access_denied() {
+        let calls = Cell::new(0);
+        let result = with_sharing_violation_retry(|| {
+            calls.set(calls.get() + 1);
+            Err::<u8, _>(std::io::Error::from_raw_os_error(ERROR_ACCESS_DENIED))
+        });
+        assert!(result.is_err(), "error must surface");
+        assert_eq!(calls.get(), 1, "a write retries only a sharing violation");
     }
 
     /// On Windows a persistent violation exhausts the six-retry budget

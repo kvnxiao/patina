@@ -1,13 +1,13 @@
 //! Per-`[[file]]`-entry atomic inverse-operation replay.
 //!
 //! [`replay_entry`] reverts every target of one `[[file]]` entry to its
-//! pre-apply state as an atomic unit. The inverse-operation rule mirrors
-//! crash recovery and has three outcomes, in evaluation order. A target the
-//! apply recorded as `Unchanged` is left in place, and is filtered out of the
-//! snapshot/roll-forward set before either branch below is reached; the apply
-//! touched neither its bytes nor its backup. A target with a backup is
-//! restored from it, because the apply overwrote a pre-existing file. A target
-//! with no backup is deleted, because the apply created it fresh.
+//! pre-apply state as an atomic unit. The inverse-operation rule has three
+//! outcomes, in evaluation order. A target the apply recorded as `Unchanged`
+//! is left in place, and is filtered out of the snapshot/roll-forward set
+//! before either branch below is reached; the apply touched neither its bytes
+//! nor its backup. A target with a backup is restored from it, because the
+//! apply overwrote a pre-existing file. A target with no backup is deleted,
+//! because the apply created it fresh.
 //!
 //! ## Atomicity mechanism
 //!
@@ -65,8 +65,9 @@ pub struct RevertTarget<'a> {
 ///
 /// - [`RollbackError::RollbackPartial`] when a target's revert fails; the entry
 ///   is rolled forward to its post-apply state before returning.
-/// - [`RollbackError::Filesystem`] when snapshotting itself fails before any
-///   target has been mutated (nothing to undo).
+/// - [`RollbackError::Filesystem`] when removing a leftover staged backup
+///   (`<backup>.partial.<pid>`) or snapshotting fails, before any target has
+///   been mutated (nothing to undo).
 pub fn replay_entry(
     entry: u32,
     targets: &[RevertTarget<'_>],
@@ -91,6 +92,11 @@ pub fn replay_entry(
     }
     if to_revert.is_empty() {
         return Ok(());
+    }
+
+    for unit in &to_revert {
+        crate::fsx::remove_partial_siblings(&mirror_backup_path(backups_dir, timestamp, unit))
+            .map_err(RollbackError::Filesystem)?;
     }
 
     // Stage each target's post-apply state so a mid-entry failure can be
@@ -165,19 +171,32 @@ pub(crate) fn replaced_root_ancestor(
     timestamp: &str,
     target: &Utf8Path,
 ) -> Option<Utf8PathBuf> {
+    let ancestor = stashed_link_ancestor(backups_dir, timestamp, target)?;
+    let live_is_real_dir = fs_err::symlink_metadata(&ancestor)
+        .is_ok_and(|meta| meta.is_dir() && !meta.file_type().is_symlink());
+    live_is_real_dir.then_some(ancestor)
+}
+
+/// Find the outermost strict ancestor of `target` whose backup mirror in this
+/// cycle is a symbolic link, whatever the live ancestor now is.
+///
+/// Ancestors are probed from the filesystem root toward `target`, so no probed
+/// mirror path passes through a stashed link.
+pub(crate) fn stashed_link_ancestor(
+    backups_dir: &Utf8Path,
+    timestamp: &str,
+    target: &Utf8Path,
+) -> Option<Utf8PathBuf> {
     let ancestors: Vec<&Utf8Path> = target.ancestors().skip(1).collect();
-    for ancestor in ancestors.into_iter().rev() {
-        if ancestor.as_str().is_empty() {
-            continue;
-        }
-        let backup = mirror_backup_path(backups_dir, timestamp, ancestor);
-        if fs_err::symlink_metadata(&backup).is_ok_and(|meta| meta.file_type().is_symlink()) {
-            let live_is_real_dir = fs_err::symlink_metadata(ancestor)
-                .is_ok_and(|meta| meta.is_dir() && !meta.file_type().is_symlink());
-            return live_is_real_dir.then(|| ancestor.to_path_buf());
-        }
-    }
-    None
+    ancestors
+        .into_iter()
+        .rev()
+        .filter(|ancestor| !ancestor.as_str().is_empty())
+        .find(|ancestor| {
+            let backup = mirror_backup_path(backups_dir, timestamp, ancestor);
+            fs_err::symlink_metadata(&backup).is_ok_and(|meta| meta.file_type().is_symlink())
+        })
+        .map(Utf8Path::to_path_buf)
 }
 
 /// Snapshot every target's current on-disk state into `stage`, returning one
@@ -239,7 +258,7 @@ fn snapshot_targets(stage: &Utf8Path, targets: &[Utf8PathBuf]) -> std::io::Resul
 
 /// Revert one target to its pre-apply state. Restore it from its backup if
 /// one exists (the overwrite case), otherwise delete it (the
-/// fresh-creation case). Crash recovery applies the same rule.
+/// fresh-creation case).
 fn revert_target(
     backups_dir: &Utf8Path,
     timestamp: &str,
@@ -386,6 +405,28 @@ mod tests {
             fs_err::read(&target).expect("read restored"),
             b"original",
             "an overwrite must be restored from its backup"
+        );
+    }
+
+    #[test]
+    fn a_leftover_staged_backup_is_removed_and_the_backup_restored() {
+        let e = env();
+        let ts = "TS";
+        let target = e.root.join("over");
+        fs_err::write(&target, b"new").expect("write post-apply target");
+        write_backup(&e.backups, ts, &target, b"original");
+        let staged = Utf8PathBuf::from(format!(
+            "{}.partial.4242",
+            mirror_backup_path(&e.backups, ts, &target)
+        ));
+        fs_err::write(&staged, b"orig").expect("write a torn staged backup");
+
+        replay_entry(0, &[update(&target)], &e.backups, ts).expect("revert");
+
+        assert_eq!(fs_err::read(&target).expect("read restored"), b"original");
+        assert!(
+            fs_err::symlink_metadata(&staged).is_err(),
+            "rollback must remove the leftover staged backup"
         );
     }
 

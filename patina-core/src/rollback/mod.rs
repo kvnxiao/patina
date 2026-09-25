@@ -9,10 +9,9 @@
 //!
 //! ## Inverse-operation rule
 //!
-//! The reversal decision mirrors crash recovery ([`crate::journal`]'s
-//! `recover_orphans`): the commit-recorded per-target disposition is consulted
-//! first, then backup *presence* decides between restore and delete. The three
-//! outcomes, in evaluation order:
+//! The commit-recorded per-target disposition is consulted first, then backup
+//! *presence* decides between restore and delete. The three outcomes, in
+//! evaluation order:
 //!
 //! - A target the apply recorded as `Unchanged` is *left in place*. The apply
 //!   skipped both its write and its backup, so its live state is already the
@@ -25,6 +24,13 @@
 //!
 //! Either way the post-rollback state of each target matches the apply's
 //! pre-apply state.
+//!
+//! Crash recovery ([`crate::journal`]'s `recover_orphans`) differs for a
+//! target with no backup whose disposition is `Update`. A committed apply
+//! wrote every `Create` and `Update` target, so a missing backup means the
+//! target was absent when the apply wrote it, and rollback deletes it. An
+//! interrupted apply may never have reached the target, so recovery leaves it
+//! in place.
 //!
 //! ## Per-`[[file]]`-entry atomicity
 //!
@@ -40,7 +46,9 @@
 //! ## Locking
 //!
 //! Rollback is mutating, so it takes the **exclusive** advisory lock for
-//! its whole duration, exactly like apply.
+//! its whole duration, exactly like apply. Under that lock it first reverts any
+//! interrupted apply, so no orphan plan is left to restore its backups over the
+//! rolled-back state later.
 
 mod replay;
 
@@ -48,7 +56,9 @@ use crate::error::EngineError;
 use crate::journal::ApplyRecord;
 use crate::journal::OsSyncer;
 use crate::journal::ROLLED_BACK_SUFFIX;
+use crate::journal::RecoveryReport;
 use crate::journal::Syncer;
+use crate::journal::recover_orphans;
 use crate::lock::LockKind;
 use crate::lock::acquire as acquire_lock;
 use crate::lock::exclusive_timeout;
@@ -57,6 +67,7 @@ use camino::Utf8Path;
 pub use replay::RevertTarget;
 pub(crate) use replay::replaced_root_ancestor;
 pub use replay::replay_entry;
+pub(crate) use replay::stashed_link_ancestor;
 use thiserror::Error;
 
 /// Errors raised while rolling back a prior apply.
@@ -99,11 +110,14 @@ pub enum RollbackError {
 /// Roll back the most recent committed apply to its pre-apply filesystem
 /// state, using the journaled backups under `<state>/patina/backups/<ts>/`.
 ///
-/// Resolves the state directory and takes the exclusive lock. Finds the most
-/// recent committed-and-not-rolled-back apply, and replays each `[[file]]`
-/// entry's inverse operations, atomically per entry. Then writes and fsyncs a
-/// `<ts>.ROLLED_BACK` sentinel. The apply therefore drops out of status's
-/// last-apply computation, and recovery never re-reverses it.
+/// Resolves the state directory and takes the exclusive lock. Reverts every
+/// interrupted apply first and passes the report to `on_recovery`, which runs
+/// before the committed record is read, so it runs even when the rollback then
+/// fails. Finds the most recent committed-and-not-rolled-back apply, and
+/// replays each `[[file]]` entry's inverse operations, atomically per entry.
+/// Then writes and fsyncs a `<ts>.ROLLED_BACK` sentinel. The apply therefore
+/// drops out of status's last-apply computation, and recovery never re-reverses
+/// it.
 ///
 /// # Errors
 ///
@@ -112,9 +126,10 @@ pub enum RollbackError {
 ///   reverted as a unit.
 /// - [`RollbackError::Filesystem`] / [`RollbackError::Journal`] for IO or
 ///   record-decode failures.
+/// - [`EngineError::Journal`] when an interrupted apply cannot be recovered.
 /// - An [`EngineError`] when state-directory resolution or lock acquisition
 ///   fails.
-pub fn run() -> Result<(), EngineError> {
+pub fn run(on_recovery: impl FnOnce(&RecoveryReport)) -> Result<(), EngineError> {
     let state_dir = resolve_state_dir()?;
     let journal_dir = state_dir.join("journal");
     let backups_dir = state_dir.join("backups");
@@ -122,10 +137,11 @@ pub fn run() -> Result<(), EngineError> {
 
     // Mutating subcommands take the exclusive lock for the whole rollback.
     let _guard = acquire_lock(&lock_path, LockKind::Exclusive, exclusive_timeout())?;
+    on_recovery(&recover_orphans(&state_dir)?);
 
     // The shared "last apply" selection (also used by `patina status`) skips a
     // torn/unreadable newest `<ts>.COMMIT` and falls back to the previous
-    // decodable commit, so a `kill -9`-torn sentinel does not strand rollback.
+    // decodable commit, so a damaged sentinel does not block rollback.
     // A newer-format sentinel still propagates (surfaced as
     // [`RollbackError::Journal`]) rather than being silently skipped.
     let Some((timestamp, record)) =

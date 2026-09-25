@@ -8,7 +8,7 @@
 //! | Code | Meaning                                                       |
 //! |------|---------------------------------------------------------------|
 //! | 0    | Success.                                                      |
-//! | 1    | Generic error (config parse, IO, undefined variable, journal version mismatch, missing prior apply, unresolved shell). |
+//! | 1    | Generic error (config parse, IO, undefined variable, journal version mismatch, missing prior apply, unresolved shell, interrupted apply pending). |
 //! | 2    | A `must_succeed` `pre_apply` hook failed; apply aborted before any file operation. |
 //! | 3    | A `must_succeed` `post_apply` hook failed; file operations rolled back. |
 //! | 4    | Exclusive-lock acquisition timed out.                         |
@@ -45,7 +45,8 @@ pub(crate) enum ExitCode {
     /// `0`: the command completed successfully.
     Success = 0,
     /// `1`: a generic failure (config parse, IO, undefined variable,
-    /// journal version mismatch, missing prior apply, unresolved shell).
+    /// journal version mismatch, missing prior apply, unresolved shell, an
+    /// interrupted apply still pending when execution starts).
     Generic = 1,
     /// `2`: a `must_succeed` `pre_apply` hook failed; the apply aborted
     /// before performing any file operation.

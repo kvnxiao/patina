@@ -8,10 +8,11 @@
 //! user-facing path allowed to carry a wall-clock timestamp (the plan's
 //! recorded `<ts>`).
 //!
-//! The plan body records only the resolved file operations (symlink,
-//! render, and copy), each with a repo-relative `source` and an absolute
-//! `target`. Hooks and the resolved variable context are evaluated during
-//! apply but are not serialized into the plan, so they do not appear here.
+//! The plan body records only the resolved file operations: symlink, render,
+//! and copy, each with a repo-relative `source` and an absolute `target`, and
+//! remove, with only the `target` it reaps. Hooks and the resolved variable
+//! context are evaluated during apply but are not serialized into the plan, so
+//! they do not appear here.
 //!
 //! # Examples
 //!
@@ -103,7 +104,7 @@ fn timestamp_from_plan_path(path: &Utf8Path) -> String {
 /// string. A header line carries the plan timestamp and the operation
 /// count. The timestamp appears in both the compact journal form and its
 /// RFC 3339 rendering. One block per operation follows, naming its mode,
-/// source, and target.
+/// source, and target; a `remove` block has no source.
 pub fn render_plan(plan: &Plan, timestamp: &str) -> String {
     use std::fmt::Write as _;
 
@@ -120,7 +121,9 @@ pub fn render_plan(plan: &Plan, timestamp: &str) -> String {
     for (index, op) in plan.operations().iter().enumerate() {
         let (mode, source, target) = describe(op);
         ignore_fmt(writeln!(out, "[{index}] {mode}"));
-        ignore_fmt(writeln!(out, "    source: {source}"));
+        if let Some(source) = source {
+            ignore_fmt(writeln!(out, "    source: {source}"));
+        }
         ignore_fmt(writeln!(out, "    target: {target}"));
     }
     out
@@ -135,11 +138,14 @@ fn ignore_fmt(_result: std::fmt::Result) {}
 /// Decompose a planned operation into its `(mode label, source, target)`.
 /// The mode label uses the same lowercase, hyphenated vocabulary the
 /// `--json` apply envelope uses, so a reader sees consistent words.
-fn describe(op: &PlannedOperation) -> (&'static str, &str, &str) {
+fn describe(op: &PlannedOperation) -> (&'static str, Option<&str>, &str) {
     match op {
-        PlannedOperation::Symlink { source, target, .. } => ("symlink", source, target),
-        PlannedOperation::Render { source, target, .. } => ("template-render", source, target),
-        PlannedOperation::Copy { source, target, .. } => ("copy", source, target),
+        PlannedOperation::Symlink { source, target, .. } => ("symlink", Some(source), target),
+        PlannedOperation::Render { source, target, .. } => {
+            ("template-render", Some(source), target)
+        }
+        PlannedOperation::Copy { source, target, .. } => ("copy", Some(source), target),
+        PlannedOperation::Remove { target } => ("remove", None, target),
     }
 }
 
@@ -166,6 +172,17 @@ mod tests {
         assert!(text.contains("/home/u/.zshrc"), "{text}");
         assert!(text.contains("/home/u/.gitconfig"), "{text}");
         assert!(text.contains("zsh/zshrc"), "{text}");
+    }
+
+    #[test]
+    fn render_shows_a_remove_as_its_target_without_a_source() {
+        let plan = Plan::new(vec![PlannedOperation::remove("/home/u/.old")]);
+        let text = render_plan(&plan, "20260528T120000Z");
+        assert!(
+            text.contains("[0] remove\n    target: /home/u/.old\n"),
+            "{text}"
+        );
+        assert!(!text.contains("source:"), "{text}");
     }
 
     #[test]
