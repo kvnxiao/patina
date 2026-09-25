@@ -660,14 +660,32 @@ like.
 
 ## Recovery
 
-An interrupted apply converges deterministically on the next run. Kill
-`patina apply` mid-write and the filesystem is left in either the
-pre-apply or the post-apply state; the next invocation reads the journal
-and rolls forward or back to a consistent state. The guarantee covers process
-termination (a `kill -9` or crash where the page cache survives). A power
-loss or kernel panic mid-apply is out of scope for v1.0.
+An interrupted apply converges deterministically on the next mutating
+command. Kill `patina apply` mid-write and the next `patina apply --yes`,
+interactive `patina apply`, `patina rollback`, `patina remove`, or
+`patina promote` first reverts the interrupted apply to its pre-apply state,
+then does its own work against those files. It reports the recovery on stderr
+with `reverted an interrupted apply to the state before it started`. The
+guarantee covers process termination (a `kill -9` or crash where the page
+cache survives). A power loss or kernel panic mid-apply is out of scope for
+v1.0.
 
-Two commands recover deliberately:
+A preview does not recover, because it must not write: `patina apply` in a
+non-interactive shell without `--yes`, `patina apply --json` without `--yes`,
+and `patina status`. While an interrupted apply is pending, each warns on
+stderr that its output describes the files as the interrupted apply left them,
+and that an interactive `patina apply` or `patina apply --yes` reverts it
+first. When another `patina` process holds the lock for longer than the
+five-second shared-lock wait, the warning says instead that an apply is running
+or was interrupted. The exit code does not change.
+
+Recovery reverts only what the interrupted apply changed. A file that existed
+before the apply keeps its original bytes, restored from the backup Patina took
+before overwriting or removing it, or untouched if the apply never reached it.
+A file the apply created is deleted, including a file you create at the same
+path after the crash and before recovery runs.
+
+Two other commands inspect or undo an apply:
 
 - `patina status` reports drift between what your configuration
   declares and what is currently on disk.
@@ -701,6 +719,13 @@ refusal or on a missing or unreadable path.
   directory is on local disk and not a cloud-sync mount (see "State
   directory"). Use `patina debug journal` to inspect the journal that
   recovery read.
+- **A preview or `patina status` warns that an interrupted apply is
+  pending.** An earlier apply was killed before it committed. Run
+  `patina apply --yes` or an interactive `patina apply` to revert it and
+  apply again.
+- **Apply exits 1 with "an interrupted apply has not been recovered".**
+  Another `patina` process was killed mid-apply after this one recovered
+  and before it started writing. Re-run the command; it recovers first.
 - **`patina status` reports `orphaned` after an apply with `-v`.** Pass the
   same variable overrides to `status`. Without them, the entry's `when`
   expression can evaluate differently. See [Variables](#variables).

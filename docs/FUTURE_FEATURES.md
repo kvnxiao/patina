@@ -73,7 +73,7 @@ reports drift on demand.
   logs `shutdown_abandoned` with the job kind, the re-apply id, and the
   reason (`grace_expired` or `second_signal`). It then exits with code 0
   while the job is still running. The journal's process-kill contract makes
-  the interrupted apply converge on the next run.
+  the interrupted apply converge on the next command that recovers.
 - The process exits 0 because a non-zero exit makes launchd relaunch a
   `KeepAlive { SuccessfulExit = false }` job after a stop. That launchd
   behavior is inferred from its documented semantics and has not been
