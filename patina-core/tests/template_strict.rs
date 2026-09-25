@@ -16,7 +16,7 @@ fn template_with_undefined_variable_fails_naming_it() {
         .render(body, &resolver())
         .expect_err("strict undefined must fail");
     assert!(
-        matches!(&err, TemplateError::UndefinedVariable { names } if names.contains("user_email")),
+        matches!(&err, TemplateError::UndefinedVariable { names, .. } if names.contains("user_email")),
         "expected UndefinedVariable naming user_email, got {err:?}"
     );
     assert!(
@@ -34,7 +34,7 @@ fn when_predicate_with_undefined_variable_fails_naming_it() {
         .eval_when(&expr, &resolver)
         .expect_err("strict undefined must fail");
     assert!(
-        matches!(&err, TemplateError::UndefinedVariable { names } if names.contains("missing_var")),
+        matches!(&err, TemplateError::UndefinedVariable { names, .. } if names.contains("missing_var")),
         "expected UndefinedVariable naming missing_var, got {err:?}"
     );
     assert!(
@@ -49,7 +49,7 @@ fn bare_undefined_when_predicate_is_an_error_not_false() {
         .eval_when("undefined_flag", &resolver())
         .expect_err("a bare undefined predicate must not silently be false");
     assert!(
-        matches!(&err, TemplateError::UndefinedVariable { names } if names.contains("undefined_flag")),
+        matches!(&err, TemplateError::UndefinedVariable { names, .. } if names.contains("undefined_flag")),
         "expected UndefinedVariable naming undefined_flag, got {err:?}"
     );
 }
