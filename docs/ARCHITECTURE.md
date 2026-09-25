@@ -200,10 +200,10 @@ The target's entry kind is part of the "matches" definition. The shared
 content comparison (`status::classify::content_matches`) requires a
 regular file at the target before reading it, so a symlink whose
 referent's bytes hash equal is drift, not a match. Plan-time
-classification and `patina status` use that seam. The watcher's drift
-handler applies the same regular-file rule. `patina apply` therefore
-plans a mode edit as an `Update`, while `patina status` reports `Drifted`,
-instead of reading through the stale entry as if it were satisfied.
+classification and `patina status` both call `content_matches`.
+`patina apply` therefore plans a mode edit as an `Update`, while
+`patina status` reports `Drifted`, instead of reading through the stale
+entry as if it were satisfied.
 
 The diff's `replace` verb is journal-provenance-gated. Planning reads
 the latest committed record once and maps each recorded target to its
@@ -339,6 +339,6 @@ under the restored link would resolve into the repository. The
 in-process reversal after a failed `post_apply` hook applies the same
 fold. `patina status` reports drift
 between the declared end-state and the live filesystem. The per-machine
-state directory for the journal, backups, lock, and drift cache uses
+state directory for the journal, backups, and lock uses
 OS-appropriate locations and must not live on a cloud-sync mount. See
 `docs/OPERATING_ENVIRONMENT.md`.

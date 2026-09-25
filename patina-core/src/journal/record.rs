@@ -29,10 +29,7 @@
 //!     bytes written. An external edit therefore changes the hash, and surfaces
 //!     as drift.
 //!
-//! The content hash is `blake3` rather than a `std::hash` fingerprint, so the
-//! same hash serves both the journal here and the drift cache. The drift cache
-//! compares a freshly computed `blake3` of a target against this recorded
-//! value. The record shares the journal's
+//! The record shares the journal's
 //! [`FILE_MAJOR_VERSION`](super::FILE_MAJOR_VERSION). Per the pre-release
 //! no-bump policy, the on-disk major is held at `1` and is not bumped
 //! for a breaking change until v1.0.
@@ -353,9 +350,6 @@ mod tests {
 
     #[test]
     fn content_hash_is_blake3_of_the_bytes() {
-        // Pin the helper to the canonical blake3 digest, so a silent swap
-        // to a different hash function is caught. The journal hash must
-        // match the drift cache's hash.
         assert_eq!(
             content_hash(b"payload"),
             *blake3::hash(b"payload").as_bytes()

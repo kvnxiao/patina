@@ -4,9 +4,16 @@
 
 mod common;
 
+use camino::Utf8Path;
 use common::Fixture;
 use common::code;
+use patina_core::Disposition;
 use patina_core::LockKind;
+use patina_core::journal::PLAN_SUFFIX;
+use patina_core::journal::PROGRESS_SUFFIX;
+use patina_core::journal::Plan;
+use patina_core::journal::PlannedOperation;
+use patina_core::journal::ProgressCursor;
 use std::time::Duration;
 
 fn hook_module(f: &Fixture, event: &str, command: &str) {
@@ -117,6 +124,95 @@ fn exclusive_lock_timeout_exits_4() {
         4,
         "an exclusive-lock timeout must exit 4; stderr: {}",
         String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+fn entry_names(dir: &Utf8Path) -> Vec<String> {
+    let mut names: Vec<String> = fs_err::read_dir(dir)
+        .expect("read dir")
+        .map(|entry| {
+            entry
+                .expect("read dir entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    names.sort();
+    names
+}
+
+#[test]
+fn exclusive_lock_timeout_leaves_a_pending_orphan_and_its_target_untouched() {
+    const ORPHAN_TS: &str = "20260529T090000Z";
+    let f = Fixture::new();
+    let module = f.module(
+        "shell",
+        "[[file]]\nsource = \"rc\"\ntarget = \"~/.rc\"\nmode = \"copy\"\n",
+    );
+    fs_err::write(module.join("rc"), "payload\n").expect("write source");
+
+    let state = f.state_root();
+    let journal = state.join("journal");
+    let backups = state.join("backups");
+
+    let orphan_target = f.home.join(".orphan");
+    fs_err::write(&orphan_target, "created by the interrupted apply\n")
+        .expect("write the orphan's created target");
+    let plan = Plan::new(vec![PlannedOperation::copy(
+        "shell/orphan",
+        orphan_target.as_str(),
+        Disposition::Create,
+    )]);
+    let plan_path = journal.join(format!("{ORPHAN_TS}{PLAN_SUFFIX}"));
+    fs_err::write(&plan_path, plan.encode().expect("encode orphan plan"))
+        .expect("write orphan plan");
+    let mut progress = ProgressCursor::create(&journal, ORPHAN_TS).expect("create orphan progress");
+    progress.record(0).expect("record orphan progress");
+    drop(progress);
+    let progress_path = journal.join(format!("{ORPHAN_TS}{PROGRESS_SUFFIX}"));
+
+    let plan_bytes = fs_err::read(&plan_path).expect("read orphan plan");
+    let progress_bytes = fs_err::read(&progress_path).expect("read orphan progress");
+    let journal_before = entry_names(&journal);
+
+    let _held = patina_core::acquire_lock(
+        &state.join("lock"),
+        LockKind::Exclusive,
+        Duration::from_secs(5),
+    )
+    .expect("hold the exclusive lock for the duration of the subprocess apply");
+
+    let out = f.apply_with_env(&["--yes"], &[("PATINA_LOCK_TIMEOUT_MS", "200")]);
+
+    assert_eq!(
+        code(&out),
+        4,
+        "an exclusive-lock timeout must exit 4; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        orphan_target.exists(),
+        "recovery must not run before the lock is held, so the orphan's Create target must remain"
+    );
+    assert_eq!(
+        fs_err::read(&plan_path).expect("read orphan plan after the apply"),
+        plan_bytes,
+        "the orphan plan must be byte-identical after a lock timeout"
+    );
+    assert_eq!(
+        fs_err::read(&progress_path).expect("read orphan progress after the apply"),
+        progress_bytes,
+        "the orphan progress must be byte-identical after a lock timeout"
+    );
+    assert_eq!(
+        entry_names(&journal),
+        journal_before,
+        "a lock timeout must not write a plan or COMMIT"
+    );
+    assert!(
+        entry_names(&backups).is_empty(),
+        "a lock timeout must not write a backup"
     );
 }
 

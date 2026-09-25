@@ -62,7 +62,6 @@ use crate::lock::LockGuard;
 use crate::lock::LockKind;
 use crate::lock::acquire as acquire_lock;
 use crate::lock::exclusive_timeout;
-use crate::lock::try_acquire as try_acquire_lock;
 use crate::paths::canonicalize;
 use crate::paths::expand_tilde;
 use crate::paths::resolve_location;
@@ -110,20 +109,6 @@ impl Default for ApplyRequest {
 
 /// How [`execute`] obtains the exclusive advisory lock guarding the apply.
 ///
-/// The default ([`LockPolicy::Blocking`]) acquires exclusive with
-/// [`exclusive_timeout`], mapping a timeout to exit code 4. The other two
-/// strategies let callers outside the CLI's `apply` path drive an apply
-/// differently:
-///
-/// - [`LockPolicy::NonBlocking`]: make a single non-blocking attempt and, on
-///   contention, return [`crate::lock::LockError::Contended`] before any
-///   filesystem mutation. The watcher uses this to skip a reapply while a CLI
-///   run holds the lock.
-/// - [`LockPolicy::Held`]: reuse a guard the caller already acquired, acquiring
-///   nothing further. The `remove` / `promote` commands use this to re-journal
-///   while already holding the exclusive lock, without deadlocking against
-///   their own held lock.
-///
 /// The guard variant carries a non-`Clone` [`LockGuard`], so the policy is
 /// passed to [`execute`] as a distinct argument rather than living on the
 /// `Clone` [`ApplyRequest`].
@@ -135,11 +120,10 @@ pub enum LockPolicy {
     /// CLI's `apply` / `rollback` paths use.
     #[default]
     Blocking,
-    /// Make exactly one non-blocking acquisition attempt; on contention
-    /// return [`crate::lock::LockError::Contended`] with zero mutation.
-    NonBlocking,
     /// Use the caller's already-acquired exclusive guard for the run;
-    /// acquire nothing.
+    /// acquire nothing. `remove` and `promote` re-journal under this policy
+    /// while they hold the exclusive lock, which a second acquisition would
+    /// wait on until it timed out.
     Held(LockGuard),
 }
 
@@ -1929,30 +1913,24 @@ pub async fn execute(
     let template_engine = Engine::new();
 
     // Whether this run reaps targets a prior apply committed that the current
-    // plan no longer manages. A full `apply` (`Blocking`)
-    // and a watcher re-apply (`NonBlocking`) reconcile the whole plan, so they
-    // reap. The `Held` path is a surgical single-target re-journal driven by
-    // `patina remove` / `patina promote` under a caller-held lock: those
-    // commands intentionally convert one managed target into an owned regular
-    // file and drop its entry, so reaping would delete the very file they just
-    // promoted. They must not reap.
+    // plan no longer manages. A full `apply` (`Blocking`) reaps. The `Held`
+    // path re-journals for `patina remove` / `patina promote` under a
+    // caller-held lock without showing a diff. `remove` has just replaced its
+    // target with an owned regular file and dropped the target's entry, so a
+    // reap would delete that file.
     let reap = !matches!(policy, LockPolicy::Held(_));
 
     // Resolve the exclusive lock per policy BEFORE any filesystem
-    // mutation, including orphan recovery. On the `NonBlocking`
-    // contention path this returns early, before `recover_orphans` and
-    // the plan flush below, so a contended attempt mutates nothing
-    // (no recovery, no plan, no COMMIT, no backup), upholding the
-    // zero-write guarantee. Recovering only under the held lock also
-    // prevents a second apply from reversing a live in-flight apply's
-    // operations.
+    // mutation, including orphan recovery, so a lock timeout writes nothing
+    // (no recovery, no plan, no COMMIT, no backup). Recovering only under the
+    // held lock also prevents a second apply from reversing a live in-flight
+    // apply's operations.
     let _guard = match policy {
         LockPolicy::Blocking => acquire_lock(
             &resolved.lock_path(),
             LockKind::Exclusive,
             exclusive_timeout(),
         )?,
-        LockPolicy::NonBlocking => try_acquire_lock(&resolved.lock_path(), LockKind::Exclusive)?,
         LockPolicy::Held(guard) => guard,
     };
 
@@ -2363,8 +2341,8 @@ fn is_full_noop(resolved: &ResolvedPlan, reap: bool) -> Result<bool, EngineError
     // `promote`): it deliberately re-records one target, often one whose bytes
     // now match its just-rewritten source and so classify `Unchanged`, and
     // must always commit that fresh record. It is never a no-op, so the
-    // short-circuit is disabled for it; only the whole-plan reconcile policies
-    // (`Blocking` / `NonBlocking`) can no-op.
+    // short-circuit is disabled for it; only the whole-plan reconcile policy
+    // (`Blocking`) can no-op.
     if !reap {
         return Ok(false);
     }
@@ -2688,30 +2666,8 @@ pub fn is_content_materialization(materialization: &Materialization) -> bool {
 
 #[cfg(test)]
 mod tests {
-    //! Unit coverage for the lock-acquisition policy
-    //! and the acquire-then-recover orphan-safety
-    //! reorder.
-    //!
-    //! These drive [`execute`] in-process so a `Held` policy can pass a
-    //! test-controlled [`LockGuard`] and a `NonBlocking` policy can be
-    //! observed returning before any mutation. Neither is expressible
-    //! through the CLI binary, which cannot share a guard across processes.
-    //! Each test builds a minimal empty-operation [`ResolvedPlan`] over a
-    //! tempdir state directory. No repository discovery or process-env
-    //! mutation is needed: the workspace forbids `unsafe`, and env mutation
-    //! is `unsafe` under edition 2024. An empty plan still flushes a
-    //! `<ts>.plan`, commits a `<ts>.COMMIT`, and then deletes the plan, which
-    //! is enough surface to assert the journal side effects the scenarios name.
-    //!
-    //! The default `Blocking` policy preserving
-    //! byte-identical stdout across two `patina apply --yes` runs is
-    //! covered end-to-end through the CLI in
-    //! `patina-cli/tests/deterministic_stdout.rs`; that suite already drives
-    //! the `Blocking` path, so it is not re-proved here.
-
     use super::*;
     use crate::error::EngineError;
-    use crate::lock::LockError;
     use crate::lock::acquire as acquire_lock;
     use std::time::Duration;
     use tempfile::TempDir;
@@ -3027,63 +2983,6 @@ mod tests {
                 .join(format!("{TS}{suffix}"))
                 .exists()
         }
-
-        /// Plant an orphan `<orphan_ts>.plan` and `<orphan_ts>.progress` in
-        /// the journal: a prior crashed apply with no COMMIT / `ROLLED_BACK`
-        /// sibling, the shape `recover_orphans` would otherwise reverse.
-        /// Returns the two paths so a test can assert their bytes are left
-        /// untouched.
-        fn plant_orphan(&self, orphan_ts: &str) -> (Utf8PathBuf, Utf8PathBuf, Vec<u8>) {
-            let journal = self.resolved.journal_dir();
-            let plan = journal.join(format!("{orphan_ts}{}", crate::journal::PLAN_SUFFIX));
-            let progress = journal.join(format!("{orphan_ts}{}", crate::journal::PROGRESS_SUFFIX));
-            let plan_bytes = b"orphan-plan-bytes".to_vec();
-            fs_err::write(&plan, &plan_bytes).expect("write orphan plan");
-            fs_err::write(&progress, b"orphan-progress").expect("write orphan progress");
-            (plan, progress, plan_bytes)
-        }
-    }
-
-    // Under the NonBlocking policy against a lock held by a
-    // test-controlled guard, the apply returns the typed contention error
-    // and writes no `<ts>.plan` or `<ts>.COMMIT`.
-    #[tokio::test]
-    async fn non_blocking_apply_on_contended_lock_errors_and_writes_no_journal() {
-        let scene = Scene::new();
-        let held = acquire_lock(
-            &scene.lock_path(),
-            LockKind::Exclusive,
-            Duration::from_secs(5),
-        )
-        .expect("hold the exclusive lock for the contended apply");
-
-        let result = execute(
-            &scene.resolved,
-            &ApplyRequest::default(),
-            LockPolicy::NonBlocking,
-        )
-        .await;
-
-        assert!(
-            matches!(
-                &result,
-                Err(EngineError::Lock(LockError::Contended {
-                    kind: LockKind::Exclusive,
-                    ..
-                }))
-            ),
-            "a NonBlocking apply against a held lock must return the typed contention error, got {result:?}"
-        );
-        assert!(
-            !scene.journal_file_exists(crate::journal::PLAN_SUFFIX),
-            "contended NonBlocking apply must not write a plan file"
-        );
-        assert!(
-            !scene.journal_file_exists(crate::journal::COMMIT_SUFFIX),
-            "contended NonBlocking apply must not write a COMMIT file"
-        );
-
-        drop(held);
     }
 
     // Under the Held policy with the caller's own exclusive guard,
@@ -3119,72 +3018,6 @@ mod tests {
             !scene.journal_file_exists(crate::journal::PLAN_SUFFIX),
             "the plan file is removed after COMMIT"
         );
-    }
-
-    // Under the NonBlocking policy against a lock held by a
-    // test-controlled guard AND with a pending orphan `<ts>.plan` in the
-    // journal, the apply returns the typed contention error, leaves the
-    // orphan plan and its progress untouched (recovery never runs because
-    // the lock is resolved first), and writes no new plan / COMMIT / backup.
-    // The acquire-then-recover reorder fixes this regression.
-    #[tokio::test]
-    async fn non_blocking_contention_leaves_pending_orphan_untouched() {
-        const ORPHAN_TS: &str = "20260529T090000Z";
-        let scene = Scene::new();
-        let (orphan_plan, orphan_progress, orphan_bytes) = scene.plant_orphan(ORPHAN_TS);
-
-        let held = acquire_lock(
-            &scene.lock_path(),
-            LockKind::Exclusive,
-            Duration::from_secs(5),
-        )
-        .expect("hold the exclusive lock for the contended apply");
-
-        let result = execute(
-            &scene.resolved,
-            &ApplyRequest::default(),
-            LockPolicy::NonBlocking,
-        )
-        .await;
-
-        assert!(
-            matches!(
-                &result,
-                Err(EngineError::Lock(LockError::Contended {
-                    kind: LockKind::Exclusive,
-                    ..
-                }))
-            ),
-            "a NonBlocking apply against a held lock must return the typed contention error, got {result:?}"
-        );
-
-        // The orphan is left exactly as planted, neither reversed nor deleted.
-        assert!(
-            orphan_plan.exists() && orphan_progress.exists(),
-            "the pending orphan plan and progress must survive a contended attempt"
-        );
-        assert_eq!(
-            fs_err::read(&orphan_plan).expect("read orphan plan"),
-            orphan_bytes,
-            "the orphan plan bytes must be untouched (recovery never ran)"
-        );
-
-        // No new journal records and no backup were written by the contended
-        // attempt.
-        assert!(
-            !scene.journal_file_exists(crate::journal::PLAN_SUFFIX),
-            "contended NonBlocking apply must not write a new plan file"
-        );
-        assert!(
-            !scene.journal_file_exists(crate::journal::COMMIT_SUFFIX),
-            "contended NonBlocking apply must not write a COMMIT file"
-        );
-        assert!(
-            !scene.resolved.backups_dir().exists(),
-            "contended NonBlocking apply must not write any backup"
-        );
-
-        drop(held);
     }
 
     /// A `symlink-tree` entry expands to one managed key per *live* source

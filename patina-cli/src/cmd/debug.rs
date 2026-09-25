@@ -1,11 +1,9 @@
-//! `patina debug journal <path>` / `patina debug drift-cache <path>`
-//! command logic.
+//! `patina debug journal <path>` command logic.
 //!
 //! The `debug` group is a namespace for post-mortem tooling; `journal`
-//! decodes a binary `<ts>.plan` file and `drift-cache` decodes a watcher
-//! `drift.cache` file. Both the version-envelope decode and the formatting
-//! are engine concerns and live in `patina_core`; this module is control flow
-//! and exit-code mapping.
+//! decodes a binary `<ts>.plan` file. Both the version-envelope decode and the
+//! formatting are engine concerns and live in `patina_core`; this module is
+//! control flow and exit-code mapping.
 //!
 //! ## Exit codes
 //!
@@ -19,15 +17,11 @@
 //! and the one this binary supports.
 
 use crate::cli::DebugCommand;
-use crate::cli::DebugDriftCacheArgs;
 use crate::cli::DebugJournalArgs;
 use crate::exit_code::ExitCode;
 use crate::output::reporter::Reporter;
-use patina_core::DriftCacheError;
 use patina_core::chain_message;
-use patina_core::load_drift_cache_file;
 use patina_core::load_plan_file;
-use patina_core::render_drift_cache;
 use patina_core::render_plan;
 
 /// Dispatch a `patina debug` subcommand, returning the process exit code.
@@ -39,7 +33,6 @@ use patina_core::render_plan;
 pub(crate) fn run(command: &DebugCommand, reporter: &mut impl Reporter) -> i32 {
     match command {
         DebugCommand::Journal(args) => run_journal(args, reporter),
-        DebugCommand::DriftCache(args) => run_drift_cache(args, reporter),
     }
 }
 
@@ -61,40 +54,13 @@ fn run_journal(args: &DebugJournalArgs, reporter: &mut impl Reporter) -> i32 {
     }
 }
 
-/// Decode and render the drift cache at `args.path`.
-fn run_drift_cache(args: &DebugDriftCacheArgs, reporter: &mut impl Reporter) -> i32 {
-    match load_drift_cache_file(&args.path) {
-        Ok(cache) => {
-            let rendered = render_drift_cache(&cache);
-            reporter.out_block(&rendered);
-            ExitCode::Success.code()
-        }
-        Err(err) => {
-            // `DriftCacheError`'s `VersionMismatch` arm includes both the
-            // found and the supported major version. The `fs-err` source of
-            // its `Filesystem` arm names the path; its decode arms do not, so
-            // this layer prefixes `args.path` to them: a debug failure has to
-            // identify the file it was pointed at.
-            let message = match &err {
-                DriftCacheError::Filesystem(_) => chain_message(&err),
-                _ => format!("{}: {}", args.path, chain_message(&err)),
-            };
-            reporter.warn(&message);
-            ExitCode::Generic.code()
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::output::reporter::BufferReporter;
     use camino::Utf8Path;
     use camino::Utf8PathBuf;
-    use patina_core::DRIFT_CACHE_MAJOR_VERSION;
     use patina_core::Disposition;
-    use patina_core::DriftCache;
-    use patina_core::DriftEntry;
     use patina_core::Plan;
     use patina_core::PlannedOperation;
 
@@ -160,102 +126,6 @@ mod tests {
         );
         assert!(
             r.err.contains('1'),
-            "stderr must include the supported major: {}",
-            r.err
-        );
-        assert!(
-            r.err.to_lowercase().contains("version"),
-            "stderr must include the word version: {}",
-            r.err
-        );
-    }
-
-    fn drift_args(path: impl Into<Utf8PathBuf>) -> DebugDriftCacheArgs {
-        DebugDriftCacheArgs { path: path.into() }
-    }
-
-    #[test]
-    fn renders_a_valid_drift_cache_to_stdout_and_exits_zero() {
-        // A populated drift cache renders with the version, the bound journal
-        // timestamp, the target path, and the expected and actual hashes;
-        // exit 0.
-        let dir = tempfile::tempdir().expect("tempdir");
-        let dir = Utf8Path::from_path(dir.path()).expect("utf8 tempdir");
-        let path = dir.join("drift.cache");
-        let entry = DriftEntry::new("/home/u/.gitconfig", [0x11; 32], [0x22; 32], 1_700_000_000);
-        let cache = DriftCache::new("20260528T120000Z", vec![entry]);
-        fs_err::write(&path, cache.encode().expect("encode")).expect("write drift cache");
-
-        let mut r = BufferReporter::new();
-        let code = run_drift_cache(&drift_args(path), &mut r);
-        assert_eq!(code, 0);
-        assert!(
-            r.out.contains("version:"),
-            "stdout must include the version line: {}",
-            r.out
-        );
-        assert!(
-            r.out.contains("20260528T120000Z"),
-            "stdout must include the bound journal timestamp: {}",
-            r.out
-        );
-        assert!(
-            r.out.contains("/home/u/.gitconfig"),
-            "stdout must include the target path: {}",
-            r.out
-        );
-        // Each 32-byte hash renders as its lower-case hex repeat.
-        assert!(
-            r.out.contains(&"11".repeat(32)),
-            "stdout must include the expected hash: {}",
-            r.out
-        );
-        assert!(
-            r.out.contains(&"22".repeat(32)),
-            "stdout must include the actual hash: {}",
-            r.out
-        );
-        assert!(r.err.is_empty(), "no warnings on success: {}", r.err);
-    }
-
-    #[test]
-    fn missing_drift_cache_path_exits_one_and_includes_the_path() {
-        let mut r = BufferReporter::new();
-        let code = run_drift_cache(&drift_args("/no/such/drift.cache"), &mut r);
-        assert_eq!(code, 1);
-        assert!(
-            r.err.contains("/no/such/drift.cache"),
-            "stderr must include the missing path: {}",
-            r.err
-        );
-        assert!(r.out.is_empty(), "nothing rendered on failure: {}", r.out);
-    }
-
-    #[test]
-    fn drift_cache_version_mismatch_exits_one_and_includes_both_versions() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let dir = Utf8Path::from_path(dir.path()).expect("utf8 tempdir");
-        let path = dir.join("drift.cache");
-        let cache = DriftCache::new("20260528T120000Z", vec![]);
-        let mut bytes = cache.encode().expect("encode");
-        // Overwrite the envelope's major with u16::MAX so the running binary
-        // (drift-cache major 1) refuses it and includes both versions.
-        bytes
-            .get_mut(..2)
-            .expect("envelope")
-            .copy_from_slice(&u16::MAX.to_le_bytes());
-        fs_err::write(&path, bytes).expect("write drift cache");
-
-        let mut r = BufferReporter::new();
-        let code = run_drift_cache(&drift_args(path), &mut r);
-        assert_eq!(code, 1);
-        assert!(
-            r.err.contains("65535"),
-            "stderr must include the cache major: {}",
-            r.err
-        );
-        assert!(
-            r.err.contains(&DRIFT_CACHE_MAJOR_VERSION.to_string()),
             "stderr must include the supported major: {}",
             r.err
         );
