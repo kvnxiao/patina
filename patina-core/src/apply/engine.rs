@@ -1453,7 +1453,14 @@ fn classify_entry(
     let rendered = if matches!(mode, FileMode::TemplateRender) {
         let body = fs_err::read_to_string(source)
             .map_err(|err| EngineError::Journal(crate::journal::JournalError::Filesystem(err)))?;
-        Some(engine.render(&body, resolver)?)
+        Some(
+            engine
+                .render(&body, resolver)
+                .map_err(|err| EngineError::TemplateRender {
+                    path: source.to_path_buf(),
+                    source: err,
+                })?,
+        )
     } else {
         None
     };
@@ -1607,7 +1614,7 @@ fn classify_target(
 /// mutation. Path canonicalization failures surface as [`EngineError::Path`].
 /// A classification read or template render failure surfaces as
 /// [`EngineError::Classify`], [`EngineError::Journal`], or
-/// [`EngineError::Template`].
+/// [`EngineError::TemplateRender`].
 #[expect(
     clippy::too_many_arguments,
     reason = "resolution needs the entry, origin, module name, and \

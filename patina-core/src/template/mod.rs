@@ -18,8 +18,8 @@
 //! # Strict-undefined contract
 //!
 //! A reference to a variable that is unset at every resolution layer
-//! produces an [`EngineError::Template`](crate::EngineError) whose
-//! `Display` names the missing variable, rather than `MiniJinja`'s
+//! produces a [`TemplateError::UndefinedVariable`] whose `Display` names
+//! the missing variable, rather than `MiniJinja`'s
 //! silent empty-string substitution. The Jinja2-inherited carve-out
 //! holds. An undefined value reached only through the unevaluated branch
 //! of an `{% if %}`/`{% else %}` block does not fire, so
@@ -85,8 +85,8 @@ pub enum TemplateError {
         /// Comma-separated list of the undefined variable names, sorted
         /// for deterministic output.
         names: String,
-        /// The `MiniJinja` error that reported the undefined value, which
-        /// names the template line. `None` when a `when` expression
+        /// The `MiniJinja` error that reported the undefined value; its
+        /// message names the template line. `None` when a `when` expression
         /// evaluated to an undefined value without raising an error.
         #[source]
         source: Option<minijinja::Error>,

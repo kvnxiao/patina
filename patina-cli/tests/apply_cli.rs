@@ -120,6 +120,27 @@ fn hook_output_reaches_the_apply_stdout_and_stderr() {
 }
 
 #[test]
+fn a_template_that_fails_to_render_at_plan_time_names_its_source() {
+    let f = Fixture::new();
+    let module = f.module(
+        "shell",
+        "[[file]]\nsource = \"rc.tmpl\"\ntarget = \"~/.rc\"\n",
+    );
+    fs_err::write(module.join("rc.tmpl"), "email = {{ undefined_email }}\n")
+        .expect("write template");
+
+    let out = f.apply(&["--yes"]);
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(code(&out), 1, "stderr: {stderr}");
+    assert!(stderr.contains("rc.tmpl"), "{stderr}");
+    assert!(
+        fs_err::symlink_metadata(f.home.join(".rc")).is_err(),
+        "a plan that failed to render must not write the target"
+    );
+}
+
+#[test]
 fn json_without_yes_previews_and_does_not_mutate() {
     let f = Fixture::new();
     let module = f.module(
