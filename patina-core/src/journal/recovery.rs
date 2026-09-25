@@ -1,30 +1,31 @@
 //! Crash recovery: converge backward to the pre-apply state via a
 //! filesystem probe.
 //!
-//! On every apply startup, before computing a fresh plan, the engine
-//! calls [`recover_orphans`]. It scans the journal directory for *orphan*
-//! plans: a `<ts>.plan` with neither a `<ts>.COMMIT` (the apply
-//! committed) nor a `<ts>.ROLLED_BACK` (a prior rollback closed it
-//! out) sentinel. An orphan indicates a `kill -9` mid-apply: the plan
-//! was made durable but the run never reached commit.
+//! [`recover_orphans`] scans the journal directory for *orphan* plans: a
+//! `<ts>.plan` with neither a `<ts>.COMMIT` (the apply committed) nor a
+//! `<ts>.ROLLED_BACK` (a prior rollback closed it out) sentinel. An orphan
+//! indicates a `kill -9` mid-apply: the plan was made durable but the run
+//! never reached commit.
 //!
 //! For each orphan, recovery:
 //!
 //! 1. Decodes the plan, reusing the version-envelope check so a plan from a
 //!    newer binary is refused rather than mis-read.
-//! 2. Probes the filesystem for each operation's target
-//!    ([`probe`](super::probe)) and consults the per-apply backup directory
+//! 2. Probes the per-apply backup directory for each operation's target
 //!    ([`mirror_backup_path`](super::mirror_backup_path)).
 //! 3. **Reverses backward**, never forward. The disposition the plan recorded
 //!    for the operation decides the outcome, evaluated in this order:
-//!    - disposition == `Unchanged`: the apply neither backed up nor wrote this
-//!      target, so the live entry is already the pre-apply entry. Leave it in
-//!      place and do **not** consult the backup directory.
-//!    - a target with a backup is an *overwrite*: restore the original bytes
-//!      from the backup.
-//!    - a target with no backup is a *fresh creation*: delete it.
+//!    - `Unchanged`: the apply neither backed up nor wrote this target, so the
+//!      live entry is already the pre-apply entry. Leave it in place and do
+//!      **not** consult the backup directory.
+//!    - a backup exists: the apply overwrote, or was about to overwrite, a
+//!      pre-existing entry. Restore the original from the backup.
+//!    - no backup and `Create`: the target was absent before the apply. Remove
+//!      whatever the apply created there, if anything.
+//!    - no backup and `Update`: the apply backs up a pre-existing target before
+//!      it writes it, so the write never started. Leave the target in place.
 //!
-//!    Either way the post-recovery state of that target matches pre-apply.
+//!    Each outcome leaves the target in its pre-apply state.
 //! 4. Deletes the orphan `<ts>.plan` and `<ts>.progress` files once every
 //!    operation has been reversed.
 //!
@@ -36,7 +37,7 @@
 //! is a no-op.
 //!
 //! The advisory progress cursor is **ignored** for the reversal decision:
-//! recovery trusts the filesystem probe and the backup directory, not the
+//! recovery trusts the recorded disposition and the backup directory, not the
 //! cursor's last record, which may not reflect how far the apply
 //! actually got.
 //!
@@ -182,36 +183,29 @@ fn reverse_orphan(
 
 /// Reverse a single planned operation back to its pre-apply state.
 ///
-/// An operation the plan recorded as [`Disposition::Unchanged`] is left in
-/// place before the backup-presence check runs. Apply skipped the write
-/// and the backup for such a target, so nothing needs reversing: its
-/// live state already matches the pre-apply state. This holds at any
-/// crash point, because the plan is fsync'd before any mutation, so the
-/// disposition the orphan plan carries is authoritative. The
-/// disposition read here is the durable per-op aggregate, so a tree
-/// operation whose aggregate is `Unchanged` is left whole.
+/// The disposition the plan recorded is authoritative at any crash point,
+/// because the plan is fsync'd before any mutation. For a tree operation it is
+/// the durable per-op aggregate, so a tree whose aggregate is `Unchanged` is
+/// left whole.
 ///
-/// Otherwise the decision is driven by the backup directory, not the
-/// progress cursor. A backup existing for the target means the apply
-/// was about to, or did, overwrite a pre-existing entry, so the original
-/// is restored. No backup means the target was created fresh, so it is
-/// deleted if present.
+/// The executor backs up a pre-existing target immediately before its write.
+/// A missing backup therefore separates a `Create` target, which recovery
+/// removes, from an `Update` target the apply never reached, which recovery
+/// leaves in place.
 ///
 /// Both restore and delete go through the kind-preserving [`crate::fsx`]
 /// helpers. The original is therefore recreated as the same kind it was: a
 /// symlink as a symlink, a directory as a directory. Backup presence is
 /// probed with [`crate::fsx::entry_present`], so a backed-up symlink whose
 /// destination is gone is still seen. `exists` would follow the dead link and
-/// wrongly delete the target.
+/// miss the backup.
 fn reverse_operation(
     backups_dir: &Utf8Path,
     timestamp: &str,
     op: &PlannedOperation,
 ) -> Result<(), JournalError> {
-    if op.disposition() == Disposition::Unchanged {
-        // The apply neither backed up nor wrote this target, so the live
-        // entry is already the pre-apply entry. Leave it untouched
-        // regardless of backup presence.
+    let disposition = op.disposition();
+    if disposition == Disposition::Unchanged {
         return Ok(());
     }
 
@@ -219,16 +213,11 @@ fn reverse_operation(
     let backup = mirror_backup_path(backups_dir, timestamp, target);
 
     if crate::fsx::entry_present(&backup) {
-        // Overwrite case: restore the original entry the engine stashed
-        // before mutating. This replaces whatever is at the target now: a
-        // new symlink, a half-written copy, or the already-restored
-        // original.
-        crate::fsx::clone_entry(&backup, target).map_err(JournalError::Filesystem)
-    } else {
-        // Fresh-creation case: there was nothing to back up, so reversing
-        // means removing the target the apply created. If the operation
-        // never started, the target is already absent and this is a no-op.
-        crate::fsx::remove_entry(target).map_err(JournalError::Filesystem)
+        return crate::fsx::clone_entry(&backup, target).map_err(JournalError::Filesystem);
+    }
+    match disposition {
+        Disposition::Create => crate::fsx::remove_entry(target).map_err(JournalError::Filesystem),
+        Disposition::Update | Disposition::Unchanged => Ok(()),
     }
 }
 

@@ -1,8 +1,8 @@
 //! Per-`[[file]]`-entry atomic inverse-operation replay.
 //!
 //! [`replay_entry`] reverts every target of one `[[file]]` entry to its
-//! pre-apply state as an atomic unit. The inverse-operation rule mirrors
-//! crash recovery and has three outcomes, in evaluation order. A target the
+//! pre-apply state as an atomic unit. The inverse-operation rule has three
+//! outcomes, in evaluation order. A target the
 //! apply recorded as `Unchanged` is left in place, and is filtered out of the
 //! snapshot/roll-forward set before either branch below is reached; the apply
 //! touched neither its bytes nor its backup. A target with a backup is
@@ -239,7 +239,7 @@ fn snapshot_targets(stage: &Utf8Path, targets: &[Utf8PathBuf]) -> std::io::Resul
 
 /// Revert one target to its pre-apply state. Restore it from its backup if
 /// one exists (the overwrite case), otherwise delete it (the
-/// fresh-creation case). Crash recovery applies the same rule.
+/// fresh-creation case).
 fn revert_target(
     backups_dir: &Utf8Path,
     timestamp: &str,

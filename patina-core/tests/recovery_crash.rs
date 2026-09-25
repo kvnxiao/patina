@@ -52,7 +52,7 @@ impl Scene {
         }
         fs_err::write(&backup, original).expect("write backup");
         fs_err::write(&target, new_content).expect("write overwriting target");
-        PlannedOperation::copy(format!("repo/{name}"), target.as_str(), Disposition::Create)
+        PlannedOperation::copy(format!("repo/{name}"), target.as_str(), Disposition::Update)
     }
 
     fn stage_fresh_created(&self, name: &str, content: &str) -> PlannedOperation {
@@ -70,6 +70,12 @@ impl Scene {
             self.target(name).as_str(),
             Disposition::Create,
         )
+    }
+
+    fn stage_update_unstarted(&self, name: &str, original: &str) -> PlannedOperation {
+        let target = self.target(name);
+        fs_err::write(&target, original).expect("write pre-existing target");
+        PlannedOperation::copy(format!("repo/{name}"), target.as_str(), Disposition::Update)
     }
 
     fn write_orphan_plan(&self, ops: Vec<PlannedOperation>) {
@@ -205,6 +211,25 @@ fn recovery_rolls_back_and_never_completes_an_unstarted_op() {
     assert!(
         !scene.target("never").exists(),
         "the un-started op is NOT completed forward; it stays absent"
+    );
+}
+
+#[test]
+fn recovery_keeps_the_original_bytes_of_an_unstarted_update_target() {
+    let scene = Scene::new();
+    let ops = vec![
+        scene.stage_fresh_created("created", "new"),
+        scene.stage_update_unstarted("edited", "user-bytes"),
+    ];
+    scene.write_orphan_plan(ops);
+    scene.write_progress(&[0]);
+
+    recover_orphans(&scene.journal, &scene.backups).expect("recovery");
+
+    assert_eq!(
+        fs_err::read_to_string(scene.target("edited")).ok(),
+        Some("user-bytes".to_owned()),
+        "an Update op the crashed apply never started must keep its pre-apply bytes"
     );
 }
 

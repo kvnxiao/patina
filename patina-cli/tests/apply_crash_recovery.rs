@@ -11,7 +11,7 @@ use patina_core::journal::COMMIT_SUFFIX;
 use patina_core::journal::PLAN_SUFFIX;
 use patina_core::recover_orphans;
 
-fn setup() -> Fixture {
+fn setup(pre_existing: &str, original: &str) -> Fixture {
     let fx = Fixture::new();
     let module = fx.module(
         "shell",
@@ -20,7 +20,7 @@ fn setup() -> Fixture {
     );
     fs_err::write(module.join("a"), "NEW-A\n").expect("write source a");
     fs_err::write(module.join("b"), "NEW-B\n").expect("write source b");
-    fs_err::write(fx.home.join(".a"), "OLD-A\n").expect("seed pre-existing target");
+    fs_err::write(fx.home.join(pre_existing), original).expect("seed pre-existing target");
     fx
 }
 
@@ -34,7 +34,7 @@ fn count_suffix(journal: &Utf8Path, suffix: &str) -> usize {
 
 #[test]
 fn kill_after_first_op_converges_to_pre_apply_on_recovery() {
-    let fx = setup();
+    let fx = setup(".a", "OLD-A\n");
 
     let out = fx.apply_with_env(&["--yes"], &[("PATINA_TEST_ABORT_AFTER_OP", "1")]);
     assert_eq!(
@@ -79,8 +79,35 @@ fn kill_after_first_op_converges_to_pre_apply_on_recovery() {
 }
 
 #[test]
+fn kill_before_a_pre_existing_second_target_is_written_keeps_its_bytes_on_recovery() {
+    let fx = setup(".b", "OLD-B\n");
+
+    let out = fx.apply_with_env(&["--yes"], &[("PATINA_TEST_ABORT_AFTER_OP", "1")]);
+    assert_eq!(
+        code(&out),
+        70,
+        "the crash seam must terminate the apply mid-materialize (exit 70); stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        fs_err::read_to_string(fx.home.join(".b")).expect("read ~/.b before recovery"),
+        "OLD-B\n",
+        "the crash seam must fire before the second op writes ~/.b"
+    );
+
+    let state = fx.state_root();
+    recover_orphans(state.join("journal"), state.join("backups")).expect("recovery");
+
+    assert_eq!(
+        fs_err::read_to_string(fx.home.join(".b")).ok(),
+        Some("OLD-B\n".to_owned()),
+        "a pre-existing target the crashed apply never reached must keep its pre-apply bytes"
+    );
+}
+
+#[test]
 fn kill_after_all_ops_before_commit_converges_to_pre_apply_on_recovery() {
-    let fx = setup();
+    let fx = setup(".a", "OLD-A\n");
 
     let out = fx.apply_with_env(&["--yes"], &[("PATINA_TEST_ABORT_AFTER_OP", "2")]);
     assert_eq!(

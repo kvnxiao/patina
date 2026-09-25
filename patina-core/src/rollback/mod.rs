@@ -9,10 +9,9 @@
 //!
 //! ## Inverse-operation rule
 //!
-//! The reversal decision mirrors crash recovery ([`crate::journal`]'s
-//! `recover_orphans`): the commit-recorded per-target disposition is consulted
-//! first, then backup *presence* decides between restore and delete. The three
-//! outcomes, in evaluation order:
+//! The commit-recorded per-target disposition is consulted first, then backup
+//! *presence* decides between restore and delete. The three outcomes, in
+//! evaluation order:
 //!
 //! - A target the apply recorded as `Unchanged` is *left in place*. The apply
 //!   skipped both its write and its backup, so its live state is already the
@@ -25,6 +24,13 @@
 //!
 //! Either way the post-rollback state of each target matches the apply's
 //! pre-apply state.
+//!
+//! Crash recovery ([`crate::journal`]'s `recover_orphans`) differs for a
+//! target with no backup whose disposition is `Update`. A committed apply
+//! wrote every `Create` and `Update` target, so a missing backup means the
+//! target was absent when the apply wrote it, and rollback deletes it. An
+//! interrupted apply may never have reached the target, so recovery leaves it
+//! in place.
 //!
 //! ## Per-`[[file]]`-entry atomicity
 //!
