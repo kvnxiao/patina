@@ -512,6 +512,31 @@ fn a_json_promote_refusal_names_the_kept_copy_only_on_stderr() {
 }
 
 #[test]
+fn promote_copies_a_drifted_target_the_interrupted_apply_never_wrote() {
+    let fx = two_copy_entries();
+    commit_first_apply(&fx);
+    fs_err::write(fx.root.join("shell").join("a"), "NEWER-A\n").expect("edit source a");
+    fs_err::write(fx.home.join(".b"), "EDITED-B\n").expect("edit ~/.b outside patina");
+    let killed = fx.apply_with_env(&["--yes"], &[("PATINA_TEST_ABORT_AFTER_OP", "1")]);
+    assert_eq!(code(&killed), 70, "stderr: {}", stderr(&killed));
+
+    let out = fx.run(&["promote", "~/.b", "--yes"], &[]);
+
+    assert_eq!(code(&out), 0, "stderr: {}", stderr(&out));
+    assert_eq!(
+        fs_err::read_to_string(fx.root.join("shell").join("b")).expect("read source b"),
+        "EDITED-B\n",
+        "promote must copy the drifted bytes the interrupted apply never replaced"
+    );
+    let b = fx.home.join(".b");
+    assert!(
+        !stderr(&out).contains(&format!("kept a copy of {b} ")),
+        "recovery must not report a target it left as it was; stderr: {}",
+        stderr(&out)
+    );
+}
+
+#[test]
 fn plan_only_apply_with_a_pending_orphan_warns_and_writes_nothing() {
     let fx = setup(".a", "OLD-A\n");
     let killed = fx.apply_with_env(&["--yes"], &[("PATINA_TEST_ABORT_AFTER_OP", "1")]);
@@ -713,4 +738,148 @@ fn promote_refuses_a_target_its_recovery_reverted_and_leaves_the_source() {
         "NEWER-A\n",
         "the kept copy holds the target as it was before the recovery"
     );
+}
+
+const NESTED: &str = "[[file]]\nsource = \"extra.lua\"\ntarget = \"~/.config/nvim/lua/extra.lua\"\nmode = \"copy\"\n\n\
+                      [[directory]]\nsource = \"tree\"\ntarget = \"~/.config/nvim\"\nmode = \"copy\"\n";
+
+/// Declare a copy `[[directory]]` over a live `~/.config/nvim` holding
+/// `init.lua` and a user file, and a `[[file]]` whose target lies inside it,
+/// seeded with `nested_original` or left absent.
+fn nested(nested_original: Option<&str>) -> Fixture {
+    let fx = Fixture::new();
+    let module = fx.module("nvim", NESTED);
+    fs_err::create_dir_all(module.join("tree")).expect("mkdir the tree source");
+    fs_err::write(module.join("tree").join("init.lua"), "NEW-INIT").expect("write init source");
+    fs_err::write(module.join("extra.lua"), "NEW-EXTRA").expect("write extra source");
+    let live = nvim(&fx);
+    fs_err::create_dir_all(live.join("lua")).expect("mkdir the live tree");
+    fs_err::write(live.join("init.lua"), "OLD-INIT").expect("seed init.lua");
+    fs_err::write(live.join("user.txt"), "USER").expect("seed a user file");
+    if let Some(original) = nested_original {
+        fs_err::write(live.join("lua").join("extra.lua"), original).expect("seed extra.lua");
+    }
+    fx
+}
+
+fn nvim(fx: &Fixture) -> camino::Utf8PathBuf {
+    fx.home.join(".config").join("nvim")
+}
+
+fn read(path: &Utf8Path) -> Option<String> {
+    fs_err::read_to_string(path).ok()
+}
+
+#[test]
+fn a_kill_after_the_nested_file_is_written_keeps_every_file_of_the_directory() {
+    let fx = nested(Some("OLD-EXTRA"));
+    let killed = fx.apply_with_env(&["--yes"], &[("PATINA_TEST_ABORT_AFTER_OP", "1")]);
+    assert_eq!(code(&killed), 70, "stderr: {}", stderr(&killed));
+
+    recover_orphans(fx.state_root()).expect("recovery");
+
+    let live = nvim(&fx);
+    assert_eq!(read(&live.join("user.txt")).as_deref(), Some("USER"));
+    assert_eq!(read(&live.join("init.lua")).as_deref(), Some("OLD-INIT"));
+    assert_eq!(
+        read(&live.join("lua").join("extra.lua")).as_deref(),
+        Some("OLD-EXTRA")
+    );
+}
+
+#[test]
+fn rollback_restores_the_original_bytes_of_a_file_nested_in_a_copied_directory() {
+    let fx = nested(Some("OLD-EXTRA"));
+    let applied = fx.apply(&["--yes"]);
+    assert_eq!(code(&applied), 0, "stderr: {}", stderr(&applied));
+
+    let rollback = fx.run(&["rollback", "--yes"], &[]);
+    assert_eq!(code(&rollback), 0, "stderr: {}", stderr(&rollback));
+
+    let live = nvim(&fx);
+    assert_eq!(
+        read(&live.join("lua").join("extra.lua")).as_deref(),
+        Some("OLD-EXTRA")
+    );
+    assert_eq!(read(&live.join("init.lua")).as_deref(), Some("OLD-INIT"));
+    assert_eq!(read(&live.join("user.txt")).as_deref(), Some("USER"));
+}
+
+#[test]
+fn rollback_deletes_a_created_file_nested_in_a_copied_directory() {
+    let fx = nested(None);
+    let applied = fx.apply(&["--yes"]);
+    assert_eq!(code(&applied), 0, "stderr: {}", stderr(&applied));
+
+    let rollback = fx.run(&["rollback", "--yes"], &[]);
+    assert_eq!(code(&rollback), 0, "stderr: {}", stderr(&rollback));
+
+    let live = nvim(&fx);
+    assert_eq!(read(&live.join("lua").join("extra.lua")), None);
+    assert_eq!(read(&live.join("init.lua")).as_deref(), Some("OLD-INIT"));
+}
+
+#[test]
+fn recovery_deletes_a_created_file_nested_in_a_copied_directory() {
+    let fx = nested(None);
+    let killed = fx.apply_with_env(&["--yes"], &[("PATINA_TEST_ABORT_AFTER_OP", "2")]);
+    assert_eq!(code(&killed), 70, "stderr: {}", stderr(&killed));
+
+    recover_orphans(fx.state_root()).expect("recovery");
+
+    let live = nvim(&fx);
+    assert_eq!(read(&live.join("lua").join("extra.lua")), None);
+    assert_eq!(read(&live.join("init.lua")).as_deref(), Some("OLD-INIT"));
+    assert_eq!(read(&live.join("user.txt")).as_deref(), Some("USER"));
+}
+
+#[test]
+fn a_reaped_leaf_inside_a_directory_backed_up_in_the_same_apply_is_restored_to_its_pre_apply_bytes()
+{
+    let fx = Fixture::new();
+    let tree = "[[directory]]\nsource = \"app\"\ntarget = \"~/app\"\nmode = \"copy\"\n";
+    let module = fx.module("app", tree);
+    fs_err::create_dir_all(module.join("app")).expect("mkdir the tree source");
+    fs_err::write(module.join("app").join("a.conf"), "A-ORIG").expect("write a.conf source");
+    fs_err::write(module.join("app").join("b.conf"), "B-ORIG").expect("write b.conf source");
+    commit_first_apply(&fx);
+
+    fs_err::write(module.join("app").join("a.conf"), "A-NEW").expect("edit a.conf source");
+    fs_err::remove_file(module.join("app").join("b.conf")).expect("drop the b.conf source");
+    let rewrite = if cfg!(windows) {
+        "Set-Content -NoNewline -Path (Join-Path $env:USERPROFILE app/b.conf) -Value HOOK"
+    } else {
+        "printf HOOK > \"$HOME/app/b.conf\""
+    };
+    fx.module(
+        "app",
+        &format!("{tree}\n[[hook]]\nevent = \"post_apply\"\ncommand = '{rewrite}'\n"),
+    );
+    let killed = fx.apply_with_env(&["--yes"], &[("PATINA_TEST_ABORT_AFTER_OP", "2")]);
+    assert_eq!(code(&killed), 70, "stderr: {}", stderr(&killed));
+    assert_eq!(
+        read(&fx.home.join("app").join("b.conf")),
+        None,
+        "the reap ran"
+    );
+
+    recover_orphans(fx.state_root()).expect("recovery");
+
+    assert_eq!(
+        read(&fx.home.join("app").join("b.conf")).as_deref(),
+        Some("B-ORIG"),
+        "the directory's backup must hold the leaf as it was before the apply"
+    );
+    let partials: Vec<String> = fs_err::read_dir(fx.home.join("app"))
+        .expect("read the restored tree")
+        .map(|entry| {
+            entry
+                .expect("read a restored entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .filter(|name| name.contains(".partial."))
+        .collect();
+    assert!(partials.is_empty(), "the restored tree holds {partials:?}");
 }

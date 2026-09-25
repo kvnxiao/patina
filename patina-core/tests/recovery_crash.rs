@@ -506,3 +506,43 @@ fn a_retry_after_a_failed_recovery_reports_the_copies_the_failed_pass_kept() {
         "the retry must not copy the restored bytes again"
     );
 }
+
+#[test]
+fn recovery_reports_and_keeps_only_the_targets_it_changed() {
+    let scene = Scene::new();
+    let ops = vec![
+        scene.stage_overwrite("written", "orig-written", "new-written"),
+        scene.stage_overwrite("unwritten", "drifted-bytes", "drifted-bytes"),
+    ];
+    scene.write_orphan_plan(ops);
+    scene.write_progress(&[0]);
+
+    let report = recover_orphans(&scene.root).expect("recovery");
+
+    let changed: Vec<&Utf8Path> = report
+        .changed_targets()
+        .iter()
+        .map(patina_core::journal::RecoveredTarget::target)
+        .collect();
+    assert_eq!(changed, vec![scene.target("written").as_path()]);
+    let kept_ops: Vec<String> =
+        fs_err::read_dir(scene.root.join("recovered").join(format!("{TS}.1")))
+            .expect("read the copy directory")
+            .map(|entry| {
+                entry
+                    .expect("read a copy entry")
+                    .file_name()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect();
+    assert_eq!(
+        kept_ops,
+        vec!["0".to_owned()],
+        "only the written target is kept"
+    );
+    assert_eq!(
+        fs_err::read_to_string(scene.target("unwritten")).expect("read the unwritten target"),
+        "drifted-bytes"
+    );
+}

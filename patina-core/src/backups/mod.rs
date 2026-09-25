@@ -1,10 +1,12 @@
 //! Pre-overwrite backups and count-based retention.
 //!
 //! Patina never clobbers a pre-existing user file without first stashing
-//! the original. Before the executor overwrites any target that already
-//! exists on disk, including replacing a regular file with a symlink, it
-//! calls [`backup_before_overwrite`]. That call copies the original bytes
-//! to `<state>/patina/backups/<ts>/<mirrored-target-path>`, staging them in a
+//! the original. After it flushes the plan and before its first write, an
+//! apply calls [`backup_before_overwrite`] for every target it will
+//! overwrite or remove, including one whose regular file becomes a symlink,
+//! outermost first and skipping a target inside a directory already backed
+//! up. That call copies the original bytes to
+//! `<state>/patina/backups/<ts>/<mirrored-target-path>`, staging them in a
 //! `.partial.<pid>` sibling that it renames into place. The mirrored
 //! path is the inverse map crash recovery reads, so both
 //! agree on where an original lives; the mapping itself is owned by

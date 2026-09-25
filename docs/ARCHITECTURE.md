@@ -172,7 +172,8 @@ sequenceDiagram
     D->>M: confirmed plan
     M->>M: lock, refuse an orphan plan, and check for work
     M->>M: pre_apply hooks
-    M->>M: journal, target writes, and cursor
+    M->>M: journal, then back up every target
+    M->>M: target writes and cursor
     M->>M: post_apply hooks, removals, and COMMIT
     M->>U: result
 ```
@@ -198,13 +199,16 @@ sequenceDiagram
    holds an orphan plan. It then checks for work. A plan with only `Unchanged`
    targets, no `Remove`, and an earlier commit returns without running hooks or
    writing files. Any other plan resolves hook shells and runs `pre_apply`
-   hooks. If those hooks succeed, it flushes the journal, backs up and
-   materializes its targets, runs `post_apply` hooks, and then backs up and
-   removes each `Remove` target. A successful run writes the terminal sentinel
-   and prunes old backups; a required `post_apply` hook failure rolls back the
-   target operations before any removal, deletes the run's backup cycle unless
-   a committed apply shares its timestamp, and then deletes the plan. The CLI
-   maps the result to the documented exit code.
+   hooks. If those hooks succeed, it flushes the journal and then backs up
+   every target it will overwrite or remove in one pass, outermost first,
+   skipping a target inside a directory the pass backed up. Only then does it
+   materialize its targets, run `post_apply` hooks, and remove each `Remove`
+   target. Every backup is therefore a copy of the pre-apply state, and no
+   backup is written inside another. A successful run writes the terminal
+   sentinel and prunes old backups; a required `post_apply` hook failure rolls
+   back the target operations before any removal, deletes the run's backup
+   cycle unless a committed apply shares its timestamp, and then deletes the
+   plan. The CLI maps the result to the documented exit code.
 
 ### Target kind and mode edits
 
@@ -335,12 +339,14 @@ reads each journal envelope and converges deterministically:
   the journal became durable but before it committed. Recovery reverses
   it to the pre-apply state, deciding per operation from the
   recorded disposition and whether a backup exists. An `Unchanged`
-  target is left alone. A target with a backup is restored from it.
+  target is left alone. A target whose live entry matches its backup (same
+  kind, bytes, link target, or tree) was never written and is left alone
+  without a report. Any other target with a backup is restored from it.
   Without a backup, a `Create` target is deleted, and an `Update` or
-  `Remove` target is left in place: the executor backs up a pre-existing
-  target immediately before it writes or removes it, so a missing backup
-  means the operation never started. The decision reads the plan and the
-  backup directory rather than the progress cursor. Before it restores over or
+  `Remove` target is left in place: the backup pass precedes every write,
+  so a target with no entry at its mirror path was never written, or lies
+  inside a backed-up directory whose restore covers it. The decision reads the
+  plan and the backup directory rather than the progress cursor. Before it restores over or
   deletes a live entry, recovery copies that entry to
   `<state>/recovered/<ts>.<n>/<op index>/<file name>` and reports the copy.
   The per-operation index keeps copies independent of each other. A retry

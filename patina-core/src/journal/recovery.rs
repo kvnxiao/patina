@@ -26,14 +26,25 @@
 //!    - `Unchanged`: the apply neither backed up nor wrote this target, so the
 //!      live entry is already the pre-apply entry. Leave it in place and do
 //!      **not** consult the backup directory.
+//!    - a backup exists and the live entry matches it (same kind, bytes, link
+//!      target, or tree): the apply never wrote the target. Leave it in place
+//!      and do not report it.
 //!    - a backup exists: the apply overwrote, or was about to overwrite, a
 //!      pre-existing entry. Restore the original from the backup.
 //!    - no backup and `Create`: the target was absent before the apply. Remove
 //!      whatever the apply created there, if anything.
-//!    - no backup and `Update`: the apply backs up a pre-existing target before
-//!      it writes it, so the write never started. Leave the target in place.
-//!    - no backup and `Remove`: the apply backs up a reaped target before it
-//!      removes it, so the removal never started. Leave the target in place.
+//!    - no backup and `Update`: the write never started. Leave the target in
+//!      place.
+//!    - no backup and `Remove`: the removal never started. Leave the target in
+//!      place.
+//!
+//!    The last two rest on the backup pass: the apply backs up every target it
+//!    will overwrite or remove before its first write, outermost first, and
+//!    skips a target inside a directory the pass backed up. A target with no
+//!    entry at its mirror path was therefore never written, or lies inside a
+//!    backed-up directory whose restore covers it and did not exist before the
+//!    apply. A covered target that did exist is found at its mirror path
+//!    inside the directory's backup.
 //!
 //!    Each outcome leaves the target in its pre-apply state. Before recovery
 //!    overwrites or removes an entry at a target, it copies that entry to
@@ -249,13 +260,14 @@ fn reverse_orphan(
 /// the durable per-op aggregate, so a tree whose aggregate is `Unchanged` is
 /// left whole.
 ///
-/// The executor backs up a pre-existing target immediately before its write,
-/// and a reaped target immediately before its removal. A missing backup
-/// therefore separates a `Create` target, which recovery removes, from an
-/// `Update` or [`Remove`](PlannedOperation::Remove) target the apply never
-/// reached, which recovery leaves in place. A backup the apply was killed while
+/// The backup pass precedes every write, so a missing backup separates a
+/// `Create` target, which recovery removes, from an `Update` or
+/// [`Remove`](PlannedOperation::Remove) target the apply never reached, which
+/// recovery leaves in place. A backup the apply was killed while
 /// staging is not at the mirror path, so it counts as missing; recovery removes
-/// the staged `.partial.<pid>` sibling.
+/// the staged `.partial.<pid>` sibling. The pass also backs up targets the
+/// apply never reached, so a live entry that matches its backup is left in
+/// place and reported only through a copy an earlier pass kept.
 ///
 /// Before either restores over or removes a live entry, the entry is copied
 /// aside through `keeper`. Copy, restore, and delete go through the
@@ -282,14 +294,15 @@ fn reverse_operation(
     let live = crate::fsx::entry_present(target);
     let restore = crate::fsx::entry_present(&backup);
     let remove = live && disposition == Some(Disposition::Create);
-    if !restore && !remove {
+    let unwritten = restore && live && crate::fsx::same_entry(target, &backup)?;
+    if unwritten || (!restore && !remove) {
         return Ok(keeper.earlier(index, target).map(|kept| RecoveredTarget {
             target: target.to_path_buf(),
             kept: vec![kept],
         }));
     }
     let kept = if live {
-        keeper.keep(index, target, restore.then_some(backup.as_path()))?
+        keeper.keep(index, target)?
     } else {
         keeper.earlier(index, target).into_iter().collect()
     };
@@ -341,24 +354,13 @@ impl<'a> Keeper<'a> {
     }
 
     /// Copy the live entry at `target` aside unless it matches an earlier
-    /// pass's copy or `backup`, and return the earlier copy, if any, before
-    /// the new one.
-    fn keep(
-        &mut self,
-        index: usize,
-        target: &Utf8Path,
-        backup: Option<&Utf8Path>,
-    ) -> Result<Vec<Utf8PathBuf>, JournalError> {
+    /// pass's copy, and return the earlier copy, if any, before the new one.
+    fn keep(&mut self, index: usize, target: &Utf8Path) -> Result<Vec<Utf8PathBuf>, JournalError> {
         let mut copies: Vec<Utf8PathBuf> = self.earlier(index, target).into_iter().collect();
-        if let Some(earlier) = copies.first() {
-            let unchanged = crate::fsx::same_entry(target, earlier)?
-                || match backup {
-                    Some(backup) => crate::fsx::same_entry(target, backup)?,
-                    None => false,
-                };
-            if unchanged {
-                return Ok(copies);
-            }
+        if let Some(earlier) = copies.first()
+            && crate::fsx::same_entry(target, earlier)?
+        {
+            return Ok(copies);
         }
         let dir = self
             .dir

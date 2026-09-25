@@ -15,10 +15,10 @@
 //! 2. [`execute`] takes the [`ResolvedPlan`] and mutates, in this order: it
 //!    takes the exclusive lock, refuses when an orphan plan is pending, runs
 //!    the symlink gate and the no-op check, runs `pre_apply` hooks, flushes the
-//!    plan, materializes every operation (backing up each pre-existing target
-//!    first), runs `post_apply` hooks, performs the plan's `Remove` operations,
-//!    commits, and prunes old backups. A failed `post_apply` hook rolls the
-//!    file operations back instead of the last three steps.
+//!    plan, backs up every target it will overwrite or remove, materializes
+//!    every operation, runs `post_apply` hooks, performs the plan's `Remove`
+//!    operations, commits, and prunes old backups. A failed `post_apply` hook
+//!    rolls the file operations back instead of the last three steps.
 //!
 //! A caller that may execute runs [`recover_interrupted`] before [`plan`], so
 //! the plan describes the pre-apply state rather than what an interrupted apply
@@ -1843,25 +1843,16 @@ fn planned_operation(
     }
 }
 
-/// Materialize one target after backing up any pre-existing entry.
+/// Materialize one target, which [`back_up_targets`] has already backed up.
 ///
 /// Tree updates write only non-`Unchanged` leaves unless `replace_root` is
 /// set; that branch removes the backed-up root and writes every leaf. A
 /// symlinked root is rejected when `replace_root` is not set.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the per-target write-skip needs the operation mode, source, \
-              target, disposition, backup tree, timestamp, template engine, \
-              resolver, and rules; a struct would only move the same fields \
-              behind a name."
-)]
 fn materialize_target(
     mode: FileMode,
     source: &Utf8Path,
     target: &Utf8Path,
     disposition: &TargetDisposition,
-    backups_dir: &Utf8Path,
-    timestamp: &str,
     engine: &Engine,
     resolver: &Resolver,
     rules: &ignore::gitignore::Gitignore,
@@ -1874,9 +1865,6 @@ fn materialize_target(
 
     let is_tree = matches!(mode, FileMode::CopyTree | FileMode::SymlinkTree);
     if !is_tree {
-        // Single-target Create/Update: back up the pre-existing target (a
-        // no-op for an absent Create target) and materialize it as today.
-        backup_before_overwrite(backups_dir, timestamp, target)?;
         return Ok(materialize(
             mode,
             source,
@@ -1887,13 +1875,11 @@ fn materialize_target(
         )?);
     }
 
-    // Tree Create/Update: back up the whole target directory as a
-    // unit so every leaf's prior bytes are captured, then write only the
-    // drifted leaves. A Create aggregate has no per-leaf entries (the target
-    // dir is absent), so write every leaf.
-    backup_before_overwrite(backups_dir, timestamp, target)?;
-    // Keep the backup before removing a consented root. Without plan-time
-    // consent, refuse before a leaf write can follow the link.
+    // Tree Create/Update: the backup pass captured the whole target directory
+    // as a unit, so write only the drifted leaves. A Create aggregate has no
+    // per-leaf entries (the target dir is absent), so write every leaf.
+    // Without plan-time consent to replace a symlinked root, refuse before a
+    // leaf write can follow the link.
     if fs_err::symlink_metadata(target).is_ok_and(|meta| meta.file_type().is_symlink()) {
         if !disposition.replace_root {
             return Err(EngineError::TreeTargetIsSymlink {
@@ -1939,9 +1925,9 @@ fn materialize_target(
 ///
 /// Takes the exclusive lock and refuses when the journal holds an orphan plan.
 /// Then runs the symlink gate and the no-op check, runs `pre_apply` hooks,
-/// flushes the plan, materializes every operation (backing up each
-/// pre-existing target first), runs `post_apply` hooks, and backs up and
-/// removes each [`PlannedOperation::Remove`] target. Finally commits and
+/// flushes the plan, backs up every target it will overwrite or remove,
+/// materializes every operation, runs `post_apply` hooks, and removes each
+/// [`PlannedOperation::Remove`] target. Finally commits and
 /// prunes old backups, or rolls the file operations back when a
 /// `must_succeed` `post_apply` hook fails.
 ///
@@ -1962,7 +1948,7 @@ fn materialize_target(
 #[expect(
     clippy::too_many_lines,
     reason = "execute is the single linear apply orchestrator: lock, orphan check, \
-              no-op short-circuit, hooks, flush, materialize, reap, commit/rollback, \
+              no-op short-circuit, hooks, flush, backups, materialize, reap, commit/rollback, \
               and GC, in the fixed order the crash-safety contract depends on. \
               Splitting a phase into a helper would hide that ordering behind a \
               call without removing any step."
@@ -2052,10 +2038,11 @@ pub fn execute(
         &resolved.plan,
         &OsSyncer,
     )?;
+    back_up_targets(resolved, &backups_dir)?;
 
-    // Materialize every operation, backing up each pre-existing target
-    // first, except a target classified `Unchanged` at plan time, which is
-    // neither backed up nor (re)written so its inode/mtime is preserved.
+    // Materialize every operation except a target classified `Unchanged` at
+    // plan time, which is neither backed up nor (re)written so its
+    // inode/mtime is preserved.
     // Track completion records (paired with the index of the
     // `[[file]]` entry that produced them) so a post_apply hook failure can
     // reverse them and the commit record can group targets into atomic
@@ -2092,8 +2079,6 @@ pub fn execute(
                 &op.source,
                 target,
                 disposition,
-                &backups_dir,
-                &resolved.timestamp,
                 &template_engine,
                 resolved.operation_resolver(op),
                 &op.ignore_rules,
@@ -2132,7 +2117,7 @@ pub fn execute(
             let PlannedOperation::Remove { target } = op else {
                 continue;
             };
-            reap_target(Utf8Path::new(target), &backups_dir, &resolved.timestamp)?;
+            reap_target(Utf8Path::new(target))?;
             journal.record_progress(op_index)?;
             op_index = op_index.saturating_add(1);
             #[cfg(debug_assertions)]
@@ -2409,27 +2394,74 @@ fn expected_target(
     }
 }
 
-/// Back up and remove one [`PlannedOperation::Remove`] target.
+/// Remove one [`PlannedOperation::Remove`] target, which [`back_up_targets`]
+/// has already backed up.
 ///
-/// The backup goes into this run's backup tree before the removal, under the
-/// same never-overwrite-without-backup guarantee every mutating path upholds.
 /// An absent target is a no-op. A directory is never removed, including one
 /// that replaced the planned target after planning: Patina cannot prove it owns
 /// a directory that may also hold files written outside Patina.
 ///
 /// # Errors
 ///
-/// Returns an [`EngineError`] when the backup or the removal fails.
-fn reap_target(
-    target: &Utf8Path,
-    backups_dir: &Utf8Path,
-    timestamp: &str,
-) -> Result<(), EngineError> {
-    if fs_err::symlink_metadata(target).is_ok_and(|meta| meta.is_dir()) {
+/// Returns an [`EngineError`] when the removal fails.
+fn reap_target(target: &Utf8Path) -> Result<(), EngineError> {
+    if is_real_dir(target) {
         return Ok(());
     }
-    backup_before_overwrite(backups_dir, timestamp, target)?;
     remove_target(target)
+}
+
+/// Back up every entry `resolved` will overwrite or remove, outermost first,
+/// before the first write.
+///
+/// A target inside a directory this pass backed up is skipped: that
+/// directory's backup already holds the target's pre-apply entry, or lacks it
+/// when the target did not exist, and every reader finds it at the target's
+/// mirror path inside the directory's backup. Taking every backup before any
+/// write keeps each one a copy of the pre-apply state, so no backup captures
+/// bytes this apply wrote and none is staged inside another. A `Remove`
+/// target that is a directory is not backed up, because [`reap_target`]
+/// never removes it.
+///
+/// # Errors
+///
+/// Returns an [`EngineError`] when a backup fails.
+fn back_up_targets(resolved: &ResolvedPlan, backups_dir: &Utf8Path) -> Result<(), EngineError> {
+    let written = resolved.operations.iter().flat_map(|op| {
+        op.targets
+            .iter()
+            .zip(&op.dispositions)
+            .filter(|(_, disposition)| disposition.aggregate != Disposition::Unchanged)
+            .map(|(target, _)| target.as_path())
+    });
+    let removed = resolved
+        .plan
+        .operations()
+        .iter()
+        .filter_map(|op| match op {
+            PlannedOperation::Remove { target } => Some(Utf8Path::new(target.as_str())),
+            _ => None,
+        })
+        .filter(|target| !is_real_dir(target));
+    let mut targets: Vec<&Utf8Path> = written.chain(removed).collect();
+    targets.sort_by_key(|target| target.components().count());
+
+    let mut directories: Vec<&Utf8Path> = Vec::new();
+    for target in targets {
+        if directories.iter().any(|dir| target.starts_with(dir)) {
+            continue;
+        }
+        backup_before_overwrite(backups_dir, &resolved.timestamp, target)?;
+        if is_real_dir(target) {
+            directories.push(target);
+        }
+    }
+    Ok(())
+}
+
+/// Whether `path` is a directory rather than a symbolic link to one.
+fn is_real_dir(path: &Utf8Path) -> bool {
+    fs_err::symlink_metadata(path).is_ok_and(|meta| meta.is_dir())
 }
 
 /// Whether a `patina apply` over `resolved` would be a full no-op under
@@ -3962,7 +3994,6 @@ mod tests {
         fs_err::write(source.join("a.conf"), b"repo bytes").expect("write a");
         let target = dir.join("out");
         make_symlink(&source, &target);
-        let backups = dir.join("backups");
 
         let disposition = TargetDisposition {
             aggregate: Disposition::Update,
@@ -3979,8 +4010,6 @@ mod tests {
             &source,
             &target,
             &disposition,
-            &backups,
-            TS,
             &Engine::new(),
             &Resolver::new(Builtins::for_tests()),
             &crate::ignore_rules::none(),
@@ -4013,7 +4042,6 @@ mod tests {
         fs_err::write(source.join("a.conf"), b"repo bytes").expect("write a");
         let target = dir.join("out");
         make_symlink(&source, &target);
-        let backups = dir.join("backups");
 
         let disposition = TargetDisposition {
             aggregate: Disposition::Update,
@@ -4030,8 +4058,6 @@ mod tests {
             &source,
             &target,
             &disposition,
-            &backups,
-            TS,
             &Engine::new(),
             &Resolver::new(Builtins::for_tests()),
             &crate::ignore_rules::none(),
@@ -4052,14 +4078,6 @@ mod tests {
             fs_err::read(source.join("a.conf")).expect("read source leaf"),
             b"repo bytes",
             "the repository source survives byte-for-byte"
-        );
-        let stashed = crate::journal::mirror_backup_path(&backups, TS, &target);
-        assert!(
-            fs_err::symlink_metadata(&stashed)
-                .expect("stat stashed root")
-                .file_type()
-                .is_symlink(),
-            "the pre-apply link is stashed for rollback"
         );
     }
 
