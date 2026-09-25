@@ -30,7 +30,7 @@ use patina_core::ForceDeploy;
 use patina_core::GateDecision;
 use patina_core::HostDevModeProbe;
 use patina_core::LockPolicy;
-use patina_core::Orphan;
+use patina_core::Reap;
 use patina_core::ResolvedPlan;
 use patina_core::chain_message;
 use patina_core::current_timestamp;
@@ -38,7 +38,6 @@ use patina_core::decide_symlink_gate;
 use patina_core::execute_plan;
 use patina_core::plan_apply;
 use patina_core::plan_is_full_noop;
-use patina_core::plan_orphans;
 use patina_core::remote::lockfile::Lockfile;
 use patina_core::remote::lockfile::lockfile_path;
 
@@ -131,11 +130,7 @@ pub(crate) fn run(
         plan_is_full_noop(&resolved).context("failed to determine apply plan state")?;
 
     if !is_full_noop {
-        // Orphans the reap phase would delete are not plan operations, so they
-        // are passed to the renderer explicitly. The engine re-derives the
-        // same set under the held lock.
-        let orphans = plan_orphans(&resolved).context("failed to determine the reap set")?;
-        let rendered = render_diff(&resolved, &orphans)?;
+        let rendered = render_diff(&resolved)?;
         reporter.out_block(&rendered);
     }
 
@@ -398,13 +393,8 @@ fn run_json(
     yes: bool,
     reporter: &mut impl Reporter,
 ) -> Result<i32> {
-    // The reap set is computed before any mutation, so the envelope reports
-    // what this run would remove. The engine re-derives the same set under the
-    // lock.
-    let reaped = plan_orphans(resolved).context("failed to determine the reap set")?;
-
     if !yes {
-        let document = json_envelope(resolved, &reaped, "previewed");
+        let document = json_envelope(resolved, "previewed");
         reporter.json(&document);
         return Ok(ExitCode::Success.code());
     }
@@ -420,7 +410,7 @@ fn run_json(
         ApplyResult::RolledBack { .. } => "rolled_back",
         ApplyResult::Aborted { .. } => "aborted",
     };
-    let document = json_envelope(resolved, &reaped, result_field);
+    let document = json_envelope(resolved, result_field);
     reporter.json(&document);
     Ok(exit_code_for(&result))
 }
@@ -435,16 +425,16 @@ fn run_json(
 /// pure function of the plan-time classification, so it inherits the
 /// deterministic-stdout contract.
 ///
-/// `reaped` lists what this run would remove: orphans of a prior apply the
-/// current plan no longer manages. They are not plan operations, so they are
-/// reported in their own array rather than as `plan` rows; the human diff
-/// renders the same set as `remove` blocks. Each row is an object carrying the
-/// `target` and the `reason` it is no longer managed
-/// ([`OrphanReason::label`](patina_core::OrphanReason::label)), so a consumer
-/// can tell a deletion caused by a new `ignore` pattern from one caused by a
-/// dropped entry. `plan_orphans` sorted them by target, so the array is a
-/// stable function of the reap set.
-fn json_envelope(resolved: &ResolvedPlan, reaped: &[Orphan], result: &str) -> String {
+/// `reaped` lists what this run removes: the plan's
+/// [`reap`](patina_core::ResolvedPlan::reap) set, targets of a prior apply the
+/// current plan no longer manages. They are reported in their own array rather
+/// than as `plan` rows; the human diff renders the same set as `remove` blocks.
+/// Each row is an object carrying the `target` and the `reason` it is no longer
+/// managed ([`OrphanReason::label`](patina_core::OrphanReason::label)), so a
+/// consumer can tell a deletion caused by a new `ignore` pattern from one
+/// caused by a dropped entry. The plan sorts the set by target, so the array is
+/// a stable function of the reap set.
+fn json_envelope(resolved: &ResolvedPlan, result: &str) -> String {
     let plan: Vec<serde_json::Value> = resolved
         .operations
         .iter()
@@ -455,7 +445,8 @@ fn json_envelope(resolved: &ResolvedPlan, reaped: &[Orphan], result: &str) -> St
                 .flat_map(move |(target, disposition)| plan_rows(op, target, disposition))
         })
         .collect();
-    let reaped: Vec<serde_json::Value> = reaped
+    let reaped: Vec<serde_json::Value> = resolved
+        .reap
         .iter()
         .map(|orphan| {
             serde_json::json!({
@@ -517,8 +508,8 @@ fn mode_label(mode: patina_core::FileMode) -> &'static str {
 ///
 /// Patina never pipes to an external pager. The embedded renderer is the only
 /// source of the rendered string, so stdout stays deterministic.
-fn render_diff(resolved: &ResolvedPlan, orphans: &[Orphan]) -> Result<String> {
-    diff::render(resolved, orphans)
+fn render_diff(resolved: &ResolvedPlan) -> Result<String> {
+    diff::render(resolved)
 }
 
 /// Report a non-JSON apply result through the reporter.
@@ -571,6 +562,7 @@ fn build_request(args: &ApplyArgs) -> Result<ApplyRequest> {
     Ok(ApplyRequest {
         force_deploy,
         cli_overrides,
+        reap: Reap::Orphans,
     })
 }
 

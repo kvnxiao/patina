@@ -260,6 +260,42 @@ fn recovery_ignores_and_removes_a_leftover_partial_backup() {
 }
 
 #[test]
+fn recovery_restores_a_reaped_target_from_its_backup() {
+    let scene = Scene::new();
+    let target = scene.target("reaped");
+    let backup = mirror_backup_path(&scene.backups, TS, &target);
+    fs_err::create_dir_all(backup.parent().expect("backup parent")).expect("create backup parent");
+    fs_err::write(&backup, "reaped-bytes").expect("write the reap's backup");
+    scene.write_orphan_plan(vec![PlannedOperation::remove(target.as_str())]);
+    scene.write_progress(&[0]);
+
+    recover_orphans(&scene.journal, &scene.backups).expect("recovery");
+
+    assert_eq!(
+        fs_err::read_to_string(&target).ok(),
+        Some("reaped-bytes".to_owned()),
+        "a Remove the crashed apply completed must be undone from its backup"
+    );
+}
+
+#[test]
+fn recovery_leaves_the_target_of_an_unstarted_remove() {
+    let scene = Scene::new();
+    let target = scene.target("kept");
+    fs_err::write(&target, "kept-bytes").expect("write the reap target");
+    scene.write_orphan_plan(vec![PlannedOperation::remove(target.as_str())]);
+    scene.write_progress(&[]);
+
+    recover_orphans(&scene.journal, &scene.backups).expect("recovery");
+
+    assert_eq!(
+        fs_err::read_to_string(&target).ok(),
+        Some("kept-bytes".to_owned()),
+        "a Remove the crashed apply never started must leave its target"
+    );
+}
+
+#[test]
 fn lying_progress_cursor_is_ignored_in_favour_of_the_filesystem() {
     let scene = Scene::new();
     let ops = vec![

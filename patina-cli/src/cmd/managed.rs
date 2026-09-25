@@ -20,6 +20,7 @@ use patina_core::EngineError;
 use patina_core::LockGuard;
 use patina_core::LockKind;
 use patina_core::LockPolicy;
+use patina_core::Reap;
 use patina_core::acquire_lock;
 use patina_core::current_timestamp;
 use patina_core::exclusive_timeout;
@@ -58,16 +59,21 @@ pub(crate) fn acquire_state_and_lock() -> Result<(Utf8PathBuf, LockGuard)> {
 /// lock `guard`.
 ///
 /// The plan is computed against the manifests as they stand, so an edit the
-/// caller just made is included. Execution runs under [`LockPolicy::Held`] and
-/// writes a fresh `<ts>.COMMIT` recording the new expected state.
+/// caller just made is included. It is planned under [`Reap::Nothing`], so the
+/// re-apply removes no target, including the one `remove` just replaced and
+/// unmanaged. Execution runs under [`LockPolicy::Held`] and writes a fresh
+/// `<ts>.COMMIT` recording the new expected state.
 ///
 /// # Errors
 ///
 /// Returns an error when the re-plan or the re-apply fails.
 pub(crate) fn rejournal(guard: LockGuard) -> Result<()> {
+    let request = ApplyRequest {
+        reap: Reap::Nothing,
+        ..ApplyRequest::default()
+    };
     let timestamp = current_timestamp();
-    let resolved = plan_apply(&ApplyRequest::default(), &timestamp).context("failed to re-plan")?;
-    execute_plan(&resolved, &ApplyRequest::default(), LockPolicy::Held(guard))
-        .context("re-apply failed")?;
+    let resolved = plan_apply(&request, &timestamp).context("failed to re-plan")?;
+    execute_plan(&resolved, &request, LockPolicy::Held(guard)).context("re-apply failed")?;
     Ok(())
 }

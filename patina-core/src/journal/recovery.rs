@@ -27,6 +27,8 @@
 //!      whatever the apply created there, if anything.
 //!    - no backup and `Update`: the apply backs up a pre-existing target before
 //!      it writes it, so the write never started. Leave the target in place.
+//!    - no backup and `Remove`: the apply backs up a reaped target before it
+//!      removes it, so the removal never started. Leave the target in place.
 //!
 //!    Each outcome leaves the target in its pre-apply state.
 //! 4. Deletes the orphan `<ts>.plan` and `<ts>.progress` files once every
@@ -191,12 +193,13 @@ fn reverse_orphan(
 /// the durable per-op aggregate, so a tree whose aggregate is `Unchanged` is
 /// left whole.
 ///
-/// The executor backs up a pre-existing target immediately before its write.
-/// A missing backup therefore separates a `Create` target, which recovery
-/// removes, from an `Update` target the apply never reached, which recovery
-/// leaves in place. A backup the apply was killed while staging is not at the
-/// mirror path, so it counts as missing; recovery removes the staged
-/// `.partial.<pid>` sibling.
+/// The executor backs up a pre-existing target immediately before its write,
+/// and a reaped target immediately before its removal. A missing backup
+/// therefore separates a `Create` target, which recovery removes, from an
+/// `Update` or [`Remove`](PlannedOperation::Remove) target the apply never
+/// reached, which recovery leaves in place. A backup the apply was killed while
+/// staging is not at the mirror path, so it counts as missing; recovery removes
+/// the staged `.partial.<pid>` sibling.
 ///
 /// Both restore and delete go through the kind-preserving [`crate::fsx`]
 /// helpers. The original is therefore recreated as the same kind it was: a
@@ -210,7 +213,7 @@ fn reverse_operation(
     op: &PlannedOperation,
 ) -> Result<(), JournalError> {
     let disposition = op.disposition();
-    if disposition == Disposition::Unchanged {
+    if disposition == Some(Disposition::Unchanged) {
         return Ok(());
     }
 
@@ -222,8 +225,10 @@ fn reverse_operation(
         return crate::fsx::clone_entry(&backup, target).map_err(JournalError::Filesystem);
     }
     match disposition {
-        Disposition::Create => crate::fsx::remove_entry(target).map_err(JournalError::Filesystem),
-        Disposition::Update | Disposition::Unchanged => Ok(()),
+        Some(Disposition::Create) => {
+            crate::fsx::remove_entry(target).map_err(JournalError::Filesystem)
+        }
+        Some(Disposition::Update | Disposition::Unchanged) | None => Ok(()),
     }
 }
 

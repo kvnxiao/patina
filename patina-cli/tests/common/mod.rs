@@ -125,6 +125,20 @@ pub(crate) fn code(output: &Output) -> i32 {
     output.status.code().expect("process exited with a code")
 }
 
+/// Journal and backup files are keyed by a one-second timestamp, so two
+/// applies inside one second share their `<ts>` files.
+pub(crate) fn wait_for_next_second() {
+    let now = || {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |elapsed| elapsed.as_secs())
+    };
+    let start = now();
+    while now() == start {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+}
+
 #[cfg(unix)]
 /// Create a file symlink using the host platform.
 pub(crate) fn symlink_file(source: &Utf8Path, link: &Utf8Path) {
