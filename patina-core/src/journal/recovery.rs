@@ -9,8 +9,8 @@
 //! reversing them.
 //!
 //! The mutating commands (`apply` on a path that can write, `rollback`,
-//! `remove`, and `promote`) recover under the exclusive lock before they read
-//! the filesystem, so each works from the pre-apply state.
+//! `remove`, and `promote`) recover under the exclusive lock before their first
+//! write, so each works from the pre-apply state.
 //!
 //! For each orphan, recovery:
 //!

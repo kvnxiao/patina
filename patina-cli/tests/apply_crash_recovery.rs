@@ -623,3 +623,27 @@ fn the_next_apply_keeps_bytes_written_after_the_crash_and_names_their_copy() {
         "the bytes written after the crash must survive the recovery"
     );
 }
+
+#[test]
+fn a_refused_remove_or_promote_with_a_pending_orphan_warns_and_writes_nothing() {
+    let fx = committed_then_interrupted();
+
+    for (args, refusal) in [
+        (&["remove", "~/.b"][..], 5),
+        (&["promote", "~/.unmanaged"][..], 1),
+    ] {
+        let before = snapshot(&[&fx.home, &fx.state, &fx.root]);
+        let out = fx.run(args, &[]);
+        assert_eq!(code(&out), refusal, "{args:?} stderr: {}", stderr(&out));
+        assert_eq!(
+            snapshot(&[&fx.home, &fx.state, &fx.root]),
+            before,
+            "{args:?} must not write under the home, state, or repository directory"
+        );
+        assert!(
+            stderr(&out).contains("an interrupted apply is pending"),
+            "{args:?} stderr: {}",
+            stderr(&out)
+        );
+    }
+}

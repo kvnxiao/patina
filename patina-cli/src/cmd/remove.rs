@@ -47,6 +47,8 @@ use crate::cmd::apply::PromptReader;
 use crate::cmd::apply::Tty;
 use crate::cmd::managed::TEMPLATE_SUFFIX;
 use crate::cmd::managed::acquire_state_and_lock;
+use crate::cmd::managed::recover_held;
+use crate::cmd::managed::refused;
 use crate::cmd::managed::rejournal;
 use crate::exit_code::ExitCode;
 use crate::output::reporter::Reporter;
@@ -80,9 +82,9 @@ use patina_core::remove_file_entry;
 ///
 /// Returns an error (exit 1, or exit 4 on a lock-acquisition timeout through
 /// the engine-error chain) when: the state directory or repository cannot be
-/// resolved; the path is not currently managed; the journaled source cannot
-/// be read or re-rendered; the target replacement fails; the manifest edit
-/// fails; or the re-apply fails.
+/// resolved; the path is not currently managed; recovering an interrupted apply
+/// fails; the journaled source cannot be read or re-rendered; the target
+/// replacement fails; the manifest edit fails; or the re-apply fails.
 pub(crate) fn run(
     args: &RemoveArgs,
     tty: Tty,
@@ -93,7 +95,7 @@ pub(crate) fn run(
     let target = anchor_input(&args.path, &home).map_err(EngineError::from)?;
     let target_key = manage_key(&target);
 
-    let (state, guard) = acquire_state_and_lock(reporter)?;
+    let (state, guard) = acquire_state_and_lock()?;
 
     let journal_dir = state.join("journal");
     let record = read_latest_commit(&journal_dir).map_err(EngineError::from)?;
@@ -104,7 +106,8 @@ pub(crate) fn run(
             .find(|expected| manage_key(Utf8Path::new(expected.target())) == target_key)
     });
     let Some(expected) = expected else {
-        return Ok(report_unmanaged(args, reporter));
+        let code = report_unmanaged(args, reporter);
+        return refused(&state, reporter, code);
     };
 
     let timestamp = current_timestamp();
@@ -117,7 +120,8 @@ pub(crate) fn run(
     if let Some(owner) = owner
         && matches!(owner.mode, FileMode::SymlinkTree | FileMode::CopyTree)
     {
-        return Ok(report_tree_leaf(args, &owner.module.manifest(), reporter));
+        let code = report_tree_leaf(args, &owner.module.manifest(), reporter);
+        return refused(&state, reporter, code);
     }
 
     let portable = contract_home(&target, &home);
@@ -128,8 +132,9 @@ pub(crate) fn run(
     )?;
 
     if !confirm(args, tty, reader, reporter) {
-        return Ok(ExitCode::UserDeclined.code());
+        return refused(&state, reporter, ExitCode::UserDeclined.code());
     }
+    recover_held(&state, reporter)?;
 
     let content = if args.purge {
         None

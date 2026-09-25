@@ -322,10 +322,12 @@ intermediate state. Full power-loss durability (atomic
 temp+rename target writes plus `fsync` of backups and parent
 directories) is a post-1.0 hardening item.
 
-The next mutating command recovers under the exclusive lock before it reads
-the last commit or plans: `patina apply` with `--yes` or at an interactive prompt,
-`patina rollback`, `patina remove`, and `patina promote`. Recovery reads each
-journal envelope and converges deterministically:
+`patina apply` with `--yes` or at an interactive prompt and `patina rollback`
+recover under the exclusive lock before they read the last commit or plan.
+`patina remove` and `patina promote` recover under the lock they hold after the
+user consents and before their first write; when they refuse or are declined,
+they warn about a pending apply as a preview does and write nothing. Recovery
+reads each journal envelope and converges deterministically:
 
 - A plan with no terminal sentinel is an orphan: an apply killed after
   the journal became durable but before it committed. Recovery reverses

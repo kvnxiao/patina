@@ -28,7 +28,7 @@ V1.0 is complete when a user can:
 
 ### Quality bar
 
-- **Crash safety.** Single-fsync postcard journal + per-operation progress cursor; `kill -9` mid-apply converges deterministically on the next `patina apply` that can write (`--yes` or interactive), `patina rollback`, `patina remove`, or `patina promote`. Scope: process termination, where the page cache survives; power-loss / kernel-panic durability is out of scope for v1.0 (see Known unknowns).
+- **Crash safety.** Single-fsync postcard journal + per-operation progress cursor; `kill -9` mid-apply converges deterministically on the next `patina apply` run with `--yes` or on an interactive terminal, `patina rollback` run with `--yes` or confirmed at its prompt, or `patina remove` / `patina promote` confirmed after its target checks pass. A preview, a declined `rollback`, and a declined or refused `remove` / `promote` do not recover. Scope: process termination, where the page cache survives; power-loss / kernel-panic durability is out of scope for v1.0 (see Known unknowns).
 - **Idempotency.** Re-applying against unchanged source is a no-op: same plan, no writes, byte-identical stdout.
 - **Never overwrite without consent.** Patina never touches a file it doesn't own until the user approves the change. Every overwrite is backed up first, so `patina rollback` can restore it.
 - **Rollback fidelity.** After `patina rollback`, the filesystem matches pre-apply state in content and entry kind (file / symlink / directory). Mode and timestamp bits are excluded, as are files the user touched outside Patina.

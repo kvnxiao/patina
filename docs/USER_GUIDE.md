@@ -660,12 +660,15 @@ like.
 
 ## Recovery
 
-An interrupted apply converges deterministically on the next mutating
-command. Kill `patina apply` mid-write and the next `patina apply --yes`,
+An interrupted apply converges deterministically on the next command that
+recovers. Kill `patina apply` mid-write and the next `patina apply --yes`,
 interactive `patina apply`, `patina rollback`, `patina remove`, or
 `patina promote` first reverts the interrupted apply to its pre-apply state,
-then does its own work against those files. It reports the recovery on stderr
-with `reverted an interrupted apply to the state before it started`. The
+then does its own work against those files. `remove` and `promote` revert only
+after you confirm; when they refuse or you decline, they warn that the
+interrupted apply is pending and change nothing. Each command reports a
+recovery on stderr with `reverted an interrupted apply to the state before it
+started`. The
 guarantee covers process termination (a `kill -9` or crash where the page
 cache survives). A power loss or kernel panic mid-apply is out of scope for
 v1.0.
