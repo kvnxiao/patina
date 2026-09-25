@@ -73,16 +73,23 @@ pub fn classify(expected: &ExpectedTarget, still_managed: bool) -> TargetState {
         return TargetState::Missing;
     }
 
-    let matches = match expected {
-        ExpectedTarget::Symlink { link_target, .. } => symlink_matches(target, link_target),
-        ExpectedTarget::Content { hash, .. } => content_matches(target, hash),
-    };
-    if matches {
+    if target_matches(expected) {
         TargetState::Clean
     } else {
         // Present but not matching: a link to somewhere else, a file
         // replaced by a link (or vice versa), or differing/unreadable bytes.
         TargetState::Drifted
+    }
+}
+
+/// Whether the live entry at `expected`'s target matches the recorded
+/// expectation: a symlink pointing at the recorded link target, or a regular
+/// file whose `blake3` hash equals the recorded hash.
+pub(crate) fn target_matches(expected: &ExpectedTarget) -> bool {
+    let target = Utf8Path::new(expected.target());
+    match expected {
+        ExpectedTarget::Symlink { link_target, .. } => symlink_matches(target, link_target),
+        ExpectedTarget::Content { hash, .. } => content_matches(target, hash),
     }
 }
 

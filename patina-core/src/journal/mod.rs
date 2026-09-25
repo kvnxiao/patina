@@ -64,6 +64,7 @@ mod probe;
 mod progress;
 mod record;
 mod recovery;
+mod removal;
 mod render;
 mod sync;
 
@@ -84,15 +85,20 @@ pub use record::LastApply;
 pub use record::content_hash;
 pub use record::read_symlink_target;
 pub use record::timestamp_to_rfc3339;
+pub(crate) use recovery::Keeper;
 pub use recovery::RECOVERED_DIR;
 pub use recovery::ROLLED_BACK_SUFFIX;
 pub use recovery::RecoveredTarget;
 pub use recovery::RecoveryReport;
 pub use recovery::orphan_plans;
 pub use recovery::recover_orphans;
+pub use removal::Removal;
+pub use removal::pending_removal;
 pub use render::PlanRenderError;
+pub use render::load_commit_file;
 pub use render::load_plan_file;
 pub use render::render_plan;
+pub use render::render_record;
 pub use sync::OsSyncer;
 pub use sync::Syncer;
 use thiserror::Error;
@@ -146,6 +152,13 @@ pub enum JournalError {
         found: u16,
         /// Highest major version this binary can decode.
         supported: u16,
+    },
+
+    /// The newest operation ID has exhausted its sequence number.
+    #[error("no journal operation ID follows {newest}")]
+    TimestampExhausted {
+        /// The newest ID in the journal, backups, or recovered directories.
+        newest: String,
     },
 }
 
@@ -234,27 +247,18 @@ impl Journal {
     /// After this returns the apply is durably committed and recovery will
     /// skip its timestamp.
     ///
-    /// The sentinel body is the encoded `record`. Crash recovery keys on the
-    /// sentinel's *existence* and never decodes the body, so the payload is
-    /// invisible to it. `patina status` reads the body to classify the live
-    /// filesystem against the last apply.
+    /// The caller must hold the exclusive state lock. Carry persistent target
+    /// edits from prior records into the new record before publishing it.
+    /// Recovery checks the sentinel's existence without decoding its body.
     ///
     /// # Errors
     ///
-    /// Returns [`JournalError::Encode`] if the record cannot be encoded,
-    /// or [`JournalError::Filesystem`] if any write, `fsync`, or delete
-    /// fails.
+    /// - Propagate errors from [`read_latest_commit`] when reading prior state.
+    /// - Return [`JournalError::Encode`] if encoding fails.
+    /// - Return [`JournalError::Filesystem`] if publishing or cleanup fails.
     pub fn commit(self, record: &ApplyRecord, syncer: &impl Syncer) -> Result<(), JournalError> {
-        let commit_path = self.dir.join(format!("{}{COMMIT_SUFFIX}", self.timestamp));
-        let staged = crate::fsx::partial_sibling(&commit_path);
-        fs_err::write(&staged, record.encode()?)?;
-        syncer.sync_file(&staged)?;
-        crate::apply::with_staged_rename_retry(|| fs_err::rename(&staged, &commit_path))?;
-        syncer.sync_dir(&self.dir)?;
+        write_commit_sentinel(&self.dir, &self.timestamp, record, syncer)?;
 
-        // The plan and progress files are removed only after COMMIT is
-        // durable. A crash between the two leaves a recoverable (plan,
-        // no-commit) pair, rather than an orphan commit.
         remove_plan_and_progress(&self.dir, &self.timestamp)
     }
 
@@ -291,22 +295,198 @@ impl Journal {
     }
 }
 
-/// Every committed-and-not-rolled-back `<ts>` in `dir`, sorted newest-first.
-///
-/// "Newest" is the lexically greatest `<ts>` prefix, which is chronological
-/// for the compact UTC timestamp the engine writes. A `<ts>` carrying a
-/// `ROLLED_BACK` sentinel beside its `COMMIT` is excluded: it has been
-/// reversed and no longer describes the live filesystem.
-///
-/// Returning the full descending list, not just the maximum, lets
-/// [`read_latest_commit_with_ts`] fall back to the previous commit when the
-/// newest sentinel's body is unreadable.
+/// Write `record` to `<dir>/<timestamp>.COMMIT` through a staged sibling:
+/// write and `fsync` the sibling, rename it onto the sentinel, then `fsync`
+/// `dir`. A process killed before the rename leaves only the sibling.
+fn write_commit_sentinel(
+    dir: &Utf8Path,
+    timestamp: &str,
+    record: &ApplyRecord,
+    syncer: &impl Syncer,
+) -> Result<(), JournalError> {
+    let mut record = record.clone();
+    record.edits = read_latest_commit(dir)?.map_or_else(Vec::new, |previous| previous.edits);
+    if let Some(target) = &record.edited_target {
+        record
+            .edits
+            .retain(|edit| !paths_overlap(&edit.target, target));
+        record.edits.push(record::RecordEdit {
+            id: timestamp.to_owned(),
+            target: target.clone(),
+            expected: record
+                .targets
+                .iter()
+                .find(|entry| entry.target() == target)
+                .cloned(),
+        });
+    }
+    let commit_path = dir.join(format!("{timestamp}{COMMIT_SUFFIX}"));
+    let staged = crate::fsx::partial_sibling(&commit_path);
+    fs_err::write(&staged, record.encode()?)?;
+    syncer.sync_file(&staged)?;
+    crate::apply::with_staged_rename_retry(|| fs_err::rename(&staged, &commit_path))?;
+    syncer.sync_dir(dir)?;
+    Ok(())
+}
+
+/// Save one target's ownership edit and return its operation ID.
+/// - The caller must hold the exclusive state lock.
+/// - `edited_target` must use the exact canonical path stored in `targets`.
+///   Omit that target from `targets` to record a removal.
+/// - The record preserves the supplied expectations without target writes.
+/// - Rollback passes this record, then protects its target in earlier applies.
+/// - Allocation advances the operation ID without waiting for the clock.
+/// - History pruning failures warn after the record commits.
 ///
 /// # Errors
 ///
-/// Returns [`JournalError::Filesystem`] if the journal directory cannot be
-/// read.
-fn unrolled_commit_timestamps(dir: &Utf8Path) -> Result<Vec<String>, JournalError> {
+/// - Propagate errors from [`read_latest_commit`] when reading prior state.
+/// - [`JournalError::Encode`] if encoding fails.
+/// - [`JournalError::TimestampExhausted`] if the sequence is exhausted.
+/// - [`JournalError::Filesystem`] if reading state or publishing the commit
+///   fails.
+pub fn commit_record_only(
+    state_dir: impl AsRef<Utf8Path>,
+    targets: Vec<ExpectedTarget>,
+    edited_target: &str,
+    syncer: &impl Syncer,
+) -> Result<String, JournalError> {
+    let state_dir = state_dir.as_ref();
+    let journal_dir = state_dir.join("journal");
+    let timestamp = next_operation_id(state_dir)?;
+    let record = record_only(targets, edited_target);
+    fs_err::create_dir_all(&journal_dir)?;
+    write_commit_sentinel(&journal_dir, &timestamp, &record, syncer)?;
+    retain_history(state_dir);
+    Ok(timestamp)
+}
+
+fn record_only(targets: Vec<ExpectedTarget>, edited_target: &str) -> ApplyRecord {
+    let builtins = crate::variables::Builtins::current();
+    let mut record = ApplyRecord::new(
+        LastApply {
+            at: crate::clock::current_rfc3339(),
+            user: builtins.user,
+            host: builtins.hostname,
+        },
+        targets
+            .into_iter()
+            .map(|target| target.with_disposition(Disposition::Unchanged))
+            .collect(),
+        Vec::new(),
+    );
+    record.edited_target = Some(edited_target.to_owned());
+    record
+}
+
+/// Choose an unused, ordered operation ID while holding the exclusive lock.
+///
+/// # Errors
+///
+/// Return an error if stored IDs cannot be read or the sequence is exhausted.
+pub(crate) fn next_operation_id(state_dir: &Utf8Path) -> Result<String, JournalError> {
+    operation_id_at(state_dir, &crate::clock::current_timestamp())
+}
+
+fn operation_id_at(state_dir: &Utf8Path, now: &str) -> Result<String, JournalError> {
+    let mut newest: Option<String> = None;
+    for dir in [
+        state_dir.join("journal"),
+        state_dir.join("backups"),
+        state_dir.join(RECOVERED_DIR),
+    ] {
+        if !crate::fsx::entry_present(&dir) {
+            continue;
+        }
+        for entry in fs_err::read_dir(dir)? {
+            let name = entry?.file_name();
+            let Some(name) = name.to_str() else {
+                continue;
+            };
+            let stem = name.split_once('.').map_or(name, |(stem, _)| stem);
+            if operation_id_parts(stem).is_some() && newest.as_deref().is_none_or(|n| stem > n) {
+                newest = Some(stem.to_owned());
+            }
+        }
+    }
+    let Some(newest) = newest else {
+        return Ok(format!("{now}-{:020}", 0));
+    };
+    if now > newest.as_str() {
+        return Ok(format!("{now}-{:020}", 0));
+    }
+    let (date, sequence) =
+        operation_id_parts(&newest).ok_or_else(|| JournalError::TimestampExhausted {
+            newest: newest.clone(),
+        })?;
+    let next = sequence
+        .checked_add(1)
+        .ok_or_else(|| JournalError::TimestampExhausted {
+            newest: newest.clone(),
+        })?;
+    Ok(format!("{date}-{next:020}"))
+}
+
+fn operation_id_parts(id: &str) -> Option<(&str, u64)> {
+    let (date, sequence) = match id.split_once('-') {
+        Some((date, sequence))
+            if sequence.len() == 20 && sequence.bytes().all(|b| b.is_ascii_digit()) =>
+        {
+            (date, sequence.parse().ok()?)
+        }
+        Some(_) => return None,
+        None => (id, 0),
+    };
+    crate::clock::is_timestamp(date).then_some((date, sequence))
+}
+
+/// Prune committed history under the exclusive lock, warning on failure.
+pub(crate) fn retain_history(state_dir: &Utf8Path) {
+    if let Err(error) = prune_history(state_dir) {
+        tracing::warn!(error = %chain_message(&error), "failed to prune journal history; the operation is committed");
+    }
+}
+
+fn prune_history(state_dir: &Utf8Path) -> Result<(), JournalError> {
+    let journal = state_dir.join("journal");
+    if !journal.exists() {
+        return Ok(());
+    }
+    let mut commits = Vec::new();
+    for entry in fs_err::read_dir(&journal)? {
+        let name = entry?.file_name();
+        if let Some(id) = name
+            .to_str()
+            .and_then(|name| name.strip_suffix(COMMIT_SUFFIX))
+        {
+            commits.push(id.to_owned());
+        }
+    }
+    commits.sort();
+    let removed = commits
+        .len()
+        .saturating_sub(crate::backups::RETENTION_COUNT);
+    prune_cycles(&journal, commits.get(..removed).unwrap_or_default())?;
+    let retained = commits.get(removed..).unwrap_or_default();
+    let pending = orphan_plans(&journal)?;
+    let backups = state_dir.join("backups");
+    if backups.exists() {
+        for entry in fs_err::read_dir(&backups)? {
+            let entry = entry?;
+            let name = entry.file_name();
+            let Some(id) = name.to_str() else { continue };
+            if operation_id_parts(id).is_some()
+                && !retained.iter().any(|kept| kept == id)
+                && !pending.iter().any(|kept| kept == id)
+            {
+                crate::fsx::remove_entry(&backups.join(id))?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn commit_timestamps(dir: &Utf8Path) -> Result<Vec<String>, JournalError> {
     if !dir.exists() {
         return Ok(Vec::new());
     }
@@ -321,62 +501,83 @@ fn unrolled_commit_timestamps(dir: &Utf8Path) -> Result<Vec<String>, JournalErro
         let Some(timestamp) = name.strip_suffix(COMMIT_SUFFIX) else {
             continue;
         };
-        if dir
-            .join(format!("{timestamp}{ROLLED_BACK_SUFFIX}"))
-            .exists()
-        {
-            continue;
-        }
         timestamps.push(timestamp.to_owned());
     }
-    // Lexical-descending is chronological newest-first for the compact `<ts>`.
     timestamps.sort_unstable_by(|a, b| b.cmp(a));
     Ok(timestamps)
 }
 
-/// Read the most recent committed apply in `dir` whose record actually
-/// decodes, paired with its `<ts>`, or `None` when no decodable un-rolled-back
-/// commit remains.
-///
-/// The newest un-rolled-back `<ts>.COMMIT` is tried first. A sentinel that is
-/// present but **unreadable** is skipped with a `warn!`, and the scan falls
-/// back to the next-older commit. Unreadable means a torn or empty body
-/// ([`JournalError::Truncated`]), or a corrupt same-version body
-/// ([`JournalError::Decode`]). [`Journal::commit`] never leaves such a
-/// sentinel, so an unreadable sentinel was damaged outside the staged write.
-/// Skipping it keeps `patina status` and `patina rollback` working rather than
-/// failing the whole command on one bad record.
-///
-/// A sentinel from a **newer** format major ([`JournalError::VersionMismatch`])
-/// is deliberately **not** skipped: it propagates. The version envelope exists
-/// precisely so an older binary refuses a newer apply instead of acting on
-/// stale state. Skipping it would silently report or revert an older commit,
-/// and defeat that guard.
-///
-/// One scan backs both readers of "the last apply": `patina status`
-/// via [`read_latest_commit`] and `patina rollback`, so the two cannot
-/// disagree on which commit is current.
-///
-/// # Errors
-///
-/// - [`JournalError::Filesystem`] if the directory or a sentinel cannot be
-///   read.
-/// - [`JournalError::VersionMismatch`] if the newest readable sentinel is from
-///   a newer format than this binary supports.
+#[cfg(test)]
 pub(crate) fn read_latest_commit_with_ts(
     dir: &Utf8Path,
 ) -> Result<Option<(String, ApplyRecord)>, JournalError> {
-    for timestamp in unrolled_commit_timestamps(dir)? {
+    Ok(read_commit_state(dir)?.and_then(|state| {
+        state
+            .timestamp
+            .clone()
+            .map(|timestamp| (timestamp, state.effective_record()))
+    }))
+}
+
+pub(crate) struct CommitState {
+    pub(crate) timestamp: Option<String>,
+    pub(crate) record: ApplyRecord,
+    pub(crate) edits: Vec<record::RecordEdit>,
+}
+
+impl CommitState {
+    fn effective_record(mut self) -> ApplyRecord {
+        for edit in self.edits {
+            self.record
+                .targets
+                .retain(|entry| !paths_overlap(entry.target(), &edit.target));
+            self.record
+                .reaped
+                .retain(|entry| !paths_overlap(entry, &edit.target));
+            if let Some(expected) = edit.expected {
+                self.record
+                    .targets
+                    .push(expected.with_disposition(Disposition::Unchanged));
+            }
+        }
+        self.record
+    }
+}
+
+pub(crate) fn paths_overlap(left: &str, right: &str) -> bool {
+    let left = crate::manage_key(Utf8Path::new(left));
+    let right = crate::manage_key(Utf8Path::new(right));
+    left.starts_with(&right) || right.starts_with(&left)
+}
+
+pub(crate) fn read_commit_state(dir: &Utf8Path) -> Result<Option<CommitState>, JournalError> {
+    let mut latest = None;
+    for timestamp in commit_timestamps(dir)? {
         let commit_path = dir.join(format!("{timestamp}{COMMIT_SUFFIX}"));
+        let rolled_back = dir
+            .join(format!("{timestamp}{ROLLED_BACK_SUFFIX}"))
+            .exists();
         let bytes = fs_err::read(&commit_path)?;
         match ApplyRecord::decode(&bytes) {
-            Ok(record) => return Ok(Some((timestamp, record))),
-            // A torn/empty (`Truncated`) or corrupt same-version (`Decode`)
-            // sentinel is unreadable: warn and fall back to the previous
-            // commit. `VersionMismatch` is intentionally NOT matched here so
-            // it flows to the propagating arm below: refusing a newer apply
-            // is the whole point of the version envelope.
-            Err(err @ (JournalError::Truncated { .. } | JournalError::Decode(_))) => {
+            Ok(mut record) => {
+                let (_, edits) =
+                    latest.get_or_insert_with(|| (record.last_apply.clone(), record.edits.clone()));
+                if !rolled_back {
+                    record.edits.clone_from(edits);
+                    return Ok(Some(CommitState {
+                        edits: edits
+                            .iter()
+                            .filter(|edit| edit.id > timestamp)
+                            .cloned()
+                            .collect(),
+                        timestamp: Some(timestamp),
+                        record,
+                    }));
+                }
+            }
+            Err(err @ (JournalError::Truncated { .. } | JournalError::Decode(_)))
+                if !rolled_back =>
+            {
                 tracing::warn!(
                     timestamp = %timestamp,
                     error = %chain_message(&err),
@@ -387,47 +588,42 @@ pub(crate) fn read_latest_commit_with_ts(
             Err(err) => return Err(err),
         }
     }
-    Ok(None)
+    Ok(latest
+        .filter(|(_, edits)| !edits.is_empty())
+        .map(|(last_apply, edits)| {
+            let mut record = ApplyRecord::new(last_apply, Vec::new(), Vec::new());
+            record.edits.clone_from(&edits);
+            CommitState {
+                timestamp: None,
+                record,
+                edits,
+            }
+        }))
 }
 
-/// Read the [`ApplyRecord`] from the most recent decodable committed apply in
-/// `dir`, or `None` when the directory holds no readable, un-rolled-back
-/// `<ts>.COMMIT` sentinel. That covers three cases: no apply has ever
-/// committed, every commit has since been rolled back, or every remaining
-/// sentinel is torn or corrupt.
-///
-/// `patina status` is the reader: it decodes the latest apply's
-/// recorded targets and classifies each against the live filesystem. The
-/// `<ts>`-less convenience wrapper calls the crate-internal
-/// `read_latest_commit_with_ts`, which owns the torn-sentinel fallback and the
-/// version-mismatch carve-out.
+/// Read the current target expectations, including later ownership edits.
+/// - Apply removal and promotion edits newer than the active record.
+/// - If every record is closed, retain only promoted target expectations.
+/// - Return `None` when neither an active record nor persistent edits remain.
+/// - Skip corrupt active records, but fail on corrupt closed records whose
+///   ownership metadata might still be needed.
 ///
 /// # Errors
 ///
 /// - [`JournalError::Filesystem`] if the directory or sentinel cannot be read.
 /// - [`JournalError::VersionMismatch`] if the newest readable sentinel is from
 ///   a newer binary.
+/// - [`JournalError::Truncated`] or [`JournalError::Decode`] if a closed record
+///   cannot be decoded.
 pub fn read_latest_commit(dir: impl AsRef<Utf8Path>) -> Result<Option<ApplyRecord>, JournalError> {
-    Ok(read_latest_commit_with_ts(dir.as_ref())?.map(|(_ts, record)| record))
+    Ok(read_commit_state(dir.as_ref())?.map(CommitState::effective_record))
 }
 
-/// Drop every journal sentinel for the `timestamps` whose backup cycles
-/// have been garbage-collected.
-///
-/// After [`backups::gc_retain`](crate::backups::gc_retain) prunes an apply's
-/// backup directory, that apply can no longer be faithfully reversed. The
-/// original bytes its overwrites would restore are gone. Rolling back to it
-/// would therefore *delete* targets it can no longer restore. Removing the
-/// `<ts>.COMMIT` sentinel, and any `<ts>.ROLLED_BACK`, drops the apply from
-/// both `patina status`'s "last apply" search ([`read_latest_commit`]) and
-/// `patina rollback`'s walk-back. A commit and its backups are therefore
-/// retained, or vanish, as one unit.
-///
-/// Only timestamps whose backup *directory* was pruned are passed here. An
-/// all-fresh apply (no overwrites) writes no backup directory, so it is never
-/// pruned and remains rollbackable. Rolling back to it correctly deletes its
-/// fresh-created targets, with nothing to restore. Absent
-/// sentinels are tolerated, so the call is idempotent.
+/// Delete plans and terminal sentinels for the supplied operation IDs.
+/// - The caller must hold the exclusive state lock.
+/// - Delete each plan before its sentinels so interruption cannot orphan it.
+/// - Delete associated backups only after this call succeeds.
+/// - Missing journal files are tolerated.
 ///
 /// # Errors
 ///
@@ -439,11 +635,9 @@ pub fn prune_cycles(
 ) -> Result<(), JournalError> {
     let journal_dir = journal_dir.as_ref();
     for ts in timestamps {
+        remove_plan_and_progress(journal_dir, ts)?;
         remove_if_present(&journal_dir.join(format!("{ts}{COMMIT_SUFFIX}")))?;
         remove_if_present(&journal_dir.join(format!("{ts}{ROLLED_BACK_SUFFIX}")))?;
-        // The plan and progress files are normally deleted at commit;
-        // remove them defensively so a pruned cycle leaves nothing behind.
-        remove_plan_and_progress(journal_dir, ts)?;
     }
     Ok(())
 }
@@ -469,6 +663,19 @@ pub(super) fn remove_if_present(path: &Utf8Path) -> Result<(), JournalError> {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    #[test]
+    fn unreadable_closed_record_cannot_discard_a_persistent_target_edit() {
+        let temp = TempDir::new().expect("tempdir");
+        let dir = Utf8Path::from_path(temp.path()).expect("utf8 temp path");
+        write_commit(dir, "20260101T000000Z");
+        fs_err::write(dir.join("20260102T000000Z.COMMIT"), []).expect("damage closed record");
+        fs_err::write(dir.join("20260102T000000Z.ROLLED_BACK"), []).expect("close record");
+        assert!(matches!(
+            read_latest_commit(dir),
+            Err(JournalError::Truncated { .. })
+        ));
+    }
 
     #[test]
     fn prune_cycles_drops_commit_and_rolled_back_sentinels_for_the_named_timestamps() {
@@ -535,6 +742,7 @@ mod tests {
                 user: "u".to_owned(),
                 host: "h".to_owned(),
             },
+            Vec::new(),
             Vec::new(),
         )
     }
@@ -633,6 +841,175 @@ mod tests {
                 .expect("a torn sole sentinel reads as none, not an error")
                 .is_none()
         );
+    }
+
+    fn content(target: &str, disposition: Disposition) -> ExpectedTarget {
+        ExpectedTarget::Content {
+            target: target.to_owned(),
+            source: format!("/repo{target}"),
+            hash: content_hash(target.as_bytes()),
+            entry: 0,
+            disposition,
+        }
+    }
+
+    #[test]
+    fn operation_ids_advance_with_a_frozen_or_backward_clock() {
+        let temp = TempDir::new().expect("tempdir");
+        let state = Utf8Path::from_path(temp.path()).expect("utf8 state");
+        let journal = state.join("journal");
+        fs_err::create_dir_all(&journal).expect("create journal");
+        let now = "20260101T000000Z";
+        let first = operation_id_at(state, now).expect("first ID");
+        fs_err::write(journal.join(format!("{first}.COMMIT")), []).expect("reserve first ID");
+        let second = operation_id_at(state, now).expect("second ID");
+        assert!(second > first);
+        fs_err::write(journal.join(format!("{second}.ROLLED_BACK")), [])
+            .expect("reserve second ID");
+        let third = operation_id_at(state, "20250101T000000Z").expect("ID after clock rollback");
+        assert!(third > second);
+        fs_err::create_dir_all(state.join(RECOVERED_DIR).join(format!("{third}.1")))
+            .expect("reserve recovered ID");
+        assert!(operation_id_at(state, now).expect("ID after recovery") > third);
+    }
+
+    #[test]
+    fn malformed_operation_ids_are_not_allocated_from() {
+        let temp = TempDir::new().expect("tempdir");
+        let state = Utf8Path::from_path(temp.path()).expect("utf8 state");
+        let journal = state.join("journal");
+        fs_err::create_dir_all(&journal).expect("create journal");
+        for name in [
+            "99990101T000000Z-short.COMMIT",
+            "99990101T000000Z-99999999999999999999.COMMIT",
+            "99990101T000000Z-0000000000000000000x.COMMIT",
+        ] {
+            fs_err::write(journal.join(name), []).expect("write malformed name");
+        }
+        assert!(
+            operation_id_at(state, "20260101T000000Z")
+                .expect("allocate ID")
+                .starts_with("20260101T000000Z-")
+        );
+    }
+
+    #[test]
+    fn retention_preserves_pending_operations_and_newest_backups() {
+        let temp = TempDir::new().expect("tempdir");
+        let state = Utf8Path::from_path(temp.path()).expect("utf8 state");
+        let journal = state.join("journal");
+        fs_err::create_dir_all(&journal).expect("create journal");
+        let mut ids = Vec::new();
+        for i in 0..(crate::backups::RETENTION_COUNT + 2) {
+            let id = format!("20260101T000000Z-{i:020}");
+            write_commit(&journal, &id);
+            fs_err::write(
+                journal.join(format!("{id}.plan")),
+                Plan::new(Vec::new()).encode().expect("encode plan"),
+            )
+            .expect("leave a committed plan");
+            let backup = state.join("backups").join(&id);
+            fs_err::create_dir_all(&backup).expect("create backup");
+            fs_err::write(backup.join("payload"), b"preserved").expect("write backup");
+            ids.push(id);
+        }
+        let pending = "20200101T000000Z";
+        fs_err::write(journal.join(format!("{pending}.plan")), []).expect("write pending plan");
+        fs_err::create_dir_all(state.join("backups").join(pending)).expect("create pending backup");
+        prune_history(state).expect("prune history");
+        assert!(state.join("backups").join(pending).exists());
+        for (i, id) in ids.iter().enumerate() {
+            assert_eq!(journal.join(format!("{id}.COMMIT")).exists(), i >= 2);
+            assert_eq!(state.join("backups").join(id).exists(), i >= 2);
+        }
+    }
+
+    #[test]
+    fn a_failed_plan_cleanup_keeps_the_commit_authoritative() {
+        let temp = TempDir::new().expect("tempdir");
+        let journal = Utf8Path::from_path(temp.path()).expect("utf8 journal");
+        let id = "20260101T000000Z";
+        write_commit(journal, id);
+        fs_err::create_dir(journal.join(format!("{id}.plan"))).expect("block plan deletion");
+
+        assert!(matches!(
+            prune_cycles(journal, &[id.to_owned()]),
+            Err(JournalError::Filesystem(_))
+        ));
+
+        assert!(
+            read_latest_commit(journal)
+                .expect("read retained commit")
+                .is_some()
+        );
+        assert!(
+            orphan_plans(journal)
+                .expect("read pending plans")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_record_only_commit_records_every_target_unchanged_and_nothing_reaped() {
+        let temp = TempDir::new().expect("tempdir");
+        let state = Utf8Path::from_path(temp.path()).expect("utf8 temp path");
+        let targets = vec![
+            content("/home/u/.a", Disposition::Create),
+            content("/home/u/.b", Disposition::Update),
+        ];
+
+        let ts = commit_record_only(state, targets, "/home/u/.a", &OsSyncer).expect("commit");
+
+        let (latest, record) = read_latest_commit_with_ts(&state.join("journal"))
+            .expect("scan")
+            .expect("the record-only commit");
+        assert_eq!(latest, ts);
+        assert_eq!(
+            record.targets,
+            [
+                content("/home/u/.a", Disposition::Unchanged),
+                content("/home/u/.b", Disposition::Unchanged),
+            ]
+        );
+        assert!(record.reaped.is_empty());
+    }
+
+    #[test]
+    fn a_record_only_commit_after_the_last_representable_sequence_is_refused() {
+        let temp = TempDir::new().expect("tempdir");
+        let state = Utf8Path::from_path(temp.path()).expect("utf8 temp path");
+        fs_err::create_dir_all(
+            state
+                .join("backups")
+                .join("99991231T235959Z-18446744073709551615"),
+        )
+        .expect("mkdir a backup cycle");
+
+        let result = commit_record_only(state, Vec::new(), "/a", &OsSyncer);
+
+        assert!(
+            matches!(result, Err(JournalError::TimestampExhausted { .. })),
+            "{result:?}"
+        );
+    }
+
+    #[test]
+    fn a_record_only_commit_follows_a_journal_or_backup_timestamp_the_clock_has_not_passed() {
+        let temp = TempDir::new().expect("tempdir");
+        let state = Utf8Path::from_path(temp.path()).expect("utf8 temp path");
+        let journal = state.join("journal");
+        fs_err::create_dir_all(&journal).expect("mkdir journal");
+        write_commit(&journal, "29990101T000000Z");
+        fs_err::create_dir_all(state.join("backups").join("29990101T000005Z"))
+            .expect("mkdir a backup cycle");
+
+        let ts = commit_record_only(state, Vec::new(), "/a", &OsSyncer).expect("commit");
+
+        assert_eq!(ts, "29990101T000005Z-00000000000000000001");
+        let (latest, _record) = read_latest_commit_with_ts(&journal)
+            .expect("scan")
+            .expect("a commit");
+        assert_eq!(latest, ts, "the record-only commit is the latest");
     }
 
     #[test]

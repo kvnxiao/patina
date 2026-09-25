@@ -232,7 +232,9 @@ pin and every checkout referenced by a journal record; other checkouts are
 removed. When the root manifest drops a remote, Patina removes its entire cache
 only after no journal record references it. Until then, the referenced
 checkouts remain available to rollback. `patina remote prune` runs this sweep
-on demand.
+on demand. When any journal record cannot be decoded, such as a record that an
+earlier pre-release build wrote, the sweep removes nothing (see
+[Records from an earlier build](USER_GUIDE.md#records-from-an-earlier-build)).
 
 An apply where no active entry selects a remote never reads
 `patina.lock` while planning, so the sweep re-reads it before deciding

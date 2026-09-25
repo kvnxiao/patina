@@ -159,12 +159,27 @@ impl PlannedOperation {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Plan {
     operations: Vec<PlannedOperation>,
+    removal_target: Option<String>,
 }
 
 impl Plan {
     /// Build a plan from an ordered list of operations.
     pub fn new(operations: Vec<PlannedOperation>) -> Self {
-        Self { operations }
+        Self {
+            operations,
+            removal_target: None,
+        }
+    }
+
+    pub(crate) fn removal(target: &str, operations: Vec<PlannedOperation>) -> Self {
+        Self {
+            operations,
+            removal_target: Some(target.to_owned()),
+        }
+    }
+
+    pub(crate) fn removes(&self, target: &str) -> bool {
+        self.removal_target.as_deref() == Some(target)
     }
 
     /// The operations in execution order.

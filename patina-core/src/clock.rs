@@ -1,30 +1,26 @@
-//! Compact-UTC timestamp helper shared across the engine and CLI.
-//!
-//! Patina keys its journal `<ts>.plan` / `<ts>.COMMIT` files and backup
-//! directories by a monotonic UTC timestamp formatted `YYYYMMDDTHHMMSSZ`.
-//! Every CLI command that plans or journals an apply needs the same format
-//! string. The helper lives here as a single shared definition, not a
-//! copy at each call site.
-//!
-//! The timestamp keys filenames only. It never appears in user-facing
-//! output, so the deterministic-stdout guarantee holds.
+//! Read wall-clock time for record metadata and remote update checks.
 
-/// A monotonic UTC timestamp keying a run's journal and backup files,
-/// formatted `YYYYMMDDTHHMMSSZ`.
+/// Return the current UTC time formatted `YYYYMMDDTHHMMSSZ`.
 ///
 /// # Examples
 ///
 /// ```
 /// let ts = patina_core::clock::current_timestamp();
-/// // YYYYMMDDTHHMMSSZ: 16 chars, a `T` separator at offset 8, ending in `Z`.
 /// assert_eq!(ts.len(), 16);
 /// assert_eq!(ts.as_bytes()[8], b'T');
 /// assert!(ts.ends_with('Z'));
 /// ```
 pub fn current_timestamp() -> String {
-    jiff::Timestamp::now()
-        .strftime("%Y%m%dT%H%M%SZ")
-        .to_string()
+    jiff::Timestamp::now().strftime(COMPACT_FORMAT).to_string()
+}
+
+const COMPACT_FORMAT: &str = "%Y%m%dT%H%M%SZ";
+
+/// Whether `text` is a timestamp exactly as [`current_timestamp`] writes it.
+/// Timestamps in that form compare chronologically as strings.
+pub(crate) fn is_timestamp(text: &str) -> bool {
+    jiff::civil::DateTime::strptime(COMPACT_FORMAT, text)
+        .is_ok_and(|parsed| parsed.strftime(COMPACT_FORMAT).to_string() == text)
 }
 
 /// The current time as Unix seconds.
@@ -82,5 +78,19 @@ mod tests {
         assert_eq!(ts.len(), 16, "timestamp {ts} should be 16 chars");
         assert!(ts.ends_with('Z'));
         assert_eq!(ts.as_bytes().get(8), Some(&b'T'));
+    }
+
+    #[test]
+    fn is_timestamp_rejects_a_name_that_only_starts_like_one() {
+        assert!(is_timestamp("20260528T120000Z"));
+        assert!(!is_timestamp("20260528T120000"));
+        assert!(!is_timestamp(""));
+        assert!(!is_timestamp("rollback-stage-20260528T120000Z-0"));
+    }
+
+    #[test]
+    fn is_timestamp_rejects_an_unpadded_spelling() {
+        assert!(!is_timestamp("2026528T120000Z"));
+        assert!(!is_timestamp("20260528T12000Z"));
     }
 }

@@ -63,6 +63,7 @@ impl Fixture {
                 entry: 0,
                 disposition: Disposition::Create,
             }],
+            Vec::new(),
         );
         fs_err::write(
             self.state
