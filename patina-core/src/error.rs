@@ -24,12 +24,9 @@ pub fn chain_message(error: &(dyn std::error::Error + 'static)) -> String {
     message
 }
 
-/// Errors returned from [`apply`](fn@crate::apply),
-/// [`status`](fn@crate::status), and [`rollback`](fn@crate::rollback).
-///
-/// Variants are added per task as their owning subsystems land. The
-/// `non_exhaustive` attribute keeps downstream `match` arms forward
-/// compatible.
+/// Errors returned from [`plan_apply`](crate::plan_apply),
+/// [`execute_plan`](crate::execute_plan), [`status`](fn@crate::status), and
+/// [`rollback`](fn@crate::rollback).
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum EngineError {

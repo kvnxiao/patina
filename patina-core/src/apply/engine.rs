@@ -112,13 +112,11 @@ impl Default for ApplyRequest {
 /// The guard variant carries a non-`Clone` [`LockGuard`], so the policy is
 /// passed to [`execute`] as a distinct argument rather than living on the
 /// `Clone` [`ApplyRequest`].
-#[derive(Debug, Default)]
+#[derive(Debug)]
 #[non_exhaustive]
 pub enum LockPolicy {
     /// Acquire the exclusive lock, waiting up to [`exclusive_timeout`]; a
-    /// timeout maps to exit code 4. The default and the only policy the
-    /// CLI's `apply` / `rollback` paths use.
-    #[default]
+    /// timeout maps to exit code 4. `patina apply` uses this policy.
     Blocking,
     /// Use the caller's already-acquired exclusive guard for the run;
     /// acquire nothing. `remove` and `promote` re-journal under this policy
@@ -2371,9 +2369,9 @@ fn is_full_noop(resolved: &ResolvedPlan, reap: bool) -> Result<bool, EngineError
     Ok(true)
 }
 
-/// Whether a `patina apply` over `resolved` would be a full no-op under the
-/// CLI's default reaping (`Blocking`) policy: every target `Unchanged`, a
-/// prior commit present, and nothing to reap.
+/// Whether a `patina apply` over `resolved` would be a full no-op under
+/// [`LockPolicy::Blocking`], which reaps: every target `Unchanged`, a prior
+/// commit present, and nothing to reap.
 ///
 /// The CLI calls this *before* prompting so a fully-satisfied repo skips the
 /// diff-and-prompt confirmation and never reads stdin. The probe is read-only.

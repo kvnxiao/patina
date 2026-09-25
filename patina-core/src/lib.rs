@@ -1,10 +1,10 @@
 //! Core library for the patina cross-platform dotfile manager.
 //!
-//! The three public async entry points, [`apply`](fn@crate::apply),
-//! [`status`](fn@crate::status), and [`rollback`](fn@crate::rollback),
-//! define the engine's outer contract. They return
-//! [`Result<_, EngineError>`](EngineError). The CLI wraps that into
-//! `anyhow::Result` at the call site; `anyhow` lives only in the binary.
+//! [`status`](fn@crate::status) and [`rollback`](fn@crate::rollback) are the
+//! async library entry points, and applying goes through [`plan_apply`] and
+//! [`execute_plan`]. Each returns [`Result<_, EngineError>`](EngineError). The
+//! CLI wraps that into `anyhow::Result` at the call site; `anyhow` lives only
+//! in the binary.
 
 #![warn(missing_debug_implementations)]
 
@@ -208,22 +208,6 @@ pub use windows::is_unc_path;
 pub use windows::plan_has_symlink_op;
 pub use windows::windows_build_supports_dev_mode;
 
-/// Options accepted by [`apply`](fn@crate::apply). The TTY-driven prompt and
-/// the `--json` envelope live in the CLI, which drives the plan through
-/// [`plan_apply`] and [`execute_plan`], the two engine primitives. This
-/// convenience entry point unconditionally plans and executes, mirroring
-/// `patina apply --yes`.
-#[derive(Debug, Default, Clone)]
-#[non_exhaustive]
-pub struct ApplyOptions {
-    /// Invocation toggles forwarded to the engine (`--force-deploy`,
-    /// `-v` overrides).
-    pub request: ApplyRequest,
-    /// Timestamp keying this run's journal and backup files. The CLI
-    /// supplies a real UTC timestamp. Tests supply a fixed string.
-    pub timestamp: String,
-}
-
 /// Options accepted by [`status`](fn@crate::status).
 #[derive(Debug, Default, Clone)]
 #[non_exhaustive]
@@ -248,19 +232,6 @@ impl StatusOptions {
 #[derive(Debug, Default, Clone)]
 #[non_exhaustive]
 pub struct RollbackOptions {}
-
-/// Compute and (depending on `options`) execute the apply plan for the
-/// resolved dotfiles repository.
-///
-/// # Errors
-///
-/// Returns an [`EngineError`] when planning or execution fails. A hook
-/// that fails under `must_succeed` is reported through the returned
-/// [`ApplyResult`], not as an error.
-pub async fn apply(options: ApplyOptions) -> Result<ApplyResult, EngineError> {
-    let resolved = plan_apply(&options.request, options.timestamp)?;
-    execute_plan(&resolved, &options.request, LockPolicy::default()).await
-}
 
 /// Report drift between the resolved dotfiles repository and the current
 /// filesystem state. Classify every managed target as CLEAN, DRIFTED,
