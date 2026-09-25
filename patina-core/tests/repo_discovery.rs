@@ -4,6 +4,7 @@
 
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
+use patina_core::PathError;
 use patina_core::chain_message;
 use patina_core::discovery::RepoDiscoveryError;
 use patina_core::discovery::RepoRootError;
@@ -101,6 +102,21 @@ fn env_var_pointing_at_non_root_directory_errors() {
 }
 
 #[test]
+fn env_var_rejection_of_a_valid_manifest_names_its_path_once_without_the_manifest() {
+    let path = Utf8PathBuf::from("/dotfiles");
+    let err = RepoDiscoveryError::EnvVarInvalid {
+        path: path.clone(),
+        source: RepoRootError::Canonicalize(PathError::Filesystem {
+            path: path.clone(),
+            source: std::io::Error::from(std::io::ErrorKind::PermissionDenied),
+        }),
+    };
+    let rendered = chain_message(&err);
+    assert_eq!(rendered.matches(path.as_str()).count(), 1, "{rendered}");
+    assert!(!rendered.contains("patina.toml"), "{rendered}");
+}
+
+#[test]
 fn manifest_without_root_true_is_rejected_as_not_root() {
     let (_td, dir) = utf8_tempdir();
     let manifest = dir.join("patina.toml");
@@ -113,7 +129,7 @@ fn manifest_without_root_true_is_rejected_as_not_root() {
 }
 
 #[test]
-fn env_var_rejection_renders_its_root_validation_source_once() {
+fn env_var_rejection_renders_its_root_validation_source_and_path_once() {
     let (_td, dir) = utf8_tempdir();
     let missing = dir.join("absent");
     let err = resolve_repository_root_with(Some(missing.as_str()), &dir, None)
@@ -131,6 +147,7 @@ fn env_var_rejection_renders_its_root_validation_source_once() {
         1,
         "{rendered}"
     );
+    assert_eq!(rendered.matches(missing.as_str()).count(), 1, "{rendered}");
 }
 
 #[test]
