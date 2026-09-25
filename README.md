@@ -96,9 +96,6 @@ contributions follow the same rules.
 ### One-time setup (per clone)
 
 ```sh
-# Activate the local git hooks (pre-commit: fmt + clippy; pre-push: `just check`):
-git config core.hooksPath .githooks
-
 # Install stable Rust (builds, tests, Clippy) and nightly rustfmt:
 rustup toolchain install stable --profile minimal --component clippy
 rustup toolchain install nightly --profile minimal --component rustfmt
@@ -111,9 +108,6 @@ cargo +stable install --locked cargo-audit cargo-machete cargo-deny
 ```
 
 `just check-msrv <package>` also needs Bash and `jq`.
-
-See [`.githooks/README.md`](.githooks/README.md) for details, the git 2.54
-`hook.*` alternative, and bypass options.
 
 Formatting uses nightly rustfmt because `.rustfmt.toml` sets unstable
 options. For rust-analyzer, set the formatter to nightly:

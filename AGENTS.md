@@ -112,7 +112,7 @@ These Patina-specific rules extend the `rust-rules` Skill with crate choices. Wh
 
 ## Standard hygiene
 
-The project's hygiene gate is **`just check`** (= `just lint` + `just test` + `just doc` + `just dependencies`; the `pre-push` hook runs it once activated via `core.hooksPath .githooks`). Run it before a task is done or a PR opens. Do not substitute ad-hoc `cargo` commands.
+The project's hygiene gate is **`just check`** (= `just lint` + `just test` + `just doc` + `just dependencies`). Run it before a task is done or a PR opens. Do not substitute ad-hoc `cargo` commands.
 
 A green local `just check` is necessary, not sufficient: CI additionally runs the per-OS test-behaviour matrix, macOS-native clippy, `just check-msrv` for each package, and coverage. Watch PR checks after pushing. See the `cross_targets` comment in the `justfile` and the one-time setup in `README.md` for the cross-lint targets and tools.
 
