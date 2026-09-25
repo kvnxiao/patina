@@ -4,7 +4,18 @@ Complete this template so reviewers can verify the change.
 
 ## Summary
 
-<!-- Describe what this PR changes and why in one paragraph. -->
+<!--
+Open with one or two sentences that state what this PR changes and why. Write them for a reviewer
+who has not read the changed module: describe behavior, not type or function names. Then list each
+separate fix, defect, or behavior change as its own bullet. Put identifiers, test names, and lists
+of cases under "Validation criteria addressed", not here.
+
+e.g.:
+After an interrupted apply, the next confirmed command restores the files before it writes.
+
+- Before this PR, recovery deleted a file that the interrupted apply had not reached.
+- Recovery ran after the next apply had already planned against the half-applied files.
+-->
 
 ## Related issue / design
 
