@@ -4,10 +4,13 @@
 
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
+use patina_core::chain_message;
 use patina_core::discovery::RepoDiscoveryError;
+use patina_core::discovery::RepoRootError;
 use patina_core::discovery::default_repo_pointer_path;
 use patina_core::discovery::persisted_default_present;
 use patina_core::discovery::resolve_repository_root_with;
+use patina_core::discovery::validate_repo_root;
 use patina_core::discovery::write_persisted_default;
 use tempfile::TempDir;
 
@@ -85,7 +88,70 @@ fn env_var_pointing_at_non_root_directory_errors() {
     let (_td, dir) = utf8_tempdir();
     let err = resolve_repository_root_with(Some(dir.as_str()), &dir, None)
         .expect_err("non-root directory rejected");
-    assert!(matches!(err, RepoDiscoveryError::EnvVarInvalid { .. }));
+    assert!(
+        matches!(
+            &err,
+            RepoDiscoveryError::EnvVarInvalid {
+                source: RepoRootError::ManifestMissing { manifest },
+                ..
+            } if *manifest == dir.join("patina.toml")
+        ),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn manifest_without_root_true_is_rejected_as_not_root() {
+    let (_td, dir) = utf8_tempdir();
+    let manifest = dir.join("patina.toml");
+    fs_err::write(manifest.as_std_path(), "[patina]\n").expect("write non-root manifest");
+    let err = validate_repo_root(&dir).expect_err("a manifest without root = true is rejected");
+    assert!(
+        matches!(&err, RepoRootError::NotRoot { manifest: path } if *path == manifest),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn env_var_rejection_renders_its_root_validation_source_once() {
+    let (_td, dir) = utf8_tempdir();
+    let missing = dir.join("absent");
+    let err = resolve_repository_root_with(Some(missing.as_str()), &dir, None)
+        .expect_err("a missing directory is rejected");
+    let source = std::error::Error::source(&err)
+        .and_then(|source| source.downcast_ref::<RepoRootError>())
+        .expect("the root validation error is the source");
+    assert!(
+        matches!(source, RepoRootError::NotADirectory { path } if *path == missing),
+        "{source:?}"
+    );
+    let rendered = chain_message(&err);
+    assert_eq!(
+        rendered.matches(&source.to_string()).count(),
+        1,
+        "{rendered}"
+    );
+}
+
+#[test]
+fn unparseable_root_manifest_is_rejected_with_its_toml_error_as_the_source() {
+    let (_td, dir) = utf8_tempdir();
+    let manifest = dir.join("patina.toml");
+    fs_err::write(manifest.as_std_path(), "[patina\nroot = true\n").expect("write manifest");
+    let err = validate_repo_root(&dir).expect_err("invalid TOML is rejected");
+    assert!(
+        matches!(&err, RepoRootError::ParseManifest { manifest: path, .. } if *path == manifest),
+        "{err:?}"
+    );
+    let toml_error = std::error::Error::source(&err)
+        .and_then(|source| source.downcast_ref::<Box<toml::de::Error>>())
+        .expect("the TOML parse error is the source");
+    let rendered = chain_message(&err);
+    assert_eq!(
+        rendered.matches(&toml_error.to_string()).count(),
+        1,
+        "{rendered}"
+    );
 }
 
 #[test]

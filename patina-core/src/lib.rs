@@ -99,6 +99,7 @@ pub use discovery::ModuleDiscoveryError;
 pub use discovery::ModuleHandle;
 pub use discovery::PERSISTED_DEFAULT_FILENAME;
 pub use discovery::RepoDiscoveryError;
+pub use discovery::RepoRootError;
 pub use discovery::default_repo_pointer_path;
 pub use discovery::discover_modules;
 pub use discovery::persisted_default_present;

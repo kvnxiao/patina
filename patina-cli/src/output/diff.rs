@@ -28,6 +28,7 @@
 
 use crate::output::style::Styles;
 use anstyle::Style;
+use anyhow::Context;
 use camino::Utf8Path;
 use patina_core::Disposition;
 use patina_core::FileMode;
@@ -51,10 +52,10 @@ use std::fmt::Write as _;
 ///
 /// # Errors
 ///
-/// Returns an error string when a template source cannot be read, or cannot be
+/// Returns an error when a template source cannot be read, or cannot be
 /// rendered for preview (the same strict-undefined failure the apply would
 /// hit).
-pub(crate) fn render(resolved: &ResolvedPlan, orphans: &[Orphan]) -> Result<String, String> {
+pub(crate) fn render(resolved: &ResolvedPlan, orphans: &[Orphan]) -> anyhow::Result<String> {
     let mut out = String::new();
     if resolved.operations.is_empty() && orphans.is_empty() {
         out.push_str("No changes: the plan is empty.\n");
@@ -195,7 +196,7 @@ fn render_leaf(
     engine: &TemplateEngine,
     vars: &Resolver,
     styles: &Styles,
-) -> Result<(), String> {
+) -> anyhow::Result<()> {
     match mode {
         FileMode::Symlink | FileMode::SymlinkDir | FileMode::SymlinkTree => {
             let header = if mode_change {
@@ -225,10 +226,10 @@ fn render_leaf(
         }
         FileMode::TemplateRender => {
             let body = fs_err::read_to_string(source)
-                .map_err(|e| format!("failed to read template {source}: {e}"))?;
+                .with_context(|| format!("failed to read template {source}"))?;
             let rendered = engine
                 .render(&body, vars)
-                .map_err(|e| format!("failed to render template {source}: {e}"))?;
+                .with_context(|| format!("failed to render template {source}"))?;
             let new = DiffContent::Text(rendered);
             render_content_block(out, "render", target, mode_change, &new, styles);
         }
@@ -639,6 +640,52 @@ mod tests {
         )
         .expect("render block");
         out
+    }
+
+    fn template_leaf_error(source: &Utf8Path, target: &Utf8Path) -> anyhow::Error {
+        render_leaf(
+            &mut String::new(),
+            FileMode::TemplateRender,
+            source,
+            target,
+            false,
+            &TemplateEngine::new(),
+            &Resolver::new(patina_core::Builtins::current()),
+            &Styles::plain(),
+        )
+        .expect_err("the template leaf must fail to render")
+    }
+
+    #[test]
+    fn template_syntax_error_keeps_the_template_error_in_the_chain() {
+        let (_td, dir) = tempdir();
+        let source = dir.join("rc.tmpl");
+        fs_err::write(&source, "{{ unclosed").expect("write template");
+
+        let err = template_leaf_error(&source, &dir.join("out"));
+
+        assert!(
+            err.chain()
+                .any(|cause| cause.downcast_ref::<patina_core::TemplateError>().is_some()),
+            "{err:#}"
+        );
+        assert!(err.to_string().contains(source.as_str()), "{err:#}");
+    }
+
+    #[test]
+    fn unreadable_template_source_keeps_the_io_error_in_the_chain() {
+        let (_td, dir) = tempdir();
+        let source = dir.join("missing.tmpl");
+
+        let err = template_leaf_error(&source, &dir.join("out"));
+
+        assert!(
+            err.chain()
+                .filter_map(|cause| cause.downcast_ref::<std::io::Error>())
+                .any(|io| io.kind() == std::io::ErrorKind::NotFound),
+            "{err:#}"
+        );
+        assert!(err.to_string().contains(source.as_str()), "{err:#}");
     }
 
     #[test]

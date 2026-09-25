@@ -22,6 +22,7 @@ pub use modules::ModuleHandle;
 pub use modules::discover_modules;
 pub use repo::PERSISTED_DEFAULT_FILENAME;
 pub use repo::RepoDiscoveryError;
+pub use repo::RepoRootError;
 pub use repo::default_repo_pointer_path;
 pub use repo::persisted_default_present;
 pub use repo::resolve_repository_root;

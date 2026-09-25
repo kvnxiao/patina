@@ -204,6 +204,8 @@ impl Plan {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_util::assert_source_rendered_once;
+    use crate::test_util::source_as;
 
     fn sample() -> Plan {
         // One Create, one Update, one Unchanged target, so the round-trip
@@ -319,6 +321,15 @@ mod tests {
                 supported: 1
             })
         ));
+    }
+
+    #[test]
+    fn cut_off_body_decode_error_renders_its_postcard_source_once() {
+        let mut bytes = sample().encode().expect("the sample plan encodes");
+        bytes.truncate(version_envelope::ENVELOPE_LEN + 1);
+        let err = Plan::decode(&bytes).expect_err("a cut-off body cannot decode");
+        source_as::<postcard::Error>(&err);
+        assert_source_rendered_once(&err);
     }
 
     #[test]
