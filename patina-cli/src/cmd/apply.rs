@@ -5,6 +5,10 @@
 //! journaling, the executors, the hooks, and rollback live in `patina_core`;
 //! this module is presentation and control flow.
 //!
+//! An invocation that can write (`--yes`, or the interactive prompt) first
+//! reverts any interrupted apply, then plans. A preview does not recover, so it
+//! writes nothing.
+//!
 //! ## Exit codes
 //!
 //! | Outcome                                   | Code |
@@ -26,11 +30,13 @@ use patina_core::ApplyRequest;
 use patina_core::ApplyResult;
 #[cfg(windows)]
 use patina_core::DEV_MODE_REGISTRY_PATH;
+use patina_core::EngineError;
 use patina_core::ForceDeploy;
 use patina_core::GateDecision;
 use patina_core::HostDevModeProbe;
 use patina_core::LockPolicy;
 use patina_core::Reap;
+use patina_core::RecoveryReport;
 use patina_core::ResolvedPlan;
 use patina_core::chain_message;
 use patina_core::current_timestamp;
@@ -38,8 +44,10 @@ use patina_core::decide_symlink_gate;
 use patina_core::execute_plan;
 use patina_core::plan_apply;
 use patina_core::plan_is_full_noop;
+use patina_core::recover_interrupted;
 use patina_core::remote::lockfile::Lockfile;
 use patina_core::remote::lockfile::lockfile_path;
+use patina_core::resolve_state_dir;
 
 /// Whether stdin is attached to an interactive terminal. Injected so the TTY
 /// decision is unit-testable without a real tty.
@@ -116,6 +124,9 @@ pub(crate) fn run(
             );
         }
     }
+    if may_execute(args, tty) {
+        recover_before_planning(reporter)?;
+    }
     let timestamp = current_timestamp();
     let resolved = plan_apply(&request, timestamp).context("failed to compute the apply plan")?;
     prune_stale_pins(&resolved, mutating, reporter)?;
@@ -149,6 +160,34 @@ pub(crate) fn run(
         .context("apply execution failed")?;
     report_result(&result, reporter);
     Ok(exit_code_for(&result))
+}
+
+/// Whether this invocation can reach `execute`: `--yes`, or the human-format
+/// prompt on an interactive terminal.
+fn may_execute(args: &ApplyArgs, tty: Tty) -> bool {
+    args.yes || (!args.json && tty == Tty::Interactive)
+}
+
+/// Revert every interrupted apply under the exclusive lock and report it.
+fn recover_before_planning(reporter: &mut impl Reporter) -> Result<()> {
+    let state = resolve_state_dir().map_err(EngineError::from)?;
+    let report = recover_interrupted(&state).context("failed to recover an interrupted apply")?;
+    report_recovery(&report, reporter);
+    Ok(())
+}
+
+/// Warn that the interrupted applies in `report` were reverted, when there
+/// were any.
+///
+/// The text carries only the count, so it is identical for every run that
+/// recovers the same number of applies.
+pub(crate) fn report_recovery(report: &RecoveryReport, reporter: &mut impl Reporter) {
+    let message = match report.recovered_timestamps().len() {
+        0 => return,
+        1 => "reverted an interrupted apply to the state before it started".to_owned(),
+        count => format!("reverted {count} interrupted applies to the state before they started"),
+    };
+    reporter.warn(&message);
 }
 
 /// Whether this invocation may rewrite the working-tree `patina.lock`.

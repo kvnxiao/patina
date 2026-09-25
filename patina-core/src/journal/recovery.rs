@@ -5,7 +5,12 @@
 //! `<ts>.plan` with neither a `<ts>.COMMIT` (the apply committed) nor a
 //! `<ts>.ROLLED_BACK` (a prior rollback closed it out) sentinel. An orphan
 //! indicates a `kill -9` mid-apply: the plan was made durable but the run
-//! never reached commit.
+//! never reached commit. [`orphan_plans`] lists the same orphans without
+//! reversing them.
+//!
+//! The mutating commands (`apply` on a path that can write, `rollback`,
+//! `remove`, and `promote`) recover under the exclusive lock before they read
+//! the filesystem, so each works from the pre-apply state.
 //!
 //! For each orphan, recovery:
 //!
@@ -99,10 +104,9 @@ impl RecoveryReport {
 /// the pre-apply filesystem state using backups under `backups_dir`, then
 /// deleting the orphan plan and progress files.
 ///
-/// Call this on apply startup, before computing a new plan. After it
-/// returns, the engine proceeds with the user's new invocation as if no
-/// prior partial work had occurred. Running it again with no intervening
-/// apply is a no-op (idempotence).
+/// Call this under the exclusive lock, before reading the filesystem to plan
+/// or roll back. Running it again with no intervening apply is a no-op
+/// (idempotence).
 ///
 /// # Errors
 ///
@@ -117,11 +121,10 @@ pub fn recover_orphans(
     let journal_dir = journal_dir.as_ref();
     let backups_dir = backups_dir.as_ref();
 
-    let mut timestamps = orphan_timestamps(journal_dir)?;
     // Reverse orphans in chronological order so the report is
     // deterministic and any later-apply backup wins a same-target race in
     // a (pathological) multi-orphan state.
-    timestamps.sort();
+    let timestamps = orphan_plans(journal_dir)?;
 
     let mut recovered = Vec::with_capacity(timestamps.len());
     for timestamp in timestamps {
@@ -131,9 +134,18 @@ pub fn recover_orphans(
     Ok(RecoveryReport { recovered })
 }
 
-/// Collect the `<ts>` of every plan file in `journal_dir` that has neither
-/// a `COMMIT` nor a `ROLLED_BACK` sentinel beside it.
-fn orphan_timestamps(journal_dir: &Utf8Path) -> Result<Vec<String>, JournalError> {
+/// Return the `<ts>` of every orphan plan in `journal_dir`, sorted: a plan file
+/// with neither a `COMMIT` nor a `ROLLED_BACK` sentinel beside it.
+///
+/// Reads only. An apply still running also has a plan without a sentinel, so
+/// only a caller holding the lock can tell an orphan from a live plan.
+///
+/// # Errors
+///
+/// Returns [`JournalError::Filesystem`] if the journal directory cannot be
+/// read.
+pub fn orphan_plans(journal_dir: impl AsRef<Utf8Path>) -> Result<Vec<String>, JournalError> {
+    let journal_dir = journal_dir.as_ref();
     if !journal_dir.exists() {
         // No journal directory yet means no prior apply, so nothing to do.
         return Ok(Vec::new());
@@ -159,6 +171,7 @@ fn orphan_timestamps(journal_dir: &Utf8Path) -> Result<Vec<String>, JournalError
             orphans.push(timestamp.to_owned());
         }
     }
+    orphans.sort();
     Ok(orphans)
 }
 

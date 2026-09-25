@@ -2,7 +2,8 @@
 //! one held exclusive lock and re-journal by re-applying.
 //!
 //! `remove` and `promote` follow the same shape. Each takes one exclusive
-//! advisory lock for the whole command, then locates the journaled
+//! advisory lock for the whole command and reverts any interrupted apply under
+//! it, then locates the journaled
 //! [`ExpectedTarget`](patina_core::ExpectedTarget) for an input path in the
 //! latest commit. Each then does its own filesystem work and re-journals by
 //! driving the engine re-apply under [`LockPolicy::Held`]. The fresh
@@ -12,6 +13,8 @@
 //! the lock path, the engine-error mapping, or the re-plan / re-execute
 //! sequence.
 
+use crate::cmd::apply::report_recovery;
+use crate::output::reporter::Reporter;
 use anyhow::Context;
 use anyhow::Result;
 use camino::Utf8PathBuf;
@@ -26,6 +29,7 @@ use patina_core::current_timestamp;
 use patina_core::exclusive_timeout;
 use patina_core::execute_plan;
 use patina_core::plan_apply;
+use patina_core::recover_orphans;
 use patina_core::resolve_state_dir;
 
 /// The `.tmpl` source suffix marking an implicit template-rendered target.
@@ -34,24 +38,33 @@ use patina_core::resolve_state_dir;
 /// `promote` refuses the target outright.
 pub(crate) const TEMPLATE_SUFFIX: &str = ".tmpl";
 
-/// Resolve the per-machine state directory and acquire the engine's
-/// exclusive advisory lock at `<state>/lock`.
+/// Resolve the per-machine state directory, acquire the engine's exclusive
+/// advisory lock at `<state>/lock`, and revert any interrupted apply under it.
 ///
-/// The returned guard is held by the caller for the whole command and reused
-/// by [`rejournal`] via [`LockPolicy::Held`], so the re-apply does not block on
-/// the command's own lock.
+/// The recovery runs before the caller reads the journal or touches a target,
+/// and `reporter` warns when it reverted anything. The returned guard is held
+/// by the caller for the whole command and reused by [`rejournal`] via
+/// [`LockPolicy::Held`], so the re-apply does not block on the command's own
+/// lock.
 ///
 /// # Errors
 ///
-/// Returns an error when the state directory cannot be resolved, or the lock
-/// cannot be acquired within [`exclusive_timeout`]. A resolution failure is
-/// exit 1; a lock timeout maps to exit 4 through the engine-error chain.
-pub(crate) fn acquire_state_and_lock() -> Result<(Utf8PathBuf, LockGuard)> {
+/// Returns an error when the state directory cannot be resolved, the lock
+/// cannot be acquired within [`exclusive_timeout`], or the recovery fails. A
+/// lock timeout maps to exit 4 through the engine-error chain; the others are
+/// exit 1.
+pub(crate) fn acquire_state_and_lock(
+    reporter: &mut impl Reporter,
+) -> Result<(Utf8PathBuf, LockGuard)> {
     let state = resolve_state_dir().map_err(EngineError::from)?;
     let lock_path = state.join("lock");
     let guard = acquire_lock(&lock_path, LockKind::Exclusive, exclusive_timeout())
         .map_err(EngineError::from)
         .context("failed to acquire the exclusive lock")?;
+    let report = recover_orphans(state.join("journal"), state.join("backups"))
+        .map_err(EngineError::from)
+        .context("failed to recover an interrupted apply")?;
+    report_recovery(&report, reporter);
     Ok((state, guard))
 }
 

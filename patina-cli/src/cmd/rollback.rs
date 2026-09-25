@@ -1,10 +1,11 @@
 //! `patina rollback` command logic.
 //!
 //! Reverses the most recent committed apply to its pre-apply filesystem
-//! state. The lock, the journal scan, the per-entry atomic inverse replay,
-//! and the rolled-back sentinel live in `patina_core::rollback`. The command
-//! owns the TTY-prompt / `--yes` / `--json` decision tree and maps the engine
-//! outcome onto the process exit code.
+//! state, after reverting any interrupted apply. The lock, the recovery, the
+//! journal scan, the per-entry atomic inverse replay, and the rolled-back
+//! sentinel live in `patina_core::rollback`. The command owns the TTY-prompt /
+//! `--yes` / `--json` decision tree and maps the engine outcome onto the
+//! process exit code.
 //!
 //! ## Exit codes
 //!
@@ -21,6 +22,7 @@
 use crate::cli::RollbackArgs;
 use crate::cmd::apply::PromptReader;
 use crate::cmd::apply::Tty;
+use crate::cmd::apply::report_recovery;
 use crate::exit_code::ExitCode;
 use crate::output::reporter::Reporter;
 use anyhow::Result;
@@ -64,7 +66,7 @@ pub(crate) fn run(
         return Ok(ExitCode::UserDeclined.code());
     }
 
-    match patina_core::rollback() {
+    match patina_core::rollback(|recovered| report_recovery(recovered, reporter)) {
         Ok(()) => {
             if args.json {
                 reporter.json(&json_envelope("rolled_back"));

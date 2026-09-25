@@ -50,6 +50,39 @@ fn applied_then_b_dropped() -> Fixture {
     fx
 }
 
+/// Commit an apply over a pre-existing `~/.a`, then kill a second apply after
+/// it rewrites `~/.a`, leaving an orphan plan beside the first commit.
+fn committed_then_interrupted() -> Fixture {
+    let fx = setup(".a", "OLD-A\n");
+    let first = fx.apply(&["--yes"]);
+    assert_eq!(
+        code(&first),
+        0,
+        "the first apply must commit; stderr: {}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+    wait_for_next_second();
+    let module = fx.root.join("shell");
+    fs_err::write(module.join("a"), "NEWER-A\n").expect("edit source a");
+    let killed = fx.apply_with_env(&["--yes"], &[("PATINA_TEST_ABORT_AFTER_OP", "1")]);
+    assert_eq!(
+        code(&killed),
+        70,
+        "the crash seam must terminate the second apply (exit 70); stderr: {}",
+        String::from_utf8_lossy(&killed.stderr)
+    );
+    assert_eq!(
+        fs_err::read_to_string(fx.home.join(".a")).expect("read ~/.a after the kill"),
+        "NEWER-A\n",
+        "the killed apply must have rewritten ~/.a"
+    );
+    fx
+}
+
+fn stderr(out: &std::process::Output) -> String {
+    String::from_utf8_lossy(&out.stderr).into_owned()
+}
+
 fn plan_files(journal: &Utf8Path) -> Vec<camino::Utf8PathBuf> {
     fs_err::read_dir(journal)
         .expect("read journal dir")
@@ -227,5 +260,167 @@ fn kill_after_a_reap_restores_the_reaped_target_on_recovery() {
         fs_err::read_to_string(fx.home.join(".b")).ok(),
         Some("NEW-B\n".to_owned()),
         "recovery must restore the reaped target from its backup"
+    );
+}
+
+#[test]
+fn the_next_apply_after_a_crash_applies_against_the_recovered_state() {
+    let fx = setup(".a", "OLD-A\n");
+    let killed = fx.apply_with_env(&["--yes"], &[("PATINA_TEST_ABORT_AFTER_OP", "1")]);
+    assert_eq!(code(&killed), 70, "stderr: {}", stderr(&killed));
+
+    let next = fx.apply(&["--yes"]);
+    assert_eq!(code(&next), 0, "stderr: {}", stderr(&next));
+    assert_eq!(
+        fs_err::read_to_string(fx.home.join(".a")).expect("read ~/.a"),
+        "NEW-A\n",
+        "the target must reach the declared bytes"
+    );
+    assert_eq!(
+        fs_err::read_to_string(fx.home.join(".b")).expect("read ~/.b"),
+        "NEW-B\n"
+    );
+    assert!(
+        stderr(&next).contains("reverted an interrupted apply"),
+        "the apply must report the recovery; stderr: {}",
+        stderr(&next)
+    );
+
+    let rollback = fx.run(&["rollback", "--yes"], &[]);
+    assert_eq!(code(&rollback), 0, "stderr: {}", stderr(&rollback));
+    assert_eq!(
+        fs_err::read_to_string(fx.home.join(".a")).ok(),
+        Some("OLD-A\n".to_owned()),
+        "the apply must have backed up the recovered original before overwriting it"
+    );
+    assert!(!fx.home.join(".b").as_std_path().exists());
+}
+
+#[test]
+fn the_next_apply_after_a_crashed_reap_plans_the_reap_again() {
+    let fx = applied_then_b_dropped();
+    let killed = fx.apply_with_env(&["--yes"], &[("PATINA_TEST_ABORT_AFTER_OP", "1")]);
+    assert_eq!(code(&killed), 70, "stderr: {}", stderr(&killed));
+    assert!(!fx.home.join(".b").as_std_path().exists());
+
+    let next = fx.apply(&["--yes", "--json"]);
+    assert_eq!(code(&next), 0, "stderr: {}", stderr(&next));
+    let document: serde_json::Value =
+        serde_json::from_slice(&next.stdout).expect("stdout is one JSON document");
+    let reaped: Vec<&str> = document
+        .get("reaped")
+        .and_then(serde_json::Value::as_array)
+        .expect("a reaped array")
+        .iter()
+        .filter_map(|row| row.get("target").and_then(serde_json::Value::as_str))
+        .collect();
+    assert!(
+        reaped
+            .iter()
+            .any(|target| Utf8Path::new(target).file_name() == Some(".b")),
+        "recovery must restore ~/.b before planning, so the apply reaps it again; reaped: {reaped:?}"
+    );
+    assert!(
+        stderr(&next).contains("reverted an interrupted apply"),
+        "stderr: {}",
+        stderr(&next)
+    );
+}
+
+#[test]
+fn rollback_with_a_pending_orphan_recovers_it_before_rolling_back() {
+    let fx = committed_then_interrupted();
+
+    let rollback = fx.run(&["rollback", "--yes"], &[]);
+    assert_eq!(code(&rollback), 0, "stderr: {}", stderr(&rollback));
+
+    assert!(
+        stderr(&rollback).contains("reverted an interrupted apply"),
+        "stderr: {}",
+        stderr(&rollback)
+    );
+    assert_eq!(
+        count_suffix(&fx.state_root().join("journal"), PLAN_SUFFIX),
+        0,
+        "no orphan plan may survive to restore its backups over the rollback"
+    );
+    assert_eq!(
+        fs_err::read_to_string(fx.home.join(".a")).ok(),
+        Some("OLD-A\n".to_owned()),
+        "~/.a must hold its bytes from before the committed apply"
+    );
+    assert!(
+        !fx.home.join(".b").as_std_path().exists(),
+        "~/.b did not exist before the committed apply"
+    );
+}
+
+#[test]
+fn a_rollback_that_finds_no_prior_apply_still_reports_its_recovery() {
+    let fx = setup(".a", "OLD-A\n");
+    let killed = fx.apply_with_env(&["--yes"], &[("PATINA_TEST_ABORT_AFTER_OP", "1")]);
+    assert_eq!(code(&killed), 70, "stderr: {}", stderr(&killed));
+
+    let rollback = fx.run(&["rollback", "--yes"], &[]);
+
+    assert_eq!(code(&rollback), 1, "stderr: {}", stderr(&rollback));
+    assert!(
+        stderr(&rollback).contains("no prior apply found"),
+        "stderr: {}",
+        stderr(&rollback)
+    );
+    assert!(
+        stderr(&rollback).contains("reverted an interrupted apply"),
+        "the recovery must be reported even though the rollback failed; stderr: {}",
+        stderr(&rollback)
+    );
+}
+
+#[test]
+fn remove_with_a_pending_orphan_recovers_it_before_its_own_writes() {
+    let fx = committed_then_interrupted();
+
+    let out = fx.run(&["remove", "~/.b", "--yes"], &[]);
+    assert_eq!(code(&out), 0, "stderr: {}", stderr(&out));
+
+    assert!(
+        stderr(&out).contains("reverted an interrupted apply"),
+        "stderr: {}",
+        stderr(&out)
+    );
+    assert_eq!(
+        count_suffix(&fx.state_root().join("journal"), PLAN_SUFFIX),
+        0,
+        "the orphan plan must be recovered"
+    );
+    assert_eq!(
+        fs_err::read_to_string(fx.home.join(".b")).ok(),
+        Some("NEW-B\n".to_owned()),
+        "remove must leave ~/.b as a regular file with its last-applied bytes"
+    );
+}
+
+#[test]
+fn promote_with_a_pending_orphan_recovers_it_before_its_own_writes() {
+    let fx = committed_then_interrupted();
+    fs_err::write(fx.home.join(".b"), "EDITED-B\n").expect("edit ~/.b outside patina");
+
+    let out = fx.run(&["promote", "~/.b", "--yes"], &[]);
+    assert_eq!(code(&out), 0, "stderr: {}", stderr(&out));
+
+    assert!(
+        stderr(&out).contains("reverted an interrupted apply"),
+        "stderr: {}",
+        stderr(&out)
+    );
+    assert_eq!(
+        count_suffix(&fx.state_root().join("journal"), PLAN_SUFFIX),
+        0,
+        "the orphan plan must be recovered"
+    );
+    assert_eq!(
+        fs_err::read_to_string(fx.root.join("shell").join("b")).ok(),
+        Some("EDITED-B\n".to_owned()),
+        "promote must copy the edited bytes into the source"
     );
 }

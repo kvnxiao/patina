@@ -81,6 +81,7 @@ pub use record::read_symlink_target;
 pub use record::timestamp_to_rfc3339;
 pub use recovery::ROLLED_BACK_SUFFIX;
 pub use recovery::RecoveryReport;
+pub use recovery::orphan_plans;
 pub use recovery::recover_orphans;
 pub use render::PlanRenderError;
 pub use render::load_plan_file;

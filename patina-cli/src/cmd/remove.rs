@@ -93,7 +93,7 @@ pub(crate) fn run(
     let target = anchor_input(&args.path, &home).map_err(EngineError::from)?;
     let target_key = manage_key(&target);
 
-    let (state, guard) = acquire_state_and_lock()?;
+    let (state, guard) = acquire_state_and_lock(reporter)?;
 
     let journal_dir = state.join("journal");
     let record = read_latest_commit(&journal_dir).map_err(EngineError::from)?;

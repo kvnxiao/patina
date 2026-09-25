@@ -12,11 +12,17 @@
 //!    [`ResolvedPlan`]. Planning performs **no** filesystem mutation, so the
 //!    CLI can render a diff and (in a non-TTY, or with `--json` and no `--yes`)
 //!    exit without touching the user's `$HOME`.
-//! 2. [`execute`] takes the [`ResolvedPlan`] and mutates. It recovers any
-//!    orphan plan, takes the exclusive lock, and flushes the journal. It then
-//!    runs `pre_apply` hooks, materializes every operation (backing up each
-//!    pre-existing target first), and runs `post_apply` hooks. Finally it
-//!    either commits or rolls the file operations back.
+//! 2. [`execute`] takes the [`ResolvedPlan`] and mutates, in this order: it
+//!    takes the exclusive lock, refuses when an orphan plan is pending, runs
+//!    the symlink gate and the no-op check, runs `pre_apply` hooks, flushes the
+//!    plan, materializes every operation (backing up each pre-existing target
+//!    first), runs `post_apply` hooks, performs the plan's `Remove` operations,
+//!    commits, and prunes old backups. A failed `post_apply` hook rolls the
+//!    file operations back instead of the last three steps.
+//!
+//! A caller that may execute runs [`recover_interrupted`] before [`plan`], so
+//! the plan describes the pre-apply state rather than what an interrupted apply
+//! left behind.
 //!
 //! The CLI (`patina`) owns the diff rendering, the TTY prompt, and the
 //! JSON envelope; this module owns the engine semantics so those presentation
@@ -54,7 +60,9 @@ use crate::journal::LastApply;
 use crate::journal::OsSyncer;
 use crate::journal::Plan;
 use crate::journal::PlannedOperation;
+use crate::journal::RecoveryReport;
 use crate::journal::content_hash;
+use crate::journal::orphan_plans;
 use crate::journal::prune_cycles;
 use crate::journal::recover_orphans;
 use crate::journal::timestamp_to_rfc3339;
@@ -1927,15 +1935,19 @@ fn materialize_target(
 
 /// Execute a [`ResolvedPlan`] against the filesystem.
 ///
-/// Takes the exclusive lock, recovers any orphan plan under that held lock,
-/// and flushes the journal. Then runs `pre_apply` hooks, materializes every
-/// operation (backing up each pre-existing target first), and runs
-/// `post_apply` hooks. Finally commits, or rolls the file operations back
-/// when a `must_succeed` `post_apply` hook fails.
+/// Takes the exclusive lock and refuses when the journal holds an orphan plan.
+/// Then runs the symlink gate and the no-op check, runs `pre_apply` hooks,
+/// flushes the plan, materializes every operation (backing up each
+/// pre-existing target first), runs `post_apply` hooks, and backs up and
+/// removes each [`PlannedOperation::Remove`] target. Finally commits and
+/// prunes old backups, or rolls the file operations back when a
+/// `must_succeed` `post_apply` hook fails.
 ///
 /// # Errors
 ///
-/// Returns an [`EngineError`] when recovery, locking, journal flushing,
+/// Returns [`EngineError::InterruptedApplyPending`], before writing anything,
+/// when the journal holds an orphan plan; [`recover_interrupted`] reverts it.
+/// Returns an [`EngineError`] when locking, journal flushing,
 /// an executor, hook execution, backup, or retention GC fails. Returns
 /// [`EngineError::DevModeRequired`] when the plan contains a symbolic link
 /// operation, Developer Mode is disabled on Windows, and the process is not
@@ -1947,8 +1959,8 @@ fn materialize_target(
 /// (`post_apply`).
 #[expect(
     clippy::too_many_lines,
-    reason = "execute is the single linear apply orchestrator: lock, recover, \
-              no-op short-circuit, hooks, flush, materialize, commit/rollback, \
+    reason = "execute is the single linear apply orchestrator: lock, orphan check, \
+              no-op short-circuit, hooks, flush, materialize, reap, commit/rollback, \
               and GC, in the fixed order the crash-safety contract depends on. \
               Splitting a phase into a helper would hide that ordering behind a \
               call without removing any step."
@@ -1969,10 +1981,9 @@ pub fn execute(
     let rejournal = matches!(policy, LockPolicy::Held(_));
 
     // Resolve the exclusive lock per policy BEFORE any filesystem
-    // mutation, including orphan recovery, so a lock timeout writes nothing
-    // (no recovery, no plan, no COMMIT, no backup). Recovering only under the
-    // held lock also prevents a second apply from reversing a live in-flight
-    // apply's operations.
+    // mutation, so a lock timeout writes nothing (no plan, no COMMIT, no
+    // backup). Under the lock, a plan without a sentinel is an orphan rather
+    // than another apply still running.
     let _guard = match policy {
         LockPolicy::Blocking => acquire_lock(
             &resolved.lock_path(),
@@ -1982,17 +1993,17 @@ pub fn execute(
         LockPolicy::Held(guard) => guard,
     };
 
-    // Recover any prior partial apply, under the held lock, before
-    // computing fresh work.
-    recover_orphans(&journal_dir, &backups_dir)?;
+    if !orphan_plans(&journal_dir)?.is_empty() {
+        return Err(EngineError::InterruptedApplyPending);
+    }
 
     // Windows-only symlink-elevation gate. Runs after
-    // recovery and BEFORE the first backup / materialize, so a plan that
-    // needs Developer Mode cannot mutate the filesystem without consent.
-    // The engine provides the backstop: the CLI normally drives the UAC
-    // prompt before calling `execute`, so a `RequireElevation` verdict here
-    // means the gate was reached without that orchestration. Refuse to
-    // proceed with a typed signal. On a host that is already
+    // the orphan check and BEFORE the first backup / materialize, so a plan
+    // that needs Developer Mode cannot mutate the filesystem without
+    // consent. The engine provides the backstop: the CLI normally drives
+    // the UAC prompt before calling `execute`, so a `RequireElevation`
+    // verdict here means the gate was reached without that orchestration.
+    // Refuse to proceed with a typed signal. On a host that is already
     // elevated, proceed but warn (running Patina elevated is discouraged).
     // On macOS / Linux `HostDevModeProbe` reports `NotWindows`, so the
     // decision is always `Proceed`: no registry read, no early return.
@@ -2175,6 +2186,30 @@ pub fn execute(
             up_to_date: false,
         })
     }
+}
+
+/// Take the exclusive lock, revert every interrupted apply recorded under the
+/// per-machine state directory `state_dir`, and release the lock.
+///
+/// A caller that may [`execute`] a plan calls this before [`plan`], so the plan
+/// describes the pre-apply state. The report lists the reverted applies'
+/// timestamps; it is empty when none was pending.
+///
+/// # Errors
+///
+/// Returns [`EngineError::Lock`] when the exclusive lock is not acquired within
+/// [`exclusive_timeout`], and [`EngineError::Journal`] when an orphan plan
+/// cannot be read or decoded or its reversal fails.
+pub fn recover_interrupted(state_dir: &Utf8Path) -> Result<RecoveryReport, EngineError> {
+    let _guard = acquire_lock(
+        &state_dir.join("lock"),
+        LockKind::Exclusive,
+        exclusive_timeout(),
+    )?;
+    Ok(recover_orphans(
+        state_dir.join("journal"),
+        state_dir.join("backups"),
+    )?)
 }
 
 #[cfg(debug_assertions)]
@@ -2973,6 +3008,49 @@ mod tests {
         assert!(
             !scene.journal_file_exists(crate::journal::PLAN_SUFFIX),
             "the plan file is removed after COMMIT"
+        );
+    }
+
+    #[test]
+    fn execute_with_a_pending_orphan_refuses_and_writes_no_journal_file() {
+        let scene = Scene::new();
+        let journal = scene.resolved.journal_dir();
+        let orphan = journal.join(format!("20260530T110000Z{}", crate::journal::PLAN_SUFFIX));
+        fs_err::write(
+            &orphan,
+            Plan::new(Vec::new()).encode().expect("encode plan"),
+        )
+        .expect("write an orphan plan");
+        let listing = || {
+            let mut names: Vec<String> = fs_err::read_dir(&journal)
+                .expect("read journal dir")
+                .map(|entry| {
+                    entry
+                        .expect("read journal entry")
+                        .file_name()
+                        .to_string_lossy()
+                        .into_owned()
+                })
+                .collect();
+            names.sort();
+            names
+        };
+        let before = listing();
+
+        let result = execute(
+            &scene.resolved,
+            &ApplyRequest::default(),
+            LockPolicy::Blocking,
+        );
+
+        assert!(
+            matches!(result, Err(EngineError::InterruptedApplyPending)),
+            "execute must refuse while an orphan plan is pending, got {result:?}"
+        );
+        assert_eq!(
+            listing(),
+            before,
+            "a refused execute writes no journal file"
         );
     }
 
