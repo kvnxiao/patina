@@ -1,10 +1,7 @@
-# Codecov defaults both statuses to `target: auto`, which sets the bar to the
-# base commit's coverage. A patch below the repository average then fails even
-# when the project number rises. A fixed floor is the intended contract.
-#
-# These statuses report a number; neither blocks a merge. `main` carries no
-# branch protection, and CI's own gate is `--fail-under-lines` in
-# .github/workflows/ci.yml.
+# These statuses report a number; neither blocks a merge. `main` does not
+# require a status check. CI runs coverage through the justfile's `coverage`
+# recipe, which passes `--fail-under-lines 0`, so that run never fails on
+# coverage.
 coverage:
   status:
     project:
