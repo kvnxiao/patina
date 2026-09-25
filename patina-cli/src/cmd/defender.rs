@@ -25,9 +25,11 @@
 
 use crate::cli::DefenderArgs;
 use crate::cli::DefenderCommand;
+use crate::cmd::apply::Confirmation;
 use crate::cmd::apply::Consent;
 use crate::cmd::apply::PromptReader;
 use crate::cmd::apply::Tty;
+use crate::cmd::apply::confirm;
 use crate::exit_code::ExitCode;
 use crate::output::reporter::Reporter;
 use crate::output::style::Styles;
@@ -141,18 +143,6 @@ pub(crate) fn run(
     )
 }
 
-/// The confirmation decision for the human reconcile path (mirrors the `apply`
-/// idiom).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Confirmation {
-    /// Mutate: `--yes` or an interactive `y`.
-    Proceed,
-    /// Non-TTY without `--yes`: previewed only, exit 0 with no writes.
-    PreviewOnly,
-    /// Interactive prompt answered with anything other than `y`/`Y`.
-    Declined,
-}
-
 /// Reconcile the live Defender exclusions to `action`'s desired set.
 fn run_reconcile(
     action: Action,
@@ -219,7 +209,13 @@ fn run_reconcile(
         return Ok(ExitCode::Success.code());
     }
 
-    match confirm(consent, tty, reader, reporter) {
+    match confirm(
+        consent,
+        tty,
+        "Modify Windows Defender exclusions?",
+        reader,
+        reporter,
+    ) {
         Confirmation::Proceed => {}
         Confirmation::PreviewOnly => return Ok(ExitCode::Success.code()),
         Confirmation::Declined => return Ok(ExitCode::UserDeclined.code()),
@@ -389,28 +385,6 @@ fn run_status(json: bool, reporter: &mut impl Reporter) -> Result<i32> {
                 render_status_desired_only(&resolved, &desired, reporter);
             }
             Ok(ExitCode::Success.code())
-        }
-    }
-}
-
-/// The interactive confirmation, prompting only on an interactive TTY.
-fn confirm(
-    consent: Consent,
-    tty: Tty,
-    reader: &mut impl PromptReader,
-    reporter: &mut impl Reporter,
-) -> Confirmation {
-    match (consent, tty) {
-        (Consent::Preapproved, _) => Confirmation::Proceed,
-        (Consent::Prompt, Tty::NonInteractive) => Confirmation::PreviewOnly,
-        (Consent::Prompt, Tty::Interactive) => {
-            reporter.confirm("Modify Windows Defender exclusions?");
-            let answer = reader.read_line().unwrap_or_default();
-            if matches!(answer.trim(), "y" | "Y") {
-                Confirmation::Proceed
-            } else {
-                Confirmation::Declined
-            }
         }
     }
 }
