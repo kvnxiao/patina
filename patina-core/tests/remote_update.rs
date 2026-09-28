@@ -8,6 +8,7 @@ use patina_core::RemoteName;
 use patina_core::RemoteSpec;
 use patina_core::remote::gate::GateConcern;
 use patina_core::remote::gate::GateOutcome;
+use patina_core::remote::git;
 use patina_core::remote::lockfile::LockEntry;
 use patina_core::remote::lockfile::Lockfile;
 use patina_core::remote::lockfile::lockfile_path;
@@ -27,7 +28,11 @@ const WEEK: i64 = 7 * 24 * 60 * 60;
 
 fn git_in(cwd: &Utf8Path, epoch: i64, args: &[&str]) -> String {
     let date = format!("{epoch} +0000");
-    let output = Command::new("git")
+    let mut command = Command::new("git");
+    for var in git::REPOSITORY_ENV_VARS.iter().chain(git::CONFIG_ENV_VARS) {
+        command.env_remove(var);
+    }
+    let output = command
         .args(args)
         .current_dir(cwd.as_std_path())
         .env("GIT_AUTHOR_NAME", "Fixture")

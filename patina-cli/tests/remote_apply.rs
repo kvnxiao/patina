@@ -4,10 +4,12 @@
 
 mod common;
 
+use camino::Utf8Path;
 use camino::Utf8PathBuf;
 use common::Fixture;
 use common::Origin;
 use common::code;
+use std::collections::BTreeSet;
 
 const EPOCH: i64 = 1_700_000_000;
 
@@ -71,6 +73,83 @@ fn a_remote_copy_mode_directory_materializes_from_the_pinned_checkout() {
         !f.home.join(".claude/skills/humanizer/README.md").exists(),
         "only the declared subtree may be deployed; the rest of the remote stays in the cache"
     );
+}
+
+fn assert_remote_apply_leaves_the_named_repository_unchanged(
+    inherited: impl FnOnce(&Utf8Path) -> Vec<(&'static str, Utf8PathBuf)>,
+) {
+    let f = Fixture::new();
+    let origin = Origin::new(&f, "humanizer", EPOCH);
+    let rev = origin.commit_files(&[("skills/humanizer/SKILL.md", "humanize\n")], EPOCH);
+    declare(&f, "humanizer", &origin);
+    f.module(
+        "agents",
+        "[[directory]]\nsource = \"skills/humanizer\"\nremote = \"humanizer\"\n\
+         target = \"~/.claude/skills/humanizer\"\nmode = \"copy\"\n",
+    );
+    write_lock(&f, "humanizer", &origin, &rev);
+    let decoy = Origin::new(&f, "decoy", EPOCH);
+    decoy.commit_files(&[("README.md", "decoy\n")], EPOCH);
+    let before = common::snapshot(&[&decoy.dir]);
+
+    let env = inherited(&decoy.dir);
+    let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    let out = f.apply_with_env(&["--yes"], &env);
+    assert_eq!(
+        code(&out),
+        0,
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        fs_err::read_to_string(
+            checkout(&f, "humanizer", &rev)
+                .join("skills/humanizer/SKILL.md")
+                .as_std_path()
+        )
+        .expect("the pinned checkout is readable"),
+        "humanize\n"
+    );
+    assert_eq!(
+        fs_err::read_to_string(
+            f.home
+                .join(".claude/skills/humanizer/SKILL.md")
+                .as_std_path()
+        )
+        .expect("the deployed leaf is readable"),
+        "humanize\n"
+    );
+    let after = common::snapshot(&[&decoy.dir]);
+    let changed: BTreeSet<&Utf8PathBuf> = before
+        .keys()
+        .chain(after.keys())
+        .filter(|path| before.get(*path) != after.get(*path))
+        .collect();
+    assert!(
+        changed.is_empty(),
+        "the repository the inherited variables name must be untouched, changed: {changed:?}"
+    );
+}
+
+#[test]
+fn a_remote_apply_under_an_inherited_git_dir_and_work_tree_leaves_that_repository_unchanged() {
+    assert_remote_apply_leaves_the_named_repository_unchanged(|decoy| {
+        vec![
+            ("GIT_DIR", decoy.join(".git")),
+            ("GIT_WORK_TREE", decoy.to_owned()),
+            ("GIT_INDEX_FILE", decoy.join(".git/index")),
+        ]
+    });
+}
+
+#[test]
+fn a_remote_apply_under_an_inherited_object_directory_writes_no_object_into_it() {
+    assert_remote_apply_leaves_the_named_repository_unchanged(|decoy| {
+        vec![
+            ("GIT_DIR", decoy.join(".git")),
+            ("GIT_OBJECT_DIRECTORY", decoy.join(".git/objects")),
+        ]
+    });
 }
 
 #[test]

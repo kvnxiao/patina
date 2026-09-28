@@ -6,6 +6,7 @@
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
 use patina_core::HostOs;
+use patina_core::remote::git;
 use std::process::Command;
 use std::process::Output;
 use tempfile::TempDir;
@@ -202,7 +203,11 @@ pub(crate) fn symlink_dir(source: &Utf8Path, link: &Utf8Path) {
 /// Run `git` with deterministic identity and timestamps.
 pub(crate) fn git_in(cwd: &Utf8Path, epoch: i64, args: &[&str]) -> String {
     let date = format!("{epoch} +0000");
-    let output = Command::new("git")
+    let mut command = Command::new("git");
+    for var in git::REPOSITORY_ENV_VARS.iter().chain(git::CONFIG_ENV_VARS) {
+        command.env_remove(var);
+    }
+    let output = command
         .args(args)
         .current_dir(cwd.as_std_path())
         .env("GIT_AUTHOR_NAME", "Fixture")

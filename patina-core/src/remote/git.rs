@@ -20,6 +20,37 @@ const GIT: &str = "git";
 /// A full 40-hex-character commit SHA.
 const SHA_LEN: usize = 40;
 
+/// The repository-location variables of `git rev-parse --local-env-vars`,
+/// removed from the environment of every `git` that Patina runs.
+///
+/// Git exports these to its hooks. A `patina` launched from a hook would
+/// otherwise run its cache commands against the hook's repository: `-C` does
+/// not override `GIT_DIR`, and `--git-dir` does not override `GIT_WORK_TREE`
+/// or `GIT_OBJECT_DIRECTORY`.
+pub const REPOSITORY_ENV_VARS: &[&str] = &[
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_COMMON_DIR",
+    "GIT_DIR",
+    "GIT_GRAFT_FILE",
+    "GIT_IMPLICIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_NO_REPLACE_OBJECTS",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_PREFIX",
+    "GIT_REPLACE_REF_BASE",
+    "GIT_SHALLOW_FILE",
+    "GIT_WORK_TREE",
+];
+
+/// The configuration variables of `git rev-parse --local-env-vars`, which
+/// Patina passes through to `git`.
+///
+/// Config a caller injects through the environment, such as a CI job's
+/// `GIT_CONFIG_COUNT` credential rewrite, still applies to remote fetches.
+/// `GIT_CONFIG_COUNT` also gates its `GIT_CONFIG_KEY_<n>` and
+/// `GIT_CONFIG_VALUE_<n>` pairs, so removing it disables them.
+pub const CONFIG_ENV_VARS: &[&str] = &["GIT_CONFIG", "GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS"];
+
 /// Failures from a `git` invocation.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
@@ -81,14 +112,11 @@ pub fn git_available() -> bool {
 /// `cwd` sets the working directory when the invocation is path-sensitive
 /// (`checkout-index` writes relative to it).
 fn run(args: &[&str], cwd: Option<&Utf8Path>) -> Result<Output, GitError> {
-    let mut command = Command::new(GIT);
+    let mut command = git_command();
     command.args(args);
     if let Some(cwd) = cwd {
         command.current_dir(cwd.as_std_path());
     }
-    // A prompt from a credential helper or from `ssh` would hang a command the
-    // user may have launched from a shell hook. Fail fast instead.
-    command.env("GIT_TERMINAL_PROMPT", "0");
     let output = command
         .output()
         .map_err(|source| spawn_error(args, source))?;
@@ -96,6 +124,17 @@ fn run(args: &[&str], cwd: Option<&Utf8Path>) -> Result<Output, GitError> {
         return Ok(output);
     }
     Err(failed_error(args, &output))
+}
+
+fn git_command() -> Command {
+    let mut command = Command::new(GIT);
+    for var in REPOSITORY_ENV_VARS {
+        command.env_remove(var);
+    }
+    // A git credential prompt would hang a command the user may have launched
+    // from a shell hook. Fail fast instead.
+    command.env("GIT_TERMINAL_PROMPT", "0");
+    command
 }
 
 /// The [`GitError::Spawn`] for an invocation the OS could not start.
@@ -402,11 +441,10 @@ pub fn checkout_commit(git_dir: &Utf8Path, rev: &str, dest: &Utf8Path) -> Result
 /// `GIT_ATTR_NOSYSTEM` drops the system gitattributes file so a machine-local
 /// attribute rule cannot rewrite the bytes a checkout materializes.
 fn run_with_index(args: &[&str], cwd: &Utf8Path, index: &Utf8Path) -> Result<(), GitError> {
-    let mut command = Command::new(GIT);
+    let mut command = git_command();
     command
         .args(args)
         .current_dir(cwd.as_std_path())
-        .env("GIT_TERMINAL_PROMPT", "0")
         .env("GIT_ATTR_NOSYSTEM", "1")
         .env("GIT_INDEX_FILE", index.as_str());
     let output = command
@@ -438,8 +476,8 @@ pub fn is_ancestor(git_dir: &Utf8Path, ancestor: &str, descendant: &str) -> Resu
         ancestor,
         descendant,
     ];
-    let mut command = Command::new(GIT);
-    command.args(args).env("GIT_TERMINAL_PROMPT", "0");
+    let mut command = git_command();
+    command.args(args);
     let output = command
         .output()
         .map_err(|source| spawn_error(&args, source))?;
@@ -577,6 +615,29 @@ fn try_repo_differs_from_origin(repo_root: &Utf8Path) -> Option<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_local_env_var_the_installed_git_reports_is_cleared_or_passed_through() {
+        let output = Command::new(GIT)
+            .args(["rev-parse", "--local-env-vars"])
+            .output()
+            .expect("run git rev-parse --local-env-vars");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let unclassified: Vec<String> = String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter(|var| !REPOSITORY_ENV_VARS.contains(var) && !CONFIG_ENV_VARS.contains(var))
+            .map(str::to_owned)
+            .collect();
+        assert!(
+            unclassified.is_empty(),
+            "git reports repository-local variables that patina neither clears nor passes \
+             through: {unclassified:?}"
+        );
+    }
 
     #[test]
     fn a_full_sha_is_recognized_and_short_or_dirty_ones_are_not() {

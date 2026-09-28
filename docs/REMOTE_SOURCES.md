@@ -218,6 +218,17 @@ update never mutates content behind a live symlink: apply re-points
 links to the new checkout under the ordinary journaled flow, and
 `patina rollback` can re-point them back.
 
+Every `git` that Patina runs starts without the repository-location
+variables that `git rev-parse --local-env-vars` lists, such as `GIT_DIR`,
+`GIT_WORK_TREE`, `GIT_INDEX_FILE`, and `GIT_OBJECT_DIRECTORY`. Git
+exports these to its hooks. When a hook launches `patina`, `patina apply`
+still fetches into the remote cache, and `patina remote check` still
+compares your dotfiles repository with its origin, instead of acting on
+the hook's repository. The configuration variables in that list
+(`GIT_CONFIG_PARAMETERS`, `GIT_CONFIG_COUNT`, `GIT_CONFIG`) pass through,
+so config a CI job injects through the environment, such as a credential
+`insteadOf` rewrite, still applies to fetches.
+
 A checkout is written with line-ending translation off, and with
 external git attribute sources (system and per-user) neutralized. The
 same pinned commit therefore materializes the same bytes on every
