@@ -168,8 +168,14 @@ requires neither a read nor a fetch. The subsystem lives under
 
 - The **`git`** module wraps the `git` binary on `PATH` via
   `std::process::Command`. Patina links no git library, so a user's SSH
-  agent, credential helpers, and `insteadOf` rewrites apply untouched. The
-  layer captures `stderr` into typed errors and prints nothing itself.
+  agent, credential helpers, and `insteadOf` rewrites apply untouched. Each
+  invocation drops the inherited repository-location variables (`GIT_DIR`,
+  `GIT_WORK_TREE`, and the rest of `git rev-parse --local-env-vars` except
+  its config variables). A `patina` launched from a git hook therefore runs
+  its remote-cache and `remote check` commands against its own repositories,
+  not the hook's. User-declared `[[hook]]` commands still inherit the full
+  environment. The layer captures `stderr` into typed errors and prints
+  nothing itself.
 - The **`cache`** module owns the layout under `<state>/remotes/`: one bare
   fetch repository per remote plus one immutable directory per pinned rev.
   Each process builds a checkout in `<sha>.partial.<pid>` and renames the

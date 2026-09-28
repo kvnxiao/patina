@@ -340,6 +340,40 @@ fn check_json_reports_the_pending_set() {
 }
 
 #[test]
+fn check_under_an_inherited_git_dir_compares_the_dotfiles_repository_with_its_origin() {
+    let f = Fixture::new();
+    let origin = Origin::new(&f, "humanizer", OLD_EPOCH);
+    origin.commit_files(&[("a.md", "first\n")], OLD_EPOCH);
+    declare(&f, "humanizer", &origin, Some("0s"));
+    let upstream = Origin::new(&f, "decoy-upstream", OLD_EPOCH);
+    upstream.commit_files(&[("a.md", "one\n")], OLD_EPOCH);
+    let decoy = f.home.join("decoy");
+    git_in(
+        &f.home,
+        OLD_EPOCH,
+        &["clone", "--quiet", &upstream.url(), decoy.as_str()],
+    );
+    upstream.commit_files(&[("a.md", "two\n")], OLD_EPOCH + 60);
+
+    let out = f.run(
+        &["remote", "check", "--json"],
+        &[
+            ("GIT_DIR", decoy.join(".git").as_str()),
+            ("GIT_WORK_TREE", decoy.as_str()),
+        ],
+    );
+    assert_eq!(code(&out), 0);
+    let doc = json_of(&out);
+    assert_eq!(
+        doc.pointer("/repo_behind")
+            .and_then(serde_json::Value::as_bool),
+        Some(false),
+        "the dotfiles repository is not a git repository; only the decoy clone differs from \
+         its origin: {doc}"
+    );
+}
+
+#[test]
 fn check_hook_is_silent_and_self_throttles() {
     let f = Fixture::new();
     let origin = Origin::new(&f, "humanizer", OLD_EPOCH);
