@@ -253,10 +253,9 @@ fn committed_remove_survives_interruption_before_returning() {
         &[("PATINA_TEST_ABORT_REMOVE_AFTER", "3")],
     );
     assert_eq!(code(&interrupted), 99, "{}", stderr(&interrupted));
-    assert!(
-        patina_core::orphan_plans(fx.state_root().join("journal"))
-            .expect("read pending")
-            .is_empty()
+    assert_eq!(
+        patina_core::orphan_plans(fx.state_root().join("journal")).expect("read pending"),
+        Vec::<String>::new()
     );
     fx.run_ok(&["rollback", "--yes"]);
     fx.run_ok(&["apply", "--yes"]);

@@ -942,10 +942,9 @@ mod tests {
                 .expect("read retained commit")
                 .is_some()
         );
-        assert!(
-            orphan_plans(journal)
-                .expect("read pending plans")
-                .is_empty()
+        assert_eq!(
+            orphan_plans(journal).expect("read pending plans"),
+            Vec::<String>::new()
         );
     }
 
@@ -971,7 +970,7 @@ mod tests {
                 content("/home/u/.b", Disposition::Unchanged),
             ]
         );
-        assert!(record.reaped.is_empty());
+        assert_eq!(record.reaped, Vec::<String>::new());
     }
 
     #[test]

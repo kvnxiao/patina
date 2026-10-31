@@ -833,7 +833,7 @@ mod tests {
             git_available: true,
             ..base_inputs()
         };
-        assert!(compute_findings(&inputs).is_empty());
+        assert_eq!(compute_findings(&inputs), []);
     }
 
     #[test]

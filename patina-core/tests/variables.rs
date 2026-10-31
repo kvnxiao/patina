@@ -90,7 +90,7 @@ fn patina_os_is_one_of_the_v1_platform_strings() {
         );
         assert_eq!(os, std::env::consts::OS);
     } else {
-        assert!(!os.is_empty());
+        assert_ne!(os, "");
     }
 }
 

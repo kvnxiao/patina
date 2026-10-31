@@ -163,7 +163,7 @@ mod tests {
 
         let removed = gc_retain(&f.backups, 10).expect("retain");
 
-        assert!(removed.is_empty());
+        assert_eq!(removed, Vec::<String>::new());
         assert_eq!(surviving_dirs(&f.backups), names);
     }
 
@@ -220,6 +220,6 @@ mod tests {
             .expect("utf8 temp path")
             .join("nope");
         let removed = gc_retain(&nope, 10).expect("missing dir is a no-op");
-        assert!(removed.is_empty());
+        assert_eq!(removed, Vec::<String>::new());
     }
 }

@@ -46,8 +46,12 @@ an options type only when the arguments form a meaningful configuration; follow 
 [exception policy](rust-lints-and-formatting.md#limit-exceptions-to-their-approved-scope-required)
 when a cohesive implementation still exceeds a threshold.
 
-Keep unit tests in a `#[cfg(test)] mod tests` within the module they exercise. Use `tests/` for
-tests through the library's public API or the executable's external behavior.
+Keep unit tests in a `#[cfg(test)]` child module, inline or in a separate file such as
+`foo/tests.rs`, even when `tests.rs` is the directory's only file. Choose the layout for readability
+and navigation, following the
+[unit-test organization guidance](rust-testing.md#organize-unit-tests-as-child-modules-default).
+Reserve crate-root `tests/` for integration tests through the library's public API or the
+executable's external behavior.
 
 Use noun names for field-like getters and `as_`, `to_`, or `into_` according to conversion
 semantics. Name retrieval operations for the work they perform, such as `load_user`. See

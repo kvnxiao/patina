@@ -295,9 +295,9 @@ fn pruning_an_absent_cache_is_a_clean_no_op() {
     let state = Utf8Path::from_path(temp.path())
         .expect("utf8 temp path")
         .join("state");
-    assert!(
+    assert_eq!(
         cache::prune(&state, &BTreeSet::new(), Some(&[]))
-            .expect("a state dir with no remotes cache prunes cleanly")
-            .is_empty()
+            .expect("a state dir with no remotes cache prunes cleanly"),
+        Vec::<Utf8PathBuf>::new()
     );
 }
