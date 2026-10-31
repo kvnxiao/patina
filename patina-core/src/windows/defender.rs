@@ -460,9 +460,9 @@ pub fn plan_defender(
             .collect(),
         // A ledger entry classifies as present exactly when the live list shows
         // it. With the list withheld it always does, because the ledger is the
-        // only evidence available. That reproduces the `current` anchor where it
-        // exists and drops it where it does not, matching what the two readings
-        // above call for.
+        // only evidence available. That reproduces the `current` anchor where
+        // it exists and drops it where it does not, matching what the two
+        // readings above call for.
         to_remove: ledger
             .iter()
             .filter(|exclusion| {
