@@ -1259,7 +1259,7 @@ mod tests {
                 ExclusionKind::File
             )]
         );
-        assert!(diff.to_remove.is_empty());
+        assert_eq!(diff.to_remove, []);
     }
 
     #[test]
@@ -1274,7 +1274,7 @@ mod tests {
         ]);
         let current = known(&[REPO, r"C:\Users\kevin\.oldrc"]);
         let diff = plan_defender(&desired, &current, &ledger);
-        assert!(diff.to_add.is_empty());
+        assert_eq!(diff.to_add, []);
         assert_eq!(diff.to_remove, vec![stale]);
     }
 
@@ -1335,7 +1335,7 @@ mod tests {
                 ExclusionKind::File
             )]
         );
-        assert!(diff.to_remove.is_empty());
+        assert_eq!(diff.to_remove, []);
     }
 
     #[test]
@@ -1362,7 +1362,7 @@ mod tests {
             (r"C:\Users\kevin\.oldrc", ExclusionKind::File),
         ]);
         let diff = plan_defender(&desired, &CurrentExclusions::Unreadable, &ledger);
-        assert!(diff.to_add.is_empty());
+        assert_eq!(diff.to_add, []);
         assert_eq!(
             diff.to_remove,
             vec![Exclusion::new(

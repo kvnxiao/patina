@@ -9,6 +9,32 @@ For async code, apply the
 [deterministic async checks](rust-async.md#verify-async-contracts-deterministically-required) and
 [Tokio virtual-time guidance](rust-async.md#use-virtual-time-for-timer-logic-default).
 
+## Organize unit tests as child modules (Default)
+
+Keep unit tests in a `#[cfg(test)]` child module of the module they exercise. Both inline and
+separate-file child modules can access the parent's private items through `super::`; do not widen
+production visibility just for tests.
+
+Prefer inline tests for small suites. Use a separate file when it improves readability or
+navigation. Do not mandate either layout or use an arbitrary line-count threshold to choose between
+them.
+
+For an implementation in `src/foo.rs`, either layout is valid:
+
+- Inline: define `#[cfg(test)] mod tests { ... }` in `src/foo.rs`.
+- Separate file: declare `#[cfg(test)] mod tests;` in `src/foo.rs` and put the test module's
+  contents directly in `src/foo/tests.rs`.
+
+Allow `src/foo/tests.rs` to be the only file in `src/foo/`; the parent implementation can stay in
+`src/foo.rs`. See the Rust Reference on
+[module source filenames](https://doc.rust-lang.org/reference/items/modules.html#module-source-filenames)
+and
+[private-item access](https://doc.rust-lang.org/reference/visibility-and-privacy.html#vis.access).
+
+Reserve crate-root `tests/` for integration tests through the library's public API or the
+executable's external behavior. Keep tests that need private access in child modules of the
+implementation.
+
 ## Keep test failures diagnostic (Required)
 
 Use unit-returning test functions and descriptive `expect` messages for fallible setup so a setup

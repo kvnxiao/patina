@@ -319,7 +319,7 @@ mod tests {
             .expect("manifest with no variable tables parses");
         assert!(config.repo_shared.is_empty());
         assert!(config.per_profile.is_empty());
-        assert!(config.remotes.is_empty());
+        assert_eq!(config.remotes, []);
         assert_eq!(
             config.remotes_min_age, None,
             "an absent `remote_min_age` must leave the gate floor to the shipped default"

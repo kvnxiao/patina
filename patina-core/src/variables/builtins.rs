@@ -132,7 +132,7 @@ mod tests {
         let builtins = Builtins::current();
         // The host running the test must be one of macOS / Linux /
         // Windows in CI; allow other Unix variants for local dev.
-        assert!(!builtins.os.is_empty());
+        assert_ne!(builtins.os, "");
         if matches!(std::env::consts::OS, "macos" | "linux" | "windows") {
             assert_eq!(builtins.os, std::env::consts::OS);
         }

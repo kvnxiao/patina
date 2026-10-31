@@ -437,10 +437,7 @@ mod tests {
         // anything.
         let mut lock = Lockfile::default();
         lock.insert(name("zsh"), entry(REV));
-        assert!(
-            lock.retain_declared([&name("zsh"), &name("humanizer")])
-                .is_empty()
-        );
+        assert_eq!(lock.retain_declared([&name("zsh"), &name("humanizer")]), []);
         assert!(lock.get(&name("zsh")).is_some());
     }
 
