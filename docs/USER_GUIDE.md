@@ -192,8 +192,12 @@ Templates and `when` expressions resolve variables through a layered
 precedence chain. From lowest to highest priority: built-in `patina.*`
 facts, the repo-shared `[variables]` table, each module's own
 `[variables]` table, the active profile's `[profiles.<name>.variables]`
-table, per-machine variables, and finally CLI overrides. A higher layer
+table, and finally CLI overrides. A higher layer
 overrides a lower one for the same key.
+
+The [intended variable contract](../specs/configuration.md#req-variable-resolution--variable-resolution)
+also defines persisted machine variables. The current CLI does not load that
+file; use profiles or CLI overrides until that capability is implemented.
 
 In a module manifest, `[variables]` is local to that module. Its values are
 available to templates, `when` expressions, and hooks declared in the same
@@ -223,8 +227,8 @@ patina status -v machine=laptop
 Without the override, `status` evaluates the configured value. It may report a
 previously applied target as orphaned when `when` becomes false. If no lower
 layer defines the variable, `status` returns an undefined-variable error.
-During apply, the same override set drives both materialization and orphan
-reaping.
+During apply, the same override set selects both deployed content and removal
+of recorded targets that current configuration no longer manages.
 
 `doctor` does not accept variable overrides. If its ignored-target check cannot
 rebuild the managed set without them, it skips that finding.
@@ -395,13 +399,17 @@ other skips a prompt.
 | --------- | --------------------------------------------------------------------------------------------- |
 | `init`    | Scaffold a root `patina.toml` and persist the default-repository pointer.                     |
 | `add`     | Bring an existing dotfile under management: copy it into a module and write a `[[file]]` entry for a file source or a `[[directory]]` entry for a directory source.|
-| `remove`  | Drop a managed target and preserve its applied contents as a regular file. Individual tree-mode leaves cannot be removed with this command. |
+| `remove`  | Drop a managed file target and leave current source content as a regular file. The current writer handles scalar `target` declarations; directory entries, tree leaves, and `targets` arrays require manifest edits. |
 | `promote` | Copy a changed copy-mode target back to its repository source and record its bytes as applied. Remote-backed targets cannot be promoted. |
 | `doctor`  | Inspect the environment for known problems (UNC repository paths, missing Windows Developer Mode, an outdated Windows build, a missing default repo, missing `git`, and targets stranded by a new `ignore` pattern). |
 | `remote`  | Manage remote git sources: `list` the pins, `check` upstream tips, `update` a pin through the update gate, `prune` cached checkouts. See [Remote sources](#remote-sources). |
 
 `patina remove --purge` deletes the target outright, where a bare
-`remove` leaves a regular file with the last-applied content.
+`remove` leaves a regular file with current recorded source content, rendering
+local templates with current variables. This can replace target edits and can
+differ from the bytes originally applied. The [removal contract](../specs/repository-management.md#req-file-removal--file-removal)
+also defines individual removal from `targets` arrays. That writer support is
+not yet implemented.
 
 `remove` and `promote` save the current managed state without running an apply:
 
@@ -587,9 +595,12 @@ outcomes exit `1`, and each says something different:
 | The helper could not apply the request | It never reached Defender: a path it refused, or a request file it could not read.     |
 | The helper reported no result          | No result was reported. The exclusions may have been applied without being recorded, so re-run `apply`, which is idempotent. |
 
-Patina records only the exclusions it added, in a per-machine ledger.
-`apply` therefore reaps a stale patina-owned exclusion and **never
-touches a user-added one**. `clear` removes only what Patina owns.
+Patina records owned exclusions in a per-machine ledger. `clear` removes that
+owned set. The current human `defender apply` can also adopt already-present
+desired exclusions without prompting when Defender itself needs no change;
+a later clear can remove them. The [ownership-consent contract](../specs/diagnostics.md#req-defender-ownership-consent--defender-ownership-consent)
+requires explicit consent for that adoption. See the [command evidence](research/commands-and-platform.md#doctor-and-windows-integration)
+for the implementation gap.
 
 On Windows 11, consider a [Dev Drive](https://learn.microsoft.com/windows/dev-drive/)
 (ReFS) in Defender *performance mode*. It scans asynchronously rather
