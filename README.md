@@ -18,7 +18,7 @@ may still shift before a tagged release.
 
 ## Install
 
-Install from crates.io with a current Rust toolchain (MSRV 1.95):
+Install from crates.io with Rust 1.100 or later:
 
 ```sh
 cargo install patina --locked
@@ -82,10 +82,11 @@ values to both commands.
 
 ## Design
 
-`patina` follows a spec-first workflow. Requirements and acceptance
-scenarios are written before implementation, and the code is reviewed
-against them. See [`AGENTS.md`](AGENTS.md) for the product north star and
-the contributor workflow.
+[`SPEC.md`](SPEC.md) defines the intended product contract and links its area
+specifications and conformance scenarios. Its frontmatter records approval
+status. [Contract research](docs/research/README.md) documents the inspected
+implementation, discrepancies, and investigation limits. Contributor rules
+are in [`AGENTS.md`](AGENTS.md).
 
 ## Contributing
 

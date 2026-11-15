@@ -5,11 +5,10 @@ resolver = "3"
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.95"
+rust-version = "1.100"
 license = "MIT"
 authors = ["Kevin Xiao <kevin@squint.ai>"]
 repository = "https://github.com/kvnxiao/patina"
-homepage = "https://github.com/kvnxiao/patina"
 readme = "README.md"
 
 [workspace.dependencies]

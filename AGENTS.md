@@ -1,81 +1,12 @@
-# Patina agent guide
+# Patina contributor instructions
 
-Patina is a cross-platform dotfile manager written in Rust. **Read this file before doing any work.**
+Patina is a cross-platform dotfile manager written in Rust. Read this file before working in the repository.
 
----
+## Product contracts
 
-## Product north star
+Read [SPEC.md](SPEC.md) for product scope, shared invariants, and the area index. Before changing observable behavior, read the affected area and its declared dependencies. Keep requirement IDs and conformance scenarios consistent with the change. Treat `status: draft` as a proposed contract awaiting approval; approval establishes intended behavior, not implementation conformance.
 
-Patina's source of truth is a user's centralized git repository. A user runs `patina apply` and the configurations declared in `patina.toml` files materialize at the right targets: symbolic links pointing back into the repo, rendered template output, or byte copies where a link is not appropriate. An apply interrupted by process termination (`kill -9`) leaves the filesystem in either the pre-apply or the post-apply state. Power-loss durability is a post-1.0 hardening item (see Known unknowns).
-
-### Users
-
-- **Fresh-laptop developer.** Clones the dotfiles repo, runs one command, expects shell/editor/git config to land everywhere.
-- **Existing-machine maintainer.** Adds, edits, removes config; re-runs `patina apply` expecting the diff-and-prompt loop to never surprise them.
-- **Multi-machine syncer.** Runs Patina across macOS / Linux / Windows; same source must produce same result everywhere.
-- **Cautious user.** Wants a diff and prompt before any mutation; never accidentally overwrites a file edited outside Patina.
-- **CI script author.** Runs `patina apply` in a non-interactive shell to preview a deployment; expects plan output and no writes to the repository or to any target. Planning a remote-backed entry against a cold cache still fills the per-machine remote cache; the plan is computed from that cache.
-
-### V1.0 outcome
-
-V1.0 is complete when a user can:
-
-- **Declare and apply.** `patina apply` materializes `patina.toml` as symlinks / rendered templates / byte copies at the right targets.
-- **Preview safely.** Diff-and-prompt by default; non-interactive shells fall through to plan-only.
-- **Recover.** `patina status` reports drift; `patina rollback` restores pre-apply state; `patina debug journal` decodes the binary journal post-mortem.
-- **Bootstrap.** `init`, `add`, `remove`, `promote`, `doctor` cover repo setup and migration; Windows symlink elevation via Developer Mode or UAC.
-- **Consume remote sources.** The root manifest declares each third-party git repository as a `[[remote]]`. Any entry deploys from a pinned checkout of one with `remote = "<name>"`. `patina.lock` is the committed statement every machine converges to, and `patina remote list` / `check` / `update` / `prune` manage it. Normative spec: `docs/REMOTE_SOURCES.md`.
-
-### Quality bar
-
-- **Crash safety.** Single-fsync postcard journal + per-operation progress cursor; `kill -9` mid-apply converges deterministically on the next command that recovers: `patina apply` with `--yes` or at an interactive prompt, `patina rollback` with `--yes` or once confirmed, or `patina remove` / `patina promote` once confirmed and past its target checks. A preview, a declined `rollback`, and a declined or refused `remove` / `promote` do not recover. Scope: process termination, where the page cache survives; power-loss / kernel-panic durability is out of scope for v1.0 (see Known unknowns).
-- **Idempotency.** Re-applying against unchanged source is a no-op: same plan, no writes, byte-identical stdout.
-- **Never overwrite without consent.** Patina never touches a file it doesn't own until the user approves the change. Every overwrite is backed up first, so `patina rollback` can restore it.
-- **Rollback fidelity.** After `patina rollback` reverses an apply, the filesystem matches pre-apply state in content and entry kind (file / symlink / directory), subject to these exceptions:
-  - Mode and timestamp bits are excluded.
-  - An edit made after the apply to a target the apply left unchanged remains.
-  - Earlier rollbacks preserve targets affected by a later `remove` or `promote`. They skip an entire directory or symlink restore when it would also replace such a target.
-
-  Before rollback replaces or deletes any other entry that changed since the apply, it keeps a copy under `<state>/recovered/`. Rollback passes a `remove` or `promote` record without changing files; the next invocation can continue through earlier history.
-- **Deterministic stdout.** Two consecutive `apply`s against unchanged source produce byte-identical output. No timestamps, PIDs, or random IDs (`--json` included).
-- **Cross-platform parity.** macOS, Linux, Windows are first-class. Two-of-three is not done.
-- **Third-party content is never trusted.** A remote checkout supplies bytes only: its `patina.toml` is never read, its `.tmpl` files are never rendered, and every byte still passes the consent diff. Pin bumps are gated (`docs/REMOTE_SOURCES.md` "The update gate"), with an honest statement of what the gate cannot stop.
-- **No two entries fight over a target.** Plan-time validation rejects duplicate canonical targets and a whole-directory `symlink` target that contains another entry's target, before any diff is shown. A tree-mode entry claims the leaves it materializes, not the whole directory.
-- **No panics.** Correctness claims require passing tests.
-
-### Non-goals
-
-Not in v1.0:
-
-- Merge-mode file types (`merge-json`, `merge-toml`, etc.)
-- Nested modules beyond two levels
-- `on_change` / `on_drift` hook events
-- A JSON schema-version field
-- A `patina gc` command
-- A `--repo <path>` global flag
-- A GUI
-- Migrations from other dotfile managers
-- An embedded scripting language
-- Native encryption
-- Cross-machine state sync, machine inventory, or dashboards
-- A background service that re-applies on source changes and notifies on drift (see `docs/FUTURE_FEATURES.md`)
-
-If the user asks for one of these, the answer is "not in v1.0". Surface it as a question for a future change.
-
-### Known unknowns
-
-- **`postcard` wire-format stability.** Mitigated by the journal version envelope.
-- **`fs2` advisory lock semantics.** Patina handles the POSIX `flock(2)` and Windows `LockFileEx` differences for coordination between CLI processes.
-- **MiniJinja strict-undefined** (including the Jinja2 `{% else %}` empty-string rule) is acceptable.
-- **Power-loss / kernel-panic durability.** Backups are not fsync'd before an overwrite. Process termination (`kill -9`, page cache intact) therefore converges on the next command that recovers; a power cut can leave the overwrite durable and its backup not. On Windows the journal directory cannot be fsync'd, so a power cut can also lose the rename that publishes a `<id>.COMMIT`; the next command that recovers then reverts that apply. Full never-intermediate durability under power loss (atomic temp+rename target writes plus fsync of backups and parent dirs) is a post-1.0 hardening item.
-- **Per-machine state directory must not live on cloud-sync paths** (iCloud / OneDrive / Dropbox / Box / Google Drive / Syncthing). Patina does not detect cloud-sync paths in v1.0; the constraint is documented only.
-- **Committer timestamps are self-reported.** The update gate's future / backdating / age checks stop untargeted, fast-moving compromises. An attacker who deliberately backdates commits can still pass these checks. The diff-and-prompt loop is the hard boundary.
-- **Fetching a bare SHA needs server cooperation.** A server with `uploadpack.allowReachableSHA1InWant` off refuses the specified shallow fetch by exact SHA. `remote::git::fetch_commit` then falls back to a shallow fetch of the tracked ref, and re-checks that the pin arrived.
-- **An `Update` target deleted between planning and execution keeps Patina's bytes after a crash.** The backup pass does not back up a target that is absent when the pass runs, so recovery reads the missing backup as an unstarted `Update` and leaves the written file in place instead of deleting it.
-- **A user edit during `execute` is overwritten.** The apply backs up every target in one pass before its first write, so an edit made after that pass and before Patina writes the target is in neither the backup nor a recovery copy.
-- **The interior-symlink gate checks only directories above a tree's current leaves.** Classification and the executors return `InteriorSymlink` for a foreign symlink at a directory between a tree root and a leaf the current source walk yields. A current tree root replaced by a link is handled separately: the reap skips every recorded target under it, the backup pass skips every target beneath a target it backed up, and recovery reverts an operation beneath a link stashed in the backup cycle as that link. Other paths follow links. The orphan reap removes a recorded target through a link planted above it after the apply, whether the target lies outside every current tree or inside a current tree root under a directory above no current leaf: with `~/app/sub` replaced by a link to `~/elsewhere`, dropping `sub/z.conf` from the source deletes `~/elsewhere/z.conf`. A `[[file]]` target inside a copy-mode `[[directory]]` whose root was replaced by a directory link is planned at the link's resolved path and written through the link, and the next apply reaps that file. The diff previews that write at the resolved path and each removal, and the apply backs up the entry the link reaches before it writes or removes it. `patina rollback` and crash recovery can also touch the destination of a link planted above a recorded target. Extending the gate to the revert paths is a follow-up.
-
----
+Read [contract research](docs/research/README.md) when implementation and intended behavior differ. Keep product rules in the spec, evidence and limitations in research, and available usage and migration procedures in the user guide. Do not duplicate those contracts here.
 
 ## Always use these Skills
 
@@ -106,7 +37,7 @@ The next review rejects any violation of these rules.
 
 These Patina-specific rules extend the `rust-rules` Skill with crate choices. When they conflict with a Skill rule, the Skill wins; update this file.
 
-- **On-disk format version (pre-release no-bump policy):** the `postcard` binary formats (journal plan, committed apply record) share one major-version envelope, `FILE_MAJOR_VERSION` in `patina-core/src/journal/plan.rs`. **Hold the major at `1` until v1.0.** Pre-release has no shipped state to preserve, so breaking layout changes keep major `1` with no migration; an older binary then refuses a newer file (`decode_envelope` rejects `found > supported`). Bump the major once, at the v1.0 boundary, where it becomes a real compatibility contract.
+- **Persisted formats:** Read [History format compatibility](specs/history.md#req-history-format-compatibility--history-format-compatibility) before changing journal encoding. Preserve the specified version and migration policy.
 - **CLI output:** human-readable by default with color where appropriate, JSON when `--json` is set. Use the `output::Reporter` abstraction, not direct prints.
 - **Tests:** integration tests use `tempfile::TempDir` for repo fixtures. Snapshot tests use `insta`. Declare `#![cfg(test)]` in an integration-test crate whose helper functions call `expect`, panic, index, or print, so the `clippy.toml` test allowances cover those helpers.
 - **Diagrams in docs:** prefer Mermaid (` ```mermaid ` fenced blocks) when it can express the diagram. GitHub renders Mermaid and diffs it per node. Use ASCII for directory trees with inline comments, exact-byte layouts, and terminal output.

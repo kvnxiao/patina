@@ -80,12 +80,13 @@ in the per-machine state directory, then `fsync`s both the plan file and
 its parent directory. The journal is the source of truth a later recovery
 run reads to converge the filesystem.
 
-The plan file and the commit record are encoded with `postcard`; the
+The plan file and the commit record use the Postcard binary serialization format; the
 progress cursor is a raw fixed-width byte log. `postcard` promises no
 wire-format stability across versions, so every journal opens with a
 version envelope. A later Patina binary can then reject a journal it
-cannot decode instead of misreading it. See the product north star's
-Known unknowns note in AGENTS.md.
+cannot decode instead of misreading it. See the
+[history compatibility contract](../specs/history.md#req-history-format-compatibility--history-format-compatibility)
+and [transaction evidence](research/transactions-and-recovery.md).
 
 ```mermaid
 flowchart LR
@@ -98,7 +99,7 @@ flowchart LR
 - The **encoded plan** is the full set of operations, written and
   fsynced upfront in a single durable write: one symlink, copy, or render
   operation per materialized target, then one `remove` operation per
-  target the apply reaps. A removal plan instead records its target and
+  recorded target that current configuration no longer manages. A removal plan instead records its target and
   manifest writes, together with the target whose declaration it removes.
 - The **progress cursor** records per-operation completion as the apply
   proceeds. The cursor is written without a per-operation `fsync`: the
@@ -200,7 +201,8 @@ checkout named by at least one sentinel. Rollback can step through older
 records, including records before a removal or promotion. When the sweep cannot decode a sentinel, it
 suspends instead of stranding a rollback.
 
-`docs/REMOTE_SOURCES.md` is the normative behavioural spec.
+The [remote specification](../specs/remote-sources.md) defines intended behavior.
+[REMOTE_SOURCES.md](REMOTE_SOURCES.md) explains the available remote workflow.
 
 ## Apply phases
 
@@ -308,7 +310,8 @@ every target beneath a target it backed up, and recovery reverts an operation
 beneath a stashed link as that link. Otherwise the orphan reap,
 `patina rollback`, and crash recovery revert recorded target paths
 without the gate, so a link planted after an apply can still redirect those
-single-path operations (see the Known unknowns note in AGENTS.md).
+single-path operations (see the
+[recovery evidence and limits](research/transactions-and-recovery.md#orphan-removal-and-published-filesystem-limits)).
 
 Backup and restore preserve a symbolic link's Windows flavour from the
 link's own file type (`fsx::symlink_dir_flavor`), not from a stat of its

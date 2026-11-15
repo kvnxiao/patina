@@ -1,5 +1,10 @@
 # Local and remote sources
 
+This guide describes the available remote workflow. The
+[remote specification](../specs/remote-sources.md) defines intended behavior;
+[remote research](research/remote-sources.md) records implementation differences
+and the conditions under which they were observed.
+
 Patina materializes declarations from two kinds of sources. A **local
 source** is a path inside your dotfiles repository. A **remote source** is
 a path inside another git repository that Patina clones, pins, and updates:
@@ -229,16 +234,15 @@ the hook's repository. The configuration variables in that list
 so config a CI job injects through the environment, such as a credential
 `insteadOf` rewrite, still applies to fetches.
 
-A checkout is written with line-ending translation off, and with
-external git attribute sources (system and per-user) neutralized. The
-same pinned commit therefore materializes the same bytes on every
-machine, whatever a user's `core.autocrlf` or `core.attributesFile` says.
-An in-tree `.gitattributes` shipped in the remote escapes that: it can
-still apply an `eol` or `filter` rule, and against such a repository a
-checkout is not byte-verbatim. Fully attribute-blind materialization is a
-post-1.0 item.
+A checkout disables automatic line-ending conversion and external system and
+user attribute files. Committed `.gitattributes` can still select conversions
+or a locally configured filter command in the current implementation. The
+[inert-content requirement](../specs/remote-sources.md#req-inert-remote-content--inert-remote-content)
+requires materialization without those conversions or commands. The
+[isolated probe](research/remote-sources.md#committed-attributes-selecting-a-command)
+documents the current limitation.
 
-Each successful apply sweeps the cache. A declared remote retains its current
+Each newly committed apply sweeps the cache; a full no-op does not. A declared remote retains its current
 pin and every checkout referenced by a journal record; other checkouts are
 removed. When the root manifest drops a remote, Patina removes its entire cache
 only after no journal record references it. Until then, the referenced

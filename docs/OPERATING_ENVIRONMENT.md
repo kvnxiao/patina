@@ -3,13 +3,20 @@
 Patina stores per-machine state in the locations below. In v1.0, keep the
 state directory and repository off cloud-sync mounts.
 
+The [runtime specification](../specs/runtime.md) defines intended state-location
+rules. The [history specification](../specs/history.md) defines intended recovery
+and [binary-format compatibility](../specs/history.md#req-history-format-compatibility--history-format-compatibility).
+Their approval status is recorded in [SPEC.md](../SPEC.md).
+
 ---
 
 ## Where Patina stores state
 
 Patina writes its journal, backups, and lock file to a
-**per-machine state directory**. Your dotfiles repository is never
-written to during `patina apply`.
+**per-machine state directory**, separate from the repository. A write-capable
+human apply can update `patina.lock` through `--update` or stale-pin cleanup;
+preview and JSON apply do not rewrite it. See the
+[remote specification](../specs/remote-sources.md) for those command boundaries.
 
 | OS      | State directory                              | Override                  |
 | ------- | -------------------------------------------- | ------------------------- |

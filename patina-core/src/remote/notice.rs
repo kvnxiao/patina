@@ -171,15 +171,13 @@ pub fn settle(state_dir: &Utf8Path, names: &[&RemoteName]) -> Result<(), RemoteE
 /// An absent or unreadable file reads as "none pending": this is notification
 /// state, and a stale read is better than a failed command.
 pub fn read_pending(state_dir: &Utf8Path) -> BTreeSet<String> {
-    fs_err::read_to_string(cache::pending_path(state_dir).as_std_path())
-        .map(|text| {
-            text.lines()
-                .map(str::trim)
-                .filter(|line| !line.is_empty())
-                .map(str::to_owned)
-                .collect()
-        })
-        .unwrap_or_default()
+    fs_err::read_to_string(cache::pending_path(state_dir).as_std_path()).map_or_default(|text| {
+        text.lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(str::to_owned)
+            .collect()
+    })
 }
 
 /// The Unix seconds recorded by the last real background check, if any.
