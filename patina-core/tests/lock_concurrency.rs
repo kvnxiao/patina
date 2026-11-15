@@ -2,6 +2,9 @@
 
 #![cfg(test)]
 
+#[path = "support/lock_helper.rs"]
+mod lock_helper;
+
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
 use std::io::BufRead;
@@ -9,43 +12,7 @@ use std::io::BufReader;
 use std::process::Child;
 use std::process::Command;
 use std::process::Stdio;
-use std::sync::Once;
 use tempfile::TempDir;
-
-static BUILD: Once = Once::new();
-
-fn ensure_helper_built() {
-    BUILD.call_once(|| {
-        let status = Command::new(env!("CARGO"))
-            .args(["build", "--quiet", "--example", "lock_helper"])
-            .arg("--target-dir")
-            .arg(target_root().as_str())
-            .status()
-            .expect("spawn cargo build for lock_helper example");
-        assert!(status.success(), "building lock_helper example failed");
-    });
-}
-
-fn target_root() -> Utf8PathBuf {
-    let test_exe = std::env::current_exe().expect("current test exe path");
-    let root = test_exe
-        .parent()
-        .and_then(std::path::Path::parent)
-        .and_then(std::path::Path::parent)
-        .expect("derive target root from test exe path");
-    Utf8PathBuf::from_path_buf(root.to_owned()).expect("utf8 target root")
-}
-
-fn helper_path() -> Utf8PathBuf {
-    let test_exe = std::env::current_exe().expect("current test exe path");
-    let deps_dir = test_exe.parent().expect("deps dir");
-    let profile_dir = deps_dir.parent().expect("profile dir");
-    let mut helper = profile_dir.join("examples").join("lock_helper");
-    if cfg!(windows) {
-        helper.set_extension("exe");
-    }
-    Utf8PathBuf::from_path_buf(helper).expect("utf8 helper path")
-}
 
 struct State {
     _temp: TempDir,
@@ -137,12 +104,11 @@ fn wait_for_acquired(child: &mut Child) {
 
 #[test]
 fn two_exclusive_applies_do_not_interleave() {
-    ensure_helper_built();
-    let helper = helper_path();
+    let helper = lock_helper::executable();
     let state = State::new();
 
-    let a = spawn(&helper, &state.dir, "exclusive", 300, 5_000, false);
-    let b = spawn(&helper, &state.dir, "exclusive", 300, 5_000, false);
+    let a = spawn(helper, &state.dir, "exclusive", 300, 5_000, false);
+    let b = spawn(helper, &state.dir, "exclusive", 300, 5_000, false);
 
     let out_a = a.wait_with_output().expect("wait a");
     let out_b = b.wait_with_output().expect("wait b");
@@ -184,13 +150,12 @@ fn two_exclusive_applies_do_not_interleave() {
 
 #[test]
 fn blocked_exclusive_exits_with_lock_timeout_code() {
-    ensure_helper_built();
-    let helper = helper_path();
+    let helper = lock_helper::executable();
     let state = State::new();
 
-    let mut holder = spawn(&helper, &state.dir, "exclusive", 1_500, 5_000, false);
+    let mut holder = spawn(helper, &state.dir, "exclusive", 1_500, 5_000, false);
     wait_for_acquired(&mut holder);
-    let blocked = spawn(&helper, &state.dir, "exclusive", 0, 200, false);
+    let blocked = spawn(helper, &state.dir, "exclusive", 0, 200, false);
 
     let blocked_out = blocked.wait_with_output().expect("wait blocked");
     let holder_out = holder.wait_with_output().expect("wait holder");
@@ -215,11 +180,10 @@ fn blocked_exclusive_exits_with_lock_timeout_code() {
 
 #[test]
 fn os_releases_lock_when_holder_aborts() {
-    ensure_helper_built();
-    let helper = helper_path();
+    let helper = lock_helper::executable();
     let state = State::new();
 
-    let aborter = spawn(&helper, &state.dir, "exclusive", 10_000, 5_000, true);
+    let aborter = spawn(helper, &state.dir, "exclusive", 10_000, 5_000, true);
     let aborter_out = aborter.wait_with_output().expect("wait aborter");
     assert!(
         !aborter_out.status.success(),
@@ -230,7 +194,7 @@ fn os_releases_lock_when_holder_aborts() {
         "aborter should have acquired the lock before aborting"
     );
 
-    let next = spawn(&helper, &state.dir, "exclusive", 0, 1_000, false);
+    let next = spawn(helper, &state.dir, "exclusive", 0, 1_000, false);
     let next_out = next.wait_with_output().expect("wait next");
     assert!(
         next_out.status.success(),
@@ -245,13 +209,12 @@ fn os_releases_lock_when_holder_aborts() {
 
 #[test]
 fn shared_holder_does_not_block_another_shared_acquirer() {
-    ensure_helper_built();
-    let helper = helper_path();
+    let helper = lock_helper::executable();
     let state = State::new();
 
-    let mut first = spawn(&helper, &state.dir, "shared", 800, 5_000, false);
+    let mut first = spawn(helper, &state.dir, "shared", 800, 5_000, false);
     wait_for_acquired(&mut first);
-    let second = spawn(&helper, &state.dir, "shared", 0, 300, false);
+    let second = spawn(helper, &state.dir, "shared", 0, 300, false);
 
     let second_out = second.wait_with_output().expect("wait second shared");
     let first_out = first.wait_with_output().expect("wait first shared");

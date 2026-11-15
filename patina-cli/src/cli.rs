@@ -24,7 +24,6 @@ use clap::ValueEnum;
 ///
 /// [`crate::main`] returns the resolved code as the process exit status. A
 /// code outside `0..=255` resolves to [`std::process::ExitCode::FAILURE`].
-#[must_use]
 pub(crate) fn resolve_exit_code(
     outcome: anyhow::Result<i32>,
     reporter: &mut impl Reporter,

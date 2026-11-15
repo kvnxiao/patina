@@ -3,9 +3,10 @@
 #![cfg(test)]
 
 mod common;
+#[path = "../../patina-core/tests/support/lock_helper.rs"]
+mod lock_helper;
 
 use camino::Utf8Path;
-use camino::Utf8PathBuf;
 use common::Fixture;
 use common::code;
 use common::symlink_dir;
@@ -14,7 +15,6 @@ use std::io::BufReader;
 use std::process::Child;
 use std::process::Command;
 use std::process::Stdio;
-use std::sync::Once;
 use std::time::Duration;
 use std::time::Instant;
 
@@ -275,11 +275,10 @@ fn add_serializes_behind_a_held_exclusive_lock() {
     let state_dir = fx.state_root();
     fs_err::create_dir_all(state_dir.join("journal").as_std_path()).expect("mkdir journal");
 
-    let helper = lock_helper_path();
-    ensure_lock_helper_built();
+    let helper = lock_helper::executable();
 
     let hold = Duration::from_secs(2);
-    let mut holder = spawn_holder(&helper, &state_dir, hold);
+    let mut holder = spawn_holder(helper, &state_dir, hold);
     wait_for_acquired(&mut holder);
     let released_after = Instant::now();
 
@@ -320,48 +319,6 @@ fn stderr(out: &std::process::Output) -> String {
 
 fn is_symlink(path: &Utf8Path) -> bool {
     fs_err::symlink_metadata(path.as_std_path()).is_ok_and(|m| m.file_type().is_symlink())
-}
-
-static BUILD: Once = Once::new();
-
-fn ensure_lock_helper_built() {
-    BUILD.call_once(|| {
-        let status = Command::new(env!("CARGO"))
-            .args([
-                "build",
-                "--quiet",
-                "--package",
-                "patina-core",
-                "--example",
-                "lock_helper",
-            ])
-            .arg("--target-dir")
-            .arg(target_root().as_str())
-            .status()
-            .expect("spawn cargo build for lock_helper example");
-        assert!(status.success(), "building lock_helper example failed");
-    });
-}
-
-fn target_root() -> Utf8PathBuf {
-    let test_exe = std::env::current_exe().expect("current test exe path");
-    let root = test_exe
-        .parent()
-        .and_then(std::path::Path::parent)
-        .and_then(std::path::Path::parent)
-        .expect("derive target root from test exe path");
-    Utf8PathBuf::from_path_buf(root.to_owned()).expect("utf8 target root")
-}
-
-fn lock_helper_path() -> Utf8PathBuf {
-    let test_exe = std::env::current_exe().expect("current test exe path");
-    let deps_dir = test_exe.parent().expect("deps dir");
-    let profile_dir = deps_dir.parent().expect("profile dir");
-    let mut helper = profile_dir.join("examples").join("lock_helper");
-    if cfg!(windows) {
-        helper.set_extension("exe");
-    }
-    Utf8PathBuf::from_path_buf(helper).expect("utf8 helper path")
 }
 
 fn spawn_holder(helper: &Utf8Path, state: &Utf8Path, hold: Duration) -> Child {

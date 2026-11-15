@@ -7,7 +7,6 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-homepage.workspace = true
 readme.workspace = true
 keywords = ["dotfiles", "windows", "elevation"]
 categories = ["command-line-utilities", "os::windows-apis"]

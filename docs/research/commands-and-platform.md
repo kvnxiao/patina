@@ -23,7 +23,7 @@ The baseline was inspected with the user's untracked `DISCUSS_VACUOUS_TEST_AUDIT
 The independent command-combination checks found these structured-output defects:
 
 - `doctor --fix --yes --json` printed human output when recording a default repository and when there were no findings. [`doctor.rs`](../../patina-cli/src/cmd/doctor.rs) dispatches its fix path without a JSON-specific result path. Tests cover JSON and remediation separately. The intended spec defines a remediation envelope and requires their combination to remain structured.
-- `remote update --json --yes` with no declared remotes exited 0 and printed `No remotes are declared.`. The empty-registry branch in [`remote.rs`](../../patina-cli/src/cmd/remote.rs) precedes JSON reporting. The intended result is an empty command-shaped JSON array.
+- `remote update --json --yes` with no declared remotes exited 0 and printed `No remotes are declared.`. The empty-registry branch in [`remote.rs`](../../patina-cli/src/cmd/remote.rs) precedes JSON reporting. The intended result is an empty JSON array.
 - Source inspection of [`apply.rs`](../../patina-cli/src/cmd/apply.rs), `run_json`, `drive_dev_mode_gate`, and `drive_elevation`, shows that a Windows Developer Mode request prints ordinary prose to stdout before JSON. No actual elevation was launched. The intended stream contract routes that explanation to stderr.
 
 Several combinations have deliberate exceptions. `remote check --hook --json` is silent because hook mode wins. Remove and promote without required consent can exit 5 with empty stdout. Rollback with no history and generic planning failures can exit 1 with stderr diagnostics rather than JSON. These exceptions do not authorize mixing human prose into a completed JSON result.
@@ -57,13 +57,13 @@ The coordinator used Python 3.15.1 on Windows to invoke `target/debug/patina.exe
 | Condition and action | Observed result | Limit |
 | --- | --- | --- |
 | Apply source `version one`, then change source to `version two` and target to `target edit`; run `remove --yes --json`. | Exit 0; target becomes `version two`. | One regular-file copy case on Windows; not every template, link, or I/O failure. |
-| Preview an entry with `when = "not missing"`. | Exit 0; the target is planned for creation. | Demonstrates the strict-undefined gap described in configuration research; preview does not prove execution. |
+| Preview an entry with `when = "not missing"`. | Exit 0; the target is planned for creation. | Demonstrates that this condition accepts an undefined variable; preview does not prove execution. |
 | Close the stdout pipe's read end before `apply --yes --json`. | Exit 0; target has current source bytes; stderr is empty. | Demonstrates this broken-pipe path on Windows, not every output failure or OS. |
 
-Separate isolated fixtures reproduced the doctor-fix and empty-update JSON defects above, without host remediation. Other probes distinguished typed JSON refusals from stderr-only failures. The Windows elevation-output finding remains source inspection only.
+Separate isolated fixtures reproduced the doctor-fix and empty-update JSON defects above, without host remediation. Other probes distinguished JSON error results from stderr-only failures. The Windows elevation-output finding remains source inspection only.
 
 ## Baseline verification limits
 
-The baseline `just check` stopped in Clippy at `patina-elevate/src/lib.rs:116`, where `clippy::double_must_use` rejects a redundant attribute on a function returning `ExitCode`. A separate `just test` built the debug CLI but stopped in `add_serializes_behind_a_held_exclusive_lock`: helper-path inference assumed a test executable layout different from the generated `target/debug/build/.../out/` location. These baseline failures prevent a claim that the full suite passed. They do not invalidate the separately executed bounded probes.
+The baseline `just check` stopped in Clippy at `patina-elevate/src/lib.rs:116`, where `clippy::double_must_use` rejects a redundant attribute on a function returning `ExitCode`. A separate `just test` built the debug CLI but stopped in `add_serializes_behind_a_held_exclusive_lock`. That test derived the helper executable's path from an assumed directory layout that differed from the generated `target/debug/build/.../out/` location. These baseline failures prevent a claim that the full suite passed. They do not invalidate the separately executed bounded probes.
 
-The Rust 1.100 baseline update and resulting implementation or test fixes are separate work. This reconstruction changes documentation and skill guidance, not the runtime implementation. Existing test assertions cited by the research establish intended checked conditions; only explicitly reported executions establish observed results in this environment.
+These observations apply to the research baseline, before the Rust 1.100 update and CI fixes. Existing test assertions cited by the research establish intended checked conditions; only explicitly reported executions establish observed results in this environment.

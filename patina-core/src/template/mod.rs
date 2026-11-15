@@ -195,7 +195,7 @@ fn coerce_when_result(
     tracker: &std::sync::Mutex<strict::UndefinedTracker>,
 ) -> Result<bool, TemplateError> {
     if value.is_undefined() {
-        let names = tracker.lock().map(|t| t.names()).unwrap_or_default();
+        let names = tracker.lock().map_or_default(|t| t.names());
         if !names.is_empty() {
             return Err(TemplateError::UndefinedVariable {
                 names: names.join(", "),
@@ -221,7 +221,7 @@ fn classify(
     tracker: &std::sync::Mutex<strict::UndefinedTracker>,
 ) -> TemplateError {
     if err.kind() == ErrorKind::UndefinedError {
-        let names = tracker.lock().map(|t| t.names()).unwrap_or_default();
+        let names = tracker.lock().map_or_default(|t| t.names());
         if !names.is_empty() {
             return TemplateError::UndefinedVariable {
                 names: names.join(", "),

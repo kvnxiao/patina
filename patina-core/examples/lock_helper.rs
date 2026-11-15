@@ -8,10 +8,8 @@
 //! invariant, because dropping a guard in-process can never reproduce an
 //! abnormal termination.
 //!
-//! It is wired as an `examples/` target (rather than a `[[bin]]`) so it
-//! ships only with the crate's test build, keeping the public binary
-//! surface clean. The integration test locates the compiled artifact at
-//! `target/<profile>/examples/lock_helper`.
+//! The integration tests build this example in a separate target directory
+//! and read its executable path from Cargo's JSON artifact messages.
 //!
 //! Usage:
 //!

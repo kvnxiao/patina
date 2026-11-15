@@ -18,7 +18,7 @@ may still shift before a tagged release.
 
 ## Install
 
-Install from crates.io with a current Rust toolchain (MSRV 1.95):
+Install from crates.io with Rust 1.100 or later:
 
 ```sh
 cargo install patina --locked
